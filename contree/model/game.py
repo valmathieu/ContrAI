@@ -3,10 +3,10 @@
 from .card import Card
 
 class Game:
-    def __init__(self, teams, players, deck, dealer=None):
+    def __init__(self, teams, dealer=None):
         self.teams = teams  # list of Team
-        self.players = players  # list of Player
-        self.deck = deck  # Deck instance
+        self.players = [player for team in teams for player in team.players]  # list of Player
+        self.deck = Deck()  # Deck instance
         self.dealer = dealer  # Player instance
         self.current_contract = None
         self.current_trick = []
