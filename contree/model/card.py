@@ -1,6 +1,26 @@
 # Card class: represents a playing card
 
 class Card:
+    """
+    Represents a playing card for the game of Contree.
+
+    Each card has a suit and a rank, and provides methods to get its point value and order,
+    depending on whether it is a trump card or not.
+
+    Attributes:
+        suit (str): The suit of the card ('Spades', 'Hearts', 'Diamonds', 'Clubs').
+        rank (str): The rank of the card ('7', '8', '9', '10', 'Jack', 'Queen', 'King', 'Ace').
+        points_normal (int): The point value of the card in a non-trump suit.
+        points_trump (int): The point value of the card in the trump suit.
+        order_normal (int): The order of the card in a non-trump suit.
+        order_trump (int): The order of the card in the trump suit.
+
+    Methods:
+        __str__(): Returns a string representation of the card with suit symbol.
+        __repr__(): Returns a string representation for debugging.
+        get_points(trump_suit=None): Returns the point value of the card, considering trump.
+        get_order(trump_suit=None): Returns the order of the card, considering trump.
+    """
     SUITS = ['Spades', 'Hearts', 'Diamonds', 'Clubs']
     RANKS = ['7', '8', '9', 'Jack', 'Queen', 'King', '10', 'Ace']
     # Normal points (non-trump)
