@@ -1,0 +1,10 @@
+[project]
+name = "contrai"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.13"
+dependencies = []
+[project.optional-dependencies]
+test = [
+  "pytest>=8.4"
+]
