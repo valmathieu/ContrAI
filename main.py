@@ -1,3 +1,4 @@
+import copy
 from contree.controller.game_controller import GameController
 from contree.model import Player
 #from contree.view.cli_view import CliView
@@ -11,9 +12,9 @@ def main():
     player2 = HumanPlayer('Player2','South')
     player3 = HumanPlayer('Player3','East')
     player4 = HumanPlayer('Player4','West')
-    team1 = Team('Team1', [player1, player2])
-    team2 = Team('Team2', [player3, player4])
-    game = Game([team1, team2])
+    players = [player1, player2, player3, player4]
+    game = Game(players)
+    game.start_new_round()
     a=1
     #controller = GameController(game, view)
     #controller.run_game()
