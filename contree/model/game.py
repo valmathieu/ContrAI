@@ -70,3 +70,4 @@ class Deck:
             player.hand.extend(self.cards[i * 3:(i * 3) + 3])
             player.hand.extend(self.cards[(i * 2) + 12:(i * 2) + 14])
             player.hand.extend(self.cards[(i * 3) + 20:(i * 3) + 23])
+        self.cards.clear()
