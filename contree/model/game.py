@@ -1,9 +1,9 @@
-# Game class
-import random
+# Game class for La Contrée
 
 from .card import Card
 from .deck import Deck
 from .team import Team
+import random
 
 class Game:
     """
@@ -195,3 +195,5 @@ class Game:
         Checks if any team has reached the target score to end the game.
         """
         return any(score >= target_score for score in self.scores.values())
+
+

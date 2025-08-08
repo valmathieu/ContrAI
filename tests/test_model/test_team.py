@@ -8,7 +8,7 @@ class DummyPlayer:
         self.name = name
         self.position = position
         self.hand = []
-
+    
     def __eq__(self, other):
         return isinstance(other, DummyPlayer) and self.name == other.name
 
@@ -41,7 +41,7 @@ def test_team_requires_exactly_two_players():
     # Test with one player
     with pytest.raises(ValueError, match="A team must have exactly 2 players"):
         Team("Invalid Team", [DummyPlayer("Player1", "North")])
-
+    
     # Test with three players
     with pytest.raises(ValueError, match="A team must have exactly 2 players"):
         Team("Invalid Team", [
@@ -49,7 +49,7 @@ def test_team_requires_exactly_two_players():
             DummyPlayer("Player2", "South"),
             DummyPlayer("Player3", "East")
         ])
-
+    
     # Test with empty list
     with pytest.raises(ValueError, match="A team must have exactly 2 players"):
         Team("Invalid Team", [])
@@ -59,13 +59,13 @@ def test_add_points(team):
     Test that adding points updates the team's total score.
     """
     assert team.total_score == 0
-
+    
     team.add_points(50)
     assert team.total_score == 50
-
+    
     team.add_points(30)
     assert team.total_score == 80
-
+    
     # Test negative points
     team.add_points(-10)
     assert team.total_score == 70
@@ -75,15 +75,15 @@ def test_get_partner(team, players):
     Test that get_partner returns the correct partner.
     """
     player1, player2 = players
-
+    
     # Test getting partner of first player
     partner = team.get_partner(player1)
     assert partner == player2
-
+    
     # Test getting partner of second player
     partner = team.get_partner(player2)
     assert partner == player1
-
+    
     # Test with player not in team
     outside_player = DummyPlayer("Outside Player", "East")
     partner = team.get_partner(outside_player)
@@ -94,11 +94,11 @@ def test_contains_player(team, players):
     Test that contains_player correctly identifies team membership.
     """
     player1, player2 = players
-
+    
     # Test with players in the team
     assert team.contains_player(player1) is True
     assert team.contains_player(player2) is True
-
+    
     # Test with player not in team
     outside_player = DummyPlayer("Outside Player", "East")
     assert team.contains_player(outside_player) is False
@@ -109,7 +109,7 @@ def test_team_string_representation(team):
     """
     expected_str = "North-South: Player1 & Player2 (0 pts)"
     assert str(team) == expected_str
-
+    
     # Test after adding points
     team.add_points(120)
     expected_str = "North-South: Player1 & Player2 (120 pts)"
@@ -121,7 +121,7 @@ def test_team_repr(team):
     """
     expected_repr = "Team('North-South', 2 players, 0 pts)"
     assert repr(team) == expected_repr
-
+    
     # Test after adding points
     team.add_points(75)
     expected_repr = "Team('North-South', 2 players, 75 pts)"
@@ -135,7 +135,7 @@ def test_team_with_different_names():
         DummyPlayer("Alice", "East"),
         DummyPlayer("Bob", "West")
     ]
-
+    
     team = Team("East-West", players)
     assert team.name == "East-West"
     assert str(team) == "East-West: Alice & Bob (0 pts)"
@@ -149,14 +149,14 @@ def test_team_score_accumulation():
         DummyPlayer("Player B", "South")
     ]
     team = Team("Team Test", players)
-
+    
     # Simulate multiple rounds of scoring
     round_scores = [80, 120, 60, 100, 90]
     expected_total = 0
-
+    
     for score in round_scores:
         team.add_points(score)
         expected_total += score
         assert team.total_score == expected_total
-
+    
     assert team.total_score == sum(round_scores)

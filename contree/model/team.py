@@ -1,4 +1,4 @@
-# Team class
+# Team class for La Contrée, representing a team of two players.
 
 class Team:
     """
