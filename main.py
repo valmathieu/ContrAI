@@ -2,7 +2,7 @@ import copy
 from contree.controller.game_controller import GameController
 from contree.model import Player
 #from contree.view.cli_view import CliView
-from contree.model.game import Game, Team
+from contree.model.game import Game
 from contree.model.player import HumanPlayer
 
 
