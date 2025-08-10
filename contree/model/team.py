@@ -1,8 +1,11 @@
-# Team class for La Contrée, representing a team of two players.
+# Team class for La Contree, representing a team of two players.
+
+from contree.model.exceptions import InvalidPlayerCountError
+from .player import Player
 
 class Team:
     """
-    Represents a team of two players in La Contrée.
+    Represents a team of two players in La Contree.
 
     Attributes:
         name (str): The name of the team (e.g., "North-South", "East-West").
@@ -17,15 +20,18 @@ class Team:
         Args:
             name (str): The name of the team
             players (list[Player]): List of exactly 2 players
+
+        Raises:
+            InvalidPlayerCountError: If the number of players is not exactly 2.
         """
         if len(players) != 2:
-            raise ValueError("A team must have exactly 2 players")
+            raise InvalidPlayerCountError(2, len(players), "Creating team")
 
         self.name = name
         self.players = players  # list of Player
         self.total_score = 0
 
-    def add_points(self, points):
+    def add_points(self, points: int):
         """
         Add points to the team's total score.
 
@@ -34,7 +40,7 @@ class Team:
         """
         self.total_score += points
 
-    def get_partner(self, player):
+    def get_partner(self, player: Player) -> Player:
         """
         Get the partner of a given player within this team.
 
@@ -48,7 +54,7 @@ class Team:
             return None
         return self.players[0] if self.players[1] == player else self.players[1]
 
-    def contains_player(self, player):
+    def contains_player(self, player: Player) -> bool:
         """
         Check if a player belongs to this team.
 
