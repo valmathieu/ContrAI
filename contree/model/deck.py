@@ -1,4 +1,4 @@
-# Deck class for managing a deck of cards in the game Contree.
+# Deck class for managing a deck of cards in the "contree" game.
 
 from contree.model.card import Card
 from contree.model.exceptions import InvalidPlayerCountError, InvalidCardCountError

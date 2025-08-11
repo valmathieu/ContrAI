@@ -1,13 +1,18 @@
 # Player, HumanPlayer, AiPlayer classes
 
 from abc import ABC, abstractmethod
-from .card import Card
 
 class Player(ABC):
     def __init__(self, name, position):
         self.name = name
         self.position = position  # 'North', 'South', 'East', 'West'
         self.hand = []  # list of Card
+        self.team = None  # Will be set by Game when teams are created
+
+    @property
+    def is_human(self):
+        """Returns True if this is a human player."""
+        return isinstance(self, HumanPlayer)
 
     @abstractmethod
     def choose_bid(self, current_contract):
