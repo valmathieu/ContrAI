@@ -1,11 +1,11 @@
-# Team class for La Contree, representing a team of two players.
+# Team class for "contree" game, representing a team of two players.
 
 from contree.model.exceptions import InvalidPlayerCountError
 from .player import Player
 
 class Team:
     """
-    Represents a team of two players in La Contree.
+    Represents a team of two players in "contree" game.
 
     Attributes:
         name (str): The name of the team (e.g., "North-South", "East-West").
@@ -40,7 +40,7 @@ class Team:
         """
         self.total_score += points
 
-    def get_partner(self, player: Player) -> Player:
+    def get_partner(self, player: Player) -> Player | None:
         """
         Get the partner of a given player within this team.
 
