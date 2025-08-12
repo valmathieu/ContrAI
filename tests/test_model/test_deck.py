@@ -122,3 +122,19 @@ def test_deck_string_representations():
     deck.deal(players)
     assert str(deck) == "Deck with 0 cards"
     assert repr(deck) == "Deck(0 cards)"
+
+def test_deck_add_cards_method(deck):
+    """Test the add_cards method of the Deck class."""
+    initial_size = len(deck.cards)
+    assert initial_size == 32
+
+    # Remove some cards to simulate dealing
+    removed_cards = deck.cards[:4]
+    deck.cards = deck.cards[4:]
+    assert len(deck.cards) == 28
+
+    # Add cards back
+    deck.add_cards(removed_cards)
+
+    # Check that cards are added back
+    assert len(deck.cards) == 32
