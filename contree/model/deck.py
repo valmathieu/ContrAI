@@ -51,3 +51,12 @@ class Deck:
             bool: True if the deck has no cards, False otherwise.
         """
         return len(self.cards) == 0
+
+    def add_cards(self, cards):
+        """
+        Add cards to the bottom of the deck.
+
+        Args:
+            cards (list[Card]): List of cards to add to the deck
+        """
+        self.cards.extend(cards)
