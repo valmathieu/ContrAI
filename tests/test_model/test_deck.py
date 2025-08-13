@@ -120,11 +120,13 @@ def test_deck_string_representations():
     # Test after dealing
     players = [DummyPlayer() for _ in range(4)]
     deck.deal(players)
-    assert str(deck) == "Deck with 0 cards"
+    assert str(deck) == "Empty deck"
     assert repr(deck) == "Deck(0 cards)"
 
 def test_deck_add_cards_method(deck):
-    """Test the add_cards method of the Deck class."""
+    """
+    Test the add_cards method of the Deck class.
+    """
     initial_size = len(deck.cards)
     assert initial_size == 32
 
