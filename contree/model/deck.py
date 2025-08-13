@@ -7,6 +7,20 @@ class Deck:
     def __init__(self):
         self.cards = [Card(suit, rank) for suit in Card.SUITS for rank in Card.RANKS]
 
+    def __repr__(self):
+        """
+        Returns a string representation of the Deck object for debugging.
+        """
+        return f"Deck({len(self.cards)} cards)"
+
+    def __str__(self):
+        """
+        Returns a human-readable string representation of the Deck.
+        """
+        if self.is_empty():
+            return "Empty deck"
+        return f"Deck with {len(self.cards)} cards"
+
     def shuffle(self):
         """
         Shuffles the deck of cards in place.
@@ -42,6 +56,8 @@ class Deck:
             player.hand.extend(self.cards[i * 3:(i * 3) + 3])
             player.hand.extend(self.cards[(i * 2) + 12:(i * 2) + 14])
             player.hand.extend(self.cards[(i * 3) + 20:(i * 3) + 23])
+
+        self.cards = []
 
     def is_empty(self):
         """
