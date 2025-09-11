@@ -1,6 +1,8 @@
 # Player, HumanPlayer, AiPlayer classes
 
 from abc import ABC, abstractmethod
+from contree.model.card import Card
+SUITS = Card.SUITS
 
 class Player(ABC):
     def __init__(self, name, position):
@@ -38,9 +40,9 @@ class AiPlayer(Player):
 
     Bidding strategy:
     1. Evaluate hand according to bidding table (80-160 points + Capot)
-    2. If partner hasn't bid or bid lower, make initial bid
+    2. If partner hasn't bid or bid lower, make initial bid if it's hand is strong enough
     3. If partner has bid, support with incremental bidding (+10 per external ace, +10 for trump complement)
-    4. Choose best suit based on strength, belote, and preference order
+    4. If multiple bid are possible : choose best suit based on strength, belote
     """
 
     # Bidding table
@@ -58,7 +60,7 @@ class AiPlayer(Player):
     ]
 
     # Suit preference order (Spades, Hearts, Diamonds, Clubs)
-    SUIT_PREFERENCE = ['Spades', 'Hearts', 'Diamonds', 'Clubs']
+    SUIT_PREFERENCE = SUITS
 
     def choose_bid(self, current_bids):
         """
@@ -96,6 +98,7 @@ class AiPlayer(Player):
     @staticmethod
     def _get_last_bid(current_bids):
         """Get the last non-pass bid."""
+
         for player, bid in reversed(current_bids):
             if bid != 'Pass' and isinstance(bid, tuple):
                 return bid
@@ -103,16 +106,15 @@ class AiPlayer(Player):
 
     def _get_partner_bid(self, current_bids):
         """Get partner's last bid."""
-        if not self.team:
-            return None
 
         for player, bid in reversed(current_bids):
-            if player.team == self.team and player != self and bid != 'Pass':
+            if player.team == self.team and bid != 'Pass':
                 return bid
         return None
 
     def _check_double_redouble(self, current_bids, last_bid):
         """Check if we should double or redouble."""
+
         if not last_bid or not isinstance(last_bid, tuple):
             return None
 
@@ -123,64 +125,49 @@ class AiPlayer(Player):
                 last_bidder = player
                 break
 
-        if not last_bidder:
-            return None
-
         # Check for double (only if opponent team made the bid)
         if last_bidder.team != self.team:
             # Simple double strategy: double if we have strong hand in other suits
             if self._should_double(last_bid):
                 return 'Double'
 
-        # Check for redouble (only if our team made the original bid and it was doubled)
-        elif last_bidder.team == self.team:
-            # Check if the contract was doubled
-            for player, bid in reversed(current_bids):
-                if bid == 'Double':
-                    if self._should_redouble(last_bid):
-                        return 'Redouble'
-                    break
+        # Check for redouble (only if the opposite team made the original bid it was a double)
+        if last_bidder.team != self.team and last_bid == 'Double':
+            if self._should_redouble():
+                return 'Redouble'
 
         return None
 
     def _should_double(self, opponent_bid):
         """Determine if we should double opponent's bid."""
+
         value, suit = opponent_bid
 
-        # Count our strength outside their trump suit
-        external_strength = 0
-
-        for card in self.hand:
-            if card.suit != suit:
-                if card.rank == 'Ace':
-                    external_strength += 11
-                elif card.rank == '10':
-                    external_strength += 10
-                elif card.rank == 'King':
-                    external_strength += 4
+        strength = self._estimate_tricks(suit) * 20  # Each expected trick worth 20 points
 
         # Double if we have significant external strength
-        return external_strength >= 25
+        return strength > 162 - value
 
-    def _should_redouble(self, our_bid):
+    @staticmethod
+    def _should_redouble():
         """Determine if we should redouble after being doubled."""
-        value, suit = our_bid
 
-        # Redouble if we have very strong trump suit
-        trump_strength = self._evaluate_trump_strength(suit)
-        return trump_strength >= value * 0.8  # Conservative redouble
+        # TODO: Implement a redouble strategy
+        return False
 
     def _evaluate_suits(self):
         """Evaluate each suit for potential trump contracts."""
+        
         evaluations = {}
 
-        for suit in ['Spades', 'Hearts', 'Diamonds', 'Clubs']:
+        for suit in SUITS:
             evaluations[suit] = self._evaluate_suit_as_trump(suit)
 
         return evaluations
 
     def _evaluate_suit_as_trump(self, suit):
         """Evaluate a specific suit as potential trump."""
+        
         trump_cards = [card for card in self.hand if card.suit == suit]
 
         if not trump_cards:
@@ -204,7 +191,7 @@ class AiPlayer(Player):
 
         # Count non-dry tens (tens with at least one other card in the suit)
         non_dry_tens = 0
-        for other_suit in ['Spades', 'Hearts', 'Diamonds', 'Clubs']:
+        for other_suit in SUITS:
             if other_suit != suit:
                 suit_cards = [card for card in self.hand if card.suit == other_suit]
                 has_ten = any(card.rank == '10' for card in suit_cards)
@@ -239,7 +226,6 @@ class AiPlayer(Player):
 
         return {
             'contract': max_contract,
-            'strength': trump_count * 10 + external_aces * 5,
             'has_belote': has_belote,
             'trump_count': trump_count,
             'external_aces': external_aces,
@@ -248,45 +234,29 @@ class AiPlayer(Player):
 
     def _estimate_tricks(self, trump_suit):
         """Estimate number of tricks we can take with this trump suit."""
+
         tricks = 0
 
-        # Count trump tricks
-        trump_cards = [card for card in self.hand if card.suit == trump_suit]
-        trump_strength = 0
+        # Count our strength inside their trump suit
+        tricks += self._evaluate_trump_tricks(trump_suit)
 
-        for card in trump_cards:
-            if card.rank == 'Jack':
-                trump_strength += 20
-            elif card.rank == '9':
-                trump_strength += 14
-            elif card.rank == 'Ace':
-                trump_strength += 11
-            elif card.rank == '10':
-                trump_strength += 10
-            elif card.rank == 'King':
-                trump_strength += 4
-            elif card.rank == 'Queen':
-                trump_strength += 3
-
-        # Rough estimation: strong trumps can take multiple tricks
-        if trump_strength >= 40:
-            tricks += 3
-        elif trump_strength >= 25:
-            tricks += 2
-        elif trump_strength >= 15:
-            tricks += 1
-
-        # Count external aces as potential tricks
-        for suit in ['Spades', 'Hearts', 'Diamonds', 'Clubs']:
-            if suit != trump_suit:
-                suit_cards = [card for card in self.hand if card.suit == suit]
-                if any(card.rank == 'Ace' for card in suit_cards):
+        # Count our strength outside their trump suit
+        for card in self.hand:
+            if card.suit != trump_suit:
+                if card.rank == 'Ace':
+                    tricks += 1
+                if card.rank == '10' and self._count_cards_in_suit(card.suit) > 1:
+                    tricks += 1
+                if (card.rank == 'King' or card.rank == 'Queen') and self._suit_has_rank(card.suit, 'Ace')\
+                        and self._suit_has_rank(card.suit, '10'):
                     tricks += 1
 
         return min(tricks, 8)  # Maximum 8 tricks in a round
 
-    def _can_overbid_partner(self, partner_bid, suit_evaluations):
+    @staticmethod
+    def _can_overbid_partner(partner_bid, suit_evaluations):
         """Check if we can make a higher bid than our partner."""
+
         partner_value, partner_suit = partner_bid
 
         # Find our best contract
@@ -298,6 +268,7 @@ class AiPlayer(Player):
 
     def _make_initial_bid(self, suit_evaluations, last_bid):
         """Make an initial bid or overbid."""
+
         # Find the best suit to bid
         best_suits = []
         max_contract = 0
@@ -321,11 +292,12 @@ class AiPlayer(Player):
         # Choose best suit among candidates
         chosen_suit = self._choose_best_suit(best_suits, suit_evaluations)
 
-        return (max_contract, chosen_suit)
+        return max_contract, chosen_suit
 
     def _support_partner_bid(self, partner_bid, suit_evaluations, last_bid):
         """Support partner's bid with incremental bidding."""
-        partner_value, partner_suit = partner_bid
+
+        _, partner_suit = partner_bid
 
         # Calculate our contribution to partner's suit
         contribution = 0
@@ -344,38 +316,25 @@ class AiPlayer(Player):
             contribution += 10
 
         # Calculate new bid value
-        new_value = partner_value + contribution
-
-        # Round to nearest 10
-        new_value = ((new_value + 5) // 10) * 10
-
-        # Check if we can make this bid
-        if last_bid:
-            last_value, _ = last_bid
-            if new_value <= last_value:
-                return 'Pass'
+        last_value, _ = last_bid
+        new_value = last_value + contribution
 
         # Don't bid beyond 160
         if new_value > 160:
             return 'Pass'
 
-        return (new_value, partner_suit)
+        return new_value, partner_suit
 
     def _choose_best_suit(self, candidate_suits, suit_evaluations):
-        """Choose the best suit from candidates based on functional specs."""
+        """Choose the best suit from candidates."""
+
         if len(candidate_suits) == 1:
             return candidate_suits[0]
 
-        # First, choose suit where we can bid the most
-        max_contract = max(suit_evaluations[suit]['contract'] for suit in candidate_suits)
-        strongest_suits = [suit for suit in candidate_suits
-                          if suit_evaluations[suit]['contract'] == max_contract]
-
-        if len(strongest_suits) == 1:
-            return strongest_suits[0]
+        strongest_suits = []
 
         # If tied, prefer suit with belote
-        belote_suits = [suit for suit in strongest_suits
+        belote_suits = [suit for suit in candidate_suits
                        if suit_evaluations[suit]['has_belote']]
 
         if belote_suits:
@@ -390,15 +349,30 @@ class AiPlayer(Player):
 
         return strongest_suits[0]  # Fallback
 
-    def _evaluate_trump_strength(self, suit):
-        """Evaluate total strength of trump suit."""
+    def _evaluate_trump_tricks(self, suit):
+        """Evaluate potential tricks won with trump suit."""
+
         trump_cards = [card for card in self.hand if card.suit == suit]
-        strength = 0
+        expected_won_tricks = 0
 
-        for card in trump_cards:
-            strength += card.get_points(suit)
+        has_jack = False
+        has_nine = False
+        has_ace = False
 
-        return strength
+        if len(trump_cards) > 0:
+            has_jack = any(card.rank == 'Jack' for card in trump_cards)
+            has_nine = any(card.rank == '9' for card in trump_cards)
+            has_ace = any(card.rank == 'Ace' for card in trump_cards)
+
+            if has_jack and has_nine:
+                expected_won_tricks += 2  # Both Jack and 9
+            elif has_jack or has_nine:
+                expected_won_tricks += 1  # Either Jack or 9
+
+        if len(trump_cards) >= 3:
+            expected_won_tricks += len(trump_cards) - 3 + (not has_ace) - has_jack - has_nine
+
+        return expected_won_tricks
 
     def choose_card(self, trick, contract, playable_cards):
         """
@@ -591,10 +565,26 @@ class AiPlayer(Player):
 
     def _count_cards_in_suit(self, suit):
         """Count how many cards we have in the given suit."""
+
         return sum(1 for card in self.hand if card.suit == suit)
+
+    def _suit_has_rank(self, suit, rank):
+        """
+        Check if the player has a specific rank in a given suit.
+
+        Args:
+            suit: The suit to check ('Spades', 'Hearts', 'Diamonds', 'Clubs')
+            rank: The rank to look for ('7', '8', '9', '10', 'Jack', 'Queen', 'King', 'Ace')
+
+        Returns:
+            bool: True if the player has the specified rank in the specified suit
+        """
+
+        return any(card.suit == suit and card.rank == rank for card in self.hand)
 
     def _opponents_might_have_trump(self, trump_suit):
         """Check if opponents might still have trump cards."""
+
         if not trump_suit:
             return False
 
