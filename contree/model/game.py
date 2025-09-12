@@ -23,6 +23,7 @@ class Game:
         last_trick(list[Card]): The cards played in the last trick.
         last_trick_winner(Player): The player that won the last trick.
         round_number (int): The current round number.
+        current_trick_number (int): The current trick number within the round.
         scores (dict): The current scores for each team.
     """
     def __init__(self, players):
@@ -77,6 +78,7 @@ class Game:
         self.last_trick = []
         self.last_trick_winner = None
         self.round_number = 0
+        self.current_trick_number = 0
         self.scores = {team.name: 0 for team in self.teams}
 
     def start_new_round(self):
@@ -92,6 +94,7 @@ class Game:
         self.current_trick = []
         self.current_contract = None
         # Set the next dealer (right of previous dealer or randomly if first round)
+        self.current_trick_number = 0  # Reset trick counter for new round
         self.next_dealer()
         # Shuffle and cut deck
         if self.round_number == 0:
@@ -326,9 +329,9 @@ class Game:
         # Play 8 tricks
         for trick_num in range(8):
             winner = self.manage_trick(view)
-            if winner:
-                winner_team = winner.team
-                team_tricks[winner_team.name].append(self.current_trick.copy())
+            self.current_trick_number = trick_num + 1
+            winner_team = winner.team
+            team_tricks[winner_team.name].append(self.current_trick.copy())
 
         # Calculate scores for the round
         round_scores = self.calculate_scores(team_tricks)
