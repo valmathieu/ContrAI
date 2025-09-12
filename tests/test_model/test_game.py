@@ -1,7 +1,6 @@
 import pytest
 from contree.model.game import Game
-from contree.model.player import HumanPlayer, AiPlayer
-from contree.model.card import Card
+from contree.model.deck import Deck
 
 class DummyPlayer:
     def __init__(self, name, position):
@@ -26,7 +25,7 @@ def game(players):
     """
     Fixture that returns a Game instance with 4 players.
     """
-    return Game(players)
+    return Game(players) # type: ignore
 
 def test_game_initialization(game, players):
     """
@@ -38,6 +37,8 @@ def test_game_initialization(game, players):
     assert game.dealer is None
     assert game.current_contract is None
     assert len(game.current_trick) == 0
+    assert len(game.last_trick) == 0
+    assert game.last_trick_winner is None
     assert game.deck is not None
     
     # Check team formation
@@ -53,12 +54,12 @@ def test_game_requires_exactly_four_players():
     # Test with too few players
     players = [DummyPlayer("Player1", "North")]
     with pytest.raises(InvalidPlayerCountError):
-        Game(players)
+        Game(players) # type: ignore
     
     # Test with too many players
     players = [DummyPlayer(f"Player{i}", "North") for i in range(5)]
     with pytest.raises(InvalidPlayerCountError):
-        Game(players)
+        Game(players) # type: ignore
 
 def test_game_requires_correct_positions():
     """
@@ -73,7 +74,7 @@ def test_game_requires_correct_positions():
     ]
     
     with pytest.raises(ValueError, match="Players must have positions"):
-        Game(players)
+        Game(players) # type: ignore
 
 def test_players_are_sorted_by_position(players):
     """
@@ -81,7 +82,7 @@ def test_players_are_sorted_by_position(players):
     """
     # Shuffle players to test sorting
     shuffled_players = [players[2], players[0], players[3], players[1]]  # Different order
-    game = Game(shuffled_players)
+    game = Game(shuffled_players) # type: ignore
     
     expected_positions = ["North", "West", "South", "East"]
     actual_positions = [player.position for player in game.players]
@@ -91,15 +92,15 @@ def test_teams_are_created_correctly(game):
     """
     Test that teams are correctly formed with North-South and East-West partnerships.
     """
-    north_south_team = next(team for team in game.teams if team.name == "North-South")
-    east_west_team = next(team for team in game.teams if team.name == "East-West")
-    
+    ns_team = next(team for team in game.teams if team.name == "North-South")
+    ew_team = next(team for team in game.teams if team.name == "East-West")
+
     # Check North-South team
-    ns_positions = {player.position for player in north_south_team.players}
+    ns_positions = {player.position for player in ns_team.players}
     assert ns_positions == {"North", "South"}
-    
+
     # Check East-West team
-    ew_positions = {player.position for player in east_west_team.players}
+    ew_positions = {player.position for player in ew_team.players}
     assert ew_positions == {"East", "West"}
 
 def test_next_dealer_anticlockwise_rotation(game):
@@ -125,6 +126,9 @@ def test_start_new_round_increments_round_number(game):
     
     game.start_new_round()
     assert game.round_number == 1
+
+    # Reset deck for next round
+    game.deck = Deck()
     
     game.start_new_round()
     assert game.round_number == 2
@@ -136,7 +140,6 @@ def test_start_new_round_sets_dealer_if_none(game):
     assert game.dealer is None
     
     game.start_new_round()
-    assert game.dealer is not None
     assert game.dealer in game.players
 
 def test_start_new_round_deals_cards(game):
@@ -537,7 +540,7 @@ def test_get_playable_cards_no_overtrump_possible(game):
 
     playable = game.get_playable_cards(player)
 
-    # Should still play trumps even if can't go higher
+    # Should still play trumps even if player can't go higher
     assert len(playable) == 2
     assert set(playable) == set(lower_trumps)
 
@@ -611,7 +614,7 @@ def test_get_playable_cards_opponent_leading_must_trump(game):
 def test_cards_returned_to_deck_after_trick(game):
     """Test that cards are returned to deck after each trick in reverse order."""
     from contree.model.card import Card
-
+    
     # Start a round and set up a contract
     game.start_new_round()
     game.current_contract = {
@@ -622,23 +625,23 @@ def test_cards_returned_to_deck_after_trick(game):
         'double': False,
         'redouble': False
     }
-
+    
     # Remember initial deck size (should be 0 after dealing)
     initial_deck_size = len(game.deck.cards)
     assert initial_deck_size == 0
-
+    
     # Mock specific cards for players to make the test predictable
     game.players[0].hand = [Card('Ace', 'Spades')]
     game.players[1].hand = [Card('King', 'Spades')]
     game.players[2].hand = [Card('Queen', 'Spades')]
     game.players[3].hand = [Card('Jack', 'Spades')]
-
+    
     # Play one trick
-    winner = game.manage_trick()
-
+    _ = game.manage_trick()
+    
     # Check that deck now has 4 cards (the trick cards)
     assert len(game.deck.cards) == 4
-
+    
     # Check that cards are added in reverse order (last played first)
     # Trick order should be: Ace, King, Queen, Jack (in that playing order)
     # Deck should have: Jack, Queen, King, Ace (reverse order)
@@ -647,46 +650,48 @@ def test_cards_returned_to_deck_after_trick(game):
     assert actual_cards == expected_cards
 
 def test_cards_returned_to_deck_all_players_pass(game):
-    """Test that all players' cards are returned to deck when everyone passes."""
-    from contree.model.card import Card
+    """
+    Test that all players' cards are returned to deck when everyone passes.
+    """
 
     # Start a round
     game.start_new_round()
-
+    
     # Remember initial deck size (should be 0 after dealing)
     initial_deck_size = len(game.deck.cards)
     assert initial_deck_size == 0
-
+    
     # Verify each player has 8 cards
     for player in game.players:
         assert len(player.hand) == 8
-
+    
     # Mock manage_bid to return None (all pass)
     original_manage_bid = game.manage_bid
     game.manage_bid = lambda view=None: None
-
+    
     # Run the round (which will trigger the all-pass scenario)
     result = game.manage_round()
-
+    
     # Restore original method
     game.manage_bid = original_manage_bid
-
+    
     # Check that contract is None and message indicates all passed
     assert result['contract'] is None
     assert result['message'] == 'All players passed. Cards redistributed.'
-
+    
     # Check that all players' hands are now empty
     for player in game.players:
         assert len(player.hand) == 0
-
+    
     # Check that deck has all 32 cards back
     assert len(game.deck.cards) == 32
 
 
 def test_multiple_tricks_card_accumulation(game):
-    """Test that cards accumulate in deck over multiple tricks."""
-    from contree.model.card import Card
-
+    """
+    Test that cards accumulate in deck over multiple tricks.
+    """
+    
     # Start a round and set up a contract
     game.start_new_round()
     game.current_contract = {
@@ -697,19 +702,19 @@ def test_multiple_tricks_card_accumulation(game):
         'double': False,
         'redouble': False
     }
-
+    
     # Ensure each player has at least 2 cards for 2 tricks
     for i, player in enumerate(game.players):
         player.hand = player.hand[:2]  # Keep only first 2 cards
-
+    
     # Play first trick
     game.manage_trick()
     assert len(game.deck.cards) == 4
-
+    
     # Play second trick
     game.manage_trick()
     assert len(game.deck.cards) == 8
-
+    
     # Verify no players have cards left
     for player in game.players:
         assert len(player.hand) == 0
@@ -717,7 +722,7 @@ def test_multiple_tricks_card_accumulation(game):
 def test_card_order_preserved_in_deck(game):
     """Test that the specific order of cards added to deck is correct."""
     from contree.model.card import Card
-
+    
     # Start a round and set up a contract
     game.start_new_round()
     game.current_contract = {
@@ -728,24 +733,24 @@ def test_card_order_preserved_in_deck(game):
         'double': False,
         'redouble': False
     }
-
+    
     # Set specific cards for each player to control the test
     specific_cards = [
         Card('7', 'Spades'),   # Player 0 (first to play)
-        Card('8', 'Spades'),   # Player 1 (second to play)
+        Card('8', 'Spades'),   # Player 1 (second to play) 
         Card('9', 'Spades'),   # Player 2 (third to play)
         Card('10', 'Spades')   # Player 3 (last to play)
     ]
-
+    
     for i, player in enumerate(game.players):
         player.hand = [specific_cards[i]]
-
+    
     # Clear deck to start fresh
     game.deck.cards = []
-
+    
     # Play the trick
     game.manage_trick()
-
+    
     # Cards should be added in reverse order: last played (10♠) first
     expected_order = ['10', '9', '8', '7']
     actual_order = [card.rank for card in game.deck.cards]
