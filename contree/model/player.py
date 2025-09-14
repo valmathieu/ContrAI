@@ -47,16 +47,16 @@ class AiPlayer(Player):
 
     # Bidding table
     BIDDING_TABLE = [
-        # (contract, trump_expected, trump_min, aces, tens_non_dry, tricks_min, belote_required)
-        (80, {'jack_or_nine': True, 'jack_and_nine': False}, 3, 1, 0, 4, False),
-        (90, {'jack_or_nine': False, 'jack_and_nine': True}, 3, 1, 0, 4, False),
-        (100, {'jack_or_nine': True, 'jack_and_nine': False}, 3, 2, 0, 5, False),
-        (110, {'jack_or_nine': False, 'jack_and_nine': True}, 3, 2, 0, 5, False),
-        (120, {'jack_or_nine': True, 'jack_and_nine': False}, 3, 3, 0, 6, False),
-        (130, {'jack_or_nine': False, 'jack_and_nine': True}, 3, 3, 0, 6, False),
-        (140, {'jack_or_nine': True, 'jack_and_nine': False}, 4, 3, 1, 6, True),
-        (150, {'jack_or_nine': False, 'jack_and_nine': True}, 4, 3, 1, 6, True),
-        (160, {'jack_or_nine': False, 'jack_and_nine': True, 'ace_required': True}, 5, 3, 2, 7, True),
+        # (contract, trump_expected, trump_min, aces, tricks_min, belote_required)
+        (80, {'jack_or_nine': True, 'jack_and_nine': False}, 3, 1, 4, False),
+        (90, {'jack_or_nine': False, 'jack_and_nine': True}, 3, 1, 4, False),
+        (100, {'jack_or_nine': True, 'jack_and_nine': False}, 3, 2, 5, False),
+        (110, {'jack_or_nine': False, 'jack_and_nine': True}, 3, 2, 5, False),
+        (120, {'jack_or_nine': True, 'jack_and_nine': False}, 3, 3, 6, False),
+        (130, {'jack_or_nine': False, 'jack_and_nine': True}, 3, 3, 6, False),
+        (140, {'jack_or_nine': True, 'jack_and_nine': False}, 4, 3, 6, True),
+        (150, {'jack_or_nine': False, 'jack_and_nine': True}, 4, 3, 6, True),
+        (160, {'jack_or_nine': False, 'jack_and_nine': True, 'ace_required': True}, 5, 3, 7, True),
     ]
 
     # Suit preference order (Spades, Hearts, Diamonds, Clubs)
@@ -189,22 +189,13 @@ class AiPlayer(Player):
         external_aces = sum(1 for card in self.hand
                           if card.suit != suit and card.rank == 'Ace')
 
-        # Count non-dry tens (tens with at least one other card in the suit)
-        non_dry_tens = 0
-        for other_suit in SUITS:
-            if other_suit != suit:
-                suit_cards = [card for card in self.hand if card.suit == other_suit]
-                has_ten = any(card.rank == '10' for card in suit_cards)
-                if has_ten and len(suit_cards) > 1:
-                    non_dry_tens += 1
-
         # Estimate trick-taking potential
         estimated_tricks = self._estimate_tricks(suit)
 
-        # Find highest contract we can bid
+        # Find the highest contract we can bid
         max_contract = 0
 
-        for contract, trump_req, trump_min, aces_req, tens_req, tricks_req, belote_req in self.BIDDING_TABLE:
+        for contract, trump_req, trump_min, aces_req, tricks_req, belote_req in self.BIDDING_TABLE:
             # Check trump requirements
             trump_ok = trump_count >= trump_min
 
@@ -219,7 +210,6 @@ class AiPlayer(Player):
             # Check other requirements
             if (trump_ok and
                 external_aces >= aces_req and
-                non_dry_tens >= tens_req and
                 estimated_tricks >= tricks_req and
                 (not belote_req or has_belote)):
                 max_contract = contract
@@ -320,7 +310,7 @@ class AiPlayer(Player):
         new_value = last_value + contribution
 
         # Don't bid beyond 160
-        if new_value > 160:
+        if new_value > 160 or contribution == 0:
             return 'Pass'
 
         return new_value, partner_suit
@@ -340,12 +330,10 @@ class AiPlayer(Player):
         if belote_suits:
             if len(belote_suits) == 1:
                 return belote_suits[0]
-            strongest_suits = belote_suits
 
         # If still tied, use preference order: Spades, Hearts, Diamonds, Clubs
         for preferred_suit in self.SUIT_PREFERENCE:
-            if preferred_suit in strongest_suits:
-                return preferred_suit
+            return preferred_suit
 
         return strongest_suits[0]  # Fallback
 
@@ -365,12 +353,14 @@ class AiPlayer(Player):
             has_ace = any(card.rank == 'Ace' for card in trump_cards)
 
             if has_jack and has_nine:
-                expected_won_tricks += 2  # Both Jack and 9
-            elif has_jack or has_nine:
-                expected_won_tricks += 1  # Either Jack or 9
+                expected_won_tricks = 2  # Both Jack and 9
+            elif has_jack:
+                expected_won_tricks = 1 # Only Jack
+            elif has_nine and len(trump_cards) > 1:
+                expected_won_tricks = 1 # Only 9 but with support
 
-        if len(trump_cards) >= 3:
-            expected_won_tricks += len(trump_cards) - 3 + (not has_ace) - has_jack - has_nine
+            if len(trump_cards) >= 3:
+                expected_won_tricks += len(trump_cards) - 3 + has_ace
 
         return expected_won_tricks
 
@@ -388,11 +378,9 @@ class AiPlayer(Player):
         """
 
         # Determine strategy based on position in trick
-        # TODO: adapt the code using the game class
+        # TODO: adapt the code using the game class to know the trick number
+        # First to play - use fallback approach since we don't have game reference
         if len(trick.cards) == 0:
-            # First to play - use fallback approach since we don't have game reference
-            trump_suit = contract[1] if contract else None
-
             # Check if this is likely the very first card by checking if we have tracking data
             if not hasattr(self, '_fallen_cards') or all(len(cards) == 0 for cards in self._fallen_cards.values()):
                 return self._play_opening_card(contract, playable_cards)
@@ -513,9 +501,6 @@ class AiPlayer(Player):
     def _play_following_card(self, trick, contract, playable_cards):
         """Strategy when not first to play."""
 
-        trump_suit = contract[1] if contract else None
-        led_suit = trick.cards[0].suit
-
         team_winning = self._is_team_winning_trick(trick)
 
         if team_winning:
@@ -570,7 +555,7 @@ class AiPlayer(Player):
                 if winning_trumps:
                     return min(winning_trumps, key=lambda c: c.get_order(trump_suit))
 
-        # Can't follow or trump - discard lowest from shortest suit (excluding masters)
+        # Can't follow or trump - discard lowest from the shortest suit (excluding masters)
         non_master_cards = [c for c in playable_cards if not self._is_master_card(c, trump_suit)]
         if non_master_cards:
             return min(non_master_cards, key=lambda c: (
@@ -621,7 +606,8 @@ class AiPlayer(Player):
         # Check if all higher cards have fallen
         return all(rank in suit_fallen for rank in higher_ranks)
 
-    def _get_higher_ranks(self, rank, suit, trump_suit):
+    @staticmethod
+    def _get_higher_ranks(rank, suit, trump_suit):
         """Get all ranks higher than the given rank in the suit."""
 
         if suit == trump_suit:
@@ -673,7 +659,8 @@ class AiPlayer(Player):
 
         return None
 
-    def _get_strongest_card_in_trick(self, trick, trump_suit):
+    @staticmethod
+    def _get_strongest_card_in_trick(trick, trump_suit):
         """Get the strongest card played so far in the trick."""
 
         if not trick.cards:
@@ -694,7 +681,8 @@ class AiPlayer(Player):
 
         return trick.cards[0]
 
-    def _is_stronger_card(self, card, current_best, trump_suit):
+    @staticmethod
+    def _is_stronger_card(card, current_best, trump_suit):
         """Check if card is stronger than current_best."""
 
         if not current_best:

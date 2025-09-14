@@ -1,7 +1,7 @@
 import pytest
 from contree.model.game import Game
 from contree.model.deck import Deck
-
+#TODO : add test for trick number in game
 class DummyPlayer:
     def __init__(self, name, position):
         self.name = name
