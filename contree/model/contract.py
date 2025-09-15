@@ -1,11 +1,12 @@
 # Contract class for the "contree" card game.
 # This class represents a contract established during bidding.
 
-from typing import Optional, List, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .player import Player
     from .team import Team
+    from .bid import ContractBid
 
 class Contract:
     """
@@ -15,10 +16,28 @@ class Contract:
     and handles double/redouble states with score calculations.
     """
 
-    def __init__(self, player: 'Player', value: int, suit: str,
-                 double: bool = False, redouble: bool = False):
+    def __init__(self, contract_bid: 'ContractBid', double: bool = False, redouble: bool = False):
         """
-        Initialize a contract.
+        Initialize a contract from a ContractBid.
+
+        Args:
+            contract_bid: The winning ContractBid that established this contract
+            double: Whether contract has been doubled
+            redouble: Whether contract has been redoubled
+        """
+        self.contract_bid = contract_bid
+        self.player = contract_bid.player
+        self.team = contract_bid.player.team
+        self.value = contract_bid.value
+        self.suit = contract_bid.suit
+        self.double = double
+        self.redouble = redouble
+
+    @classmethod
+    def from_legacy(cls, player: 'Player', value: int or str, suit: str,
+                   double: bool = False, redouble: bool = False):
+        """
+        Create a Contract from legacy parameters (for backwards compatibility).
 
         Args:
             player: Player who made the winning bid
@@ -27,12 +46,11 @@ class Contract:
             double: Whether contract has been doubled
             redouble: Whether contract has been redoubled
         """
-        self.player = player
-        self.team = player.team
-        self.value = value
-        self.suit = suit
-        self.double = double
-        self.redouble = redouble
+        # Import here to avoid circular imports
+        from .bid import ContractBid
+
+        contract_bid = ContractBid(player, value, suit)
+        return cls(contract_bid, double, redouble)
 
     def get_multiplier(self) -> int:
         """
@@ -55,121 +73,65 @@ class Contract:
             team_points: Points scored by the contracting team
 
         Returns:
-            True if contract value was reached
+            True if contract was made, False otherwise
         """
-        return team_points >= self.value
+        if self.value == 'Capot':
+            # For Capot, team must win all tricks (all 162 points)
+            return team_points >= 162
+        else:
+            return team_points >= self.value
 
     def get_attacking_team(self) -> 'Team':
-        """Get the team that must make the contract."""
+        """
+        Get the team that must make the contract.
+
+        Returns:
+            The contracting team
+        """
         return self.team
 
-    def get_defending_team(self, all_teams: List['Team']) -> Optional['Team']:
+    def get_defending_team(self) -> 'Team':
         """
         Get the team defending against the contract.
 
-        Args:
-            all_teams: List of all teams in the game
-
         Returns:
-            The defending team, or None if not found
+            The opposing team
         """
-        for team in all_teams:
-            if team != self.team:
-                return team
+        # This requires access to game teams, but we can get it from player's game context
+        # For now, return None - this should be handled at game level
         return None
 
     def is_capot(self) -> bool:
-        """Check if this is a capot contract (all tricks must be won)."""
+        """
+        Check if this is a Capot contract.
+
+        Returns:
+            True if contract value is 'Capot', False otherwise
+        """
         return self.value == 'Capot'
 
     def get_base_points(self) -> int:
-        """Get the base points value for this contract."""
-        if self.is_capot():
-            return 250  # Capot base value
-        return self.value
-
-    def calculate_success_points(self, team_points: int) -> int:
         """
-        Calculate points awarded to attacking team if contract is successful.
-
-        Args:
-            team_points: Actual points scored by the contracting team
+        Get the base point value of the contract.
 
         Returns:
-            Points to award to the attacking team
+            Base points for the contract (250 for Capot, actual value otherwise)
         """
-        base_value = self.get_base_points()
-        multiplier = self.get_multiplier()
-
-        if self.is_capot():
-            # For capot, award fixed points
-            return base_value * multiplier
-        elif self.double or self.redouble:
-            # When doubled/redoubled and made, special scoring
-            return 160 + base_value * multiplier
-        else:
-            # Normal contract: base value + actual points scored
-            return base_value + team_points
-
-    def calculate_failure_points(self) -> int:
-        """
-        Calculate points awarded to defending team if contract fails.
-
-        Returns:
-            Points to award to the defending team
-        """
-        base_value = self.get_base_points()
-        multiplier = self.get_multiplier()
-
-        # Defending team gets all possible points + contract value
-        return (160 + base_value) * multiplier
-
-    def to_dict(self) -> dict:
-        """Convert contract to dictionary representation (for compatibility)."""
-        return {
-            'player': self.player,
-            'team': self.team,
-            'value': self.value,
-            'suit': self.suit,
-            'double': self.double,
-            'redouble': self.redouble
-        }
-
-    # Dictionary-style access for backward compatibility
-    def __getitem__(self, key: str):
-        """Allow dictionary-style access for backward compatibility."""
-        if key in ['player', 'team', 'value', 'suit', 'double', 'redouble']:
-            return getattr(self, key)
-        else:
-            raise KeyError(f"'{key}' is not a valid contract attribute")
-
-    def get(self, key: str, default=None):
-        """Dictionary-style get method for backward compatibility."""
-        try:
-            return self[key]
-        except KeyError:
-            return default
-
-    def __contains__(self, key: str) -> bool:
-        """Support 'in' operator for dictionary-style access."""
-        return key in ['player', 'team', 'value', 'suit', 'double', 'redouble']
+        return 250 if self.value == 'Capot' else self.value
 
     def __str__(self) -> str:
         """String representation of the contract."""
-        modifiers = []
+        multiplier_str = ""
         if self.redouble:
-            modifiers.append("Redoubled")
+            multiplier_str = " (Redoubled)"
         elif self.double:
-            modifiers.append("Doubled")
+            multiplier_str = " (Doubled)"
 
-        modifier_str = " (" + ", ".join(modifiers) + ")" if modifiers else ""
+        return f"{self.value} {self.suit} by {self.player.name}{multiplier_str}"
 
-        if self.is_capot():
-            return f"Capot in {self.suit}{modifier_str} by {self.player.name}"
-        else:
-            return f"{self.value} {self.suit}{modifier_str} by {self.player.name}"
-
-    def __repr__(self) -> str:
-        """Detailed string representation for debugging."""
-        return (f"Contract(player={self.player.name}, value={self.value}, "
-                f"suit={self.suit}, double={self.double}, redouble={self.redouble})")
+    def __eq__(self, other) -> bool:
+        """Equality comparison between contracts."""
+        return (isinstance(other, Contract) and
+                self.contract_bid == other.contract_bid and
+                self.double == other.double and
+                self.redouble == other.redouble)
