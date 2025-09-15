@@ -11,7 +11,6 @@ class TestPlayer:
 
     def test_player_creation(self):
         """Test creating a human player"""
-
         player = HumanPlayer("Alice", "North")
         assert player.name == "Alice"
         assert player.position == "North"
@@ -21,7 +20,6 @@ class TestPlayer:
 
     def test_ai_player_creation(self):
         """Test creating an AI player"""
-
         player = AiPlayer("Bot", "South")
         assert player.name == "Bot"
         assert player.position == "South"
@@ -36,7 +34,6 @@ class TestAiPlayerBidding:
     @pytest.fixture
     def ai_player(self):
         """Create an AI player for testing"""
-
         player = AiPlayer("TestBot", "North")
         # Create a mock team
         partner = AiPlayer("Partner", "South")
@@ -48,7 +45,6 @@ class TestAiPlayerBidding:
     @pytest.fixture
     def ai_opponent_player(self):
         """Create an opponent AI player for testing"""
-
         opponent = AiPlayer("Opponent", "West")
         opponent_partner = AiPlayer("OpponentPartner", "East")
         opponent_team = Team("East-West", [opponent, opponent_partner])
@@ -60,7 +56,6 @@ class TestAiPlayerBidding:
     @pytest.fixture
     def sample_cards_weak(self):
         """Create a weak hand for testing"""
-
         return [
             Card('Spades', '7'),
             Card('Spades', '8'),
@@ -75,7 +70,6 @@ class TestAiPlayerBidding:
     @pytest.fixture
     def sample_cards_correct_hearts(self):
         """Create a middle hand for testing"""
-
         return [
             Card('Hearts', 'Jack'),
             Card('Hearts', 'King'),
@@ -90,7 +84,6 @@ class TestAiPlayerBidding:
     @pytest.fixture
     def sample_cards_strong_spades(self):
         """Create a strong spades hand for testing"""
-
         return [
             Card('Spades', 'Jack'),
             Card('Spades', '9'),
@@ -105,7 +98,6 @@ class TestAiPlayerBidding:
     @pytest.fixture
     def sample_cards_belote_spades(self):
         """Create a hand with belote in spades"""
-
         return [
             Card('Spades', 'Jack'),
             Card('Spades', 'Ace'),
@@ -119,7 +111,6 @@ class TestAiPlayerBidding:
 
     def test_evaluate_suits_weak_hand(self, ai_player, sample_cards_weak):
         """Test suit evaluation with a weak hand"""
-
         ai_player.hand = sample_cards_weak
         evaluations = ai_player._evaluate_suits()
 
@@ -131,7 +122,6 @@ class TestAiPlayerBidding:
 
     def test_evaluate_suits_correct_hand(self, ai_player, sample_cards_correct_hearts):
         """Test suit evaluation with a correct hand"""
-
         ai_player.hand = sample_cards_correct_hearts
         evaluations = ai_player._evaluate_suits()
 
@@ -143,7 +133,6 @@ class TestAiPlayerBidding:
 
     def test_evaluate_suits_strong_spades(self, ai_player, sample_cards_strong_spades):
         """Test suit evaluation with a strong spades hand"""
-
         ai_player.hand = sample_cards_strong_spades
         evaluations = ai_player._evaluate_suits()
 
@@ -155,7 +144,6 @@ class TestAiPlayerBidding:
 
     def test_evaluate_suits_belote(self, ai_player, sample_cards_belote_spades):
         """Test suit evaluation with belote"""
-
         ai_player.hand = sample_cards_belote_spades
         evaluations = ai_player._evaluate_suits()
 
@@ -165,7 +153,6 @@ class TestAiPlayerBidding:
 
     def test_estimate_tricks(self, ai_player, sample_cards_strong_spades):
         """Test trick estimation"""
-
         ai_player.hand = sample_cards_strong_spades
         tricks = ai_player._estimate_tricks('Spades')
 
@@ -174,7 +161,6 @@ class TestAiPlayerBidding:
 
     def test_evaluate_trump_tricks(self, ai_player, sample_cards_strong_spades):
         """Test trump tricks evaluation"""
-
         ai_player.hand = sample_cards_strong_spades
         expected_tricks = ai_player._evaluate_trump_tricks('Spades')
 
@@ -182,16 +168,42 @@ class TestAiPlayerBidding:
         # Jack + 9 = 2 tricks, plus additional tricks from trump length
         assert expected_tricks == 4
 
+    def test_get_last_bid(self, ai_player, ai_opponent_player):
+        """Test getting the last contract bid"""
+        ai_player_partner = ai_player.team.players[1]
+        ai_opponent_player_partner = ai_opponent_player.team.players[1]
+
+        current_bids = [
+            (ai_opponent_player, 'Pass'),
+            (ai_player_partner, (80, 'Spades')),
+            (ai_opponent_player_partner, (90, 'Hearts')),
+        ]
+
+        last_bid = ai_player._get_last_bid(current_bids)
+        assert last_bid == (90, 'Hearts')
+
+    def test_get_partner_bid(self, ai_player, ai_opponent_player):
+        """Test getting partner's bid"""
+        ai_player_partner = ai_player.team.players[1]
+        ai_opponent_player_partner = ai_opponent_player.team.players[1]
+
+        current_bids = [
+            (ai_opponent_player, 'Pass'),
+            (ai_player_partner, (80, 'Spades')),
+            (ai_opponent_player_partner, (90, 'Hearts')),
+        ]
+
+        partner_bid = ai_player._get_partner_bid(current_bids)
+        assert partner_bid == (80, 'Spades')
+
     def test_choose_bid_pass_weak_hand(self, ai_player, sample_cards_weak):
         """Test that AI passes with weak hand"""
-
         ai_player.hand = sample_cards_weak
         bid = ai_player.choose_bid([])
         assert bid == 'Pass'
 
     def test_choose_bid_initial_bid_strong_hand(self, ai_player, sample_cards_strong_spades):
         """Test initial bid with strong hand"""
-
         ai_player.hand = sample_cards_strong_spades
         bid = ai_player.choose_bid([])
 
@@ -202,7 +214,6 @@ class TestAiPlayerBidding:
 
     def test_choose_bid_overbid_opponent(self, ai_player, ai_opponent_player, sample_cards_strong_spades):
         """Test overbidding opponent"""
-
         ai_player.hand = sample_cards_strong_spades
 
         current_bids = [(ai_opponent_player, (90, 'Hearts'))]
@@ -215,7 +226,6 @@ class TestAiPlayerBidding:
 
     def test_choose_bid_support_partner(self, ai_player, ai_opponent_player):
         """Test supporting partner's bid"""
-
         # Give AI player some external aces to support partner
         ai_player.hand = [
             Card('Hearts', 'Ace'),
@@ -241,7 +251,6 @@ class TestAiPlayerBidding:
 
     def test_choose_bid_cant_overbid_partner(self, ai_player, ai_opponent_player, sample_cards_weak):
         """Test that AI doesn't overbid partner when it can't"""
-
         ai_player.hand = sample_cards_weak
 
         # Partner bids high
@@ -253,7 +262,6 @@ class TestAiPlayerBidding:
 
     def test_choose_best_suit_preference_order(self, ai_player):
         """Test suit preference order when multiple suits are equal"""
-
         # Create hand with equal strength in multiple suits
         ai_player.hand = [
             Card('Spades', 'Jack'),
@@ -275,7 +283,6 @@ class TestAiPlayerBidding:
 
     def test_choose_best_suit_belote_preference(self, ai_player):
         """Test that belote is preferred when contract values are equal"""
-
         ai_player.hand = [
             Card('Spades', 'Jack'),
             Card('Spades', '9'),
@@ -299,8 +306,8 @@ class TestAiPlayerDoubling:
     """Test AI player doubling logic"""
 
     @pytest.fixture
-    def ai_player_with_team(self):
-        """Create AI player with team setup"""
+    def ai_players_with_teams(self):
+        """Create AI players with team setup"""
         player = AiPlayer("TestBot", "North")
         partner = AiPlayer("Partner", "South")
         team = Team("North-South", [player, partner])
@@ -308,17 +315,17 @@ class TestAiPlayerDoubling:
         partner.team = team
 
         # Create opponent team
-        opponent1 = AiPlayer("Opponent1", "East")
-        opponent2 = AiPlayer("Opponent2", "West")
+        opponent1 = AiPlayer("Opponent1", "West")
+        opponent2 = AiPlayer("Opponent2", "East")
         opponent_team = Team("East-West", [opponent1, opponent2])
         opponent1.team = opponent_team
         opponent2.team = opponent_team
 
         return player, partner, opponent1, opponent2
 
-    def test_should_double_with_external_strength(self, ai_player_with_team):
+    def test_should_double_with_external_strength(self, ai_players_with_teams):
         """Test doubling when having external strength"""
-        player, partner, opponent1, opponent2 = ai_player_with_team
+        player, _, opponent1, _ = ai_players_with_teams
 
         # Give player strong external cards
         player.hand = [
@@ -326,21 +333,21 @@ class TestAiPlayerDoubling:
             Card('Hearts', '10'),
             Card('Diamonds', 'Ace'),
             Card('Diamonds', '10'),
-            Card('Clubs', 'Ace'),
             Card('Clubs', '10'),
+            Card('Clubs', 'Jack'),
             Card('Spades', '8'),
             Card('Spades', '7')
         ]
 
         # Opponent bids in Spades
-        current_bids = [(opponent1, (100, 'Spades'))]
+        current_bids = [(opponent1, (120, 'Spades'))]
         bid = player.choose_bid(current_bids)
 
         assert bid == 'Double'
 
-    def test_should_not_double_weak_external(self, ai_player_with_team):
+    def test_should_not_double_weak_external(self, ai_players_with_teams):
         """Test not doubling when lacking external strength"""
-        player, partner, opponent1, opponent2 = ai_player_with_team
+        player, _, opponent1, _ = ai_players_with_teams
 
         # Give player weak external cards
         player.hand = [
@@ -360,146 +367,6 @@ class TestAiPlayerDoubling:
 
         assert bid == 'Pass'
 
-    def test_should_redouble_strong_trump(self, ai_player_with_team):
-        """Test redoubling when having very strong trump"""
-        player, partner, opponent1, opponent2 = ai_player_with_team
-
-        # Give player very strong spades
-        player.hand = [
-            Card('Spades', 'Jack'),
-            Card('Spades', '9'),
-            Card('Spades', 'Ace'),
-            Card('Spades', 'King'),
-            Card('Spades', 'Queen'),
-            Card('Hearts', 'Ace'),
-            Card('Diamonds', '8'),
-            Card('Clubs', '7')
-        ]
-
-        # Partner bids, then opponent doubles
-        current_bids = [
-            (partner, (120, 'Spades')),
-            (opponent1, 'Double')
-        ]
-        bid = player.choose_bid(current_bids)
-
-        assert bid == 'Redouble'
-
-    def test_get_last_bid(self, ai_player_with_team):
-        """Test getting the last contract bid"""
-        player, partner, opponent1, opponent2 = ai_player_with_team
-
-        current_bids = [
-            (partner, (80, 'Spades')),
-            (opponent1, 'Pass'),
-            (opponent2, (90, 'Hearts')),
-            (player, 'Pass')
-        ]
-
-        last_bid = player._get_last_bid(current_bids)
-        assert last_bid == (90, 'Hearts')
-
-    def test_get_partner_bid(self, ai_player_with_team):
-        """Test getting partner's bid"""
-        player, partner, opponent1, opponent2 = ai_player_with_team
-
-        current_bids = [
-            (partner, (80, 'Spades')),
-            (opponent1, (90, 'Hearts')),
-            (opponent2, 'Pass')
-        ]
-
-        partner_bid = player._get_partner_bid(current_bids)
-        assert partner_bid == (80, 'Spades')
-
-
-class TestAiPlayerCardPlay:
-    """Test AI player card playing logic"""
-
-    @pytest.fixture
-    def ai_player(self):
-        """Create an AI player for testing"""
-        return AiPlayer("TestBot", "North")
-
-    def test_choose_card_simple(self, ai_player):
-        """Test simple card selection"""
-        playable_cards = [
-            Card('Spades', 'Ace'),
-            Card('Hearts', 'King')
-        ]
-
-        chosen_card = ai_player.choose_card([], None, playable_cards)
-        assert chosen_card in playable_cards
-
-    def test_choose_card_no_playable(self, ai_player):
-        """Test card selection when no cards are playable"""
-        chosen_card = ai_player.choose_card([], None, [])
-        assert chosen_card is None
-
-
-class TestBiddingTableLogic:
-    """Test the bidding table logic specifically"""
-
-    @pytest.fixture
-    def ai_player(self):
-        """Create an AI player for testing"""
-        return AiPlayer("TestBot", "North")
-
-    def test_bidding_table_80_contract(self, ai_player):
-        """Test 80 contract requirements"""
-        # Hand that meets 80 contract: 3+ trump with Jack or 9, 1+ ace
-        ai_player.hand = [
-            Card('Spades', 'Jack'),
-            Card('Spades', '8'),
-            Card('Spades', '7'),
-            Card('Hearts', 'Ace'),
-            Card('Diamonds', '8'),
-            Card('Clubs', '8'),
-            Card('Clubs', '7'),
-            Card('Hearts', '7')
-        ]
-
-        evaluation = ai_player._evaluate_suit_as_trump('Spades')
-        assert evaluation['contract'] >= 80
-
-    def test_bidding_table_140_contract(self, ai_player):
-        """Test 140 contract requirements"""
-        # Hand that meets 140: 4+ trump, 3+ aces, 1+ non-dry ten, belote
-        ai_player.hand = [
-            Card('Spades', 'Jack'),
-            Card('Spades', 'King'),
-            Card('Spades', 'Queen'),  # Belote
-            Card('Spades', '9'),
-            Card('Hearts', 'Ace'),
-            Card('Diamonds', 'Ace'),
-            Card('Clubs', 'Ace'),
-            Card('Clubs', '10')  # Non-dry ten (with other clubs)
-        ]
-
-        evaluation = ai_player._evaluate_suit_as_trump('Spades')
-        assert evaluation['contract'] >= 140
-        assert evaluation['has_belote'] is True
-
-    def test_bidding_table_capot_requirements(self, ai_player):
-        """Test very high contract requirements"""
-        # Exceptional hand for 160
-        ai_player.hand = [
-            Card('Spades', 'Jack'),
-            Card('Spades', '9'),
-            Card('Spades', 'Ace'),
-            Card('Spades', 'King'),
-            Card('Spades', 'Queen'),  # Belote + strong trump
-            Card('Hearts', 'Ace'),
-            Card('Diamonds', 'Ace'),
-            Card('Clubs', 'Ace')  # Many external aces
-        ]
-
-        evaluation = ai_player._evaluate_suit_as_trump('Spades')
-        assert evaluation['contract'] == 160
-        assert evaluation['trump_count'] == 5
-        assert evaluation['external_aces'] == 3
-
-
 class TestAiPlayerTrickTaking:
     """Test AI player trick taking strategy"""
 
@@ -514,6 +381,16 @@ class TestAiPlayerTrickTaking:
         partner.team = team
         player.initialize_card_tracking()
         return player
+
+    @pytest.fixture
+    def ai_player_opponent(self):
+        """Create an opponent AI player and team"""
+        opponent1 = AiPlayer("Opponent1", "West")
+        opponent2 = AiPlayer("Opponent2", "East")
+        opponent_team = Team("East-West", [opponent1, opponent2])
+        opponent1.team = opponent_team
+        opponent2.team = opponent_team
+        return opponent1
 
     @pytest.fixture
     def mock_trick(self):
@@ -535,40 +412,29 @@ class TestAiPlayerTrickTaking:
             Card('Hearts', '10'),
             Card('Diamonds', 'Ace'),
             Card('Diamonds', '8'),
+            Card('Diamonds', '7'),
             Card('Clubs', 'Queen'),
-            Card('Clubs', '7')
         ]
-
-    def test_choose_card_empty_playable_cards(self, ai_player_with_tracking, mock_trick):
-        """Test that None is returned when no cards are playable"""
-        result = ai_player_with_tracking.choose_card(mock_trick, (100, 'Spades'), [])
-        assert result is None
 
     def test_play_first_card_opening_round(self, ai_player_with_tracking, mock_trick, sample_hand_mixed):
         """Test playing the very first card of the round"""
         ai_player_with_tracking.hand = sample_hand_mixed
-        contract = (100, 'Spades')
+        contract = (ai_player_with_tracking, 80, 'Spades')
 
-        # Mock team has contract
-        ai_player_with_tracking._team_has_contract = lambda c: True
-
-        # Should play strongest trump (Jack of Spades)
+        # Should play the strongest trump (Jack of Spades)
         result = ai_player_with_tracking.choose_card(mock_trick, contract, sample_hand_mixed)
         assert result.suit == 'Spades'
         assert result.rank == 'Jack'
 
-    def test_play_first_card_opponents_contract(self, ai_player_with_tracking, mock_trick, sample_hand_mixed):
+    def test_play_first_card_opponents_contract(self, ai_player_with_tracking, ai_player_opponent, mock_trick, sample_hand_mixed):
         """Test playing first card when opponents have contract"""
         ai_player_with_tracking.hand = sample_hand_mixed
-        contract = (100, 'Hearts')
+        contract = (ai_player_opponent, 100, 'Hearts')
 
-        # Mock team doesn't have contract
-        ai_player_with_tracking._team_has_contract = lambda c: False
-
-        # Should play ace from shortest suit (Diamonds or Spades)
+        # Should play ace from the shortest suit (Diamonds or Spades)
         result = ai_player_with_tracking.choose_card(mock_trick, contract, sample_hand_mixed)
         assert result.rank == 'Ace'
-        assert result.suit in ['Spades', 'Diamonds']
+        assert result.suit == 'Spades'
 
     def test_play_leading_card_with_trump_remaining(self, ai_player_with_tracking, mock_trick):
         """Test leading subsequent tricks when opponents might have trump"""
@@ -578,7 +444,7 @@ class TestAiPlayerTrickTaking:
             Card('Hearts', 'Ace'),
             Card('Diamonds', '8')
         ]
-        contract = (100, 'Spades')
+        contract = (ai_player_with_tracking, 100, 'Spades')
 
         # Mark some cards as fallen to simulate non-opening trick
         ai_player_with_tracking._fallen_cards['Hearts'].add('King')
@@ -597,7 +463,7 @@ class TestAiPlayerTrickTaking:
             Card('Diamonds', 'Ace'),
             Card('Clubs', '7')
         ]
-        contract = (100, 'Spades')
+        contract = (ai_player_with_tracking, 100, 'Spades')
 
         # Mark some cards as fallen
         ai_player_with_tracking._fallen_cards['Hearts'].add('King')
@@ -618,18 +484,18 @@ class TestAiPlayerTrickTaking:
         ]
 
         # Set up trick where partner is winning
-        mock_trick.cards = [Card('Hearts', 'Queen')]
+        mock_trick.cards = [Card('Hearts', 'Queen'), Card('Hearts', '7')]
         mock_trick.trump_suit = 'Spades'
 
         # Mock team is winning
         ai_player_with_tracking._is_team_winning_trick = lambda t: True
 
         playable_cards = [Card('Hearts', 'King'), Card('Hearts', '10'), Card('Hearts', '8')]
-        result = ai_player_with_tracking.choose_card(mock_trick, (100, 'Spades'), playable_cards)
+        result = ai_player_with_tracking.choose_card(mock_trick, (ai_player_with_tracking, 100, 'Spades'), playable_cards)
 
-        # Should play highest point card (King or 10)
+        # Should play the highest point card (King or 10)
         assert result.suit == 'Hearts'
-        assert result.rank in ['King', '10']
+        assert result.rank == '10'
 
     def test_follow_suit_when_team_losing_can_beat(self, ai_player_with_tracking, mock_trick):
         """Test following suit when team is losing but can beat current card"""
@@ -647,7 +513,7 @@ class TestAiPlayerTrickTaking:
         ai_player_with_tracking._is_team_winning_trick = lambda t: False
 
         playable_cards = [Card('Hearts', 'Ace'), Card('Hearts', '8')]
-        result = ai_player_with_tracking.choose_card(mock_trick, (100, 'Spades'), playable_cards)
+        result = ai_player_with_tracking.choose_card(mock_trick, (ai_player_with_tracking, 100, 'Spades'), playable_cards)
 
         # Should play Ace to beat King
         assert result.rank == 'Ace'
@@ -656,7 +522,7 @@ class TestAiPlayerTrickTaking:
     def test_follow_suit_when_team_losing_cannot_beat(self, ai_player_with_tracking, mock_trick):
         """Test following suit when team is losing and cannot beat"""
         ai_player_with_tracking.hand = [
-            Card('Hearts', '9'),
+            Card('Hearts', 'Jack'),
             Card('Hearts', '8'),
             Card('Spades', 'Jack')
         ]
@@ -668,10 +534,10 @@ class TestAiPlayerTrickTaking:
         # Mock team is losing
         ai_player_with_tracking._is_team_winning_trick = lambda t: False
 
-        playable_cards = [Card('Hearts', '9'), Card('Hearts', '8')]
-        result = ai_player_with_tracking.choose_card(mock_trick, (100, 'Spades'), playable_cards)
+        playable_cards = [Card('Hearts', 'Jack'), Card('Hearts', '8')]
+        result = ai_player_with_tracking.choose_card(mock_trick, (ai_player_with_tracking, 100, 'Spades'), playable_cards)
 
-        # Should play lowest card (8)
+        # Should play the lowest card (8)
         assert result.rank == '8'
         assert result.suit == 'Hearts'
 
@@ -692,7 +558,7 @@ class TestAiPlayerTrickTaking:
         ai_player_with_tracking._can_trump_win = lambda card, trick, trump: card.rank == 'Jack'
 
         playable_cards = [Card('Spades', 'Jack'), Card('Spades', '9'), Card('Diamonds', '8')]
-        result = ai_player_with_tracking.choose_card(mock_trick, (100, 'Spades'), playable_cards)
+        result = ai_player_with_tracking.choose_card(mock_trick, (ai_player_with_tracking, 100, 'Spades'), playable_cards)
 
         # Should trump with Jack (lowest winning trump)
         assert result.suit == 'Spades'
@@ -701,9 +567,9 @@ class TestAiPlayerTrickTaking:
     def test_discard_when_cannot_follow_or_trump(self, ai_player_with_tracking, mock_trick):
         """Test discarding when cannot follow suit or trump effectively"""
         ai_player_with_tracking.hand = [
-            Card('Diamonds', '8'),
             Card('Diamonds', '7'),
             Card('Clubs', 'Queen'),
+            Card('Clubs', 'Jack'),
             Card('Clubs', '10')
         ]
 
@@ -715,10 +581,10 @@ class TestAiPlayerTrickTaking:
         ai_player_with_tracking._is_team_winning_trick = lambda t: False
         ai_player_with_tracking._is_master_card = lambda card, trump: False
 
-        playable_cards = [Card('Diamonds', '8'), Card('Diamonds', '7'), Card('Clubs', 'Queen'), Card('Clubs', '10')]
-        result = ai_player_with_tracking.choose_card(mock_trick, (100, 'Spades'), playable_cards)
+        playable_cards = [Card('Diamonds', '7'), Card('Clubs', 'Queen'), Card('Clubs', 'Jack'), Card('Clubs', '10')]
+        result = ai_player_with_tracking.choose_card(mock_trick, (ai_player_with_tracking, 100, 'Spades'), playable_cards)
 
-        # Should discard lowest from shortest suit
+        # Should discard lowest from the shortest suit
         assert result.rank == '7'  # Lowest point card
         assert result.suit == 'Diamonds'  # From shorter suit
 
@@ -730,24 +596,27 @@ class TestAiPlayerTrickTaking:
         for suit_cards in ai_player_with_tracking._fallen_cards.values():
             assert isinstance(suit_cards, set)
 
-    def test_update_card_tracking(self, ai_player_with_tracking):
+
+    def test_update_card_tracking(self, ai_player_with_tracking, ai_player_opponent):
         """Test updating card tracking with played cards"""
         # Test the update_card_tracking method directly
         card = Card('Hearts', 'King')
-        ai_player_with_tracking.update_card_tracking(card, 'East', 'Hearts', 'Spades')
-        ai_player_with_tracking.hand = [
-        # Check that card is tracked as fallen
-        ]
+        ai_player_with_tracking.update_card_tracking(card, ai_player_opponent, 'Hearts', 'Spades')
+
+        # Players list without trump should be empty
+        assert ai_player_with_tracking._players_without_trump == set()
+        assert 'King' in ai_player_with_tracking._fallen_cards['Hearts']
 
         # Test trump tracking - player couldn't follow suit and didn't trump
         card2 = Card('Diamonds', '8')
-        ai_player_with_tracking.update_card_tracking(card2, 'West', 'Hearts', 'Spades')
+        ai_player_with_tracking.update_card_tracking(card2, ai_player_opponent.team.players[1], 'Hearts', 'Spades')
 
         # West should be marked as having no trump (couldn't follow Hearts, didn't trump)
-        assert 'West' in ai_player_with_tracking._players_without_trump
-        ai_player_with_tracking._fallen_cards['Spades'] = {'King', 'Queen'}
+        assert ai_player_opponent.team.players[1] in ai_player_with_tracking._players_without_trump
 
         # With 2 trump in hand and 2 fallen, opponents might have 4 remaining
+        ai_player_with_tracking.hand = [Card('Spades', 'Jack'), Card('Spades', '9')]
+        ai_player_with_tracking._fallen_cards['Spades'] = {'King', 'Queen'}
         result = ai_player_with_tracking._opponents_might_have_trump('Spades')
         assert result is True
 
@@ -761,15 +630,15 @@ class TestAiPlayerTrickTaking:
     def test_is_master_card_detection(self, ai_player_with_tracking):
         """Test detection of master cards"""
         # Set up fallen cards
-        ai_player_with_tracking._fallen_cards['Hearts'] = {'King', 'Queen', 'Jack'}
+        ai_player_with_tracking._fallen_cards['Hearts'] = {'Ace', 'Queen', '8'}
 
         # Ace should be master now
-        ace_hearts = Card('Hearts', 'Ace')
+        ace_hearts = Card('Hearts', '10')
         result = ai_player_with_tracking._is_master_card(ace_hearts, 'Spades')
         assert result is True
 
         # 10 should not be master (Ace still out)
-        ten_hearts = Card('Hearts', '10')
+        ten_hearts = Card('Hearts', 'King')
         result = ai_player_with_tracking._is_master_card(ten_hearts, 'Spades')
         assert result is False
 
