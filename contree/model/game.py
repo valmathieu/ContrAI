@@ -1,10 +1,11 @@
 # Game class for the "contree" card game.
 # This class manages the game state, players, teams, deck, and game logic.
 
-from .card import Card
 from .deck import Deck
 from .team import Team
 from .player import Player
+from .trick import Trick
+from .contract import Contract
 from .exceptions import InvalidPlayerCountError
 import random
 
@@ -18,10 +19,10 @@ class Game:
         deck (Deck): The deck of cards for the game.
         dealer (Player): The current dealer.
         players_order (list[Player]): The order of players for the current round.
-        current_contract (object): The current contract (to be defined).
-        current_trick (list[Card]): The cards played in the current trick.
-        last_trick(list[Card]): The cards played in the last trick.
-        last_trick_winner(Player): The player that won the last trick.
+        current_contract (Contract): The current contract object.
+        current_trick (Trick): The current trick object.
+        last_trick (Trick): The last completed trick object.
+        last_trick_winner (Player): The player that won the last trick.
         round_number (int): The current round number.
         current_trick_number (int): The current trick number within the round.
         scores (dict): The current scores for each team.
@@ -74,8 +75,8 @@ class Game:
         self.dealer = None
         self.players_order = []
         self.current_contract = None
-        self.current_trick = []
-        self.last_trick = []
+        self.current_trick = None
+        self.last_trick = None
         self.last_trick_winner = None
         self.round_number = 0
         self.current_trick_number = 0
@@ -84,16 +85,10 @@ class Game:
     def start_new_round(self):
         """
         Starts a new round: shuffles or cuts, deals, resets contract and trick, and sets the next dealer.
-        - Resets the current contract and trick.
-        - Sets the next dealer (player to the right of the previous dealer).
-        - Increments the round number.
-        - Shuffles and cuts the deck (if not the first round, cut before shuffling).
-        - Deals cards to all players (3-2-3 distribution) with dealer getting cards last.
         """
         # Reset contract and trick
-        self.current_trick = []
+        self.current_trick = None
         self.current_contract = None
-        # Set the next dealer (right of previous dealer or randomly if first round)
         self.current_trick_number = 0  # Reset trick counter for new round
         self.next_dealer()
         # Shuffle and cut deck
@@ -110,12 +105,7 @@ class Game:
 
     def manage_bid(self, view=None):
         """
-        Manages the bidding phase for the current round.
-
-        Handles the bidding order, validates bids, manages pass/double/redouble logic,
-        and sets self.current_contract to the winning contract or None if all pass.
-        Optionally uses a view for human interaction.
-        Bidding order follows the players' order set by the dealer and stored in self.players_order.
+        Manages the bidding phase for the current round using Contract class.
         """
         bids = []  # List of (player, bid) tuples
         passes = 0
@@ -176,22 +166,23 @@ class Game:
             if all(b[1] == 'Pass' for b in bids):
                 # All players passed
                 break
+
+        # Create Contract object
         if contract:
-            self.current_contract = {
-                'player': contract[0],
-                'team': contract[0].team,
-                'value': contract[1],
-                'suit': contract[2],
-                'double': double,
-                'redouble': redouble
-            }
+            self.current_contract = Contract(
+                player=contract[0],
+                value=contract[1],
+                suit=contract[2],
+                double=double,
+                redouble=redouble
+            )
         else:
             self.current_contract = None
         return self.current_contract
 
     def manage_trick(self, view=None):
         """
-        Manages the trick-taking phase for the current round.
+        Manages the trick-taking phase using Trick class.
         Should update self.current_trick and handle trick winner logic.
 
         Args:
@@ -200,7 +191,7 @@ class Game:
         Returns:
             Player: The winner of the trick
         """
-        self.current_trick = []
+        self.current_trick = Trick()
         trick_leader = self.players_order[0] if self.last_trick_winner is None else self.last_trick_winner
 
         # Determine the order for this trick (winner of last trick leads)
@@ -214,7 +205,6 @@ class Game:
             # Get the playable cards for this player
             playable_cards = self.get_playable_cards(player)
 
-            card = None
             if hasattr(player, 'choose_card'):
                 # AI player or player with choose_card method
                 # Pass playable cards to help AI make legal moves
@@ -230,49 +220,53 @@ class Game:
             # Validate that the chosen card is legal
             if card and card in playable_cards and card in player.hand:
                 player.hand.remove(card)
-                self.current_trick.append((player, card))
+                self.current_trick.add_play(player, card)
             elif card:
                 # Card chosen is not legal - fallback to first playable card
                 fallback_card = playable_cards[0]
                 player.hand.remove(fallback_card)
-                self.current_trick.append((player, fallback_card))
+                self.current_trick.add_play(player, fallback_card)
 
         # Determine trick winner
         winner = self._determine_trick_winner(self.current_trick)
         self.last_trick_winner = winner
 
         # Move current trick to last trick for display
-        self.last_trick = self.current_trick.copy()
+        self.last_trick = self.current_trick.copy() if hasattr(self.current_trick, 'copy') else self.current_trick
 
         # Add cards back to deck (last card played first, then reverse order)
-        trick_cards = [card for _, card in self.current_trick]
-        trick_cards.reverse()  # Last card played becomes first to be added back
-        self.deck.add_cards(trick_cards)
+        if hasattr(self.current_trick, 'get_plays'):
+            trick_cards = [card for _, card in self.current_trick.get_plays()]
+            trick_cards.reverse()  # Last card played becomes first to be added back
+            self.deck.add_cards(trick_cards)
 
         return winner
 
-    def _determine_trick_winner(self, trick) -> Player:
+    def _determine_trick_winner(self, trick):
         """
         Determines the winner of a trick based on the cards played.
 
         Args:
-            trick: List of (player, card) tuples
+            trick: a Trick object containing the plays
 
         Returns:
             Player: The winner of the trick
         """
-        # TODO : Raise an error if trick is empty or not existing
-        if not trick:
+        trump_suit = self.current_contract.suit if self.current_contract else None
+        if not trick or not hasattr(trick, 'get_plays'):
             return None
 
-        trump_suit = self.current_contract['suit'] if self.current_contract else None
-        lead_suit = trick[0][1].suit  # Suit of the first card played
+        plays = trick.get_plays()
+        if not plays:
+            return None
 
-        best_player = trick[0][0]
-        best_card = trick[0][1]
+        lead_suit = plays[0][1].suit  # Suit of the first card played
+
+        best_player = plays[0][0]
+        best_card = plays[0][1]
         best_is_trump = trump_suit and best_card.suit == trump_suit
 
-        for player, card in trick[1:]:
+        for player, card in plays[1:]:
             card_is_trump = trump_suit and card.suit == trump_suit
 
             if card_is_trump and not best_is_trump:
@@ -313,12 +307,12 @@ class Game:
         if not contract:
             # Put all players' cards back in deck (8 cards per player)
             for player in self.players:
-                self.deck.add_cards(player.hand.copy())
-                player.hand.clear()
-
+                self.deck.add_cards(player.hand)
+                player.hand = []
             return {
                 'contract': None,
                 'scores': {team.name: 0 for team in self.teams},
+                'total_scores': self.scores.copy(),
                 'message': 'All players passed. Cards redistributed.'
             }
 
@@ -330,8 +324,14 @@ class Game:
         for trick_num in range(8):
             winner = self.manage_trick(view)
             self.current_trick_number = trick_num + 1
-            winner_team = winner.team
-            team_tricks[winner_team.name].append(self.current_trick.copy())
+
+            # Add trick to winner's team
+            if winner:
+                winner_team = winner.team
+                if hasattr(self.current_trick, 'copy'):
+                    team_tricks[winner_team.name].append(self.current_trick.copy())
+                else:
+                    team_tricks[winner_team.name].append(self.current_trick)
 
         # Calculate scores for the round
         round_scores = self.calculate_scores(team_tricks)
@@ -352,23 +352,22 @@ class Game:
         Calculates and updates the scores for each team at the end of a round.
 
         Args:
-            team_tricks: Dict mapping team names to their tricks
+            team_tricks: Dict mapping team names to their Trick objects
 
         Returns:
-            dict: Points earned by each team this round
+            dict: Team scores for this round
         """
         if not self.current_contract:
             return {team.name: 0 for team in self.teams}
 
-        contract_team = self.current_contract['team']
-        contract_value = self.current_contract['value']
-        trump_suit = self.current_contract['suit']
-        is_doubled = self.current_contract.get('double', False)
-        is_redoubled = self.current_contract.get('redouble', False)
+        contract_team = self.current_contract.player.team
+        contract_value = self.current_contract.value
+        trump_suit = self.current_contract.suit
+        is_doubled = self.current_contract.double
+        is_redoubled = self.current_contract.redouble
 
-        # Initialize team scores
-        team_scores = {team.name: 0 for team in self.teams}
         team_card_points = {team.name: 0 for team in self.teams}
+        team_scores = {team.name: 0 for team in self.teams}
 
         # Count card points for each team and check for belote (King + Queen of trump)
         belote_teams = set()  # Teams that have belote
@@ -378,11 +377,20 @@ class Game:
                 trump_cards_played = []
 
                 for trick in tricks:
-                    for player, card in trick:
-                        points += card.get_points(trump_suit)
-                        # Track trump cards played by this team
-                        if trump_suit and card.suit == trump_suit:
-                            trump_cards_played.append(card.rank)
+                    # Handle Trick objects
+                    if hasattr(trick, 'get_plays'):
+                        plays = trick.get_plays()
+                        for player, card in plays:
+                            points += card.get_points(trump_suit)
+                            # Track trump cards played by this team
+                            if trump_suit and card.suit == trump_suit:
+                                trump_cards_played.append(card.rank)
+                    else:
+                        # Handle as iterable of (player, card) tuples
+                        for player, card in trick:
+                            points += card.get_points(trump_suit)
+                            if trump_suit and card.suit == trump_suit:
+                                trump_cards_played.append(card.rank)
 
                 # Check for belote (King and Queen of trump suit in same round)
                 if trump_suit and 'King' in trump_cards_played and 'Queen' in trump_cards_played:
@@ -408,14 +416,13 @@ class Game:
             multiplier = 4
         elif is_doubled:
             multiplier = 2
+
         # TODO : Handle "Capot" (all tricks won by one team)
         if contract_made:
             # Contract successful
             if is_doubled or is_redoubled:
                 # When contract is made with double/redouble, attacking team gets
                 # the same points that defending team would have gotten if contract failed
-                defending_team_points = sum(points for name, points in team_card_points.items()
-                                          if name != contract_team_name)
                 team_scores[contract_team_name] = 160 + contract_value * multiplier
 
                 # Defending team gets their actual points (no multiplier)
@@ -467,7 +474,7 @@ class Game:
             'game_over': False,
             'winner': None,
             'tied_teams': None,
-            'final_scores': None
+            'final_scores': self.scores.copy()
         }
 
     def next_dealer(self):
@@ -482,13 +489,10 @@ class Game:
 
     def set_players_order(self):
         """
-        Sets the order of players for the current round based on the dealer.
-        The player to the right of the dealer starts first.
+        Sets the players order starting with the player after the dealer (anticlockwise order).
         """
-        if self.dealer is None:
-            raise ValueError("Dealer must be set before setting players order.")
-        dealer_idx = self.players.index(self.dealer)
         # Reset players order and start with next player after dealer (anticlockwise order)
+        dealer_idx = self.players.index(self.dealer)
         self.players_order = []
         for i in range(4):
             player_idx = (dealer_idx + 1 + i) % 4
@@ -502,7 +506,7 @@ class Game:
             player (Player): The player whose playable cards we want to determine
 
         Returns:
-            list[Card]: List of cards that the player can legally play
+            list: List of cards that can be legally played
 
         Rules:
         1. Must follow suit if possible
@@ -515,11 +519,15 @@ class Game:
             return []
 
         # If no cards played yet in trick, any card is playable
-        if not self.current_trick:
+        trump_suit = self.current_contract.suit if self.current_contract else None
+        if not self.current_trick or not hasattr(self.current_trick, 'get_plays'):
             return player.hand.copy()
 
-        trump_suit = self.current_contract['suit'] if self.current_contract else None
-        lead_suit = self.current_trick[0][1].suit  # First card played in trick
+        plays = self.current_trick.get_plays()
+        if not plays:
+            return player.hand.copy()
+
+        lead_suit = plays[0][1].suit  # First card played in trick
 
         # Cards of the lead suit in player's hand
         lead_suit_cards = [card for card in player.hand if card.suit == lead_suit]
@@ -529,7 +537,7 @@ class Game:
             return lead_suit_cards
 
         # Player doesn't have lead suit, check if partner is leading
-        trick_leader = self.current_trick[0][0]
+        trick_leader = plays[0][0]
         player_team = player.team
         partner_is_leading = trick_leader.team == player_team
 
@@ -547,8 +555,9 @@ class Game:
 
         # Get highest trump played so far by opponents
         highest_opponent_trump = None
+        player_team = player.team
 
-        for trick_player, card in self.current_trick:
+        for trick_player, card in plays:
             if (card.suit == trump_suit and
                 trick_player.team != player_team):
                 if (highest_opponent_trump is None or
