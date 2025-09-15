@@ -49,6 +49,42 @@ class Trick:
             return None
         return self.plays[0][1].suit
 
+    def __len__(self) -> int:
+        """
+        Return the number of cards played in this trick.
+
+        Returns:
+            Number of cards played (0-4)
+        """
+        return len(self.plays)
+
+    def get_plays(self) -> List[Tuple[Player, Card]]:
+        """
+        Get all plays (player, card) in this trick.
+
+        Returns:
+            List of (player, card) tuples
+        """
+        return self.plays.copy()
+
+    def is_complete(self) -> bool:
+        """
+        Check if this trick is complete (4 cards played).
+
+        Returns:
+            True if 4 cards have been played, False otherwise
+        """
+        return len(self.plays) == 4
+
+    def size(self) -> int:
+        """
+        Get number of cards played so far.
+
+        Returns:
+            Number of cards played (0-4)
+        """
+        return len(self.plays)
+
     def get_winner(self) -> Optional[Player]:
         """
         Determine the winner of this trick.
@@ -84,18 +120,6 @@ class Trick:
                     best_card = card
 
         return best_player
-
-    def is_complete(self) -> bool:
-        """Check if all 4 cards have been played."""
-        return len(self.plays) == 4
-
-    def size(self) -> int:
-        """Get number of cards played so far."""
-        return len(self.plays)
-
-    def get_plays(self) -> List[Tuple[Player, Card]]:
-        """Get all player-card pairs in play order."""
-        return self.plays.copy()
 
     def is_empty(self) -> bool:
         """Check if the trick is empty."""
