@@ -369,7 +369,7 @@ class AiPlayer(Player):
         Choose a card to play based on simple AI strategy.
 
         Args:
-            trick: Current trick with cards played so far
+            trick: List of (player, card) tuples, current trick with cards played by players so far
             contract: Current contract (value, trump_suit, player) or None
             playable_cards: List of cards the AI can legally play
 
@@ -380,7 +380,7 @@ class AiPlayer(Player):
         # Determine strategy based on position in trick
         # TODO: adapt the code using the game class to know the trick number
         # First to play - use fallback approach since we don't have game reference
-        if len(trick.cards) == 0:
+        if len(trick) == 0:
             # Check if this is likely the very first card by checking if we have tracking data
             if not hasattr(self, '_fallen_cards') or all(len(cards) == 0 for cards in self._fallen_cards.values()):
                 return self._play_opening_card(contract, playable_cards)
@@ -401,14 +401,14 @@ class AiPlayer(Player):
         }
         self._players_without_trump = set()
 
-    def update_card_tracking(self, card, player_position, led_suit, trump_suit):
+    def update_card_tracking(self, card, player, led_suit, trump_suit):
         """
         Update tracking based on a card played by any player.
         Should be called by the game whenever a card is played.
 
         Args:
             card: The card that was played
-            player_position: Position of the player who played the card
+            player: Player who played the card
             led_suit: The suit that was led this trick
             trump_suit: The current trump suit
         """
@@ -423,7 +423,7 @@ class AiPlayer(Player):
         if (led_suit == trump_suit and card.suit != trump_suit) or (led_suit != trump_suit and
                 (card.suit != led_suit and card.suit != trump_suit)):
             # Player couldn't follow suit and didn't trump - no trump
-            self._players_without_trump.add(player_position)
+            self._players_without_trump.add(player)
 
     def _play_first_card(self, game, contract, playable_cards):
         """Strategy when AI is first to play in the trick."""
@@ -438,13 +438,13 @@ class AiPlayer(Player):
     def _play_opening_card(self, contract, playable_cards):
         """Play the very first card of the round."""
 
-        trump_suit = contract[1] if contract else None
+        trump_suit = contract[2] if contract else None
 
-        if contract[2] == self.team:
+        if contract[0].team == self.team:
             # Our team has the contract - play the strongest trump
             trump_cards = [c for c in playable_cards if c.suit == trump_suit]
             if trump_cards:
-                sorted_trumps = sorted(trump_cards, key=lambda c: c.get_order(trump_suit))
+                sorted_trumps = sorted(trump_cards, key=lambda c: c.get_order(trump_suit), reverse = True)
                 if sorted_trumps[0].rank == '9' and len(sorted_trumps) > 1:
                     # Avoid playing 9 first
                     return sorted_trumps[1]
@@ -457,20 +457,35 @@ class AiPlayer(Player):
                 # Play ace from the shortest suit
                 return min(aces, key=lambda c: self._count_cards_in_suit(c.suit))
 
-        # Fallback - play first available card
-        return playable_cards[0]
+        # Default: play the lowest value card (excluding trump unless only trumps available)
+        non_trump_cards = [c for c in playable_cards if c.suit != trump_suit] if trump_suit else playable_cards
+
+        if not non_trump_cards:
+            # Only trump cards available, use all playable cards
+            cards_to_consider = playable_cards
+        else:
+            # Use non-trump cards
+            cards_to_consider = non_trump_cards
+
+        # Find cards with minimum points value
+        min_points = min(c.get_points(trump_suit) for c in cards_to_consider)
+        lowest_value_cards = [c for c in cards_to_consider if c.get_points(trump_suit) == min_points]
+
+        # If multiple cards with same lowest value, choose randomly
+        return lowest_value_cards[0]
 
     def _play_leading_card(self, contract, playable_cards):
         """Play when leading subsequent tricks."""
 
-        trump_suit = contract[1] if contract else None
+        trump_suit = contract[2] if contract else None
 
         # If the team has the contract and opponents might still have trump, play the strongest trump
-        if contract[2] == self.team and self._opponents_might_have_trump(trump_suit):
+        if contract[0].team == self.team and self._opponents_might_have_trump(trump_suit):
             trump_cards = [c for c in playable_cards if c.suit == trump_suit]
             if trump_cards:
                 return max(trump_cards, key=lambda c: c.get_order(trump_suit))
 
+        # TODO: exclude trump from logic if we know opponents have no trump left
         # No trump left with opponents - play ace from the longest suit
         aces = [c for c in playable_cards if c.rank == 'Ace']
         if aces:
@@ -511,8 +526,8 @@ class AiPlayer(Player):
     def _play_when_team_winning(self, trick, contract, playable_cards):
         """Play when our team is currently winning the trick."""
 
-        trump_suit = contract[1] if contract else None
-        led_suit = trick.cards[0].suit
+        trump_suit = contract[2] if contract else None
+        led_suit = trick[1][0].suit
 
         # Try to follow suit with the highest point card
         same_suit_cards = [c for c in playable_cards if c.suit == led_suit]
@@ -529,8 +544,8 @@ class AiPlayer(Player):
     def _play_when_team_losing(self, trick, contract, playable_cards):
         """Play when opponents are currently winning the trick."""
 
-        trump_suit = contract[1] if contract else None
-        led_suit = trick.cards[0].suit
+        trump_suit = contract[2] if contract else None
+        led_suit = trick[1][0].suit
         current_best = self._get_strongest_card_in_trick(trick, trump_suit)
 
         # Try to follow suit
@@ -554,6 +569,7 @@ class AiPlayer(Player):
                                 if self._can_trump_win(c, trick, trump_suit)]
                 if winning_trumps:
                     return min(winning_trumps, key=lambda c: c.get_order(trump_suit))
+
 
         # Can't follow or trump - discard lowest from the shortest suit (excluding masters)
         non_master_cards = [c for c in playable_cards if not self._is_master_card(c, trump_suit)]
@@ -587,6 +603,7 @@ class AiPlayer(Player):
     def _opponents_might_have_trump(self, trump_suit):
         """Check if opponents might still have trump cards."""
 
+        # TODO: upgrade to exclude partner if we can track their cards
         # Count trump cards we've seen fall
         trump_fallen = len(self._fallen_cards.get(trump_suit, set()))
         trump_in_hand = sum(1 for card in self.hand if card.suit == trump_suit)
@@ -594,6 +611,7 @@ class AiPlayer(Player):
         # Total trump cards is 8, if we've seen less than 8 - trump_in_hand, opponents might have some
         return trump_fallen < (8 - trump_in_hand)
 
+    # TODO: replace trump_suit with a boolean is_trump parameter
     def _is_master_card(self, card, trump_suit):
         """Check if a card is currently the master (highest remaining) in its suit."""
 
@@ -623,18 +641,18 @@ class AiPlayer(Player):
         except ValueError:
             return []
 
-    def _is_team_winning_trick(self, trick):
+    def _is_team_winning_trick(self, trick, trump_suit=None):
         """Check if our team is currently winning the trick."""
 
         # TODO: check with trick number from game
-        if len(trick.cards) < 1:
+        if len(trick) < 1:
             return False
 
         # Find partner's position
         partner_position = self._get_partner_position()
 
         # Check if partner played the strongest card so far
-        strongest_position = self._get_strongest_card_position(trick)
+        strongest_position = self._get_strongest_card_position(trick, trump_suit)
         return strongest_position == partner_position
 
     def _get_partner_position(self):
@@ -643,19 +661,18 @@ class AiPlayer(Player):
         position_map = {'North': 'South', 'South': 'North', 'East': 'West', 'West': 'East'}
         return position_map.get(self.position)
 
-    def _get_strongest_card_position(self, trick):
+    def _get_strongest_card_position(self, trick, trump_suit):
         """Get the position of the player who played the strongest card."""
 
-        if not trick.cards:
+        if not trick:
             return None
 
-        trump_suit = getattr(trick, 'trump_suit', None)
         strongest_card = self._get_strongest_card_in_trick(trick, trump_suit)
 
-        for i, card in enumerate(trick.cards):
+        # Find which player played the strongest card
+        for player, card in trick:
             if card == strongest_card:
-                leader_pos = getattr(trick, 'leader_position', 0)
-                return (leader_pos + i) % 4
+                return player.position
 
         return None
 
@@ -663,13 +680,13 @@ class AiPlayer(Player):
     def _get_strongest_card_in_trick(trick, trump_suit):
         """Get the strongest card played so far in the trick."""
 
-        if not trick.cards:
+        if not trick:
             return None
 
-        led_suit = trick.cards[0].suit
+        led_suit = trick[1][0].suit
 
         # Trump cards beat non-trump (unless led suit is trump)
-        if trump_suit and led_suit != trump_suit:
+        if led_suit != trump_suit:
             trump_cards = [c for c in trick.cards if c.suit == trump_suit]
             if trump_cards:
                 return max(trump_cards, key=lambda c: c.get_order(trump_suit))
