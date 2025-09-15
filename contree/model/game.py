@@ -6,6 +6,7 @@ from .team import Team
 from .player import Player
 from .trick import Trick
 from .contract import Contract
+from .bid import Bid, PassBid, ContractBid, DoubleBid, RedoubleBid, BidValidator
 from .exceptions import InvalidPlayerCountError
 import random
 
@@ -105,80 +106,131 @@ class Game:
 
     def manage_bid(self, view=None):
         """
-        Manages the bidding phase for the current round using Contract class.
+        Manages the bidding phase for the current round using new Bid class system.
+
+        Args:
+            view: Optional view for human player interaction
+
+        Returns:
+            Contract: The established contract or None if all players passed
         """
-        bids = []  # List of (player, bid) tuples
-        passes = 0
-        last_bid = None
-        last_bidder = None
-        contract = None
-        double = False
-        redouble = False
+        bid_objects = []  # List of Bid objects
+        passes_count = 0
 
         while True:
             for player in self.players_order:
-                # Ask player for bid
+                # Get bid choice from player (returns string or tuple)
                 if hasattr(player, 'choose_bid'):
-                    bid = player.choose_bid(bids)
+                    # Convert old format to new format for compatibility
+                    legacy_bids = [(bid.player, self._bid_to_legacy_format(bid)) for bid in bid_objects]
+                    bid_choice = player.choose_bid(legacy_bids)
                 else:
-                    bid = 'Pass'
+                    bid_choice = 'Pass'
+
                 # If view is provided and player is human, use view for input
-                if view and player.is_human:
-                    bid = view.request_bid_action(player, bids)
-                bids.append((player, bid))
-                if bid == 'Pass':
-                    passes += 1
-                elif isinstance(bid, tuple):
-                    # bid is (value, suit)
-                    value, suit = bid
-                    # TODO: better bid management
-                    if last_bid is None or value > last_bid[0] or value == 'Capot':
-                        last_bid = (value, suit)
-                        last_bidder = player
-                        passes = 0
-                        contract = (player, value, suit)
+                if view and hasattr(player, 'is_human') and player.is_human:
+                    # Convert bid objects to legacy format for view compatibility
+                    legacy_bids = [(bid.player, self._bid_to_legacy_format(bid)) for bid in bid_objects]
+                    bid_choice = view.request_bid_action(player, legacy_bids)
+
+                # Create appropriate Bid object from player's choice
+                bid_obj = self._create_bid_from_choice(player, bid_choice)
+
+                # Validate the bid
+                if BidValidator.is_bid_valid(bid_obj, bid_objects):
+                    bid_objects.append(bid_obj)
+
+                    # Reset pass count for non-pass bids
+                    if not isinstance(bid_obj, PassBid):
+                        passes_count = 0
                     else:
-                        # Invalid bid, force pass
-                        passes += 1
-                elif bid == 'Double' and last_bid is not None and player not in [last_bidder]:
-                    # Only defending team (not the bidder's team) can double
-                    if last_bidder.team != player.team:
-                        double = True
-                        passes = 0
-                    else:
-                        # Invalid double, force pass
-                        passes += 1
-                elif bid == 'Redouble' and double and last_bidder:
-                    # Only attacking team (bidder's team) can redouble after a double
-                    if last_bidder.team == player.team:
-                        redouble = True
-                        passes = 0
-                    else:
-                        # Invalid redouble, force pass
-                        passes += 1
+                        passes_count += 1
                 else:
-                    passes += 1
-                # End if 3 passes after last bid
-                if last_bid and passes >= 3:
+                    # Invalid bid - force a pass
+                    bid_objects.append(PassBid(player))
+                    passes_count += 1
+
+                # Check for end conditions
+                # End if 3 passes after a valid contract/double/redouble
+                if passes_count >= 3 and len(bid_objects) > 3:
+                    # Check if there's any non-pass bid
+                    has_non_pass = any(not isinstance(bid, PassBid) for bid in bid_objects)
+                    if has_non_pass:
+                        break
+
+            # Break outer loop if bidding should end
+            if passes_count >= 3 and len(bid_objects) > 3:
+                has_non_pass = any(not isinstance(bid, PassBid) for bid in bid_objects)
+                if has_non_pass:
                     break
-            if last_bid and passes >= 3:
-                break
-            if all(b[1] == 'Pass' for b in bids):
-                # All players passed
+
+            # If all players passed in first round
+            if len(bid_objects) >= 4 and all(isinstance(bid, PassBid) for bid in bid_objects[-4:]):
                 break
 
-        # Create Contract object
-        if contract:
-            self.current_contract = Contract(
-                player=contract[0],
-                value=contract[1],
-                suit=contract[2],
-                double=double,
-                redouble=redouble
-            )
+        # Create Contract from final bid sequence
+        contract_bid = BidValidator.get_last_contract(bid_objects)
+
+        if contract_bid:
+            # Check for double and redouble
+            has_double = BidValidator.has_double(bid_objects)
+            has_redouble = BidValidator.has_redouble(bid_objects)
+
+            self.current_contract = Contract(contract_bid, double=has_double, redouble=has_redouble)
         else:
             self.current_contract = None
+
         return self.current_contract
+
+    def _create_bid_from_choice(self, player: Player, choice) -> Bid:
+        """
+        Create a Bid object from a player's choice.
+
+        Args:
+            player: The player making the bid
+            choice: The bid choice (string or tuple)
+
+        Returns:
+            Appropriate Bid object
+        """
+        if choice == 'Pass':
+            return PassBid(player)
+        elif choice == 'Double':
+            return DoubleBid(player)
+        elif choice == 'Redouble':
+            return RedoubleBid(player)
+        elif isinstance(choice, tuple) and len(choice) == 2:
+            # Contract bid: (value, suit)
+            value, suit = choice
+            try:
+                return ContractBid(player, value, suit)
+            except ValueError:
+                # Invalid contract parameters - return pass
+                return PassBid(player)
+        else:
+            # Unknown bid format - return pass
+            return PassBid(player)
+
+    def _bid_to_legacy_format(self, bid: Bid):
+        """
+        Convert a Bid object to legacy format for compatibility.
+
+        Args:
+            bid: Bid object to convert
+
+        Returns:
+            Legacy format bid representation
+        """
+        if isinstance(bid, PassBid):
+            return 'Pass'
+        elif isinstance(bid, DoubleBid):
+            return 'Double'
+        elif isinstance(bid, RedoubleBid):
+            return 'Redouble'
+        elif isinstance(bid, ContractBid):
+            return (bid.value, bid.suit)
+        else:
+            return 'Pass'
 
     def manage_trick(self, view=None):
         """
@@ -252,6 +304,9 @@ class Game:
         Returns:
             Player: The winner of the trick
         """
+        # Ensure contract is in new format
+        self._ensure_contract_object()
+
         trump_suit = self.current_contract.suit if self.current_contract else None
         if not trick or not hasattr(trick, 'get_plays'):
             return None
@@ -360,6 +415,9 @@ class Game:
         if not self.current_contract:
             return {team.name: 0 for team in self.teams}
 
+        # Ensure contract is in new format
+        self._ensure_contract_object()
+
         contract_team = self.current_contract.player.team
         contract_value = self.current_contract.value
         trump_suit = self.current_contract.suit
@@ -446,58 +504,6 @@ class Game:
 
         return team_scores
 
-    def check_game_over(self, target_score=1500):
-        """
-        Checks if any team has reached the target score to end the game.
-
-        Args:
-            target_score: Score required to win the game
-
-        Returns:
-            dict: Game over status and winner information
-        """
-        max_score = max(self.scores.values())
-
-        if max_score >= target_score:
-            # Find winning team(s)
-            winning_teams = [team.name for team in self.teams
-                           if self.scores[team.name] == max_score]
-
-            return {
-                'game_over': True,
-                'winner': winning_teams[0] if len(winning_teams) == 1 else None,
-                'tied_teams': winning_teams if len(winning_teams) > 1 else None,
-                'final_scores': self.scores.copy()
-            }
-
-        return {
-            'game_over': False,
-            'winner': None,
-            'tied_teams': None,
-            'final_scores': self.scores.copy()
-        }
-
-    def next_dealer(self):
-        """
-        Sets the next dealer for the next round (player to the left of current dealer, anticlockwise).
-        """
-        if self.dealer is None:
-            self.dealer = random.choice(self.players)
-        else:
-            idx = self.players.index(self.dealer)
-            self.dealer = self.players[(idx + 1) % 4]
-
-    def set_players_order(self):
-        """
-        Sets the players order starting with the player after the dealer (anticlockwise order).
-        """
-        # Reset players order and start with next player after dealer (anticlockwise order)
-        dealer_idx = self.players.index(self.dealer)
-        self.players_order = []
-        for i in range(4):
-            player_idx = (dealer_idx + 1 + i) % 4
-            self.players_order.append(self.players[player_idx])
-
     def get_playable_cards(self, player):
         """
         Determine which cards a player can legally play based on the current trick and contract rules.
@@ -517,6 +523,9 @@ class Game:
         """
         if not player.hand:
             return []
+
+        # Ensure contract is in new format
+        self._ensure_contract_object()
 
         # If no cards played yet in trick, any card is playable
         trump_suit = self.current_contract.suit if self.current_contract else None
@@ -584,3 +593,72 @@ class Game:
             else:
                 # No trump cards, can discard any card
                 return player.hand.copy()
+
+    def check_game_over(self, target_score=1500):
+        """
+        Checks if any team has reached the target score to end the game.
+
+        Args:
+            target_score: Score required to win the game
+
+        Returns:
+            dict: Game over status and winner information
+        """
+        max_score = max(self.scores.values())
+
+        if max_score >= target_score:
+            # Find winning team(s)
+            winning_teams = [team.name for team in self.teams
+                           if self.scores[team.name] == max_score]
+
+            return {
+                'game_over': True,
+                'winner': winning_teams[0] if len(winning_teams) == 1 else None,
+                'tied_teams': winning_teams if len(winning_teams) > 1 else None,
+                'final_scores': self.scores.copy()
+            }
+
+        return {
+            'game_over': False,
+            'winner': None,
+            'tied_teams': None,
+            'final_scores': self.scores.copy()
+        }
+
+    def next_dealer(self):
+        """
+        Sets the next dealer for the next round (player to the left of current dealer, anticlockwise).
+        """
+        if self.dealer is None:
+            self.dealer = random.choice(self.players)
+        else:
+            idx = self.players.index(self.dealer)
+            self.dealer = self.players[(idx + 1) % 4]
+
+    def set_players_order(self):
+        """
+        Sets the players order starting with the player after the dealer (anticlockwise order).
+        """
+        # Reset players order and start with next player after dealer (anticlockwise order)
+        dealer_idx = self.players.index(self.dealer)
+        self.players_order = []
+        for i in range(4):
+            player_idx = (dealer_idx + 1 + i) % 4
+            self.players_order.append(self.players[player_idx])
+
+    def _ensure_contract_object(self):
+        """
+        Ensure current_contract is a Contract object for backwards compatibility.
+        Converts old dict format to new Contract object if needed.
+        """
+        if isinstance(self.current_contract, dict):
+            # Convert old format to new Contract object
+            player = self.current_contract['player']
+            value = self.current_contract['value']
+            suit = self.current_contract['suit']
+            double = self.current_contract.get('double', False)
+            redouble = self.current_contract.get('redouble', False)
+
+            self.current_contract = Contract.from_legacy(
+                player, value, suit, double, redouble
+            )
