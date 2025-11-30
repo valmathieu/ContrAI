@@ -85,7 +85,7 @@ class Game:
         self.current_contract = None
         self.next_dealer()
 
-        # Shuffle and cut deck
+        # Shuffle if it's the first round and cut deck otherwise
         if self.round_number == 0:
             self.deck.shuffle()
         else:
@@ -198,99 +198,3 @@ class Game:
         for i in range(4):
             player_idx = (dealer_idx + 1 + i) % 4
             self.players_order.append(self.players[player_idx])
-
-    # Legacy methods for backward compatibility (deprecated - use Round class directly)
-    def manage_bid(self, view=None):
-        """
-        Legacy method - use current_round.manage_bidding() instead.
-
-        Returns:
-            Contract: The established contract or None if all players passed
-        """
-        if self.current_round:
-            return self.current_round.manage_bidding(view)
-        return None
-
-    def manage_trick(self, view=None):
-        """
-        Legacy method - use current_round.play_trick() instead.
-
-        Returns:
-            Player: The winner of the trick
-        """
-        if self.current_round:
-            return self.current_round.play_trick(view)
-        return None
-
-    def calculate_scores(self, team_tricks=None):
-        """
-        Legacy method - use current_round.calculate_round_scores() instead.
-
-        Returns:
-            dict: Team scores for this round
-        """
-        if self.current_round:
-            return self.current_round.calculate_round_scores()
-        return {team.name: 0 for team in self.teams}
-
-    def get_playable_cards(self, player):
-        """
-        Legacy method - use current_round._get_playable_cards() instead.
-
-        Returns:
-            list: List of cards that can be legally played
-        """
-        if self.current_round:
-            return self.current_round._get_playable_cards(player)
-        return player.hand.copy() if player.hand else []
-
-    # Compatibility properties for legacy test support
-    @property
-    def current_trick(self):
-        """
-        Legacy property - access current_round.current_trick instead.
-
-        Returns:
-            Current trick object or empty Trick for compatibility
-        """
-        if self.current_round and hasattr(self.current_round, 'current_trick') and self.current_round.current_trick:
-            return self.current_round.current_trick
-        # Return empty Trick for compatibility with tests that expect len()
-        return Trick()
-
-    @property
-    def last_trick(self):
-        """
-        Legacy property - access current_round.tricks[-1] instead.
-
-        Returns:
-            Last completed trick or empty Trick for compatibility
-        """
-        if self.current_round and self.current_round.tricks:
-            return self.current_round.tricks[-1]
-        # Return empty Trick for compatibility with tests that expect len()
-        return Trick()
-
-    @property
-    def last_trick_winner(self):
-        """
-        Legacy property - access current_round.last_trick_winner instead.
-
-        Returns:
-            Winner of the last trick or None
-        """
-        if self.current_round and hasattr(self.current_round, 'last_trick_winner'):
-            return self.current_round.last_trick_winner
-        return None
-
-    @property
-    def current_trick_number(self):
-        """
-        Legacy property - calculated from current_round.tricks length.
-
-        Returns:
-            Number of completed tricks in current round
-        """
-        if self.current_round and hasattr(self.current_round, 'tricks'):
-            return len(self.current_round.tricks)
-        return 0
