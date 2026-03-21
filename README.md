@@ -13,7 +13,7 @@ This dashboard replaces "gut feeling" with pure statistics. By inputting your 8-
 
 ### 🚀 Current Capabilities
 
-* **Interactive Hand Selection:** A clean UI to select your 8 starting cards.
+* **Interactive Hand Selection:** A UI to select your 8 starting cards.
 * **Bidding Decision Engine:** An automated diagnostic tool that cross-references your hand against a proven tactical truth table (evaluating trumps, outside Aces, and expected tricks) to suggest the optimal opening bid (80 to 160).
 * **Partner Support (Relance) Odds:** Calculates the exact probability of your partner holding critical missing cards (e.g., the missing outside Ace or the top trump 9/Jack).
 * **Threat Assessment:** Evaluates defensive risks, such as the exact probability of an opponent holding a "Third Ace" in a suit where you are void.
