@@ -52,7 +52,7 @@ This project uses `uv` for lightning-fast dependency management and virtual envi
 **1. Clone the repository**
 
 ```powershell
-git clone [https://github.com/YOUR_GITHUB_USERNAME/Contree-Probabilites.git](https://github.com/YOUR_GITHUB_USERNAME/Contree-Probabilites.git)
+git clone [https://github.com/valmathieu/Contree-Probabilites.git](https://github.com/valmathieu/Contree-Probabilites.git)
 cd Contree-Probabilites
 ```
 
