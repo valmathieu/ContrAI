@@ -444,7 +444,7 @@ def main() -> None:
             )
             fig.update_traces(textposition="outside")
 
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
             # Summary totals table
             st.markdown("#### Totals")
@@ -466,7 +466,7 @@ def main() -> None:
                 "Partner ~": [f"{partner_pts[s]:.1f}" for s in SuitSlot],
                 "Opponents ~": [f"{opp_pts[s]:.1f}" for s in SuitSlot],
             }
-            st.dataframe(pd.DataFrame(breakdown), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(breakdown), hide_index=True, width="stretch")
 
 
 if __name__ == "__main__":
