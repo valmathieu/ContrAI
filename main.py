@@ -23,8 +23,8 @@ from src.bidding.evaluator import BiddingEvaluator
 # Rank ordering helpers
 # ---------------------------------------------------------------------------
 
-TRUMP_RANK_ORDER: list[str] = ["J", "9", "A", "K", "Q", "10", "8", "7"]
-NON_TRUMP_RANK_ORDER: list[str] = ["A", "K", "Q", "J", "10", "9", "8", "7"]
+TRUMP_RANK_ORDER: list[str] = ["J", "9", "A", "10", "K", "Q", "8", "7"]
+NON_TRUMP_RANK_ORDER: list[str] = ["A", "10", "K", "Q", "J", "9", "8", "7"]
 
 _LABEL_TO_RANK: dict[str, Rank] = {r.value: r for r in Rank}
 
