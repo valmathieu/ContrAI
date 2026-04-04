@@ -1,5 +1,5 @@
 import pytest
-from contree.model.card import Card
+from contrai_engine.model.card import Card
 
 
 @pytest.fixture

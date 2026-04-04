@@ -1,9 +1,9 @@
 # Unit tests for the Player classes (Player, HumanPlayer, AiPlayer)
 
 import pytest
-from contree.model.player import HumanPlayer, AiPlayer
-from contree.model.card import Card
-from contree.model.team import Team
+from contrai_engine.model.player import HumanPlayer, AiPlayer
+from contrai_engine.model.card import Card
+from contrai_engine.model.team import Team
 
 
 class TestPlayer:

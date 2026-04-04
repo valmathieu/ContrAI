@@ -1,6 +1,6 @@
 # Team class for "contree" game, representing a team of two players.
 
-from contree.model.exceptions import InvalidPlayerCountError
+from contrai_engine.model.exceptions import InvalidPlayerCountError
 from .player import Player
 
 class Team:

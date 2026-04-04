@@ -1,7 +1,7 @@
 # Deck class for managing a deck of cards in the "contree" game.
 
-from contree.model.card import Card
-from contree.model.exceptions import InvalidPlayerCountError, InvalidCardCountError
+from contrai_engine.model.card import Card
+from contrai_engine.model.exceptions import InvalidPlayerCountError, InvalidCardCountError
 
 class Deck:
     def __init__(self):

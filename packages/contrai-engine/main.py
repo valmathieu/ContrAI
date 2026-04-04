@@ -1,9 +1,9 @@
 import copy
-from contree.controller.game_controller import GameController
-from contree.model import Player
-#from contree.view.cli_view import CliView
-from contree.model.game import Game
-from contree.model.player import HumanPlayer
+from contrai_engine.controller.game_controller import GameController
+from contrai_engine.model import Player
+#from contrai_engine.view.cli_view import CliView
+from contrai_engine.model.game import Game
+from contrai_engine.model.player import HumanPlayer
 
 
 def main():

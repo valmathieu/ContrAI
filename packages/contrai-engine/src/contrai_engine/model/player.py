@@ -1,7 +1,7 @@
 # Player, HumanPlayer, AiPlayer classes
 
 from abc import ABC, abstractmethod
-from contree.model.card import Card
+from contrai_engine.model.card import Card
 SUITS = Card.SUITS
 
 class Player(ABC):
