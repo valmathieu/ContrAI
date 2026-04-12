@@ -1,0 +1,4 @@
+# Virtual uv workspace — members live under packages/.
+# Each member declares its own [project] table and dependencies.
+[tool.uv.workspace]
+members = ["packages/*"]
