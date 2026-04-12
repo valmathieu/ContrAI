@@ -1,8 +1,8 @@
 [project]
-name = "contrai"
+name = "contrai-engine"
 version = "0.1.0"
 description = "Add your description here"
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 dependencies = []
 [project.optional-dependencies]
 test = [
