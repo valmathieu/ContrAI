@@ -1,4 +1,6 @@
 # Virtual uv workspace — members live under packages/.
 # Each member declares its own [project] table and dependencies.
+# contrai-core is excluded until phase 2 populates it with a pyproject.toml.
 [tool.uv.workspace]
 members = ["packages/*"]
+exclude = ["packages/contrai-core"]
