@@ -2,3 +2,6 @@
 # Each member declares its own [project] table and dependencies.
 [tool.uv.workspace]
 members = ["packages/*"]
+
+[tool.uv.sources]
+contrai-core = { workspace = true }

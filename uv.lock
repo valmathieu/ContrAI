@@ -363,7 +363,7 @@ requires-dist = [
 [[package]]
 name = "contrai-core"
 version = "0.1.0"
-source = { virtual = "packages/contrai-core" }
+source = { editable = "packages/contrai-core" }
 
 [package.optional-dependencies]
 test = [
