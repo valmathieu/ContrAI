@@ -378,6 +378,9 @@ provides-extras = ["test"]
 name = "contrai-engine"
 version = "0.1.0"
 source = { virtual = "packages/contrai-engine" }
+dependencies = [
+    { name = "contrai-core" },
+]
 
 [package.optional-dependencies]
 test = [
@@ -385,7 +388,10 @@ test = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pytest", marker = "extra == 'test'", specifier = ">=8.4" }]
+requires-dist = [
+    { name = "contrai-core", editable = "packages/contrai-core" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.4" },
+]
 provides-extras = ["test"]
 
 [[package]]
