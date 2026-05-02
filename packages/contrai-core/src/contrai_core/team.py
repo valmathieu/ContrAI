@@ -1,7 +1,8 @@
 # Team class for "contree" game, representing a team of two players.
 
+from __future__ import annotations
 from contrai_core.exceptions import InvalidPlayerCountError
-from .player import Player
+from .player import BasePlayer
 
 class Team:
     """
@@ -40,7 +41,7 @@ class Team:
         """
         self.total_score += points
 
-    def get_partner(self, player: Player) -> Player | None:
+    def get_partner(self, player: BasePlayer) -> BasePlayer | None:
         """
         Get the partner of a given player within this team.
 
@@ -54,7 +55,7 @@ class Team:
             return None
         return self.players[0] if self.players[1] == player else self.players[1]
 
-    def contains_player(self, player: Player) -> bool:
+    def contains_player(self, player: BasePlayer) -> bool:
         """
         Check if a player belongs to this team.
 

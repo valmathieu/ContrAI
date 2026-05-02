@@ -1,16 +1,11 @@
 # Player, HumanPlayer, AiPlayer classes
 
 from abc import ABC, abstractmethod
+from contrai_core.player import BasePlayer
 from contrai_engine.model.card import Card
 SUITS = Card.SUITS
 
-class Player(ABC):
-    def __init__(self, name, position):
-        self.name = name
-        self.position = position  # 'North', 'South', 'East', 'West'
-        self.hand = []  # list of Card
-        self.team = None  # Will be set by Game when teams are created
-
+class Player(BasePlayer, ABC):
     @property
     def is_human(self):
         """Returns True if this is a human player."""
