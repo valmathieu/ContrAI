@@ -3,7 +3,7 @@
 import pytest
 from contrai_engine.model.player import HumanPlayer, AiPlayer
 from contrai_engine.model.card import Card
-from contrai_engine.model.team import Team
+from contrai_core.team import Team
 
 
 class TestPlayer:

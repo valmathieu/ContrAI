@@ -5,7 +5,7 @@ from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .player import Player
-    from .team import Team
+    from contrai_core.team import Team
     from .bid import ContractBid
 
 class Contract:

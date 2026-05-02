@@ -8,7 +8,7 @@ from .bid import Bid, PassBid, ContractBid, DoubleBid, RedoubleBid, BidValidator
 
 if TYPE_CHECKING:
     from .player import Player
-    from .team import Team
+    from contrai_core.team import Team
     from .deck import Deck
 
 class Round:

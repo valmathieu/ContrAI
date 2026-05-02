@@ -1,6 +1,6 @@
 import pytest
-from contrai_engine.model.team import Team
-from contrai_engine.model.exceptions import InvalidPlayerCountError
+from contrai_core.team import Team
+from contrai_core.exceptions import InvalidPlayerCountError
 
 class DummyPlayer:
     """Dummy player class for testing purposes."""

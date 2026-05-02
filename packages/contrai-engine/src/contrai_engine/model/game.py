@@ -2,12 +2,12 @@
 # This class manages the game state, players, teams, deck, and game logic.
 
 from .deck import Deck
-from .team import Team
+from contrai_core.team import Team
 from .player import Player
 from .trick import Trick
 from .contract import Contract
 from .round import Round
-from .exceptions import InvalidPlayerCountError
+from contrai_core.exceptions import InvalidPlayerCountError
 import random
 
 class Game:
