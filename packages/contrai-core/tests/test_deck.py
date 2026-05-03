@@ -1,7 +1,7 @@
 import pytest
 import copy
-from contrai_engine.model.deck import Deck
-from contrai_engine.model.card import Card
+from contrai_core.deck import Deck
+from contrai_core.card import Card
 from contrai_core.exceptions import InvalidPlayerCountError, InvalidCardCountError
 
 @pytest.fixture

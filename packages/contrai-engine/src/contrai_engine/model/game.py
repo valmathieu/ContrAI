@@ -1,7 +1,7 @@
 # Game class for the "contree" card game.
 # This class manages the game state, players, teams, deck, and game logic.
 
-from .deck import Deck
+from contrai_core.deck import Deck
 from contrai_core.team import Team
 from .player import Player
 from .trick import Trick

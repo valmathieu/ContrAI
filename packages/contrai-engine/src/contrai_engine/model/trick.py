@@ -2,7 +2,7 @@
 # This class represents a single trick in the game.
 
 from typing import List, Tuple, Optional
-from .card import Card
+from contrai_core.card import Card
 from .player import Player
 
 class Trick:

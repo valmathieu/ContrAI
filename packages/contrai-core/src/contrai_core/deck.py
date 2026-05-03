@@ -1,6 +1,6 @@
 # Deck class for managing a deck of cards in the "contree" game.
 
-from contrai_engine.model.card import Card
+from .card import Card
 from contrai_core.exceptions import InvalidPlayerCountError, InvalidCardCountError
 
 class Deck:

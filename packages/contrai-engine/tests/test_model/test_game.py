@@ -1,8 +1,8 @@
 import pytest
 from contrai_engine.model.game import Game
-from contrai_engine.model.deck import Deck
+from contrai_core.deck import Deck
 from contrai_core.exceptions import InvalidPlayerCountError
-from contrai_engine.model.card import Card
+from contrai_core.card import Card
 
 #TODO : add test for trick number in game
 class DummyPlayer:

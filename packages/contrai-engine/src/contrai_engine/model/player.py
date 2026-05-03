@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from contrai_core.player import BasePlayer
-from contrai_engine.model.card import Card
+from contrai_core.card import Card
 SUITS = Card.SUITS
 
 class Player(BasePlayer, ABC):
