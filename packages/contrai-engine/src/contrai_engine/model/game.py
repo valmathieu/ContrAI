@@ -4,8 +4,8 @@
 from contrai_core.deck import Deck
 from contrai_core.team import Team
 from .player import Player
-from .trick import Trick
-from .contract import Contract
+from contrai_core.trick import Trick
+from contrai_core.contract import Contract
 from .round import Round
 from contrai_core.exceptions import InvalidPlayerCountError
 import random

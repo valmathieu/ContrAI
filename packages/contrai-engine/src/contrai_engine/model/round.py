@@ -2,9 +2,9 @@
 # This class represents a complete round of the card game from dealing to scoring.
 
 from typing import Optional, Dict, List, TYPE_CHECKING
-from .trick import Trick
-from .contract import Contract
-from .bid import Bid, PassBid, ContractBid, DoubleBid, RedoubleBid, BidValidator
+from contrai_core.trick import Trick
+from contrai_core.contract import Contract
+from contrai_core.bid import Bid, PassBid, ContractBid, DoubleBid, RedoubleBid, BidValidator
 
 if TYPE_CHECKING:
     from .player import Player

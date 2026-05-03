@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .player import Player
+    from .player import BasePlayer as Player
 
 class Bid(ABC):
     """

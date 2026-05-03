@@ -2,8 +2,8 @@
 # This class represents a single trick in the game.
 
 from typing import List, Tuple, Optional
-from contrai_core.card import Card
-from .player import Player
+from .card import Card
+from .player import BasePlayer as Player
 
 class Trick:
     """
