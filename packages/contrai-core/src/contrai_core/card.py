@@ -1,5 +1,10 @@
 # Card class: represents a playing card
 
+from __future__ import annotations
+
+from .types import Suit, Rank
+
+
 class Card:
     """
     Represents a playing card for the game of Contree.
@@ -8,8 +13,8 @@ class Card:
     depending on whether it is a trump card or not.
 
     Attributes:
-        suit (str): The suit of the card ('Spades', 'Hearts', 'Diamonds', 'Clubs').
-        rank (str): The rank of the card ('7', '8', '9', '10', 'Jack', 'Queen', 'King', 'Ace').
+        suit (Suit): The suit of the card.
+        rank (Rank): The rank of the card.
         points_normal (int): The point value of the card in a non-trump suit.
         points_trump (int): The point value of the card in the trump suit.
         order_normal (int): The order of the card in a non-trump suit.
@@ -21,54 +26,59 @@ class Card:
         get_points(trump_suit=None): Returns the point value of the card, considering trump.
         get_order(trump_suit=None): Returns the order of the card, considering trump.
     """
-    SUITS = ['Spades', 'Hearts', 'Diamonds', 'Clubs']
-    RANKS = ['7', '8', '9', 'Jack', 'Queen', 'King', '10', 'Ace']
-    # Normal points (non-trump)
+
+    # Normal points (non-trump), keyed by Rank
     NORMAL_POINTS = {
-        '7': 0,
-        '8': 0,
-        '9': 0,
-        'Jack': 2,
-        'Queen': 3,
-        'King': 4,
-        '10': 10,
-        'Ace': 11
+        Rank.SEVEN: 0,
+        Rank.EIGHT: 0,
+        Rank.NINE: 0,
+        Rank.JACK: 2,
+        Rank.QUEEN: 3,
+        Rank.KING: 4,
+        Rank.TEN: 10,
+        Rank.ACE: 11,
     }
     # Trump points
     TRUMP_POINTS = {
-        '7': 0,
-        '8': 0,
-        '9': 14,
-        'Jack': 20,
-        'Queen': 3,
-        'King': 4,
-        '10': 10,
-        'Ace': 11
+        Rank.SEVEN: 0,
+        Rank.EIGHT: 0,
+        Rank.NINE: 14,
+        Rank.JACK: 20,
+        Rank.QUEEN: 3,
+        Rank.KING: 4,
+        Rank.TEN: 10,
+        Rank.ACE: 11,
     }
     # Normal order (for trick-taking)
     NORMAL_ORDER = {
-        '7': 0,
-        '8': 1,
-        '9': 2,
-        'Jack': 3,
-        'Queen': 4,
-        'King': 5,
-        '10': 6,
-        'Ace': 7
+        Rank.SEVEN: 0,
+        Rank.EIGHT: 1,
+        Rank.NINE: 2,
+        Rank.JACK: 3,
+        Rank.QUEEN: 4,
+        Rank.KING: 5,
+        Rank.TEN: 6,
+        Rank.ACE: 7,
     }
     # Trump order
     TRUMP_ORDER = {
-        '7': 0,
-        '8': 1,
-        'Queen': 2,
-        'King': 3,
-        '10': 4,
-        'Ace': 5,
-        '9': 6,
-        'Jack': 7
+        Rank.SEVEN: 0,
+        Rank.EIGHT: 1,
+        Rank.QUEEN: 2,
+        Rank.KING: 3,
+        Rank.TEN: 4,
+        Rank.ACE: 5,
+        Rank.NINE: 6,
+        Rank.JACK: 7,
+    }
+    SUIT_SYMBOLS = {
+        Suit.SPADES: "♠",
+        Suit.HEARTS: "♥",
+        Suit.DIAMONDS: "♦",
+        Suit.CLUBS: "♣",
     }
 
-    def __init__(self, suit, rank):
+    def __init__(self, suit: Suit, rank: Rank):
         self.suit = suit
         self.rank = rank
         self.points_normal = Card.NORMAL_POINTS[rank]
@@ -76,24 +86,18 @@ class Card:
         self.order_normal = Card.NORMAL_ORDER[rank]
         self.order_trump = Card.TRUMP_ORDER[rank]
 
-    def __str__(self):
-        suit_symbols = {
-            'Spades': '♠',
-            'Hearts': '♥',
-            'Diamonds': '♦',
-            'Clubs': '♣'
-        }
-        return f"{self.rank}{suit_symbols[self.suit]}"
+    def __str__(self) -> str:
+        return f"{self.rank.value}{Card.SUIT_SYMBOLS[self.suit]}"
 
-    def __repr__(self):
-        return f"Card('{self.suit}', '{self.rank}')"
+    def __repr__(self) -> str:
+        return f"Card({self.suit!r}, {self.rank!r})"
 
-    def get_points(self, trump_suit=None):
+    def get_points(self, trump_suit: Suit | None = None) -> int:
         if trump_suit and self.suit == trump_suit:
             return self.points_trump
         return self.points_normal
 
-    def get_order(self, trump_suit=None):
+    def get_order(self, trump_suit: Suit | None = None) -> int:
         if trump_suit and self.suit == trump_suit:
             return self.order_trump
         return self.order_normal

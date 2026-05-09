@@ -1,11 +1,12 @@
 # Deck class for managing a deck of cards in the "contree" game.
 
 from .card import Card
+from .types import CARD_SUITS, Rank
 from contrai_core.exceptions import InvalidPlayerCountError, InvalidCardCountError
 
 class Deck:
     def __init__(self):
-        self.cards = [Card(suit, rank) for suit in Card.SUITS for rank in Card.RANKS]
+        self.cards = [Card(suit, rank) for suit in CARD_SUITS for rank in Rank]
 
     def __repr__(self):
         """

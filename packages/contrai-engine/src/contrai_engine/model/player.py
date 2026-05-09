@@ -3,7 +3,8 @@
 from abc import ABC, abstractmethod
 from contrai_core.player import BasePlayer
 from contrai_core.card import Card
-SUITS = Card.SUITS
+from contrai_core.types import Suit, Rank, CARD_SUITS
+SUITS = CARD_SUITS
 
 class Player(BasePlayer, ABC):
     @property
@@ -169,11 +170,11 @@ class AiPlayer(Player):
             return {'contract': 0, 'strength': 0, 'has_belote': False}
 
         # Count trump strength
-        has_jack = any(card.rank == 'Jack' for card in trump_cards)
-        has_nine = any(card.rank == '9' for card in trump_cards)
-        has_ace = any(card.rank == 'Ace' for card in trump_cards)
-        has_king = any(card.rank == 'King' for card in trump_cards)
-        has_queen = any(card.rank == 'Queen' for card in trump_cards)
+        has_jack = any(card.rank == Rank.JACK for card in trump_cards)
+        has_nine = any(card.rank == Rank.NINE for card in trump_cards)
+        has_ace = any(card.rank == Rank.ACE for card in trump_cards)
+        has_king = any(card.rank == Rank.KING for card in trump_cards)
+        has_queen = any(card.rank == Rank.QUEEN for card in trump_cards)
 
         trump_count = len(trump_cards)
 
@@ -182,7 +183,7 @@ class AiPlayer(Player):
 
         # Count external aces
         external_aces = sum(1 for card in self.hand
-                          if card.suit != suit and card.rank == 'Ace')
+                          if card.suit != suit and card.rank == Rank.ACE)
 
         # Estimate trick-taking potential
         estimated_tricks = self._estimate_tricks(suit)
@@ -228,12 +229,12 @@ class AiPlayer(Player):
         # Count our strength outside their trump suit
         for card in self.hand:
             if card.suit != trump_suit:
-                if card.rank == 'Ace':
+                if card.rank == Rank.ACE:
                     tricks += 1
-                if card.rank == '10' and self._count_cards_in_suit(card.suit) > 1:
+                if card.rank == Rank.TEN and self._count_cards_in_suit(card.suit) > 1:
                     tricks += 1
-                if (card.rank == 'King' or card.rank == 'Queen') and self._suit_has_rank(card.suit, 'Ace')\
-                        and self._suit_has_rank(card.suit, '10'):
+                if (card.rank == Rank.KING or card.rank == Rank.QUEEN) and self._suit_has_rank(card.suit, Rank.ACE)\
+                        and self._suit_has_rank(card.suit, Rank.TEN):
                     tricks += 1
 
         return min(tricks, 8)  # Maximum 8 tricks in a round
@@ -289,13 +290,13 @@ class AiPlayer(Player):
 
         # +10 per external ace
         for card in self.hand:
-            if card.suit != partner_suit and card.rank == 'Ace':
+            if card.suit != partner_suit and card.rank == Rank.ACE:
                 contribution += 10
 
         # +10 if we have trump complement (Jack or 9)
         trump_cards = [card for card in self.hand if card.suit == partner_suit]
-        has_jack = any(card.rank == 'Jack' for card in trump_cards)
-        has_nine = any(card.rank == '9' for card in trump_cards)
+        has_jack = any(card.rank == Rank.JACK for card in trump_cards)
+        has_nine = any(card.rank == Rank.NINE for card in trump_cards)
 
         if has_jack or has_nine:
             contribution += 10
@@ -343,9 +344,9 @@ class AiPlayer(Player):
         has_ace = False
 
         if len(trump_cards) > 0:
-            has_jack = any(card.rank == 'Jack' for card in trump_cards)
-            has_nine = any(card.rank == '9' for card in trump_cards)
-            has_ace = any(card.rank == 'Ace' for card in trump_cards)
+            has_jack = any(card.rank == Rank.JACK for card in trump_cards)
+            has_nine = any(card.rank == Rank.NINE for card in trump_cards)
+            has_ace = any(card.rank == Rank.ACE for card in trump_cards)
 
             if has_jack and has_nine:
                 expected_won_tricks = 2  # Both Jack and 9
@@ -389,10 +390,10 @@ class AiPlayer(Player):
         """Initialize tracking of fallen cards and trump distribution. Should be called by the game."""
 
         self._fallen_cards = {
-            'Spades': set(),
-            'Hearts': set(),
-            'Diamonds': set(),
-            'Clubs': set()
+            Suit.SPADES: set(),
+            Suit.HEARTS: set(),
+            Suit.DIAMONDS: set(),
+            Suit.CLUBS: set()
         }
         self._players_without_trump = set()
 
@@ -440,14 +441,14 @@ class AiPlayer(Player):
             trump_cards = [c for c in playable_cards if c.suit == trump_suit]
             if trump_cards:
                 sorted_trumps = sorted(trump_cards, key=lambda c: c.get_order(trump_suit), reverse = True)
-                if sorted_trumps[0].rank == '9' and len(sorted_trumps) > 1:
+                if sorted_trumps[0].rank == Rank.NINE and len(sorted_trumps) > 1:
                     # Avoid playing 9 first
                     return sorted_trumps[1]
                 else:
                     return sorted_trumps[0]
         else:
             # Opponents have contract - play an ace if we have one
-            aces = [c for c in playable_cards if c.rank == 'Ace']
+            aces = [c for c in playable_cards if c.rank == Rank.ACE]
             if aces:
                 # Play ace from the shortest suit
                 return min(aces, key=lambda c: self._count_cards_in_suit(c.suit))
@@ -482,7 +483,7 @@ class AiPlayer(Player):
 
         # TODO: exclude trump from logic if we know opponents have no trump left
         # No trump left with opponents - play ace from the longest suit
-        aces = [c for c in playable_cards if c.rank == 'Ace']
+        aces = [c for c in playable_cards if c.rank == Rank.ACE]
         if aces:
             return max(aces, key=lambda c: self._count_cards_in_suit(c.suit))
 
@@ -586,8 +587,8 @@ class AiPlayer(Player):
         Check if the player has a specific rank in a given suit.
 
         Args:
-            suit: The suit to check ('Spades', 'Hearts', 'Diamonds', 'Clubs')
-            rank: The rank to look for ('7', '8', '9', '10', 'Jack', 'Queen', 'King', 'Ace')
+            suit: The suit to check (Suit.SPADES, Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS)
+            rank: The rank to look for (Rank.SEVEN, Rank.EIGHT, Rank.NINE, Rank.TEN, Rank.JACK, Rank.QUEEN, Rank.KING, Rank.ACE)
 
         Returns:
             bool: True if the player has the specified rank in the specified suit
@@ -625,10 +626,10 @@ class AiPlayer(Player):
 
         if suit == trump_suit:
             # Trump order: 7, 8, Queen, King, 10, Ace, 9, Jack
-            trump_order = ['7', '8', 'Queen', 'King', '10', 'Ace', '9', 'Jack']
+            trump_order = [Rank.SEVEN, Rank.EIGHT, Rank.QUEEN, Rank.KING, Rank.TEN, Rank.ACE, Rank.NINE, Rank.JACK]
         else:
             # Normal order: 7, 8, 9, Jack, Queen, King, 10, Ace
-            trump_order = ['7', '8', '9', 'Jack', 'Queen', 'King', '10', 'Ace']
+            trump_order = [Rank.SEVEN, Rank.EIGHT, Rank.NINE, Rank.JACK, Rank.QUEEN, Rank.KING, Rank.TEN, Rank.ACE]
 
         try:
             rank_index = trump_order.index(rank)

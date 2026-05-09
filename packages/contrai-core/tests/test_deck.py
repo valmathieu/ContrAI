@@ -2,6 +2,7 @@ import pytest
 import copy
 from contrai_core.deck import Deck
 from contrai_core.card import Card
+from contrai_core.types import Suit, Rank, CARD_SUITS
 from contrai_core.exceptions import InvalidPlayerCountError, InvalidCardCountError
 
 @pytest.fixture
@@ -29,14 +30,14 @@ def test_deck_has_all_card_combinations():
     deck = Deck()
     expected_cards = set()
     suit_symbols = {
-        'Spades': '♠',
-        'Hearts': '♥',
-        'Diamonds': '♦',
-        'Clubs': '♣'
+        Suit.SPADES: '♠',
+        Suit.HEARTS: '♥',
+        Suit.DIAMONDS: '♦',
+        Suit.CLUBS: '♣'
     }
-    for suit in Card.SUITS:
-        for rank in Card.RANKS:
-            expected_cards.add(f"{rank}{suit_symbols[suit]}")
+    for suit in CARD_SUITS:
+        for rank in Rank:
+            expected_cards.add(f"{rank.value}{suit_symbols[suit]}")
 
     actual_cards = {str(card) for card in deck.cards}
     assert actual_cards == expected_cards

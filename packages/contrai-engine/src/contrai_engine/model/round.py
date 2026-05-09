@@ -5,6 +5,7 @@ from typing import Optional, Dict, List, TYPE_CHECKING
 from contrai_core.trick import Trick
 from contrai_core.contract import Contract
 from contrai_core.bid import Bid, PassBid, ContractBid, DoubleBid, RedoubleBid, BidValidator
+from contrai_core.types import Rank
 
 if TYPE_CHECKING:
     from .player import Player
@@ -254,7 +255,7 @@ class Round:
                             trump_cards_played.append(card.rank)
 
             # Check for belote (King and Queen of trump suit in same round)
-            if trump_suit and 'King' in trump_cards_played and 'Queen' in trump_cards_played:
+            if trump_suit and Rank.KING in trump_cards_played and Rank.QUEEN in trump_cards_played:
                 points += 20  # Belote bonus
                 belote_teams.add(team_name)
 

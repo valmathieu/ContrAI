@@ -4,6 +4,8 @@
 from abc import ABC, abstractmethod
 from typing import Optional, TYPE_CHECKING
 
+from .types import Suit
+
 if TYPE_CHECKING:
     from .player import BasePlayer as Player
 
@@ -78,7 +80,7 @@ class ContractBid(Bid):
 
     # Valid contract values in contree
     VALID_VALUES = [80, 90, 100, 110, 120, 130, 140, 150, 160, 'Capot']
-    VALID_SUITS = ['Spades', 'Hearts', 'Diamonds', 'Clubs', 'NoTrump']
+    VALID_SUITS = list(Suit)
 
     def __init__(self, player: 'Player', value: int or str, suit: str):
         """
