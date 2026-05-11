@@ -8,6 +8,8 @@ Shared across ContrAI packages. Game-flow concerns like ``choose_bid()`` and
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+from .hand import Hand
+
 if TYPE_CHECKING:
     from .team import Team
 
@@ -18,12 +20,12 @@ class BasePlayer:
     Attributes:
         name: The player's display name.
         position: Table position ('North', 'South', 'East', 'West').
-        hand: Cards currently held (list of Card objects).
+        hand: Cards currently held (a :class:`Hand` instance).
         team: The team this player belongs to (assigned by Game).
     """
 
     def __init__(self, name: str, position: str):
         self.name = name
         self.position = position
-        self.hand: list = []
+        self.hand: Hand = Hand()
         self.team: Team | None = None

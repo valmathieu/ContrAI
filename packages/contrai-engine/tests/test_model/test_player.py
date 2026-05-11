@@ -15,7 +15,7 @@ class TestPlayer:
         player = HumanPlayer("Alice", "North")
         assert player.name == "Alice"
         assert player.position == "North"
-        assert player.hand == []
+        assert len(player.hand) == 0
         assert player.team is None
         assert player.is_human is True
 
@@ -24,7 +24,7 @@ class TestPlayer:
         player = AiPlayer("Bot", "South")
         assert player.name == "Bot"
         assert player.position == "South"
-        assert player.hand == []
+        assert len(player.hand) == 0
         assert player.team is None
         assert player.is_human is False
 
