@@ -326,7 +326,7 @@ class Round:
         # Put all players' cards back in deck (8 cards per player)
         for player in self.players_order:
             self.deck.add_cards(player.hand)
-            player.hand = []
+            player.hand.clear()
 
         # Return zero scores
         teams = set(player.team for player in self.players_order)
