@@ -6,23 +6,27 @@ AI research project studying the French card game *Coinche* (a.k.a. *Contrée*).
 
 A [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/) with four packages under `packages/`:
 
-| Package | Description |
-|---|---|
-| `contrai-core` | Shared domain model — `Card`, `Deck`, `Hand`, `Bid`, `Contract`, `Trick`, `Round`. *Populated in phase 2.* |
-| `contrai-engine` | Game engine: model layer, AI players, CLI controller. |
-| `contrai-analyzer` | Streamlit dashboard for hand-strength analysis. |
-| `contrai-scraper` | Playwright spectator-mode scraper for online games. |
+| Package            | Description                                                                                                                                                                       |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `contrai-core`     | Shared domain model — `Suit`/`Rank` enums, `Card`, `Deck`, `Hand`, `Team`, `BasePlayer`, the `Bid` hierarchy (`PassBid`/`ContractBid`/`DoubleBid`/`RedoubleBid`), `Contract`, `Trick`, and exceptions. |
+| `contrai-engine`   | Game engine on top of `contrai-core`: `Player`/`HumanPlayer`/`AiPlayer`, `Game` / `Round` orchestration, CLI controller and view.                                                 |
+| `contrai-analyzer` | Streamlit dashboard for opening-hand strength analysis. Independent of `contrai-core` by design (uses its own `SuitSlot` abstraction).                                            |
+| `contrai-scraper`  | Playwright spectator-mode scraper for online games on `app.belote-rebelote.fr`.                                                                                                   |
 
 ## Setup
 
 Requires **Python 3.14**. Dependency management via [uv](https://docs.astral.sh/uv/).
 
+The workspace `pyproject.toml` is virtual (no top-level project), so after `uv sync` the workspace members must be editable-installed explicitly:
+
 ```bash
-uv sync                                            # install all workspace deps
+uv sync
+uv pip install -e packages/contrai-core -e packages/contrai-engine -e packages/contrai-analyzer -e packages/contrai-scraper
+
 uv run --package contrai-engine main.py            # run the engine CLI
 uv run --package contrai-analyzer streamlit run main.py
 ```
 
 ## Documentation
 
-See [`docs/`](docs/) for architecture overview, per-package documentation, and PlantUML diagrams.
+See [`docs/`](docs/) for the architecture overview, per-package documentation, and diagram sources (PlantUML for sequence/class diagrams, Mermaid for everything else).
