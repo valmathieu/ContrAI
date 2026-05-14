@@ -1,0 +1,155 @@
+@startuml class_analyzer
+title contrai-analyzer — class structure (current state)
+
+' --- Palette: analyzer green ---
+skinparam shadowing false
+skinparam class {
+    BackgroundColor #E8F5E9
+    BorderColor #3F8C3D
+    HeaderBackgroundColor #7AC178
+    FontColor #1B5E20
+    AttributeFontColor #1B5E20
+    StereotypeFontColor #2E7D32
+}
+skinparam enum {
+    BackgroundColor #E8F5E9
+    BorderColor #3F8C3D
+    HeaderBackgroundColor #7AC178
+    FontColor #1B5E20
+    StereotypeFontColor #2E7D32
+}
+skinparam note {
+    BackgroundColor #FFFDE7
+    BorderColor #F9A825
+    FontColor #5F4B00
+}
+skinparam ArrowColor #3F8C3D
+
+' =========================================================
+' Domain primitives — models/
+' =========================================================
+package "src.models" as models {
+
+    enum SuitSlot <<enum>> {
+        TRUMP   = "trump"
+        BLUE    = "blue"
+        GREEN   = "green"
+        PURPLE  = "purple"
+        --
+        + emoji : str <<property>>
+        + label : str <<property>>
+        + color : str <<property>>
+    }
+
+    enum Rank <<enum>> {
+        SEVEN, EIGHT, NINE, TEN
+        JACK, QUEEN, KING, ACE
+        --
+        + point_value(is_trump: bool) : int
+    }
+
+    class Card <<frozen dataclass>> {
+        + rank : Rank
+        + suit : SuitSlot
+        --
+        + id : str <<property>>
+        + point_value : int <<property>>
+        + __str__() : str
+    }
+
+    class Hand {
+        + cards : list<Card>
+        --
+        + has_card(rank: Rank, suit: SuitSlot) : bool
+        + count_suit(suit: SuitSlot) : int
+        + count_rank(rank: Rank) : int
+        + get_suit_cards(suit: SuitSlot) : list<Card>
+        + my_points() : int
+    }
+
+    class Deck {
+        + cards : list<Card>
+        --
+        + get_all_cards() : list<Card>
+    }
+}
+
+' =========================================================
+' Probability core — engine/
+' =========================================================
+package "src.engine" as engine {
+
+    class ProbabilityEngine {
+        + hand : Hand
+        + total_unknown_cards : int = 24
+        + cards_per_player : int = 8
+        --
+        .. hypergeometric core ..
+        + hypergeometric_prob(N, K, n, k) : float
+        .. partner — generic ..
+        + prob_partner_has_specific_card() : float
+        + prob_partner_has_at_least_one_of(num_target_cards: int) : float
+        .. partner — trump support ..
+        + prob_partner_has_at_least_n_trumps(n: int) : float
+        + prob_partner_has_trump_ace() : float
+        .. partner — non-trump aces ..
+        + prob_partner_has_ace(slot: SuitSlot) : float
+        .. opponent threats ..
+        + prob_opponent_has_ace(slot: SuitSlot) : float
+        + prob_opponent_has_both_j_and_9() : float
+        + prob_opponent_can_bid_slot(slot: SuitSlot) : float
+        + prob_opponent_threat_third_ace(slot: SuitSlot) : float
+        .. distribution ..
+        + expected_points_by_slot(player: "partner"|"opponents") : dict<SuitSlot, float>
+    }
+}
+
+' =========================================================
+' Bidding truth-table — bidding/
+' =========================================================
+package "src.bidding" as bidding {
+
+    class BidSuggestion <<dataclass>> {
+        + value : int
+        + suit : SuitSlot
+        + reasoning : str
+    }
+
+    class BiddingEvaluator {
+        + hand : Hand
+        - _engine : ProbabilityEngine
+        --
+        + evaluate() : list<BidSuggestion>
+        + opponent_bidding_risk() : tuple<SuitSlot, float>
+        - _evaluate_suit(trump_suit: SuitSlot) : BidSuggestion?
+    }
+}
+
+' =========================================================
+' Relationships
+' =========================================================
+Card --> SuitSlot : suit
+Card --> Rank : rank
+Hand "1" *-- "8" Card : cards
+Deck "1" *-- "32" Card : cards
+ProbabilityEngine "1" o-- "1" Hand : hand
+BiddingEvaluator "1" o-- "1" Hand : hand
+BiddingEvaluator "1" *-- "1" ProbabilityEngine : _engine
+BiddingEvaluator ..> BidSuggestion : <<returns>>
+
+' =========================================================
+' Banner note — deliberate independence
+' =========================================================
+note as N_independence
+  **Deliberately independent of `contrai-core`.**
+  Zero imports from `contrai_core` across all files.
+  `SuitSlot` (TRUMP / BLUE / GREEN / PURPLE) is a
+  **suit-agnostic** probability abstraction — what matters
+  for combinatorial math is whether a slot is trump,
+  not which French suit it represents.
+  (CLAUDE.md §2 item 4, §4.1)
+end note
+
+N_independence .. SuitSlot
+
+@enduml
