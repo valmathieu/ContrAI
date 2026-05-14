@@ -1,0 +1,126 @@
+@startuml class_workspace
+title ContrAI workspace — package overview (headline types + dependency direction)
+
+' --- All four palettes appear at once; styling is set per-class. ---
+skinparam shadowing false
+skinparam class {
+    FontColor #1A1A1A
+    AttributeFontColor #1A1A1A
+    StereotypeFontColor #1A1A1A
+}
+skinparam packageStyle rectangle
+skinparam packageFontColor #1A1A1A
+skinparam packageBorderColor #555555
+skinparam note {
+    BackgroundColor #FFFDE7
+    BorderColor #F9A825
+    FontColor #5F4B00
+}
+skinparam ArrowColor #555555
+skinparam ArrowFontColor #1A1A1A
+
+' =========================================================
+' contrai-core — blue
+' =========================================================
+package "contrai-core\n(shared domain model)" as P_core {
+    class "Card"       as C_card     #E1F0FF
+    class "Hand"       as C_hand     #E1F0FF
+    class "Deck"       as C_deck     #E1F0FF
+    class "Trick"      as C_trick    #E1F0FF
+    class "Bid"        as C_bid      #E1F0FF
+    class "Contract"   as C_contract #E1F0FF
+    class "BasePlayer" as C_player   #E1F0FF
+    class "Team"       as C_team     #E1F0FF
+
+    C_hand --> C_card
+    C_deck --> C_card
+    C_player --> C_hand
+    C_player --> C_team
+    C_trick --> C_card
+    C_contract --> C_bid
+    C_bid --> C_player
+}
+
+' =========================================================
+' contrai-engine — orange
+' =========================================================
+package "contrai-engine\n(MVC + game loop)" as P_engine {
+    class "Player"      as E_player   #FFEFD9
+    class "HumanPlayer" as E_human    #FFEFD9
+    class "AiPlayer"    as E_ai       #FFEFD9
+    class "Game"        as E_game     #FFEFD9
+    class "Round"       as E_round    #FFEFD9
+
+    class "GameController" as E_ctrl  #EEEEEE
+    class "CliView"        as E_view  #EEEEEE
+
+    E_player <|-- E_human
+    E_player <|-- E_ai
+    E_game *-- E_round
+    E_game *-- E_player
+    E_ctrl ..> E_game : <<would drive>>
+    E_round ..> E_view : <<would consult>>
+}
+
+' =========================================================
+' contrai-analyzer — green
+' =========================================================
+package "contrai-analyzer\n(Streamlit hand strength)" as P_analyzer {
+    class "SuitSlot"          as A_slot    #E8F5E9
+    class "Hand"              as A_hand    #E8F5E9
+    class "ProbabilityEngine" as A_engine  #E8F5E9
+    class "BiddingEvaluator"  as A_bidding #E8F5E9
+
+    A_engine --> A_hand
+    A_bidding --> A_engine
+    A_hand --> A_slot
+}
+
+' =========================================================
+' contrai-scraper — purple
+' =========================================================
+package "contrai-scraper\n(Playwright spectator)" as P_scraper {
+    class "main.py" as S_main <<module>> #EDE7F6 {
+        + main()
+        + observe_game(page)
+        + get_players(page)
+        + get_current_round(page)
+        + wait_for_new_round(page, current)
+        + is_game_scrapeable(players)
+    }
+}
+
+' =========================================================
+' Cross-package dependencies
+' =========================================================
+
+' Engine extends + uses core
+E_player --|> C_player : <<extends>>
+P_engine ..> P_core : <<uses>>\n(Card, Suit, Rank,\n Bid, Contract, Trick,\n Team, Deck)
+
+' Analyzer deliberately does NOT depend on core
+note as N_analyzer_indep
+  **Deliberately independent.**
+  `contrai-analyzer` does not import anything
+  from `contrai_core`. Its `SuitSlot` is a
+  suit-agnostic abstraction for combinatorial
+  math, not a duplicate of core's `Suit`.
+  (CLAUDE.md §2 item 4)
+end note
+P_analyzer .. N_analyzer_indep
+
+' Scraper: planned consumer of core (future)
+P_scraper ..> P_core : <<future>>\nmaterialize observed\ngames into core types
+
+' Web server: planned future component (not in repo yet)
+note as N_future
+  **Planned (not in repo today)**
+  A multiplayer web server (likely FastAPI +
+  WebSockets) will expose trained AI models
+  over the network. It will consume
+  `contrai-engine` and the trained models
+  from the AI ladder.
+end note
+P_engine .. N_future
+
+@enduml
