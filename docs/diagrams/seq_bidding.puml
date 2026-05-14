@@ -1,0 +1,126 @@
+@startuml seq_bidding
+title contrai-engine — bidding cycle zoom (Round.manage_bidding)
+
+' --- Palette: engine orange, grey for stub paths, blue for core types ---
+skinparam shadowing false
+skinparam sequence {
+    ArrowColor #B26A28
+    LifeLineBorderColor #E89A4F
+    LifeLineBackgroundColor #FFEFD9
+    ParticipantBorderColor #B26A28
+    ParticipantBackgroundColor #FFEFD9
+    ParticipantFontColor #5C3A14
+    ActorBorderColor #B26A28
+    ActorBackgroundColor #FFEFD9
+    ActorFontColor #5C3A14
+    GroupBorderColor #B26A28
+    GroupBackgroundColor #FFF3E0
+    GroupHeaderFontColor #5C3A14
+    BoxBorderColor #B26A28
+    BoxBackgroundColor #FFF3E0
+    DividerBorderColor #B26A28
+    DividerBackgroundColor #FFD9B3
+    DividerFontColor #5C3A14
+}
+skinparam note {
+    BackgroundColor #FFFDE7
+    BorderColor #F9A825
+    FontColor #5F4B00
+}
+
+participant "Round" as R <<engine>>
+participant "Player" as P <<engine>>
+participant "BidValidator" as BV <<from contrai-core>> #E1F0FF
+participant "Contract" as CT <<from contrai-core>> #E1F0FF
+participant "CliView" as V <<stub>> #EEEEEE
+
+[-> R : manage_bidding(view)
+activate R
+
+R -> R : bid_objects = []\npasses_count = 0
+
+loop **while True** (outer)
+
+    loop **for player in players_order**
+
+        R -> R : legacy_bids = [\n  (b.player, _bid_to_legacy_format(b))\n  for b in bid_objects\n]
+
+        alt player has choose_bid (AI / Human)
+            R -> P : player.choose_bid(legacy_bids)
+            P --> R : 'Pass' | 'Double' | 'Redouble' | (value, suit)
+        else fallback
+            R -> R : bid_choice = 'Pass'
+        end
+
+        alt view ≠ None AND player.is_human
+            R -->> V : view.request_bid_action(player, legacy_bids)
+            note right of V
+              **<<not implemented>>** —
+              CliView is an empty file
+              today, so this branch is
+              guarded but unreachable.
+            end note
+            V -->> R : (overrides bid_choice)
+        end
+
+        R -> R : bid_obj = _create_bid_from_choice(\n  player, bid_choice\n)\n→ PassBid / DoubleBid / RedoubleBid\n   / ContractBid / PassBid (on ValueError)
+
+        R -> BV : is_bid_valid(bid_obj, bid_objects)
+        BV -> BV : bid_obj.is_valid_after(\n  previous_bids\n)\n(higher contract / valid double / etc.)
+        BV --> R : bool
+
+        alt valid
+            R -> R : bid_objects.append(bid_obj)
+            alt isinstance(bid_obj, PassBid)
+                R -> R : passes_count += 1
+            else other bid
+                R -> R : passes_count = 0
+            end
+        else invalid → force pass
+            R -> R : bid_objects.append(PassBid(player))
+            R -> R : passes_count += 1
+        end
+
+        alt passes_count ≥ 3 AND len(bid_objects) > 3\nAND any non-pass
+            R -> R : **break** (inner)
+        end
+
+    end
+
+    alt termination — 3 passes after a non-pass
+        R -> R : **break** (outer)
+    else last 4 bids all PassBid (first-round wipe)
+        R -> R : **break** (outer)
+    end
+
+end
+
+== Build the Contract ==
+
+R -> BV : get_last_contract(bid_objects)
+BV --> R : ContractBid | None
+
+alt no ContractBid found
+    R -> R : self.contract = None
+else
+    R -> BV : has_double(bid_objects)
+    BV --> R : bool
+    R -> BV : has_redouble(bid_objects)
+    BV --> R : bool
+    R -> CT : new Contract(\n  contract_bid,\n  double=has_double,\n  redouble=has_redouble\n)
+    CT --> R : Contract
+    R -> R : self.contract = contract
+end
+
+[<-- R : return self.contract  (Contract | None)
+deactivate R
+
+note over R, V
+  **Bid choice shape (legacy format on the wire):**
+    `'Pass'` | `'Double'` | `'Redouble'` | `(value, suit)`
+  `_create_bid_from_choice` upgrades it to a proper `Bid` subclass;
+  `_bid_to_legacy_format` is the reverse, used when handing bids
+  back to `Player.choose_bid` (which still expects legacy tuples).
+end note
+
+@enduml
