@@ -1,0 +1,205 @@
+@startuml class_engine
+title contrai-engine — model + MVC (current state, honest portrayal)
+
+' --- Palette: engine orange (model), grey (stubs), core blue (boundary) ---
+skinparam shadowing false
+skinparam class {
+    BackgroundColor #FFEFD9
+    BorderColor #B26A28
+    HeaderBackgroundColor #E89A4F
+    FontColor #5C3A14
+    AttributeFontColor #5C3A14
+    StereotypeFontColor #8A4F1C
+}
+skinparam note {
+    BackgroundColor #FFFDE7
+    BorderColor #F9A825
+    FontColor #5F4B00
+}
+skinparam ArrowColor #B26A28
+
+' =========================================================
+' Boundary element from contrai-core (blue palette)
+' =========================================================
+class BasePlayer <<from contrai-core>> #E1F0FF {
+    + name : str
+    + position : str
+    + hand : Hand
+    + team : Team?
+}
+
+' =========================================================
+' model/player.py — Player hierarchy
+' =========================================================
+package "model/player.py" as p_player {
+    abstract class Player <<abstract>> {
+        + is_human : bool <<property>>
+        --
+        + {abstract} choose_bid(current_bids) : str | tuple
+        + {abstract} choose_card(trick, contract, playable_cards) : Card
+    }
+
+    class HumanPlayer #EEEEEE {
+        + choose_bid(current_bids) : None  <<stub>>
+        + choose_card(trick, contract, playable_cards) : None  <<stub>>
+    }
+
+    class AiPlayer {
+        + {static} BIDDING_TABLE : list<tuple>
+        + {static} SUIT_PREFERENCE : tuple<Suit>
+        --
+        + choose_bid(current_bids) : str | tuple
+        + choose_card(trick, contract, playable_cards) : Card
+        + initialize_card_tracking() : None
+        + update_card_tracking(card, player, led_suit, trump_suit) : None
+        --
+        - _fallen_cards : dict<Suit, set<Rank>>
+        - _players_without_trump : set<Player>
+    }
+
+    note right of AiPlayer
+      <<strategy>> private helpers (collapsed):
+      _evaluate_suits / _evaluate_suit_as_trump,
+      _estimate_tricks / _evaluate_trump_tricks,
+      _make_initial_bid / _support_partner_bid,
+      _check_double_redouble / _should_double / _should_redouble,
+      _play_opening_card / _play_leading_card / _play_following_card,
+      _play_when_team_winning / _play_when_team_losing,
+      _is_master_card / _is_stronger_card / _can_trump_win,
+      _opponents_might_have_trump / _get_higher_ranks, …
+      (~25 helpers — see player.py)
+    end note
+
+    note bottom of AiPlayer
+      **BIDDING_TABLE** rows (9 levels, 80–160):
+      (contract, trump_req, trump_min, aces, tricks_min, belote_required).
+      No 'Capot' row today.
+    end note
+
+    note bottom of HumanPlayer
+      Stub today: `choose_bid` / `choose_card`
+      return **None**. Real implementation
+      will route through CliView once that
+      view is wired up.
+    end note
+}
+
+' =========================================================
+' model/game.py & model/round.py — orchestration
+' =========================================================
+package "model/game.py" as p_game {
+    class Game {
+        + teams : list<Team>
+        + players : list<Player>
+        + deck : Deck
+        + dealer : Player?
+        + players_order : list<Player>
+        + current_contract : Contract?
+        + current_round : Round?
+        + round_number : int
+        + scores : dict<str, int>
+        --
+        + __init__(players: list<Player>)
+        + start_new_round() : None
+        + manage_round(view=None) : dict
+        + check_game_over(target_score=1500) : dict
+        + next_dealer() : None
+        + set_players_order() : None
+    }
+}
+
+package "model/round.py" as p_round {
+    class Round {
+        + players_order : list<Player>
+        + dealer : Player
+        + deck : Deck
+        + round_number : int
+        + contract : Contract?
+        + tricks : list<Trick>
+        + current_trick : Trick?
+        + last_trick_winner : Player?
+        + team_tricks : dict<str, list<Trick>>
+        + round_scores : dict<str, int>
+        --
+        + __init__(players_order, dealer, deck, round_number)
+        + deal_cards() : None
+        + manage_bidding(view=None) : Contract?
+        + play_trick(view=None) : Player?
+        + play_all_tricks(view=None) : dict<str, list<Trick>>
+        + calculate_round_scores() : dict<str, int>
+        + handle_failed_contract() : dict<str, int>
+        --
+        - _create_bid_from_choice(player, choice) : Bid
+        - _bid_to_legacy_format(bid: Bid)
+        - _get_playable_cards(player) : list<Card>
+        - _determine_trick_winner(trick: Trick) : Player?
+    }
+
+    note right of Round
+      `_determine_trick_winner` duplicates
+      `Trick.get_winner()` from contrai-core
+      (open question: pick one).
+    end note
+}
+
+' =========================================================
+' controller/ & view/ — both stubs today
+' =========================================================
+package "controller/" as p_ctrl {
+    class GameController <<stub>> #EEEEEE {
+        + running : bool = True
+        --
+        + handle_events() : None
+        + update() : None
+        + render() : None
+        + run() : None
+    }
+
+    note right of GameController
+      **Stub.** References undefined `pygame`;
+      no integration with Game / Round.
+      Not wired today.
+    end note
+}
+
+package "view/" as p_view {
+    class CliView <<stub>> #EEEEEE {
+    }
+
+    note right of CliView
+      **Empty file.** Round / Game pass
+      `view=None` in practice; the
+      `view.request_bid_action` /
+      `view.request_card_action` branches
+      in Round are guarded but unreachable.
+    end note
+}
+
+' =========================================================
+' Relationships
+' =========================================================
+
+' Player hierarchy
+BasePlayer <|-- Player
+Player <|-- HumanPlayer
+Player <|-- AiPlayer
+
+' Game composes / aggregates engine + core types
+Game "1" *-- "2" "Team" : teams
+Game "1" *-- "4" Player : players
+Game "1" *-- "1" "Deck" : deck
+Game "1" o-- "0..1" Player : dealer
+Game "1" *-- "0..1" Round : current_round
+Game "1" o-- "0..1" "Contract" : current_contract
+
+' Round composes Tricks, references Contract
+Round "1" *-- "0..8" "Trick" : tricks
+Round "1" o-- "0..1" "Contract" : contract
+Round "1" o-- "1" "Deck" : deck
+Round "1" o-- "4" Player : players_order
+
+' MVC wiring (currently broken / unwired — dashed)
+GameController ..> Game : <<would drive>>
+Round ..> CliView : <<would consult\nfor human input>>
+
+@enduml
