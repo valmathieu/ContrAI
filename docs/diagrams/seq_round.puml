@@ -1,0 +1,102 @@
+@startuml seq_round
+title contrai-engine — round lifecycle overview (Game.manage_round)
+
+' --- Palette: engine orange for engine participants, core blue for core types ---
+skinparam shadowing false
+skinparam sequence {
+    ArrowColor #B26A28
+    LifeLineBorderColor #E89A4F
+    LifeLineBackgroundColor #FFEFD9
+    ParticipantBorderColor #B26A28
+    ParticipantBackgroundColor #FFEFD9
+    ParticipantFontColor #5C3A14
+    ActorBorderColor #B26A28
+    ActorBackgroundColor #FFEFD9
+    ActorFontColor #5C3A14
+    GroupBorderColor #B26A28
+    GroupBackgroundColor #FFF3E0
+    GroupHeaderFontColor #5C3A14
+    BoxBorderColor #B26A28
+    BoxBackgroundColor #FFF3E0
+    DividerBorderColor #B26A28
+    DividerBackgroundColor #FFD9B3
+    DividerFontColor #5C3A14
+}
+skinparam note {
+    BackgroundColor #FFFDE7
+    BorderColor #F9A825
+    FontColor #5F4B00
+}
+
+actor "caller" as C
+participant "Game" as G <<engine>>
+participant "Round" as R <<engine>>
+participant "Deck" as D <<from contrai-core>> #E1F0FF
+participant "Player\n(per turn)" as P <<engine>>
+
+C -> G : manage_round(view=None)
+activate G
+
+== Setup — start_new_round() ==
+
+G -> G : current_contract = None
+G -> G : next_dealer()\n(random first time, else rotate +1)
+alt round_number == 0
+    G -> D : shuffle()
+else subsequent rounds
+    G -> D : cut()
+end
+G -> G : set_players_order()\n(starts after dealer, anticlockwise)
+G -> G : round_number += 1
+G -> R : new Round(players_order, dealer,\n            deck, round_number)
+activate R
+G -> R : deal_cards()
+R -> D : deal(players_order)\n(dealer gets last cards)
+return
+
+== Bidding phase ==
+
+G -> R : manage_bidding(view)
+ref over R, P : **seq_bidding** — bid loop, validation, termination
+R --> G : Contract | None
+G -> G : current_contract = contract
+
+alt all players passed (contract is None)
+    G -> R : handle_failed_contract()
+    R -> D : add_cards(all hands)
+    R --> G : {team: 0}
+    G --> C : { contract: None,\n  message: "All players passed.\n  Cards redistributed." }
+    return
+end
+
+== Trick-taking — 8 tricks ==
+
+G -> R : play_all_tricks(view)
+loop trick_num in 0..7
+    ref over R, P : **seq_trick** — playable cards, choose, winner
+end
+R --> G : team_tricks: dict<str, list<Trick>>
+
+== Scoring ==
+
+G -> R : calculate_round_scores()
+R -> R : sum card_points per team\n(belote +20, dix-de-der +10)
+R -> R : compare to contract.value\n(Capot ≥ 162, else ≥ value)
+R -> R : apply double / redouble multiplier
+R --> G : round_scores: dict<str, int>
+deactivate R
+
+loop team_name, points in round_scores
+    G -> G : scores[team_name] += points
+end
+
+G --> C : { contract, scores, total_scores,\n  message: "Round completed" }
+deactivate G
+
+note over C, P
+  Caller typically loops `manage_round` then `check_game_over(target=1500)`
+  until a team crosses the target. Game ↔ Round delegation:
+  Game owns the loop; Round owns one round's lifecycle.
+end note
+
+@enduml
