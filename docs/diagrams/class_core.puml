@@ -1,0 +1,294 @@
+@startuml class_core
+title contrai-core — domain model (current state)
+
+' --- Palette: core blue ---
+skinparam shadowing false
+skinparam class {
+    BackgroundColor #E1F0FF
+    BorderColor #3D6FA5
+    HeaderBackgroundColor #7AAEE3
+    FontColor #0D3B66
+    AttributeFontColor #0D3B66
+    StereotypeFontColor #1A5490
+}
+skinparam enum {
+    BackgroundColor #E1F0FF
+    BorderColor #3D6FA5
+    HeaderBackgroundColor #7AAEE3
+    FontColor #0D3B66
+    StereotypeFontColor #1A5490
+}
+skinparam note {
+    BackgroundColor #FFFDE7
+    BorderColor #F9A825
+    FontColor #5F4B00
+}
+skinparam ArrowColor #3D6FA5
+
+' =========================================================
+' Enums + module-level constants (types.py)
+' =========================================================
+package "types.py" as p_types {
+    enum Suit <<enum>> {
+        SPADES    = "Spades"
+        HEARTS    = "Hearts"
+        DIAMONDS  = "Diamonds"
+        CLUBS     = "Clubs"
+        NO_TRUMP  = "NoTrump"
+    }
+
+    enum Rank <<enum>> {
+        SEVEN, EIGHT, NINE, TEN
+        JACK, QUEEN, KING, ACE
+    }
+
+    note bottom of Suit
+      Module constant:
+      **CARD_SUITS** : tuple[Suit, Suit, Suit, Suit]
+      = (SPADES, HEARTS, DIAMONDS, CLUBS)
+      —— the 4 real suits, NO_TRUMP excluded.
+    end note
+}
+
+' =========================================================
+' Card & deck (card.py, deck.py)
+' =========================================================
+package "card.py / deck.py" as p_card {
+    class Card {
+        + suit : Suit
+        + rank : Rank
+        + points_normal : int
+        + points_trump  : int
+        + order_normal  : int
+        + order_trump   : int
+        --
+        + __init__(suit: Suit, rank: Rank)
+        + get_points(trump_suit: Suit? = None) : int
+        + get_order(trump_suit: Suit? = None)  : int
+    }
+
+    class Deck {
+        + cards : list<Card>
+        --
+        + shuffle() : None
+        + cut() : None
+        + deal(players: list) : None
+        + is_empty() : bool
+        + add_cards(cards: list<Card>) : None
+    }
+}
+
+' =========================================================
+' Hand (hand.py)
+' =========================================================
+package "hand.py" as p_hand {
+    class Hand {
+        + cards : list<Card>
+        --
+        .. list-compatible API ..
+        + append(card: Card) : None
+        + extend(cards: Iterable<Card>) : None
+        + remove(card: Card) : None
+        + clear() : None
+        + __contains__(card) : bool
+        + __iter__() : Iterator<Card>
+        + __len__() : int
+        + __getitem__(idx) : Card | list<Card>
+        .. query helpers ..
+        + count_suit(suit: Suit) : int
+        + count_rank(rank: Rank) : int
+        + has_card(suit: Suit, rank: Rank) : bool
+        + cards_of_suit(suit: Suit) : list<Card>
+        + is_complete() : bool
+    }
+}
+
+' =========================================================
+' Team & BasePlayer (team.py, player.py)
+' =========================================================
+package "team.py / player.py" as p_team {
+    class Team {
+        + name : str
+        + players : list<BasePlayer>
+        + total_score : int
+        --
+        + __init__(name: str, players: list<BasePlayer>)
+        + add_points(points: int) : None
+        + get_partner(player: BasePlayer) : BasePlayer?
+        + contains_player(player: BasePlayer) : bool
+    }
+
+    class BasePlayer {
+        + name : str
+        + position : str
+        + hand : Hand
+        + team : Team?
+        --
+        + __init__(name: str, position: str)
+    }
+}
+
+' =========================================================
+' Bid hierarchy (bid.py)
+' =========================================================
+package "bid.py" as p_bid {
+    abstract class Bid <<abstract>> {
+        + player : BasePlayer
+        --
+        + __init__(player: BasePlayer)
+        + {abstract} is_valid_after(previous_bids: list<Bid>) : bool
+        + {abstract} can_be_doubled() : bool
+        + {abstract} __str__() : str
+        + {abstract} __eq__(other) : bool
+    }
+
+    class PassBid {
+        + is_valid_after(...) : bool  ' always True
+        + can_be_doubled() : bool     ' False
+    }
+
+    class ContractBid {
+        + {static} VALID_VALUES = [80..160, "Capot"]
+        + {static} VALID_SUITS = list(Suit)
+        + value : int | str
+        + suit : Suit
+        --
+        + __init__(player, value, suit)
+        + is_valid_after(...) : bool
+        + can_be_doubled() : bool     ' True
+        + get_numeric_value() : int   ' Capot → 250
+        + __gt__(other) : bool
+    }
+
+    class DoubleBid {
+        + is_valid_after(...) : bool
+        + can_be_doubled() : bool     ' False
+    }
+
+    class RedoubleBid {
+        + is_valid_after(...) : bool
+        + can_be_doubled() : bool     ' False
+    }
+
+    class BidValidator <<utility>> {
+        + {static} is_bid_valid(bid, previous) : bool
+        + {static} get_last_contract(bids) : ContractBid?
+        + {static} has_double(bids) : bool
+        + {static} has_redouble(bids) : bool
+        + {static} count_passes_after_last_action(bids) : int
+    }
+}
+
+' =========================================================
+' Contract & Trick (contract.py, trick.py)
+' =========================================================
+package "contract.py / trick.py" as p_contract {
+    class Contract {
+        + contract_bid : ContractBid
+        + player : BasePlayer
+        + team : Team
+        + value : int | str
+        + suit : Suit
+        + double : bool
+        + redouble : bool
+        --
+        + __init__(contract_bid, double=False, redouble=False)
+        + {static} from_legacy(player, value, suit, ...) : Contract
+        + get_multiplier() : int           ' 1, 2, or 4
+        + is_made(team_points: int) : bool
+        + get_attacking_team() : Team
+        + get_defending_team() : Team?     ' TODO: currently None
+        + is_capot() : bool
+        + get_base_points() : int          ' Capot → 250
+    }
+
+    class Trick {
+        + plays : list<(BasePlayer, Card)>
+        + trump_suit : Suit?
+        --
+        + __init__(trump_suit: Suit? = None)
+        + add_play(player: BasePlayer, card: Card) : None
+        + get_cards() : list<Card>
+        + get_led_suit() : Suit?
+        + get_plays() : list<(BasePlayer, Card)>
+        + get_winner() : BasePlayer?
+        + is_complete() : bool
+        + is_empty() : bool
+        + size() : int
+        + __len__() : int
+    }
+}
+
+' =========================================================
+' Exceptions (exceptions.py)
+' =========================================================
+package "exceptions.py" as p_exc {
+    class "ValueError" as ValueError <<stdlib>> #DDDDDD
+
+    class InvalidPlayerCountError {
+        + expected_count : int
+        + actual_count   : int
+        + context : str
+    }
+
+    class InvalidCardCountError {
+        + expected_count : int
+        + actual_count   : int
+        + context : str
+    }
+
+    InvalidPlayerCountError --|> ValueError
+    InvalidCardCountError   --|> ValueError
+}
+
+' =========================================================
+' Relationships
+' =========================================================
+
+' Inheritance — Bid hierarchy
+Bid <|-- PassBid
+Bid <|-- ContractBid
+Bid <|-- DoubleBid
+Bid <|-- RedoubleBid
+
+' Card composes enums (by-reference)
+Card --> Suit
+Card --> Rank
+
+' Hand owns Cards
+Hand "1" *-- "0..8" Card : cards
+
+' Deck owns the full 32-card set
+Deck "1" *-- "32" Card : cards
+
+' Player owns its Hand, references Team
+BasePlayer "1" *-- "1" Hand : hand
+BasePlayer "1" o-- "0..1" Team : team
+
+' Team aggregates exactly 2 players
+Team "1" o-- "2" BasePlayer : players
+
+' Bid references BasePlayer
+Bid "1" o-- "1" BasePlayer : player
+ContractBid --> Suit : suit
+
+' BidValidator inspects Bid lists (utility, not composition)
+BidValidator ..> Bid : <<inspects>>
+
+' Contract references ContractBid + BasePlayer + Team
+Contract "1" o-- "1" ContractBid : contract_bid
+Contract "1" o-- "1" BasePlayer  : player
+Contract "1" o-- "1" Team        : team
+Contract --> Suit                : suit
+
+' Trick composes (player, card) plays + references trump suit
+Trick "1" *-- "0..4" Card        : (via plays)
+Trick "1" o-- "0..4" BasePlayer  : (via plays)
+Trick --> Suit                   : trump_suit
+
+' Operations raising exceptions
+Team ..> InvalidPlayerCountError : <<raises>>
+Deck ..> InvalidPlayerCountError : <<raises>>
+Deck ..> InvalidCardCountError   : <<raises>>
+
+@enduml
