@@ -8,8 +8,15 @@ The repository is a [uv workspace](https://docs.astral.sh/uv/concepts/projects/w
 
 - **`contrai-core`** — shared domain model. Owns `Suit`/`Rank`/`CARD_SUITS`, `Card`, `Deck`, `Hand`, `Team`, `BasePlayer`, the `Bid` hierarchy + `BidValidator`, `Contract`, `Trick`, and the model-level exceptions. Pure data and invariants, no orchestration.
 - **`contrai-engine`** — game engine on top of `contrai-core`. Extends `BasePlayer` with `Player` / `HumanPlayer` / `AiPlayer`, owns `Game` and `Round` orchestration, and the CLI (controller / view layers).
-- **`contrai-analyzer`** — Streamlit dashboard for opening-hand strength (hypergeometric distribution + bidding truth-table). Deliberately independent of `contrai-core`; see [`packages/analyzer.md`](packages/analyzer.md) for the rationale behind the `SuitSlot` abstraction.
+- **`contrai-analyzer`** — Streamlit dashboard for opening-hand strength (hypergeometric distribution + bidding truth-table). Deliberately independent of `contrai-core`; see [`analyzer/index.md`](analyzer/index.md) for the rationale behind the `SuitSlot` abstraction.
 - **`contrai-scraper`** — Playwright spectator-mode scraper for `app.belote-rebelote.fr`. v1 ships login + table navigation + per-round polling; bidding/play observation and persistence are still to be wired up.
+
+## Package map
+
+```plantuml format="svg" source="class_workspace.puml"
+```
+
+Headline types per package plus cross-package dependency direction. The engine `<<extends>>` core's `BasePlayer`; the scraper's dashed `<<future>>` arrow to core marks the planned materialization of observed games into `Card` / `Bid` / `Trick` / … instances; the analyzer has no arrow into core by design. The dashed note attached to the engine flags the planned multiplayer web server, which isn't in this repo yet. See [Diagrams](diagrams/) for the colour convention.
 
 ## Shared types
 
@@ -38,4 +45,4 @@ contrai-core
 
 `contrai-engine`, `contrai-analyzer`, and `contrai-scraper` do not depend on each other.
 
-> TODO: dataflow diagrams (live in [`diagrams/`](diagrams/) — PlantUML `.puml` for sequence/class, Mermaid `.mmd` for everything else).
+> TODO: dataflow diagrams (live in [`diagrams/`](diagrams/index.md) — PlantUML `.puml` for sequence/class, Mermaid `.mmd` for everything else).
