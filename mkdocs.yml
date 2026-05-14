@@ -1,0 +1,117 @@
+site_name: ContrAI
+site_description: AI for the French card game Contrée
+site_author: Valentin Mathieu
+# site_url:  # intentionally empty until a hosting decision is made
+
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: black
+      accent: red
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: black
+      accent: red
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    # NOTE: navigation.instant is intentionally omitted; mkdocs-static-i18n's
+    # language switcher is incompatible with instant SPA-style navigation
+    # (would always land on the homepage of the other locale instead of the
+    # equivalent page). Re-enable only if i18n is dropped.
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+  logo: assets/logo.svg
+  favicon: assets/flavicon.png
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - footnotes
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:mermaid2.fence_mermaid_custom
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - plantuml_markdown:
+      format: svg
+
+plugins:
+  - search
+  - mermaid2
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_root_heading: true
+            show_source: false
+            members_order: source
+  - i18n:
+      docs_structure: suffix
+      languages:
+        - locale: en
+          default: true
+          name: English
+          build: true
+        - locale: fr
+          name: Français
+          build: true
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Engine:
+      - Overview: engine/index.md
+      - API reference: engine/api.md
+  - Core:
+      - Overview: core/index.md
+      - API reference: core/api.md
+  - Analyzer:
+      - Overview: analyzer/index.md
+      - API reference: analyzer/api.md
+  - Scraper:
+      - Overview: scraper/index.md
+      - API reference: scraper/api.md
+  - AI Ladder:
+      - Overview: ai-ladder/index.md
+      - Rule-based: ai-ladder/rule_based.md
+      - Supervised learning: ai-ladder/supervised.md
+      - Reinforcement learning: ai-ladder/rl.md
+  - Diagrams: diagrams/index.md
