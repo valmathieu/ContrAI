@@ -1,0 +1,129 @@
+@startuml seq_trick
+title contrai-engine — single trick zoom (Round.play_trick)
+
+' --- Palette: engine orange, grey for stub paths, blue for core types ---
+skinparam shadowing false
+skinparam sequence {
+    ArrowColor #B26A28
+    LifeLineBorderColor #E89A4F
+    LifeLineBackgroundColor #FFEFD9
+    ParticipantBorderColor #B26A28
+    ParticipantBackgroundColor #FFEFD9
+    ParticipantFontColor #5C3A14
+    ActorBorderColor #B26A28
+    ActorBackgroundColor #FFEFD9
+    ActorFontColor #5C3A14
+    GroupBorderColor #B26A28
+    GroupBackgroundColor #FFF3E0
+    GroupHeaderFontColor #5C3A14
+    BoxBorderColor #B26A28
+    BoxBackgroundColor #FFF3E0
+    DividerBorderColor #B26A28
+    DividerBackgroundColor #FFD9B3
+    DividerFontColor #5C3A14
+}
+skinparam note {
+    BackgroundColor #FFFDE7
+    BorderColor #F9A825
+    FontColor #5F4B00
+}
+
+participant "Round" as R <<engine>>
+participant "Trick" as T <<from contrai-core>> #E1F0FF
+participant "Player" as P <<engine>>
+participant "Hand" as H <<from contrai-core>> #E1F0FF
+participant "Deck" as D <<from contrai-core>> #E1F0FF
+participant "CliView" as V <<stub>> #EEEEEE
+
+[-> R : play_trick(view)
+activate R
+
+R -> T : new Trick()
+note right of T
+  Note: `Trick()` is built **without** a `trump_suit`.
+  Round uses `self.contract.suit` directly via
+  `_determine_trick_winner` below, bypassing
+  `Trick.get_winner()` from contrai-core.
+end note
+
+== Leader determination ==
+
+alt last_trick_winner is None  (first trick)
+    R -> R : trick_leader = players_order[0]
+else
+    R -> R : trick_leader = last_trick_winner
+end
+
+R -> R : leader_idx = players_order.index(trick_leader)\ntrick_order = rotate(players_order, leader_idx)
+
+== Four players play in order ==
+
+loop **for player in trick_order**  (×4)
+
+    R -> R : playable_cards = _get_playable_cards(player)
+
+    ref over R : **SF-09 / SF-10** — see legality rules below
+
+    alt player has choose_card (AI / Human)
+        R -> P : choose_card(current_trick,\n                contract, playable_cards)
+        P --> R : Card
+    else fallback
+        R -> R : card = playable_cards[0]
+    end
+
+    alt view ≠ None AND player.is_human
+        R -->> V : view.request_card_action(player,\n  current_trick, contract, playable_cards)
+        note right of V
+          **<<not implemented>>** —
+          CliView is an empty file
+          today, branch unreachable.
+        end note
+        V -->> R : (overrides card)
+    end
+
+    alt card ∈ playable_cards AND card ∈ player.hand
+        R -> H : player.hand.remove(card)
+        R -> T : current_trick.add_play(player, card)
+    else illegal choice → fallback to playable_cards[0]
+        R -> H : player.hand.remove(playable_cards[0])
+        R -> T : current_trick.add_play(\n  player, playable_cards[0]\n)
+    end
+
+end
+
+== Winner + bookkeeping ==
+
+R -> R : winner = _determine_trick_winner(current_trick)
+note right of R
+  Reads `self.contract.suit` for trump.
+  Trump beats non-trump; within same suit,
+  highest `get_order()` wins. Duplicates the
+  logic that lives on `Trick.get_winner()`.
+end note
+
+R -> R : last_trick_winner = winner
+R -> R : tricks.append(current_trick)
+R -> R : team_tricks[winner.team.name].append(\n  current_trick\n)
+
+R -> T : current_trick.get_plays()
+T --> R : list<(Player, Card)>
+R -> R : trick_cards = [card for _, card in plays]\ntrick_cards.reverse()  (last played → first back in)
+R -> D : deck.add_cards(trick_cards)
+
+[<-- R : return winner  (Player)
+deactivate R
+
+note over R, V
+  **Legality (SF-09 / SF-10) — `_get_playable_cards`:**
+
+  1. **Empty trick** → any card.
+  2. Player has the **lead suit** → must follow suit.
+  3. No lead-suit cards, **partner is leading** → any card (no obligation to trump).
+  4. No lead-suit cards, opponent led:
+     • no trump suit, or lead = trump → any card.
+     • opponent already trumped → must over-trump if possible;
+       else play any trump if any; else discard.
+     • no opponent trump yet → must trump if any; else discard.
+end note
+
+@enduml
