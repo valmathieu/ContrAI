@@ -35,14 +35,12 @@ MkDocs renders both PlantUML and Mermaid **inline at site-build time**:
 
 So `mkdocs serve` / `mkdocs build` is enough — no pre-rendering step.
 
-If you want a standalone PNG (slides, the LaTeX report, offline preview) you can still render manually:
+A **rendered PNG is committed alongside each `.puml`** in `docs/diagrams/` so the diagrams are previewable offline (in a file browser, an IDE, slides, the LaTeX report) without spinning up `mkdocs serve`. The MkDocs site itself does not read those PNGs — it re-renders from the `.puml` source — so the canonical source of truth is still the `.puml` file. Re-render the PNG whenever the source changes and commit both together in the same atomic commit:
 
 ```bash
 plantuml -tpng docs/diagrams/file.puml         # → docs/diagrams/file.png
 mmdc      -i docs/diagrams/file.mmd -o docs/diagrams/file.png
 ```
-
-These manual renders are **optional** and not committed by default — the canonical sources are the `.puml` / `.mmd` files in `docs/diagrams/`.
 
 VS Code: install the *PlantUML* (`jebbs.plantuml`) and *Markdown Preview Mermaid Support* extensions for in-editor previews.
 
@@ -56,13 +54,15 @@ VS Code: install the *PlantUML* (`jebbs.plantuml`) and *Markdown Preview Mermaid
 
 ## Catalogue
 
-| Diagram                    | Kind     | Scope                | Source                                | Embedded on                            | Status        |
-|----------------------------|----------|----------------------|---------------------------------------|----------------------------------------|---------------|
-| `class_analyzer.puml`      | Class    | contrai-analyzer     | [source](class_analyzer.puml)         | [Analyzer overview](../analyzer/#class-structure) | **Done**      |
-| `seq_scraper.puml`         | Sequence | contrai-scraper      | [source](seq_scraper.puml)            | [Scraper overview](../scraper/#current-flow-v1)   | **Done**      |
-| `class_core.puml`          | Class    | contrai-core         | —                                     | Core overview *(planned)*              | Phase 2       |
-| `class_engine.puml`        | Class    | contrai-engine + MVC | —                                     | Engine overview *(planned)*            | Phase 2       |
-| `class_workspace.puml`     | Class    | Workspace overview   | —                                     | Architecture *(planned)*               | Phase 2       |
-| `seq_round.puml`           | Sequence | Engine round flow    | —                                     | Engine overview *(planned)*            | Phase 2       |
-| `seq_bidding.puml`         | Sequence | Bidding cycle zoom   | —                                     | Engine overview *(planned)*            | Phase 2       |
-| `seq_trick.puml`           | Sequence | Single trick zoom    | —                                     | Engine overview *(planned)*            | Phase 2       |
+Each row links to the canonical `.puml` source, the rendered `.png` preview, and the topical page where the diagram is embedded.
+
+| Diagram                | Kind     | Scope                | Source                                | PNG preview                          | Embedded on                                                |
+|------------------------|----------|----------------------|---------------------------------------|--------------------------------------|------------------------------------------------------------|
+| `class_core.puml`      | Class    | contrai-core         | [source](class_core.puml)             | [png](class_core.png)                | [Core overview](../core/#class-structure)                  |
+| `class_engine.puml`    | Class    | contrai-engine + MVC | [source](class_engine.puml)           | [png](class_engine.png)              | [Engine overview](../engine/#class-structure)              |
+| `class_analyzer.puml`  | Class    | contrai-analyzer     | [source](class_analyzer.puml)         | [png](class_analyzer.png)            | [Analyzer overview](../analyzer/#class-structure)          |
+| `class_workspace.puml` | Class    | Workspace overview   | [source](class_workspace.puml)        | [png](class_workspace.png)           | [Architecture](../architecture/#package-map)               |
+| `seq_round.puml`       | Sequence | Engine round flow    | [source](seq_round.puml)              | [png](seq_round.png)                 | [Engine — round lifecycle](../engine/#round-lifecycle)     |
+| `seq_bidding.puml`     | Sequence | Bidding cycle zoom   | [source](seq_bidding.puml)            | [png](seq_bidding.png)               | [Engine — bidding cycle zoom](../engine/#round-lifecycle)  |
+| `seq_trick.puml`       | Sequence | Single trick zoom    | [source](seq_trick.puml)              | [png](seq_trick.png)                 | [Engine — single trick zoom](../engine/#round-lifecycle)   |
+| `seq_scraper.puml`     | Sequence | contrai-scraper      | [source](seq_scraper.puml)            | [png](seq_scraper.png)               | [Scraper overview](../scraper/#current-flow-v1)            |
