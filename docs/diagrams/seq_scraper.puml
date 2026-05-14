@@ -1,0 +1,146 @@
+@startuml seq_scraper
+title contrai-scraper — spectator observation flow (main.py, current state)
+
+' --- Palette: scraper purple, with grey "future" components ---
+skinparam shadowing false
+skinparam sequence {
+    ArrowColor #5E4495
+    LifeLineBorderColor #9B7FCC
+    LifeLineBackgroundColor #EDE7F6
+    ParticipantBorderColor #5E4495
+    ParticipantBackgroundColor #EDE7F6
+    ParticipantFontColor #311B92
+    ActorBorderColor #5E4495
+    ActorBackgroundColor #EDE7F6
+    ActorFontColor #311B92
+    GroupBorderColor #5E4495
+    GroupBackgroundColor #F3E5F5
+    GroupHeaderFontColor #311B92
+    BoxBorderColor #5E4495
+    BoxBackgroundColor #F3E5F5
+    DividerBorderColor #5E4495
+    DividerBackgroundColor #D1C4E9
+    DividerFontColor #311B92
+}
+skinparam note {
+    BackgroundColor #FFFDE7
+    BorderColor #F9A825
+    FontColor #5F4B00
+}
+
+actor "User" as U
+participant "main.py" as M <<scraper>>
+participant "async_playwright" as P <<scraper>>
+participant "Browser / page\n(Chromium)" as B
+participant "DOM\napp.belote-rebelote.fr" as D
+participant "SQLite" as S <<future>> #DDDDDD
+
+U -> M : python main.py
+activate M
+
+M -> P : async_playwright().start()
+M -> P : chromium.launch(headless=False, slow_mo=500)
+P -> B : <<creates>> page
+M -> B : page.goto("https://app.belote-rebelote.fr/")
+B -> D : navigate
+
+== Phase 1 — Login flow ==
+
+M -> M : page.wait_for_timeout(5000)
+M -> B : tutorial_btn.is_visible() ?\n(`gui.quick-start.launch.no`)
+alt tutorial visible
+    M -> B : click `gui.quick-start.launch.no`
+end
+
+M -> B : click 'button:has-text("Email")'
+note right of M
+  Fallback selector if the
+  primary `text("Email")` fails:
+  `button[data-icon="email"]`
+end note
+M -> B : fill `input[placeholder=\n"Adresse électronique"]` ← EMAIL
+M -> B : click `gui.users.email-wizard.continue`
+M -> B : wait_for_selector(`#verificationCode`)
+M -> B : fill `#verificationCode` ← FIXED_CODE
+M -> B : click `#validateBtn`
+B --> D : authenticate
+M -> M : page.wait_for_timeout(10000)
+
+== Phase 2 — Mode navigation ==
+
+M -> B : click `gui.actions.mode.online`
+M -> B : click `gui.actions.online.observe`
+M -> B : click `gui.versions.contree`
+
+== Phase 3 — Table discovery ==
+
+M -> B : `.table-list-item`.first.click()  (timeout 3s)
+note right of M
+  If auto-join times out,
+  user has 5s to click a
+  table manually.
+end note
+
+loop up to 20 attempts (until tournament found)
+    M -> M : page.wait_for_timeout(2000)
+    M -> B : `#tournamentMatchInfo`.is_visible() ?
+    alt tournament match found
+        M -> M : break loop
+    else standard table
+        M -> B : click `gui.online.tables.other-table`
+        M -> M : page.wait_for_timeout(3000)
+    end
+end
+
+== Phase 4 — observe_game(page) ==
+
+M -> B : get_players(page)
+loop pos ∈ {nord, sud, est, ouest}
+    M -> D : inner_text(`#{pos} div[data-role='badge']`)
+    D --> M : player name
+end
+
+M -> M : is_game_scrapeable(players)
+note right of M
+  **<<future>>** — currently
+  returns **True** always.
+  Will check a DB whether
+  these players are already
+  being scraped.
+end note
+
+M -> B : last_known_round = get_current_round(page)
+B -> D : inner_text(`#tour label[\ndata-i18n="gui.scores.tour"]`)
+D --> M : "TOUR N" → regex \d+ → int
+
+loop forever (1s poll)
+    M -> B : current_round = get_current_round(page)
+    alt round changed (and ≠ -1)
+        M -> M : print "🎬 ROUND N STARTED - RECORDING"
+
+        ' --- FUTURE LOGIC block (main.py:105-108) ---
+        group <<future>> FUTURE LOGIC — main.py:105-108
+            M -->> B : observe_bidding(page)
+            M -->> B : observe_gameplay(page)
+            M -->> S : persist round / bids / plays
+        end
+
+        M -> M : last_known_round = current_round
+    end
+    M -> M : page.wait_for_timeout(1000)
+end
+
+== Shutdown ==
+
+M -> B : browser.close()
+deactivate M
+
+note over M, S
+  **What is NOT wired up yet**
+  • `observe_bidding(page)` and `observe_gameplay(page)` — commented placeholders
+  • Any persistence path — no SQLite (or other) writes
+  • DB-based de-duplication of already-scraped players
+  See CLAUDE.md §2 (item 5) and §7 for the roadmap.
+end note
+
+@enduml
