@@ -71,6 +71,7 @@ markdown_extensions:
   - pymdownx.details
   - plantuml_markdown:
       format: svg
+      base_dir: docs/diagrams
 
 plugins:
   - search
