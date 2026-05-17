@@ -195,6 +195,12 @@ class Round:
             trick_cards.reverse()  # Last card played becomes first to be added back
             self.deck.add_cards(trick_cards)
 
+        # Notify the view that a trick just completed (optional view hook).
+        # Used by interactive views (e.g. RichView) to pause for "Press Enter"
+        # between tricks. Skipped silently when no such hook exists.
+        if view is not None and hasattr(view, 'on_trick_complete'):
+            view.on_trick_complete(self.current_trick, winner, self)
+
         return winner
 
     def play_all_tricks(self, view=None) -> Dict[str, List[Trick]]:
