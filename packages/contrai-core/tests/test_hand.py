@@ -251,6 +251,28 @@ def test_is_complete_false_when_8_cards_but_duplicate():
 
 
 # ----------------------------------------------------------------------
+# copy
+# ----------------------------------------------------------------------
+
+
+def test_copy_returns_list_of_same_cards(sample_cards):
+    h = Hand(sample_cards)
+    snapshot = h.copy()
+    assert isinstance(snapshot, list)
+    assert snapshot == list(sample_cards)
+
+
+def test_copy_is_independent_of_hand(sample_cards):
+    """Mutating the copy must not affect the hand or vice versa."""
+    h = Hand(sample_cards)
+    snapshot = h.copy()
+    snapshot.pop()
+    assert len(h) == len(sample_cards)
+    h.append(Card(Suit.CLUBS, Rank.NINE))
+    assert len(snapshot) == len(sample_cards) - 1
+
+
+# ----------------------------------------------------------------------
 # repr
 # ----------------------------------------------------------------------
 

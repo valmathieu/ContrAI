@@ -75,6 +75,16 @@ class Hand:
         """Remove every card from the hand, leaving it empty."""
         self.cards.clear()
 
+    def copy(self) -> list[Card]:
+        """Return a shallow ``list`` copy of the cards.
+
+        Mirrors ``list.copy`` so legacy engine code that used to treat
+        ``hand`` as a list (e.g. ``Round._get_playable_cards``) keeps
+        working. Returns a ``list[Card]`` — not another ``Hand`` — to
+        match the "list of cards" callers expect.
+        """
+        return list(self.cards)
+
     def __contains__(self, card: object) -> bool:
         """Return ``True`` iff ``card`` is currently in the hand."""
         return card in self.cards
