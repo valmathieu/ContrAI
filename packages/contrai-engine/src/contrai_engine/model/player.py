@@ -400,6 +400,13 @@ class AiPlayer(Player):
             Card: The chosen card to play
         """
 
+        # Lazy-init card tracking. The engine never calls
+        # initialize_card_tracking() explicitly, so without this guard
+        # _is_master_card / _opponents_might_have_trump crash on the
+        # first non-opening trick.
+        if not hasattr(self, '_fallen_cards'):
+            self.initialize_card_tracking()
+
         # Determine strategy based on position in trick
         # TODO: adapt the code using the game class to know the trick number
         # First to play - use fallback approach since we don't have game reference
