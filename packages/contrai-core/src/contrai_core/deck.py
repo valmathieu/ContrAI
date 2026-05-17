@@ -60,7 +60,7 @@ class Deck:
 
         self.cards = []
 
-    def is_empty(self):
+    def is_empty(self) -> bool:
         """
         Check if the deck is empty (contains no cards).
 

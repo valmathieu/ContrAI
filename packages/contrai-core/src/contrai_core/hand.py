@@ -87,7 +87,7 @@ class Hand:
         """Return the number of cards currently in the hand."""
         return len(self.cards)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int | slice):
         """Index into the hand by integer or slice.
 
         Args:
