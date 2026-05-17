@@ -41,7 +41,12 @@ class AiPlayer(Player):
     4. If multiple bid are possible : choose best suit based on strength, belote
     """
 
-    # Bidding table
+    # Bidding table. The `contract` column is stored numerically — 250 is the
+    # internal sentinel for Capot, matching ContractBid.get_numeric_value /
+    # Contract.get_base_points in contrai-core. It's translated back to the
+    # string 'Capot' at the bid-return boundary (see _make_initial_bid /
+    # _support_partner_bid). The Capot row is gated purely by the trick
+    # estimator (tricks_min=8) per the agreed AI criterion.
     BIDDING_TABLE = [
         # (contract, trump_expected, trump_min, aces, tricks_min, belote_required)
         (80, {'jack_or_nine': True, 'jack_and_nine': False}, 3, 1, 4, False),
@@ -53,7 +58,11 @@ class AiPlayer(Player):
         (140, {'jack_or_nine': True, 'jack_and_nine': False}, 4, 3, 6, True),
         (150, {'jack_or_nine': False, 'jack_and_nine': True}, 4, 3, 6, True),
         (160, {'jack_or_nine': False, 'jack_and_nine': True, 'ace_required': True}, 5, 3, 7, True),
+        (250, {}, 0, 0, 8, False),  # Capot — only the trick estimator gates it.
     ]
+
+    # Internal numeric value used in BIDDING_TABLE for Capot.
+    CAPOT_NUMERIC = 250
 
     # Suit preference order (Spades, Hearts, Diamonds, Clubs)
     SUIT_PREFERENCE = SUITS
@@ -90,6 +99,17 @@ class AiPlayer(Player):
             return self._support_partner_bid(partner_bid, last_bid)
 
         return 'Pass'
+
+    @classmethod
+    def _bid_value_numeric(cls, value):
+        """Coerce a contract value (numeric or 'Capot' string) to int.
+
+        The wire format on `current_bids` carries Capot as the literal
+        string 'Capot' (see Round._bid_to_legacy_format), so comparisons
+        anywhere upstream of the wire boundary must normalise.
+        """
+
+        return cls.CAPOT_NUMERIC if value == 'Capot' else value
 
     @staticmethod
     def _get_last_bid(current_bids):
@@ -138,6 +158,7 @@ class AiPlayer(Player):
         """Determine if we should double opponent's bid."""
 
         value, suit = opponent_bid
+        value = self._bid_value_numeric(value)
 
         strength = self._estimate_tricks(suit) * 20  # Each expected trick worth 20 points
 
@@ -239,11 +260,12 @@ class AiPlayer(Player):
 
         return min(tricks, 8)  # Maximum 8 tricks in a round
 
-    @staticmethod
-    def _can_overbid_partner(partner_bid, suit_evaluations):
+    @classmethod
+    def _can_overbid_partner(cls, partner_bid, suit_evaluations):
         """Check if we can make a higher bid than our partner."""
 
         partner_value, partner_suit = partner_bid
+        partner_value = cls._bid_value_numeric(partner_value)
 
         # Find our best contract
         best_contract = 0
@@ -272,13 +294,16 @@ class AiPlayer(Player):
         # Check if we can overbid the last bid
         if last_bid:
             last_value, _ = last_bid
+            last_value = self._bid_value_numeric(last_value)
             if max_contract <= last_value:
                 return 'Pass'
 
         # Choose best suit among candidates
         chosen_suit = self._choose_best_suit(best_suits, suit_evaluations)
 
-        return max_contract, chosen_suit
+        # Translate the internal Capot sentinel back to the wire format.
+        bid_value = 'Capot' if max_contract == self.CAPOT_NUMERIC else max_contract
+        return bid_value, chosen_suit
 
     def _support_partner_bid(self, partner_bid, last_bid):
         """Support partner's bid with incremental bidding."""
@@ -303,13 +328,15 @@ class AiPlayer(Player):
 
         # Calculate new bid value
         last_value, _ = last_bid
+        last_value = self._bid_value_numeric(last_value)
         new_value = last_value + contribution
 
-        # Don't bid beyond 160
-        if new_value > 160 or contribution == 0:
+        # Cap at Capot (the top of the table); don't try to raise past it.
+        if new_value > self.CAPOT_NUMERIC or contribution == 0:
             return 'Pass'
 
-        return new_value, partner_suit
+        bid_value = 'Capot' if new_value == self.CAPOT_NUMERIC else new_value
+        return bid_value, partner_suit
 
     def _choose_best_suit(self, candidate_suits, suit_evaluations):
         """Choose the best suit from candidates."""
