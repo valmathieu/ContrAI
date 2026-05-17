@@ -461,9 +461,9 @@ class AiPlayer(Player):
     def _play_opening_card(self, contract, playable_cards):
         """Play the very first card of the round."""
 
-        trump_suit = contract[2] if contract else None
+        trump_suit = contract.suit if contract else None
 
-        if contract[0].team == self.team:
+        if contract and contract.player.team == self.team:
             # Our team has the contract - play the strongest trump
             trump_cards = [c for c in playable_cards if c.suit == trump_suit]
             if trump_cards:
@@ -500,10 +500,10 @@ class AiPlayer(Player):
     def _play_leading_card(self, contract, playable_cards):
         """Play when leading subsequent tricks."""
 
-        trump_suit = contract[2] if contract else None
+        trump_suit = contract.suit if contract else None
 
         # If the team has the contract and opponents might still have trump, play the strongest trump
-        if contract[0].team == self.team and self._opponents_might_have_trump(trump_suit):
+        if contract and contract.player.team == self.team and self._opponents_might_have_trump(trump_suit):
             trump_cards = [c for c in playable_cards if c.suit == trump_suit]
             if trump_cards:
                 return max(trump_cards, key=lambda c: c.get_order(trump_suit))
@@ -549,7 +549,7 @@ class AiPlayer(Player):
     def _play_when_team_winning(self, trick, contract, playable_cards):
         """Play when our team is currently winning the trick."""
 
-        trump_suit = contract[2] if contract else None
+        trump_suit = contract.suit if contract else None
         led_suit = trick.get_led_suit()
 
         # Try to follow suit with the highest point card
@@ -567,7 +567,7 @@ class AiPlayer(Player):
     def _play_when_team_losing(self, trick, contract, playable_cards):
         """Play when opponents are currently winning the trick."""
 
-        trump_suit = contract[2] if contract else None
+        trump_suit = contract.suit if contract else None
         led_suit = trick.get_led_suit()
         current_best = self._get_strongest_card_in_trick(trick, trump_suit)
 

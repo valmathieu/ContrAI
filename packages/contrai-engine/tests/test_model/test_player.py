@@ -2,10 +2,21 @@
 
 import pytest
 from contrai_engine.model.player import HumanPlayer, AiPlayer
-from contrai_core import Hand
+from contrai_core import Hand, ContractBid, Contract
 from contrai_core.card import Card
 from contrai_core.team import Team
 from contrai_core.types import Suit, Rank
+
+
+def _contract(player, value, suit):
+    """Build a real Contract for the AiPlayer trick-taking tests.
+
+    The original tests passed a ``(player, value, suit)`` tuple, but the
+    engine threads the actual ``Contract`` object from ``Round`` into
+    ``AiPlayer.choose_card``. This helper keeps the test bodies readable
+    while matching the production type.
+    """
+    return Contract(ContractBid(player, value, suit))
 
 
 class TestPlayer:
@@ -503,7 +514,7 @@ class TestAiPlayerTrickTaking:
     def test_play_first_card_opening_round(self, ai_player_with_tracking, mock_trick, sample_hand_mixed):
         """Test playing the very first card of the round"""
         ai_player_with_tracking.hand = sample_hand_mixed
-        contract = (ai_player_with_tracking, 80, Suit.SPADES)
+        contract = _contract(ai_player_with_tracking, 80, Suit.SPADES)
 
         # Should play the strongest trump (Jack of Spades)
         result = ai_player_with_tracking.choose_card(mock_trick, contract, sample_hand_mixed)
@@ -513,7 +524,7 @@ class TestAiPlayerTrickTaking:
     def test_play_first_card_opponents_contract(self, ai_player_with_tracking, ai_player_opponent, mock_trick, sample_hand_mixed):
         """Test playing first card when opponents have contract"""
         ai_player_with_tracking.hand = sample_hand_mixed
-        contract = (ai_player_opponent, 100, Suit.HEARTS)
+        contract = _contract(ai_player_opponent, 100, Suit.HEARTS)
 
         # Should play ace from the shortest suit (Diamonds or Spades)
         result = ai_player_with_tracking.choose_card(mock_trick, contract, sample_hand_mixed)
@@ -528,7 +539,7 @@ class TestAiPlayerTrickTaking:
             Card(Suit.HEARTS, Rank.ACE),
             Card(Suit.DIAMONDS, Rank.EIGHT)
         ])
-        contract = (ai_player_with_tracking, 100, Suit.SPADES)
+        contract = _contract(ai_player_with_tracking, 100, Suit.SPADES)
 
         # Mark some cards as fallen to simulate non-opening trick
         ai_player_with_tracking._fallen_cards[Suit.HEARTS].add(Rank.KING)
@@ -547,7 +558,7 @@ class TestAiPlayerTrickTaking:
             Card(Suit.DIAMONDS, Rank.ACE),
             Card(Suit.CLUBS, Rank.SEVEN)
         ])
-        contract = (ai_player_with_tracking, 100, Suit.SPADES)
+        contract = _contract(ai_player_with_tracking, 100, Suit.SPADES)
 
         # Mark some cards as fallen
         ai_player_with_tracking._fallen_cards[Suit.HEARTS].add(Rank.KING)
@@ -575,7 +586,7 @@ class TestAiPlayerTrickTaking:
         ai_player_with_tracking._is_team_winning_trick = lambda t: True
 
         playable_cards = [Card(Suit.HEARTS, Rank.KING), Card(Suit.HEARTS, Rank.TEN), Card(Suit.HEARTS, Rank.EIGHT)]
-        result = ai_player_with_tracking.choose_card(mock_trick, (ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
+        result = ai_player_with_tracking.choose_card(mock_trick, _contract(ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
 
         # Should play the highest point card (King or 10)
         assert result.suit == Suit.HEARTS
@@ -597,7 +608,7 @@ class TestAiPlayerTrickTaking:
         ai_player_with_tracking._is_team_winning_trick = lambda t: False
 
         playable_cards = [Card(Suit.HEARTS, Rank.ACE), Card(Suit.HEARTS, Rank.EIGHT)]
-        result = ai_player_with_tracking.choose_card(mock_trick, (ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
+        result = ai_player_with_tracking.choose_card(mock_trick, _contract(ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
 
         # Should play Ace to beat King
         assert result.rank == Rank.ACE
@@ -619,7 +630,7 @@ class TestAiPlayerTrickTaking:
         ai_player_with_tracking._is_team_winning_trick = lambda t: False
 
         playable_cards = [Card(Suit.HEARTS, Rank.JACK), Card(Suit.HEARTS, Rank.EIGHT)]
-        result = ai_player_with_tracking.choose_card(mock_trick, (ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
+        result = ai_player_with_tracking.choose_card(mock_trick, _contract(ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
 
         # Should play the lowest card (8)
         assert result.rank == Rank.EIGHT
@@ -642,7 +653,7 @@ class TestAiPlayerTrickTaking:
         ai_player_with_tracking._can_trump_win = lambda card, trick, trump: card.rank == Rank.JACK
 
         playable_cards = [Card(Suit.SPADES, Rank.JACK), Card(Suit.SPADES, Rank.NINE), Card(Suit.DIAMONDS, Rank.EIGHT)]
-        result = ai_player_with_tracking.choose_card(mock_trick, (ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
+        result = ai_player_with_tracking.choose_card(mock_trick, _contract(ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
 
         # Should trump with Jack (lowest winning trump)
         assert result.suit == Suit.SPADES
@@ -666,7 +677,7 @@ class TestAiPlayerTrickTaking:
         ai_player_with_tracking._is_master_card = lambda card, trump: False
 
         playable_cards = [Card(Suit.DIAMONDS, Rank.SEVEN), Card(Suit.CLUBS, Rank.QUEEN), Card(Suit.CLUBS, Rank.JACK), Card(Suit.CLUBS, Rank.TEN)]
-        result = ai_player_with_tracking.choose_card(mock_trick, (ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
+        result = ai_player_with_tracking.choose_card(mock_trick, _contract(ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
 
         # Should discard lowest from the shortest suit
         assert result.rank == Rank.SEVEN  # Lowest point card
