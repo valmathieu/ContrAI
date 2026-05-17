@@ -39,9 +39,9 @@ package "model/player.py" as p_player {
         + {abstract} choose_card(trick, contract, playable_cards) : Card
     }
 
-    class HumanPlayer #EEEEEE {
-        + choose_bid(current_bids) : None  <<stub>>
-        + choose_card(trick, contract, playable_cards) : None  <<stub>>
+    class HumanPlayer {
+        + choose_bid(current_bids) : None  <<no-op>>
+        + choose_card(trick, contract, playable_cards) : None  <<no-op>>
     }
 
     class AiPlayer {
@@ -77,10 +77,11 @@ package "model/player.py" as p_player {
     end note
 
     note bottom of HumanPlayer
-      Stub today: `choose_bid` / `choose_card`
-      return **None**. Real implementation
-      will route through CliView once that
-      view is wired up.
+      ``choose_bid`` / ``choose_card`` return
+      **None** by design. Human input is
+      serviced by **RichView** through the
+      ``view.request_*_action`` hooks Round
+      calls when ``player.is_human``.
     end note
 }
 
@@ -139,11 +140,17 @@ package "model/round.py" as p_round {
       `_determine_trick_winner` duplicates
       `Trick.get_winner()` from contrai-core
       (open question: pick one).
+      ----
+      After each trick, Round calls
+      ``view.on_trick_complete(trick, winner,
+      self)`` if the view declares the hook
+      (``hasattr``-guarded so non-Rich
+      callers stay unaffected).
     end note
 }
 
 ' =========================================================
-' controller/ & view/ — both stubs today
+' controller/ — still a stub today
 ' =========================================================
 package "controller/" as p_ctrl {
     class GameController <<stub>> #EEEEEE {
@@ -158,20 +165,82 @@ package "controller/" as p_ctrl {
     note right of GameController
       **Stub.** References undefined `pygame`;
       no integration with Game / Round.
-      Not wired today.
+      Open question (CLAUDE.md §10): keep
+      for a future GUI path, or delete now
+      that the Rich CLI handles input/output?
     end note
 }
 
-package "view/" as p_view {
-    class CliView <<stub>> #EEEEEE {
+' =========================================================
+' view/ — live Rich terminal UI
+' =========================================================
+package "view/rich_view.py" as p_view {
+    class RoundSummary <<dataclass>> {
+        + round_number : int
+        + contract : Contract?
+        + contract_team_name : str?
+        + contract_made : bool
+        + ns_pts : int
+        + ew_pts : int
+        + running_ns : int
+        + running_ew : int
     }
 
-    note right of CliView
-      **Empty file.** Round / Game pass
-      `view=None` in practice; the
-      `view.request_bid_action` /
-      `view.request_card_action` branches
-      in Round are guarded but unreachable.
+    class RichView {
+        + console : rich.Console
+        + target_score : int
+        + history : list<RoundSummary>
+        + last_completed_trick : (Trick, Player)?
+        + game : Game?
+        --
+        + attach(game, target_score) : None
+        + reset_for_rematch() : None
+        --
+        ' Engine hooks
+        + request_bid_action(player, legacy_bids) : str | tuple
+        + request_card_action(player, trick, contract, playable) : Card
+        + on_trick_complete(trick, winner, round_) : None
+        + on_round_complete(round_, running_scores) : None
+        --
+        ' CLI flow screens
+        + show_landing(selected_target=1500) : int
+        + show_end_game(status) : str  ('n' | 'r' | 'q')
+    }
+
+    note right of RichView
+      Five-screen UI: landing, bidding,
+      mid-trick, trick-won, end-game.
+      Per-round summaries tracked here
+      (`history`) so Game stays UI-free.
+      ----
+      Pure helpers (parsers, sorter,
+      current-winner, hint) live at
+      module scope and are covered by
+      `tests/test_view/test_rich_view.py`.
+      Rendering panels are validated by
+      `uv run contrai` smoke testing.
+    end note
+}
+
+' =========================================================
+' cli.py — `contrai` console-script entry point
+' =========================================================
+package "cli.py" as p_cli {
+    class "main()" as Cli <<module>> #FFEFD9 {
+        + main() : None
+        --
+        - _build_game() : Game
+        --
+        Drives landing → game loop →
+        end-game; routes `n`/`r`/`q`.
+    }
+
+    note right of Cli
+      Hardcoded seating: South =
+      `HumanPlayer`, N/E/W = `AiPlayer`
+      (medium). TODO marker for a
+      future seat picker on the landing
+      screen.
     end note
 }
 
@@ -198,8 +267,11 @@ Round "1" o-- "0..1" "Contract" : contract
 Round "1" o-- "1" "Deck" : deck
 Round "1" o-- "4" Player : players_order
 
-' MVC wiring (currently broken / unwired — dashed)
-GameController ..> Game : <<would drive>>
-Round ..> CliView : <<would consult\nfor human input>>
+' MVC wiring
+GameController ..> Game : <<would drive\n(stub)>>
+Round ..> RichView : <<consults for\nhuman input + hooks>>
+Cli ..> Game : <<owns game loop>>
+Cli ..> RichView : <<owns view\n+ screens>>
+RichView "1" *-- "0..N" RoundSummary : history
 
 @enduml

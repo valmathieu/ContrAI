@@ -52,14 +52,17 @@ package "contrai-engine\n(MVC + game loop)" as P_engine {
     class "Round"       as E_round    #FFEFD9
 
     class "GameController" as E_ctrl  #EEEEEE
-    class "CliView"        as E_view  #EEEEEE
+    class "RichView"       as E_view  #FFEFD9
+    class "cli.py"         as E_cli   #FFEFD9
 
     E_player <|-- E_human
     E_player <|-- E_ai
     E_game *-- E_round
     E_game *-- E_player
-    E_ctrl ..> E_game : <<would drive>>
-    E_round ..> E_view : <<would consult>>
+    E_ctrl ..> E_game : <<would drive\n(stub)>>
+    E_round ..> E_view : <<consults\nvia hooks>>
+    E_cli ..> E_game : <<owns loop>>
+    E_cli ..> E_view : <<owns screens>>
 }
 
 ' =========================================================
