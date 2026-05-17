@@ -227,3 +227,32 @@ class TestCardIntegration:
         # Queen: 4 normal, 2 trump (becomes lower)
         assert queen.get_order(Suit.HEARTS) == 4
         assert queen.get_order(Suit.SPADES) == 2
+
+
+class TestCardStringRepresentations:
+    """Test __str__ and __repr__ output formats."""
+
+    def test_str_uses_suit_symbol(self, sample_cards):
+        # Jack of Spades → "Jack♠"
+        assert str(sample_cards['spade_jack']) == "Jack♠"
+        assert str(sample_cards['heart_ace']) == "Ace♥"
+        assert str(sample_cards['diamond_9']) == "9♦"
+        assert str(sample_cards['club_king']) == "King♣"
+
+    def test_str_uses_rank_display_value(self):
+        # Rank.TEN.value is "10" — make sure str doesn't show "TEN".
+        assert str(Card(Suit.HEARTS, Rank.TEN)) == "10♥"
+        assert str(Card(Suit.SPADES, Rank.SEVEN)) == "7♠"
+
+    def test_repr_is_debuggable(self, sample_cards):
+        card = sample_cards['spade_jack']
+        # __repr__ uses enum repr — assert the key identifying bits are
+        # present rather than pinning the full enum repr format.
+        text = repr(card)
+        assert "Card(" in text
+        assert "SPADES" in text
+        assert "JACK" in text
+
+    def test_suit_symbol_table_covers_all_physical_suits(self):
+        for suit in (Suit.SPADES, Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS):
+            assert suit in Card.SUIT_SYMBOLS

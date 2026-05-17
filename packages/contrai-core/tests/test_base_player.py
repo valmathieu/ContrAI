@@ -36,3 +36,14 @@ def test_two_players_have_independent_hands():
     p2 = BasePlayer("P2", "South")
     p1.hand.append("card_for_p1")
     assert len(p2.hand) == 0
+
+
+def test_all_table_positions_construct():
+    """The four documented positions are all valid construction arguments.
+
+    AiPlayer._get_partner_position relies on exactly these four strings,
+    so any drift here would silently break partner lookup.
+    """
+    for position in ("North", "South", "East", "West"):
+        player = BasePlayer("Anon", position)
+        assert player.position == position
