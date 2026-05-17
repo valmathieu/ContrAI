@@ -1,7 +1,33 @@
-# Virtual uv workspace — members live under packages/.
-# Each member declares its own [project] table and dependencies.
+[project]
+name = "contrai-workspace"
+version = "0.0.0"
+description = "AI for the French card game Contrée"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "contrai-core[test]",
+    "contrai-engine[test]",
+    "contrai-analyzer",
+    "contrai-scraper",
+]
+
+[dependency-groups]
+docs = [
+    "mkdocs-material",
+    "mkdocstrings[python]",
+    "mkdocs-mermaid2-plugin",
+    "plantuml-markdown",
+    "mkdocs-static-i18n",
+]
+
+[tool.uv]
+default-groups = ["docs"]
+
 [tool.uv.workspace]
 members = ["packages/*"]
 
 [tool.uv.sources]
 contrai-core = { workspace = true }
+contrai-engine = { workspace = true }
+contrai-analyzer = { workspace = true }
+contrai-scraper = { workspace = true }
