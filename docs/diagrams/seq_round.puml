@@ -28,13 +28,18 @@ skinparam note {
     FontColor #5F4B00
 }
 
-actor "caller" as C
+actor "caller\n(cli.py | tests)" as C
 participant "Game" as G <<engine>>
 participant "Round" as R <<engine>>
 participant "Deck" as D <<from contrai-core>> #E1F0FF
 participant "Player\n(per turn)" as P <<engine>>
 
-C -> G : manage_round(view=None)
+C -> G : manage_round(view)
+note right of G
+  `view` is typically a **RichView**
+  (passed by `cli.py`); tests and
+  headless callers can pass `None`.
+end note
 activate G
 
 == Setup — start_new_round() ==
@@ -94,9 +99,12 @@ G --> C : { contract, scores, total_scores,\n  message: "Round completed" }
 deactivate G
 
 note over C, P
-  Caller typically loops `manage_round` then `check_game_over(target=1500)`
+  Caller typically loops `manage_round` then `check_game_over(target)`
   until a team crosses the target. Game ↔ Round delegation:
-  Game owns the loop; Round owns one round's lifecycle.
+  Game owns the loop; Round owns one round's lifecycle. The CLI
+  (`cli.py`) additionally calls `view.on_round_complete(...)` after
+  each `manage_round` so the end-game scoreboard table fills in
+  view-side without `Game` carrying UI state.
 end note
 
 @enduml

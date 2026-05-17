@@ -33,7 +33,7 @@ participant "Trick" as T <<from contrai-core>> #E1F0FF
 participant "Player" as P <<engine>>
 participant "Hand" as H <<from contrai-core>> #E1F0FF
 participant "Deck" as D <<from contrai-core>> #E1F0FF
-participant "CliView" as V <<stub>> #EEEEEE
+participant "RichView" as V <<engine>>
 
 [-> R : play_trick(view)
 activate R
@@ -74,11 +74,13 @@ loop **for player in trick_order**  (×4)
     alt view ≠ None AND player.is_human
         R -->> V : view.request_card_action(player,\n  current_trick, contract, playable_cards)
         note right of V
-          **<<not implemented>>** —
-          CliView is an empty file
-          today, branch unreachable.
+          RichView renders the
+          mid-trick screen, parses
+          the human's card-number
+          input, and returns the
+          chosen Card.
         end note
-        V -->> R : (overrides card)
+        V -->> R : Card
     end
 
     alt card ∈ playable_cards AND card ∈ player.hand
@@ -109,6 +111,21 @@ R -> T : current_trick.get_plays()
 T --> R : list<(Player, Card)>
 R -> R : trick_cards = [card for _, card in plays]\ntrick_cards.reverse()  (last played → first back in)
 R -> D : deck.add_cards(trick_cards)
+
+== View callback (gated on hasattr) ==
+
+alt view ≠ None AND hasattr(view, 'on_trick_complete')
+    R -->> V : view.on_trick_complete(\n  current_trick, winner, self\n)
+    note right of V
+      RichView renders the
+      **trick-won** screen with
+      all four cards revealed
+      and the winner highlighted,
+      then blocks on "Press
+      [Enter] to continue…".
+    end note
+    V -->> R : (returns)
+end
 
 [<-- R : return winner  (Player)
 deactivate R

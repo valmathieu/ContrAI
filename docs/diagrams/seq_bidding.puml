@@ -32,7 +32,7 @@ participant "Round" as R <<engine>>
 participant "Player" as P <<engine>>
 participant "BidValidator" as BV <<from contrai-core>> #E1F0FF
 participant "Contract" as CT <<from contrai-core>> #E1F0FF
-participant "CliView" as V <<stub>> #EEEEEE
+participant "RichView" as V <<engine>>
 
 [-> R : manage_bidding(view)
 activate R
@@ -55,12 +55,16 @@ loop **while True** (outer)
         alt view ≠ None AND player.is_human
             R -->> V : view.request_bid_action(player, legacy_bids)
             note right of V
-              **<<not implemented>>** —
-              CliView is an empty file
-              today, so this branch is
-              guarded but unreachable.
+              RichView renders the
+              bidding screen, parses
+              the human's string
+              (`pass`, `80 h`,
+              `coinche`/`double`,
+              `surcoinche`/`redouble`,
+              …), and loops on
+              parse errors.
             end note
-            V -->> R : (overrides bid_choice)
+            V -->> R : 'Pass' | 'Double' | 'Redouble' | (value, suit)
         end
 
         R -> R : bid_obj = _create_bid_from_choice(\n  player, bid_choice\n)\n→ PassBid / DoubleBid / RedoubleBid\n   / ContractBid / PassBid (on ValueError)
