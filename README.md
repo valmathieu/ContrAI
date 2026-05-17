@@ -30,3 +30,12 @@ uv run --package contrai-analyzer streamlit run main.py
 ## Documentation
 
 See [`docs/`](docs/) for the architecture overview, per-package documentation, and diagram sources (PlantUML for sequence/class diagrams, Mermaid for everything else).
+
+## Docs site
+
+The narrative docs and per-package API reference are published with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/).
+
+```bash
+uv run mkdocs serve   # live preview at http://127.0.0.1:8000
+uv run mkdocs build   # render the static site into site/ (gitignored)
+```

@@ -1,0 +1,43 @@
+/* ContrAI — card-table palette */
+
+:root {
+  --md-primary-fg-color:              #1A1A1A;
+  --md-primary-fg-color--light:       #2E2E2E;
+  --md-primary-fg-color--dark:        #000000;
+  --md-default-bg-color:              #FAFAFA;
+  --md-accent-fg-color:               #B22234;
+  --md-accent-fg-color--transparent:  rgba(178, 34, 52, 0.10);
+  --md-typeset-a-color:               #B22234;
+  --contrai-green:                    #0F5132;
+  --contrai-green-soft:               rgba(15, 81, 50, 0.08);
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color:              #0F0F0F;
+  --md-primary-fg-color--light:       #1A1A1A;
+  --md-primary-fg-color--dark:        #000000;
+  --md-default-bg-color:              #121212;
+  --md-accent-fg-color:               #D63E50;
+  --md-accent-fg-color--transparent:  rgba(214, 62, 80, 0.15);
+  --md-typeset-a-color:               #D63E50;
+  --contrai-green:                    #2D8C66;
+  --contrai-green-soft:               rgba(45, 140, 102, 0.12);
+}
+
+.md-typeset pre > code {
+  border-left: 3px solid var(--contrai-green);
+}
+
+.md-typeset blockquote {
+  border-left: 3px solid var(--contrai-green);
+  color: var(--md-default-fg-color--light);
+}
+
+.md-typeset table:not([class]) th {
+  background-color: var(--contrai-green-soft);
+  border-bottom: 2px solid var(--contrai-green);
+}
+
+::selection {
+  background-color: var(--md-accent-fg-color--transparent);
+}
