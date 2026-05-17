@@ -125,12 +125,14 @@ class ContractBid(Bid):
         if last_contract is None:
             return True  # First contract bid is always valid
 
-        # Capot is always higher than any numeric bid
+        # Nothing outranks a prior Capot — must be checked before the
+        # "self is Capot" shortcut, otherwise Capot-over-Capot would slip through.
+        if last_contract.value == 'Capot':
+            return False
+
+        # Capot outranks any numeric bid.
         if self.value == 'Capot':
             return True
-
-        if last_contract.value == 'Capot':
-            return False  # Cannot bid higher than Capot
 
         # Compare numeric values
         return self.value > last_contract.value
@@ -250,12 +252,18 @@ class RedoubleBid(Bid):
                 has_redouble = True
                 break
             elif isinstance(bid, DoubleBid):
+                # Found the DoubleBid we'd be redoubling; keep scanning
+                # backwards for the ContractBid that established the contract.
                 has_double = True
-                break
             elif isinstance(bid, PassBid):
-                passes_since_double += 1
+                # Only passes that appear after the double (chronologically)
+                # close the redouble window. In reversed iteration that's
+                # passes encountered *before* we see the DoubleBid.
+                if not has_double:
+                    passes_since_double += 1
             elif isinstance(bid, ContractBid):
                 contract_player = bid.player
+                break
 
         if not has_double or has_redouble or contract_player is None:
             return False
