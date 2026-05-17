@@ -550,7 +550,7 @@ class AiPlayer(Player):
         """Play when our team is currently winning the trick."""
 
         trump_suit = contract[2] if contract else None
-        led_suit = trick[1][0].suit
+        led_suit = trick.get_led_suit()
 
         # Try to follow suit with the highest point card
         same_suit_cards = [c for c in playable_cards if c.suit == led_suit]
@@ -568,7 +568,7 @@ class AiPlayer(Player):
         """Play when opponents are currently winning the trick."""
 
         trump_suit = contract[2] if contract else None
-        led_suit = trick[1][0].suit
+        led_suit = trick.get_led_suit()
         current_best = self._get_strongest_card_in_trick(trick, trump_suit)
 
         # Try to follow suit
@@ -693,7 +693,7 @@ class AiPlayer(Player):
         strongest_card = self._get_strongest_card_in_trick(trick, trump_suit)
 
         # Find which player played the strongest card
-        for player, card in trick:
+        for player, card in trick.get_plays():
             if card == strongest_card:
                 return player.position
 
@@ -706,20 +706,21 @@ class AiPlayer(Player):
         if not trick:
             return None
 
-        led_suit = trick[1][0].suit
+        led_suit = trick.get_led_suit()
+        cards = trick.get_cards()
 
         # Trump cards beat non-trump (unless led suit is trump)
         if led_suit != trump_suit:
-            trump_cards = [c for c in trick.cards if c.suit == trump_suit]
+            trump_cards = [c for c in cards if c.suit == trump_suit]
             if trump_cards:
                 return max(trump_cards, key=lambda c: c.get_order(trump_suit))
 
         # Among cards of led suit
-        led_suit_cards = [c for c in trick.cards if c.suit == led_suit]
+        led_suit_cards = [c for c in cards if c.suit == led_suit]
         if led_suit_cards:
             return max(led_suit_cards, key=lambda c: c.get_order(trump_suit if led_suit == trump_suit else None))
 
-        return trick.cards[0]
+        return cards[0]
 
     @staticmethod
     def _is_stronger_card(card, current_best, trump_suit):

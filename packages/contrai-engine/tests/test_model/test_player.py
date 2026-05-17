@@ -457,12 +457,33 @@ class TestAiPlayerTrickTaking:
 
     @pytest.fixture
     def mock_trick(self):
-        """Create a mock trick object"""
+        """Create a mock trick object.
+
+        Mirrors the subset of the real Trick API that AiPlayer consumes:
+        ``__len__`` (so empty-check works), ``get_led_suit`` and
+        ``get_cards`` (cards-only convenience for tests that don't care
+        about players), and ``get_plays`` (used by code paths that need
+        player identity — synthetic plays pair each card with ``None``,
+        which is sufficient because the only test exercising that path
+        mocks the methods that look at players).
+        """
         class MockTrick:
             def __init__(self):
                 self.cards = []
                 self.leader_position = 0
                 self.trump_suit = None
+
+            def __len__(self):
+                return len(self.cards)
+
+            def get_cards(self):
+                return list(self.cards)
+
+            def get_led_suit(self):
+                return self.cards[0].suit if self.cards else None
+
+            def get_plays(self):
+                return [(None, card) for card in self.cards]
         return MockTrick()
 
     @pytest.fixture
@@ -725,13 +746,13 @@ class TestAiPlayerTrickTaking:
 
         # Mock partner position and strongest card detection
         ai_player_with_tracking._get_partner_position = lambda: 1  # Partner at position 1
-        ai_player_with_tracking._get_strongest_card_position = lambda t: 1  # Position 1 winning
+        ai_player_with_tracking._get_strongest_card_position = lambda t, ts: 1  # Position 1 winning
 
         result = ai_player_with_tracking._is_team_winning_trick(mock_trick)
         assert result is True
 
         # Change winning position to opponent
-        ai_player_with_tracking._get_strongest_card_position = lambda t: 2  # Position 2 winning
+        ai_player_with_tracking._get_strongest_card_position = lambda t, ts: 2  # Position 2 winning
 
         result = ai_player_with_tracking._is_team_winning_trick(mock_trick)
         assert result is False
