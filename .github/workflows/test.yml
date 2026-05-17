@@ -1,0 +1,57 @@
+name: tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel stale runs when you push new commits to the same PR/branch.
+# Saves CI minutes and gives you a faster signal on the latest code.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest (${{ matrix.package }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      # Don't abort the whole matrix if one package fails;
+      # you want to see which packages broke independently.
+      fail-fast: false
+      matrix:
+        package:
+          - contrai-core
+          - contrai-engine
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          # Invalidate the cache when the lockfile changes.
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        # No arg = uv reads requires-python / .python-version
+        # and installs the matching interpreter (3.14 for ContrAI).
+        run: uv python install
+
+      - name: Sync workspace
+        # --all-packages installs every workspace member, including
+        # dev dependencies. Needed because contrai-engine depends on
+        # contrai-core in editable mode within the workspace.
+        run: uv sync --all-packages --all-extras
+
+      - name: Run pytest
+        # --package scopes the run to one workspace member, so we get
+        # a clean per-package status check in the PR UI.
+        run: uv run --package ${{ matrix.package }} pytest
