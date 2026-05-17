@@ -9,3 +9,10 @@ dependencies = [
     "nest-asyncio>=1.6.0",
     "playwright>=1.57.0",
 ]
+
+# contrai-scraper currently ships only entry-point scripts (main.py, run.py) at
+# the package root and exposes no importable Python module. Declaring an empty
+# module list keeps setuptools' flat-layout discovery from choking on the two
+# top-level .py files. Revisit once the scraper grows a real package under src/.
+[tool.setuptools]
+py-modules = []
