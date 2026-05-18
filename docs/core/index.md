@@ -11,7 +11,7 @@ Source lives at `packages/contrai-core/src/contrai_core/`:
 | `types.py`      | `Suit`, `Rank` enums and the `CARD_SUITS` tuple                                |
 | `card.py`       | `Card`                                                                         |
 | `deck.py`       | `Deck`                                                                         |
-| `hand.py`       | `Hand` (list-compatible API + query helpers)                                   |
+| `hand.py`       | `Hand` (list-compatible API including `copy()` + query helpers)                |
 | `team.py`       | `Team`                                                                         |
 | `player.py`     | `BasePlayer` (engine `Player` extends it)                                      |
 | `bid.py`        | `Bid`, `PassBid`, `ContractBid`, `DoubleBid`, `RedoubleBid`, `BidValidator`    |
@@ -43,6 +43,7 @@ The full domain model in one view. Note `Contract.get_defending_team()` is annot
 
 ## Tests
 
-Present: `test_card.py`, `test_deck.py`, `test_hand.py`, `test_team.py`, `test_base_player.py`.
+Coverage is now complete across every module:
+`test_types.py`, `test_card.py`, `test_deck.py`, `test_hand.py`, `test_team.py`, `test_base_player.py`, `test_bid.py`, `test_contract.py`, `test_trick.py`, `test_exceptions.py`.
 
-> Backfill needed (per `CLAUDE.md` §10): `Bid` / `Contract` / `Trick` shipped without pytest coverage and still need tests.
+The earlier `CLAUDE.md` §10 backfill note (Bid / Contract / Trick) is closed. The remaining engine-side gap is `Round` — see [`engine/index.md`](../engine/index.md#open-work).
