@@ -391,90 +391,122 @@ class Round:
 
     def _get_playable_cards(self, player: 'Player'):
         """
-        Determine which cards a player can legally play based on the current trick and contract rules.
+        Determine which cards a player can legally play.
+
+        Implements the rules from contree-domain.md §6.2-§6.3:
+            1. Follow the led suit if you can.
+            2. When trump is led, you must additionally over-trump if you
+               hold a higher trump than the highest already on the table
+               (§6.3).
+            3. When you cannot follow suit and your partner is *not*
+               currently master of the trick, you must trump. If an
+               opponent has already trumped, you must over-trump if able;
+               otherwise play any trump.
+            4. Partner-master exception: if your partner is currently
+               winning the trick, you may discard freely — no obligation
+               to trump or over-trump (§6.2 rule 4).
+            5. Otherwise (no trump in your hand, or no trump suit) any
+               card may be discarded.
 
         Args:
-            player: The player whose playable cards we want to determine
+            player: The player whose playable cards we want to determine.
 
         Returns:
-            list: List of cards that can be legally played
-
-        Rules:
-        1. Must follow suit if possible
-        2. If can't follow suit and partner is not leading, must trump if possible
-        3. If opponent already trumped, must play higher trump if possible
-        4. If can't follow suit or trump, can play any card (discard)
-        5. If partner is leading the trick, no obligation to trump when can't follow suit
+            list: List of cards that can be legally played.
         """
         if not player.hand:
             return []
 
-        # If no cards played yet in trick, any card is playable
         trump_suit = self.contract.suit if self.contract else None
         if not self.current_trick or not hasattr(self.current_trick, 'get_plays'):
             return player.hand.copy()
 
         plays = self.current_trick.get_plays()
         if not plays:
+            # First to play in this trick — anything goes.
             return player.hand.copy()
 
-        lead_suit = plays[0][1].suit  # First card played in trick
-
-        # Cards of the lead suit in player's hand
+        lead_suit = plays[0][1].suit
         lead_suit_cards = [card for card in player.hand if card.suit == lead_suit]
+        trump_cards = (
+            [card for card in player.hand if card.suit == trump_suit]
+            if trump_suit
+            else []
+        )
 
-        # If player has cards of the lead suit, must play one
+        # Rule 1 — follow suit. Special-case rule 2 (over-trump when trump
+        # is led): the player MUST go higher than the best trump on the
+        # table if they hold one; only fall back to lower trumps when no
+        # higher trump exists.
         if lead_suit_cards:
+            if trump_suit and lead_suit == trump_suit:
+                higher = self._higher_trumps_than_played(lead_suit_cards, plays, trump_suit)
+                return higher if higher else lead_suit_cards
             return lead_suit_cards
 
-        # Player doesn't have lead suit, check if partner is leading
+        # Rule 4 — partner exemption. Currently keyed on the *leader* of
+        # the trick (legacy behaviour); commit 3 switches this to the
+        # *current master* per contree-domain.md §6.2 rule 4.
         trick_leader = plays[0][0]
-        player_team = player.team
-        partner_is_leading = trick_leader.team == player_team
-
-        # If partner is leading, no obligation to trump - can play any card
-        if partner_is_leading:
+        if trick_leader.team == player.team:
             return player.hand.copy()
 
-        # Partner is not leading, check trump obligations
+        # No trump suit, or led suit is trump (and we have none — already
+        # handled above when we have some): nothing to over-trump, free discard.
         if not trump_suit or lead_suit == trump_suit:
-            # No trump suit or lead suit is trump, can play any card
             return player.hand.copy()
 
-        # Check if opponent has already played trump
-        trump_cards = [card for card in player.hand if card.suit == trump_suit]
-
-        # Get highest trump played so far by opponents
-        highest_opponent_trump = None
-        player_team = player.team
-
-        for trick_player, card in plays:
-            if (card.suit == trump_suit and
-                trick_player.team != player_team):
-                if (highest_opponent_trump is None or
-                    card.get_order(trump_suit) > highest_opponent_trump.get_order(trump_suit)):
-                    highest_opponent_trump = card
-
-        if highest_opponent_trump:
-            # Opponent has trumped, must play higher trump if possible
-            higher_trumps = [card for card in trump_cards
-                           if card.get_order(trump_suit) > highest_opponent_trump.get_order(trump_suit)]
+        # Trump obligations apply. If any opponent trumped, must beat them.
+        highest_opponent_trump = self._highest_opponent_trump(plays, player.team, trump_suit)
+        if highest_opponent_trump is not None:
+            higher_trumps = [
+                card for card in trump_cards
+                if card.get_order(trump_suit) > highest_opponent_trump.get_order(trump_suit)
+            ]
             if higher_trumps:
                 return higher_trumps
-            elif trump_cards:
-                # Must trump even if can't go higher
-                return trump_cards
-            else:
-                # No trump cards, can discard any card
-                return player.hand.copy()
-        else:
-            # No opponent trump yet
             if trump_cards:
-                # Must trump if has trump cards
                 return trump_cards
-            else:
-                # No trump cards, can discard any card
-                return player.hand.copy()
+            return player.hand.copy()
+
+        # No opponent trump yet but partner is not master either → must
+        # trump if able.
+        if trump_cards:
+            return trump_cards
+        return player.hand.copy()
+
+    @staticmethod
+    def _higher_trumps_than_played(trumps_in_hand, plays, trump_suit):
+        """Return the subset of *trumps_in_hand* that beat every trump in *plays*.
+
+        Used by the over-trump rule when the led suit is itself trump.
+        Returns an empty list if no trump has been played to the trick
+        yet (logically impossible here, but kept defensive) or if no
+        trump in hand beats the current best.
+        """
+        best_so_far = None
+        for _, card in plays:
+            if card.suit != trump_suit:
+                continue
+            if best_so_far is None or card.get_order(trump_suit) > best_so_far.get_order(trump_suit):
+                best_so_far = card
+        if best_so_far is None:
+            return []
+        return [
+            c for c in trumps_in_hand
+            if c.get_order(trump_suit) > best_so_far.get_order(trump_suit)
+        ]
+
+    @staticmethod
+    def _highest_opponent_trump(plays, player_team, trump_suit):
+        """Return the highest trump played by an opponent of *player_team*, or None."""
+        highest = None
+        for trick_player, card in plays:
+            if card.suit != trump_suit or trick_player.team == player_team:
+                continue
+            if highest is None or card.get_order(trump_suit) > highest.get_order(trump_suit):
+                highest = card
+        return highest
 
     def _determine_trick_winner(self, trick: Trick) -> Optional['Player']:
         """
