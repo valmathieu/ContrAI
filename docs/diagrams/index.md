@@ -66,3 +66,4 @@ Each row links to the canonical `.puml` source, the rendered `.png` preview, and
 | `seq_bidding.puml`     | Sequence | Bidding cycle zoom   | [source](seq_bidding.puml)            | [png](seq_bidding.png)               | [Engine — bidding cycle zoom](../engine/#round-lifecycle)  |
 | `seq_trick.puml`       | Sequence | Single trick zoom    | [source](seq_trick.puml)              | [png](seq_trick.png)                 | [Engine — single trick zoom](../engine/#round-lifecycle)   |
 | `seq_scraper.puml`     | Sequence | contrai-scraper      | [source](seq_scraper.puml)            | [png](seq_scraper.png)               | [Scraper overview](../scraper/#current-flow-v1)            |
+| `state_cli_screens.mmd`| State    | RichView screen flow | [source](state_cli_screens.mmd)       | [png](state_cli_screens.png)         | [Engine — CLI](../engine/#cli)                             |
