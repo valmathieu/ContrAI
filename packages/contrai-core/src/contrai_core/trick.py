@@ -87,21 +87,48 @@ class Trick:
 
     def get_winner(self) -> Optional[Player]:
         """
-        Determine the winner of this trick.
+        Determine the winner of this trick using ``self.trump_suit``.
+
+        Convenience wrapper around :meth:`get_current_winner` for callers
+        that bound the trump suit at construction time. Both methods are
+        identical when ``self.trump_suit`` is set; pass a trump explicitly
+        when the trump is known at call time instead (the engine creates
+        ``Trick()`` without binding trump, and the contract carries the
+        authoritative trump suit).
 
         Returns:
-            Player who won the trick, or None if trick is empty
+            Player who won the trick, or None if trick is empty.
+        """
+        return self.get_current_winner(self.trump_suit)
+
+    def get_current_winner(self, trump_suit: Optional[str] = None) -> Optional[Player]:
+        """
+        Return the player currently winning this (possibly partial) trick.
+
+        Works on incomplete tricks — useful while a trick is being played
+        for legality checks (e.g. *partner is currently master*) and view
+        rendering (live winner highlight). Pass ``trump_suit`` explicitly
+        when the trick was constructed without one.
+
+        Args:
+            trump_suit: The trump suit to evaluate against. If ``None``, no
+                suit is trump (every trump-related branch reduces to the
+                follow-suit rule).
+
+        Returns:
+            Player who is currently winning, or None if no card has been
+            played yet.
         """
         if not self.plays:
             return None
 
-        lead_suit = self.get_led_suit()
+        lead_suit = self.plays[0][1].suit
         best_player = self.plays[0][0]
         best_card = self.plays[0][1]
-        best_is_trump = self.trump_suit and best_card.suit == self.trump_suit
+        best_is_trump = trump_suit is not None and best_card.suit == trump_suit
 
         for player, card in self.plays[1:]:
-            card_is_trump = self.trump_suit and card.suit == self.trump_suit
+            card_is_trump = trump_suit is not None and card.suit == trump_suit
 
             if card_is_trump and not best_is_trump:
                 # Trump beats non-trump
@@ -109,8 +136,8 @@ class Trick:
                 best_card = card
                 best_is_trump = True
             elif card_is_trump and best_is_trump:
-                # Compare trump cards
-                if card.get_order(self.trump_suit) > best_card.get_order(self.trump_suit):
+                # Compare trump cards (Jack > 9 > Ace > 10 > King > Queen > 8 > 7)
+                if card.get_order(trump_suit) > best_card.get_order(trump_suit):
                     best_player = player
                     best_card = card
             elif not card_is_trump and not best_is_trump and card.suit == lead_suit:

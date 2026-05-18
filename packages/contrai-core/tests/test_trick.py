@@ -200,3 +200,56 @@ class TestTrickWinnerWithTrump:
         trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
         trick.add_play(east, Card(Suit.HEARTS, Rank.SEVEN))
         assert trick.get_winner() is north
+
+
+# ---------------------------------------------------------------------------
+# get_current_winner(trump_suit) — same logic but trump is passed explicitly
+# ---------------------------------------------------------------------------
+
+
+class TestTrickCurrentWinner:
+    def test_empty_returns_none(self):
+        assert Trick().get_current_winner(Suit.HEARTS) is None
+
+    def test_partial_trick_partner_still_master(self, north, east):
+        """Two cards in: lead Ace still beats follow-suit seven."""
+        trick = Trick()  # no trump bound at construction
+        trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
+        trick.add_play(east, Card(Suit.HEARTS, Rank.SEVEN))
+        assert trick.get_current_winner(Suit.SPADES) is north
+
+    def test_partial_trick_opponent_overtrumps_partner(
+        self, north, east
+    ):
+        """Partner (N) led the Ace of hearts; an opponent (E) trumped low
+        with the seven of spades. E is now master even though N's card
+        outranks it absolutely."""
+        trick = Trick()
+        trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
+        trick.add_play(east, Card(Suit.SPADES, Rank.SEVEN))
+        assert trick.get_current_winner(Suit.SPADES) is east
+
+    def test_uses_passed_trump_not_self_trump_suit(self, north, east):
+        """When ``trump_suit`` is passed, it overrides what was bound on
+        construction. Engine constructs Trick() without binding trump and
+        relies on the runtime call site."""
+        trick = Trick(trump_suit=Suit.HEARTS)  # would say HEARTS is trump
+        trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))  # would be trump
+        trick.add_play(east, Card(Suit.SPADES, Rank.SEVEN))
+        # Pass SPADES at call time — the seven of spades is now the only
+        # trump and wins.
+        assert trick.get_current_winner(Suit.SPADES) is east
+
+    def test_no_trump_argument_falls_back_to_lead_suit(self, north, east):
+        trick = Trick()
+        trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
+        trick.add_play(east, Card(Suit.SPADES, Rank.SEVEN))
+        # No trump: spade can't beat lead-suit ace.
+        assert trick.get_current_winner(None) is north
+
+    def test_higher_trump_takes_over(self, north, east, south):
+        trick = Trick()
+        trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))   # lead
+        trick.add_play(east, Card(Suit.SPADES, Rank.SEVEN))  # weak trump
+        trick.add_play(south, Card(Suit.SPADES, Rank.JACK))  # master trump
+        assert trick.get_current_winner(Suit.SPADES) is south

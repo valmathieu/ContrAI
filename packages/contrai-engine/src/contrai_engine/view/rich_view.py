@@ -183,23 +183,20 @@ def _sort_hand_for_display(cards: list[Card], trump_suit: Optional[Suit]) -> lis
 def _current_winner(
     plays: list[tuple[BasePlayer, Card]], trump_suit: Optional[Suit]
 ) -> Optional[BasePlayer]:
-    """Return the player currently winning the (possibly incomplete) trick."""
+    """Return the player currently winning the (possibly incomplete) trick.
+
+    Thin wrapper around :meth:`contrai_core.trick.Trick.get_current_winner`
+    that accepts a raw ``plays`` list (the shape ``_render_diamond`` already
+    uses) instead of forcing a Trick allocation at every render.
+    """
     if not plays:
         return None
-    lead_suit = plays[0][1].suit
-    best_player, best_card = plays[0]
-    best_is_trump = trump_suit is not None and best_card.suit == trump_suit
-    for player, card in plays[1:]:
-        card_is_trump = trump_suit is not None and card.suit == trump_suit
-        if card_is_trump and not best_is_trump:
-            best_player, best_card, best_is_trump = player, card, True
-        elif card_is_trump and best_is_trump:
-            if card.get_order(trump_suit) > best_card.get_order(trump_suit):
-                best_player, best_card = player, card
-        elif not card_is_trump and not best_is_trump and card.suit == lead_suit:
-            if card.get_order() > best_card.get_order():
-                best_player, best_card = player, card
-    return best_player
+    # Synthesize a minimal Trick for the delegate. Cheap: no game logic
+    # depends on the wrapper instance — only the plays list is read.
+    proxy = Trick()
+    for p, c in plays:
+        proxy.plays.append((p, c))
+    return proxy.get_current_winner(trump_suit)
 
 
 def _explain_constraint(
