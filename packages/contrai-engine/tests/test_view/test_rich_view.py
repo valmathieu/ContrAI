@@ -61,16 +61,27 @@ class TestParseBidInput:
         assert _parse_bid_input(raw) == "Pass"
 
     @pytest.mark.parametrize(
-        "raw", ["double", "d", "coinche", "contrée", "contree", "Coinche"]
+        "raw", ["double", "d", "Double", "DOUBLE", " double "]
     )
     def test_double_variants(self, raw):
         assert _parse_bid_input(raw) == "Double"
 
     @pytest.mark.parametrize(
-        "raw", ["redouble", "r", "surcoinche", "surcontrée", "surcontree"]
+        "raw", ["redouble", "r", "Redouble", "REDOUBLE", " redouble "]
     )
     def test_redouble_variants(self, raw):
         assert _parse_bid_input(raw) == "Redouble"
+
+    @pytest.mark.parametrize(
+        "raw",
+        ["coinche", "surcoinche", "contrée", "contree",
+         "surcontrée", "surcontree"],
+    )
+    def test_rejects_french_aliases(self, raw):
+        """The CLI uses the English vocabulary exclusively. The parser
+        used to accept the French aliases ``coinche`` / ``surcoinche`` /
+        ``contrée`` / ``surcontrée``; those have been retired."""
+        assert _parse_bid_input(raw) is None
 
     @pytest.mark.parametrize(
         "raw,value,suit",

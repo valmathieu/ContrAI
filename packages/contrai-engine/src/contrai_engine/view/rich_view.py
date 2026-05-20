@@ -87,8 +87,8 @@ TEAM_ABBR = {"North-South": "N-S", "East-West": "E-W"}
 
 # Bid keyword aliases for parsing.
 PASS_WORDS = {"pass", "p", "passe"}
-DOUBLE_WORDS = {"double", "d", "coinche", "contrée", "contree"}
-REDOUBLE_WORDS = {"redouble", "r", "surcoinche", "surcontrée", "surcontree"}
+DOUBLE_WORDS = {"double", "d"}
+REDOUBLE_WORDS = {"redouble", "r"}
 SUIT_ALIASES = {
     "s": Suit.SPADES, "spades": Suit.SPADES, "spade": Suit.SPADES, "♠": Suit.SPADES,
     "h": Suit.HEARTS, "hearts": Suit.HEARTS, "heart": Suit.HEARTS, "♥": Suit.HEARTS,
@@ -267,9 +267,9 @@ def _parse_bid_input(raw: str) -> Optional[str | tuple[int | str, Suit]]:
     """Parse a human bid string. Returns engine bid representation or None.
 
     Accepted forms:
-        pass / p           -> 'Pass'
-        coinche / double   -> 'Double'
-        surcoinche / r     -> 'Redouble'
+        pass / p / passe   -> 'Pass'
+        double / d         -> 'Double'
+        redouble / r       -> 'Redouble'
         "80 h" / "100 hearts" / "150nt" / "capot s" -> (value, Suit)
     """
     s = raw.strip().lower()
@@ -433,7 +433,7 @@ class RichView:
                 self.console.print(
                     Text(
                         "  ✗ Unrecognized bid. Try '80 h', 'pass', "
-                        "'coinche', 'surcoinche'.",
+                        "'double', 'redouble'.",
                         style=RED,
                     )
                 )
@@ -1165,16 +1165,16 @@ class RichView:
             if last_bid == "Pass":
                 t.append(f"{label} passed. ", style=FG)
             elif last_bid == "Double":
-                t.append(f"{label} coinched. ", style=f"bold {GOLD}")
+                t.append(f"{label} doubled. ", style=f"bold {GOLD}")
             elif last_bid == "Redouble":
-                t.append(f"{label} surcoinched. ", style=f"bold {GOLD}")
+                t.append(f"{label} redoubled. ", style=f"bold {GOLD}")
             elif isinstance(last_bid, tuple):
                 value, suit = last_bid
                 t.append(f"{label} bid {value} ", style=FG)
                 t.append(_suit_glyph(suit), style=_suit_color(suit))
                 t.append(". ", style=FG)
         t.append("Your bid? ", style=FG)
-        t.append("(e.g. '80 H' / 'pass' / 'coinche')", style=DIM)
+        t.append("(e.g. '80 H' / 'pass' / 'double')", style=DIM)
         return t
 
     def _card_prompt_text(
