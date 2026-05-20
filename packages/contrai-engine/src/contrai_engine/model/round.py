@@ -444,11 +444,13 @@ class Round:
                 return higher if higher else lead_suit_cards
             return lead_suit_cards
 
-        # Rule 4 — partner exemption. Currently keyed on the *leader* of
-        # the trick (legacy behaviour); commit 3 switches this to the
-        # *current master* per contree-domain.md §6.2 rule 4.
-        trick_leader = plays[0][0]
-        if trick_leader.team == player.team:
+        # Rule 4 — partner-master exemption per contree-domain.md §6.2
+        # rule 4. The exemption applies only when the partner is
+        # *currently winning* the partial trick, not just whoever led:
+        # a partner who has since been over-trumped by an opponent no
+        # longer protects you from the trump obligation.
+        current_master = self.current_trick.get_current_winner(trump_suit)
+        if current_master is not None and current_master.team == player.team:
             return player.hand.copy()
 
         # No trump suit, or led suit is trump (and we have none — already

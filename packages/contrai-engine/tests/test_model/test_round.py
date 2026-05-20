@@ -203,6 +203,88 @@ class TestFollowSuitWhenNonTrumpLed:
             (Suit.HEARTS, Rank.ACE),
         }
 
+    def test_partner_master_free_discard(self, players):
+        """N (partner) led ♥A. E followed ♥7. Partner is still master.
+        S has no hearts, no trump obligation → free discard."""
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        hand = [
+            Card(Suit.SPADES, Rank.JACK),
+            Card(Suit.DIAMONDS, Rank.ACE),
+            Card(Suit.CLUBS, Rank.SEVEN),
+        ]
+        round_ = _make_round(
+            players,
+            {"N": [], "E": [], "S": hand, "W": []},
+            contract,
+            [("N", Card(Suit.HEARTS, Rank.ACE)),
+             ("E", Card(Suit.HEARTS, Rank.SEVEN))],
+        )
+        legal = round_._get_playable_cards(players["S"])
+        assert _ids(legal) == _ids(hand)
+
+    def test_partner_overtrumped_must_trump(self, players):
+        """N (partner) led ♥A. E (opponent) over-trumped with ♠7.
+        Partner is no longer master → S must trump (and over-trump
+        the ♠7 with anything higher, here ♠J)."""
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        hand = [
+            Card(Suit.SPADES, Rank.JACK),
+            Card(Suit.DIAMONDS, Rank.ACE),
+            Card(Suit.CLUBS, Rank.SEVEN),
+        ]
+        round_ = _make_round(
+            players,
+            {"N": [], "E": [], "S": hand, "W": []},
+            contract,
+            [("N", Card(Suit.HEARTS, Rank.ACE)),
+             ("E", Card(Suit.SPADES, Rank.SEVEN))],
+        )
+        legal = round_._get_playable_cards(players["S"])
+        assert _ids(legal) == {(Suit.SPADES, Rank.JACK)}
+
+    def test_partner_led_then_partner_overtaken_must_trump(self, players):
+        """Symmetric scenario where S has no hearts AND no trump
+        higher than the opponent's overtrump — must still play a
+        trump (even a lower one). The non-trump cards are now off-limits."""
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        hand = [
+            Card(Suit.SPADES, Rank.SEVEN),  # below opponent's ♠ J
+            Card(Suit.DIAMONDS, Rank.ACE),
+        ]
+        round_ = _make_round(
+            players,
+            {"N": [], "E": [], "S": hand, "W": []},
+            contract,
+            [("N", Card(Suit.HEARTS, Rank.ACE)),
+             ("E", Card(Suit.SPADES, Rank.JACK))],
+        )
+        legal = round_._get_playable_cards(players["S"])
+        # Must trump even though we can't over-trump.
+        assert _ids(legal) == {(Suit.SPADES, Rank.SEVEN)}
+
+    def test_three_card_partial_opponent_master_forces_overtrump(self, players):
+        """Three-card partial trick: N♥A, E♠7, S♠A. S is now master
+        (S♠A beats E's ♠7 in trump order). It is W's turn. W's partner
+        is E (not master) — the master is the opponent S → W must
+        over-trump S♠A. In trump order ♠A is rank 5, only ♠9 (rank 6)
+        and ♠J (rank 7) beat it. W has ♠9 (legal) and ♠8 (illegal)."""
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        hand_w = [
+            Card(Suit.SPADES, Rank.NINE),    # beats ♠A
+            Card(Suit.SPADES, Rank.EIGHT),   # below ♠A in trump order
+            Card(Suit.DIAMONDS, Rank.SEVEN),
+        ]
+        round_ = _make_round(
+            players,
+            {"N": [], "E": [], "S": [], "W": hand_w},
+            contract,
+            [("N", Card(Suit.HEARTS, Rank.ACE)),
+             ("E", Card(Suit.SPADES, Rank.SEVEN)),
+             ("S", Card(Suit.SPADES, Rank.ACE))],
+        )
+        legal = round_._get_playable_cards(players["W"])
+        assert _ids(legal) == {(Suit.SPADES, Rank.NINE)}
+
     def test_opponent_led_and_partner_followed_must_follow_suit(self, players):
         """E (opponent) led ♥K; N (partner) played ♥7 in follow. S has
         hearts → must follow suit."""
