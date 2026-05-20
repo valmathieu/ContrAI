@@ -257,6 +257,45 @@ class TestBiddingPromptHint:
 # ======================================================================
 
 
+class TestPanelBiddingHistorySeparator:
+    """Bidding rounds are visually separated by ' - '."""
+
+    def test_no_separator_within_first_round(self, four_players):
+        view = RichView()
+        north, east, south, west = four_players
+        bids = [
+            (south, "Pass"),
+            (east, "Pass"),
+            (north, (80, Suit.HEARTS)),
+            (west, "Pass"),
+        ]
+        text = view._panel_bidding_history(bids).renderable.plain
+        assert " - " not in text
+
+    def test_separator_between_rounds(self, four_players):
+        view = RichView()
+        north, east, south, west = four_players
+        bids = [
+            (south, "Pass"),
+            (east, "Pass"),
+            (north, (80, Suit.HEARTS)),
+            (west, "Pass"),
+            # round 2 begins:
+            (south, (100, Suit.HEARTS)),
+            (east, "Pass"),
+            (north, (130, Suit.HEARTS)),
+            (west, "Double"),
+        ]
+        text = view._panel_bidding_history(bids).renderable.plain
+        # Exactly one separator between round 1 and round 2.
+        assert text.count(" - ") == 1
+        # Separator appears after the 4th bid (W Pass) and before the 5th
+        # (S 100 ♥).
+        before, after = text.split(" - ", 1)
+        assert before.endswith("W Pass")
+        assert after.startswith("S 100")
+
+
 class TestPanelRoundTitle:
     """The Round panel's title shows the active round number."""
 

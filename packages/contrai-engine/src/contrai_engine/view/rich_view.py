@@ -1157,14 +1157,24 @@ class RichView:
         return t
 
     def _panel_bidding_history(self, bids: list) -> Panel:
-        """One-line history of bids so far. Useful for the human deciding."""
+        """One-line history of bids so far. Useful for the human deciding.
+
+        Inserts a ` - ` separator between successive 4-bid blocks so the
+        bidding rounds are visually distinct:
+            S Pass  E Pass  N 80 ♥  W Pass - S 100 ♥  E Pass  N 130 ♥  W ×2
+        """
         body = Text()
         if not bids:
             body.append("(no bids yet)", style=DIM)
         else:
             for i, (player, bid) in enumerate(bids):
                 if i > 0:
-                    body.append("  ", style=DIM)
+                    # Two-space gap between bids; bump to a dashed
+                    # separator at every 4-bid (bidding-round) boundary.
+                    if i % 4 == 0:
+                        body.append(" - ", style=DIM)
+                    else:
+                        body.append("  ", style=DIM)
                 body.append(_position_short(player.position),
                             style=f"bold {_position_color(player.position)}")
                 body.append(" ", style=FG)
