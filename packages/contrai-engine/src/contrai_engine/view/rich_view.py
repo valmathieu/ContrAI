@@ -869,7 +869,12 @@ class RichView:
 
         border_color = YELLOW if trump_active else BORDER
         title_color = YELLOW if trump_active else TITLE
-        title = Text("Round", style=f"bold {title_color}")
+        round_label = (
+            f"Round {round_.round_number}"
+            if round_ is not None and getattr(round_, "round_number", None)
+            else "Round"
+        )
+        title = Text(round_label, style=f"bold {title_color}")
         if trump_active:
             title.append(" ★", style=GOLD)
         return Panel(

@@ -253,6 +253,37 @@ class TestBiddingPromptHint:
 
 
 # ======================================================================
+# _panel_round — round number in the title
+# ======================================================================
+
+
+class TestPanelRoundTitle:
+    """The Round panel's title shows the active round number."""
+
+    class _StubRound:
+        # Minimal stand-in. _panel_round only reads round_number,
+        # contract, dealer, tricks during this phase path.
+        def __init__(self, round_number):
+            self.round_number = round_number
+            self.contract = None
+            self.dealer = None
+            self.tricks = []
+            self.team_tricks = {}
+
+    def test_title_contains_round_number(self):
+        view = RichView()
+        panel = view._panel_round(self._StubRound(7), phase="bidding")
+        assert "Round 7" in panel.title.plain
+
+    def test_title_defaults_when_round_is_none(self):
+        view = RichView()
+        panel = view._panel_round(None, phase="bidding")
+        assert panel.title.plain.startswith("Round")
+        # No number when there is no round to talk about.
+        assert "Round 0" not in panel.title.plain
+
+
+# ======================================================================
 # _parse_card_input
 # ======================================================================
 
