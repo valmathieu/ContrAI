@@ -334,6 +334,44 @@ def _parse_card_input(
     return card
 
 
+def _redouble_available_to(history: list, player: BasePlayer) -> bool:
+    """True if *player* may currently redouble — narrows the prompt hint.
+
+    Mirrors :class:`contrai_core.bid.RedoubleBid.is_valid_after` for the
+    legacy-format history this view receives, without re-deriving
+    Contract objects. The rule: the most recent non-pass bid is a
+    Double, no passes have occurred since it, and the previous
+    ContractBid was made by *player*'s team.
+    """
+    if not history or player is None or getattr(player, "team", None) is None:
+        return False
+
+    # Walk backwards looking for the most recent Double; abort if we
+    # see a Pass first or a Redouble has already fired.
+    saw_double = False
+    contract_team = None
+    for bid_player, bid in reversed(history):
+        if bid == "Pass":
+            if not saw_double:
+                # Pass before any Double — Double slot is closed.
+                return False
+            # Pass after the Double we already found — also closes the window.
+            return False
+        if bid == "Redouble":
+            return False
+        if bid == "Double":
+            saw_double = True
+            continue
+        if isinstance(bid, tuple):
+            # That's the ContractBid the Double refers to.
+            contract_team = getattr(bid_player, "team", None)
+            break
+
+    if not saw_double or contract_team is None:
+        return False
+    return contract_team == player.team
+
+
 def _bid_legacy_label(bid: str | tuple) -> Text:
     """Legacy bid label for the bidding-history line."""
     if bid == "Pass":
@@ -422,7 +460,7 @@ class RichView:
                 phase="bidding",
                 current_player=player,
                 bidding_history=legacy_bids,
-                prompt_question=self._bidding_prompt_text(legacy_bids),
+                prompt_question=self._bidding_prompt_text(legacy_bids, player),
                 mandatory=False,
             )
             raw = self.console.input(
@@ -1156,7 +1194,11 @@ class RichView:
     # Prompt text builders
     # ------------------------------------------------------------------
 
-    def _bidding_prompt_text(self, history: list) -> Text:
+    def _bidding_prompt_text(
+        self,
+        history: list,
+        next_player: Optional[BasePlayer] = None,
+    ) -> Text:
         t = Text()
         # Find what last non-self event was — for "West passed.".
         if history:
@@ -1174,7 +1216,13 @@ class RichView:
                 t.append(_suit_glyph(suit), style=_suit_color(suit))
                 t.append(". ", style=FG)
         t.append("Your bid? ", style=FG)
-        t.append("(e.g. '80 H' / 'pass' / 'double')", style=DIM)
+        # Adaptive example. When the last non-pass bid was Double AND
+        # the next bidder is on the contracting team, redouble is the
+        # only meaningful active option — surface it explicitly.
+        if next_player is not None and _redouble_available_to(history, next_player):
+            t.append("(pass / redouble)", style=DIM)
+        else:
+            t.append("(e.g. '80 H' / 'pass' / 'double')", style=DIM)
         return t
 
     def _card_prompt_text(

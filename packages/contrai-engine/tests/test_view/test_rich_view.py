@@ -21,10 +21,12 @@ from contrai_core import Card, Rank, Suit, Trick
 from contrai_engine.model.player import AiPlayer
 from contrai_core.team import Team
 from contrai_engine.view.rich_view import (
+    RichView,
     _current_winner,
     _explain_constraint,
     _parse_bid_input,
     _parse_card_input,
+    _redouble_available_to,
     _sort_hand_for_display,
 )
 
@@ -152,6 +154,102 @@ class TestParseBidInput:
     )
     def test_rejects_garbage(self, raw):
         assert _parse_bid_input(raw) is None
+
+
+# ======================================================================
+# _redouble_available_to + adaptive bid prompt
+# ======================================================================
+
+
+class TestRedoubleAvailability:
+    """Validates the helper that drives the '(pass / redouble)' hint."""
+
+    def test_empty_history_no_redouble(self, four_players):
+        north, *_ = four_players
+        assert _redouble_available_to([], north) is False
+
+    def test_after_contract_only_no_redouble(self, four_players):
+        """A bare contract bid hasn't been doubled yet."""
+        north, _east, _south, _west = four_players
+        history = [(north, (100, Suit.HEARTS))]
+        assert _redouble_available_to(history, north) is False
+
+    def test_contractor_can_redouble_after_opponent_doubles(
+        self, four_players
+    ):
+        """N bid 100♥, E doubled. N (contractor) is up — must offer
+        redouble."""
+        north, east, south, _west = four_players
+        history = [
+            (north, (100, Suit.HEARTS)),
+            (east, "Double"),
+        ]
+        assert _redouble_available_to(history, north) is True
+        # Contractor's partner (South) is also on the contracting team.
+        assert _redouble_available_to(history, south) is True
+
+    def test_opponent_cannot_redouble(self, four_players):
+        """An opponent of the contractor cannot redouble even when a
+        Double is on the table."""
+        north, east, _south, west = four_players
+        history = [
+            (north, (100, Suit.HEARTS)),
+            (east, "Double"),
+        ]
+        # West is on East's team → not the contracting team.
+        assert _redouble_available_to(history, west) is False
+
+    def test_pass_after_double_closes_window(self, four_players):
+        """Once any player has passed after the Double, the redouble
+        window has closed."""
+        north, east, south, _west = four_players
+        history = [
+            (north, (100, Suit.HEARTS)),
+            (east, "Double"),
+            (south, "Pass"),
+        ]
+        # North is the only contracting-team member who hasn't acted —
+        # but their PARTNER (S) already passed. By bidding-loop rules
+        # the redouble window is closed once a pass intervenes.
+        assert _redouble_available_to(history, north) is False
+
+    def test_already_redoubled_no_more(self, four_players):
+        north, east, south, _west = four_players
+        history = [
+            (north, (100, Suit.HEARTS)),
+            (east, "Double"),
+            (south, "Redouble"),
+        ]
+        assert _redouble_available_to(history, north) is False
+
+
+class TestBiddingPromptHint:
+    """End-to-end test that the prompt text adapts to the bid history."""
+
+    def _prompt(self, history, next_player):
+        view = RichView()
+        return view._bidding_prompt_text(history, next_player).plain
+
+    def test_default_hint_when_no_double(self, four_players):
+        north, _east, _south, _west = four_players
+        history = [(north, "Pass")]
+        text = self._prompt(history, north)
+        assert "double" in text
+        assert "redouble" not in text
+
+    def test_redouble_hint_when_contractor_was_doubled(
+        self, four_players
+    ):
+        north, east, _south, _west = four_players
+        history = [
+            (north, (100, Suit.HEARTS)),
+            (east, "Double"),
+        ]
+        text = self._prompt(history, north)
+        assert "redouble" in text
+        # The default '80 H' example shouldn't appear in the redouble
+        # variant since the only meaningful play is pass/redouble.
+        assert "80 H" not in text
 
 
 # ======================================================================
