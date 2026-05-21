@@ -482,7 +482,7 @@ class TestEventLog:
             dealer = north
 
         view.on_round_dealt(_StubRound())
-        assert any("Round 5" in line.plain for line in view.event_log)
+        assert any("Round #5" in line.plain for line in view.event_log)
         assert any("deals" in line.plain for line in view.event_log)
 
     def test_on_all_pass_redeal_logs(self, monkeypatch):
@@ -658,7 +658,7 @@ class TestRoundRecapPanel:
         )
         panel = view._panel_round_recap(round_, {"North-South": 500, "East-West": 0})
         text = panel.renderable.plain
-        assert "Round 3 recap" in panel.title.plain
+        assert "Round #3 recap" in panel.title.plain
         assert "Contract made" in text
         assert "+162" in text
         assert "500" in text  # running NS total
@@ -728,14 +728,59 @@ class TestPanelRoundTitle:
     def test_title_contains_round_number(self):
         view = RichView()
         panel = view._panel_round(self._StubRound(7), phase="bidding")
-        assert "Round 7" in panel.title.plain
+        assert "Round #7" in panel.title.plain
 
     def test_title_defaults_when_round_is_none(self):
         view = RichView()
         panel = view._panel_round(None, phase="bidding")
         assert panel.title.plain.startswith("Round")
-        # No number when there is no round to talk about.
-        assert "Round 0" not in panel.title.plain
+        # No # marker when there is no round to talk about.
+        assert "#" not in panel.title.plain
+
+
+class TestTrickPanelTitles:
+    """Trick panel titles use the (#N) format."""
+
+    class _StubRound:
+        def __init__(self, tricks_done):
+            self.round_number = 1
+            self.contract = None
+            self.dealer = None
+            self.tricks = [object()] * tricks_done
+            self.team_tricks = {}
+            self.belote_state = {}
+
+    def test_current_trick_title_uses_hash_format(self):
+        view = RichView()
+        # 4 tricks done, currently playing trick #5.
+        panel = view._panel_current_trick(
+            self._StubRound(tricks_done=4),
+            trick=Trick(),
+            phase="playing",
+            current_player=None,
+            trick_winner=None,
+        )
+        assert "Current trick (#5)" in panel.title.plain
+
+    def test_last_trick_title_uses_hash_format(self, monkeypatch, four_players):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView()
+        north, *_ = four_players
+        trick = Trick()
+        # Stub a completed trick.
+        view.last_completed_trick = (trick, north)
+        round_ = self._StubRound(tricks_done=7)
+        panel = view._panel_last_trick(round_)
+        assert "Last trick (#7)" in panel.title.plain
+
+    def test_last_trick_title_bare_when_no_round(self):
+        view = RichView()
+        # No last_completed_trick set → '(none)' panel with the bare
+        # "Last trick" title.
+        panel = view._panel_last_trick(None)
+        assert panel.title.plain == "Last trick"
 
 
 # ======================================================================

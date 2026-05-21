@@ -600,7 +600,7 @@ class RichView:
             else "—"
         )
         line = Text()
-        line.append(f"Round {round_.round_number}: ", style=f"bold {YELLOW}")
+        line.append(f"Round #{round_.round_number}: ", style=f"bold {YELLOW}")
         line.append(f"{dealer} deals.", style=FG)
         self._log(line)
 
@@ -1037,7 +1037,7 @@ class RichView:
         border_color = YELLOW if trump_active else BORDER
         title_color = YELLOW if trump_active else TITLE
         round_label = (
-            f"Round {round_.round_number}"
+            f"Round #{round_.round_number}"
             if round_ is not None and getattr(round_, "round_number", None)
             else "Round"
         )
@@ -1095,7 +1095,13 @@ class RichView:
         body.append("\n")
         body.append("Won: ", style=DIM)
         body.append(_position_short(winner.position), style=f"bold {GOLD}")
-        title = Text(f"Last trick {len(round_.tricks) if round_ else ''}", style=DIM)
+        # Last trick number is the just-completed trick — that's the
+        # length of tricks (the freshly appended one we are echoing).
+        last_idx = len(round_.tricks) if round_ else 0
+        title = Text(
+            f"Last trick (#{last_idx})" if last_idx else "Last trick",
+            style=DIM,
+        )
         return Panel(
             body,
             title=title,
@@ -1117,7 +1123,7 @@ class RichView:
         if round_ and phase in ("playing", "trick_won"):
             trick_idx = len(round_.tricks) + (0 if phase == "trick_won" else 1)
             trick_idx = min(max(1, trick_idx), 8)
-            title_suffix = f"  trick {trick_idx}"
+            title_suffix = f" (#{trick_idx})"
 
         if phase == "bidding" or trick is None:
             body = Text("(bidding…)" if phase == "bidding" else "(none)",
@@ -1577,7 +1583,7 @@ class RichView:
         return Panel(
             body,
             title=Text(
-                f"Round {getattr(round_, 'round_number', '?')} recap",
+                f"Round #{getattr(round_, 'round_number', '?')} recap",
                 style=f"bold {GOLD}",
             ),
             border_style=GOLD,
