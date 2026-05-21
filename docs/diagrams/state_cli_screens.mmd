@@ -10,7 +10,7 @@ stateDiagram-v2
     Bidding : <b>1. Bidding</b><br/>request_bid_action(player, history)<br/>"80 h" / "pass" / "double" / "redouble"<br/>(hint adapts to '(pass / redouble)'<br/>when contractor was just doubled)
     MidTrick : <b>2. Mid-trick</b><br/>request_card_action(player, trick, contract, playable)<br/>diamond + live-winner gold pill<br/>★ Belote badge under holder (Belote/Rebelote in log)
     TrickWon : <b>3. Trick won</b><br/>on_trick_complete(trick, winner, round)<br/>"Press [Enter] to continue…"
-    RoundRecap : <b>4. Round recap</b><br/>show_round_recap(round, scores)<br/>contract · made/failed · round pts · running totals<br/>"Press [Enter] to deal next round…"
+    RoundRecap : <b>4. Round recap</b><br/>show_round_recap(round, scores)<br/>contract · made/failed<br/>per-team breakdown: card pts · dix de der · belote · round score<br/>running totals · target<br/>"Press [Enter] to deal next round…"
     EndGame : <b>5. End game</b><br/>show_end_game(status)<br/>[n] new · [r] rematch · [q] quit
 
     Landing --> Bidding : Enter

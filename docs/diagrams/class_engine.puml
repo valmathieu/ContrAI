@@ -242,6 +242,18 @@ package "view/rich_view.py" as p_view {
       here (`history`) so Game stays UI-free.
       A rolling 5-line `event_log` is shown
       below the hand in every in-game state.
+      Round / trick / recap panel titles use
+      the `#N` format (e.g. `Round #2`,
+      `Last trick (#7)`, `Current trick (#8)`).
+      ----
+      The round-recap panel breaks the round
+      score down per team:
+      card points (sum across the team's
+      tricks) + dix-de-der + belote bonus →
+      `round_scores[team]` → running total.
+      Helpers: `_recap_breakdown`,
+      `_format_recap_table`,
+      `_belote_team_in_round`.
       ----
       AI pacing is tunable per-hook via the
       env vars `CONTRAI_AI_BID_DELAY` (1.4s)

@@ -711,6 +711,81 @@ class TestRoundRecapPanel:
         assert "Belote" in text
         assert "+20" in text
 
+    def test_recap_shows_card_points_sum_per_team(self, four_players):
+        """Card-points row shows the trump-aware sum across each team's
+        tricks (plus the trick count)."""
+        view = RichView()
+        north, east, south, west = four_players
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        # N-S took J♥ (20) + 9♥ (14) + A♠ (11) = 45 across two tricks.
+        ns_trick1 = Trick()
+        ns_trick1.add_play(north, Card(Suit.HEARTS, Rank.JACK))
+        ns_trick1.add_play(east, Card(Suit.HEARTS, Rank.SEVEN))
+        ns_trick2 = Trick()
+        ns_trick2.add_play(south, Card(Suit.SPADES, Rank.ACE))
+        ns_trick2.add_play(west, Card(Suit.HEARTS, Rank.NINE))
+        # E-W took two low tricks worth 0 + 0 = 0.
+        ew_trick = Trick()
+        ew_trick.add_play(east, Card(Suit.CLUBS, Rank.SEVEN))
+        round_ = self._StubRound(
+            round_number=4,
+            contract=contract,
+            round_scores={"North-South": 145, "East-West": 0},
+            team_tricks={
+                "North-South": [ns_trick1, ns_trick2],
+                "East-West": [ew_trick],
+            },
+        )
+        panel = view._panel_round_recap(
+            round_, {"North-South": 145, "East-West": 0}
+        )
+        text = panel.renderable.plain
+        # Trump-aware card points:
+        #   ns_trick1: J♥(20) + 7♥(0)  = 20
+        #   ns_trick2: A♠(11) + 9♥(14) = 25
+        # N-S total = 45.
+        assert "45" in text
+        # Trick count line — N-S 2 tricks, E-W 1 trick.
+        assert "(2/1 tricks)" in text
+
+    def test_recap_shows_dix_de_der_for_last_trick_winner(self, four_players):
+        view = RichView()
+        north, *_ = four_players
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        last_trick = Trick()
+        last_trick.add_play(north, Card(Suit.HEARTS, Rank.SEVEN))
+        round_ = self._StubRound(
+            round_number=4,
+            contract=contract,
+            round_scores={"North-South": 110, "East-West": 0},
+            team_tricks={"North-South": [last_trick], "East-West": []},
+        )
+        round_.last_trick_winner = north
+        panel = view._panel_round_recap(
+            round_, {"North-South": 110, "East-West": 0}
+        )
+        text = panel.renderable.plain
+        assert "Dix de der" in text
+        assert "+10" in text
+
+    def test_recap_table_uses_trump_glyph_in_belote_label(self, four_players):
+        """The Belote row label reflects the actual trump suit."""
+        view = RichView()
+        north, *_ = four_players
+        contract = self._StubContract(100, Suit.SPADES, "North-South")
+        round_ = self._StubRound(
+            round_number=3,
+            contract=contract,
+            round_scores={"North-South": 200, "East-West": 0},
+            team_tricks={"North-South": [], "East-West": []},
+        )
+        panel = view._panel_round_recap(
+            round_, {"North-South": 200, "East-West": 0}
+        )
+        text = panel.renderable.plain
+        # Spade glyph in the Belote row, not the hearts glyph.
+        assert "Belote (K + Q ♠)" in text
+
 
 class TestPanelRoundTitle:
     """The Round panel's title shows the active round number."""

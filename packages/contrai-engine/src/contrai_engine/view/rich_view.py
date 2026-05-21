@@ -1531,7 +1531,13 @@ class RichView:
         round_: "Round",
         running_scores: dict,
     ) -> Panel:
-        """Between-rounds recap panel — what just happened, in one read."""
+        """Between-rounds recap panel — what just happened, in one read.
+
+        Lays out the round's points as a two-column table so the user
+        can trace how the round total was built: trump-aware card
+        points per team, then dix-de-der and belote bonuses, then the
+        final round score the contract bonus / penalty produced.
+        """
         body = Text()
         body.append("\n")
         contract = getattr(round_, "contract", None)
@@ -1558,27 +1564,21 @@ class RichView:
                 body.append("✗ Contract failed", style=f"bold {RED}")
             body.append("\n\n")
 
-        # Per-team points and running totals.
-        body.append("  N-S    ", style=f"bold {BLUE}")
-        body.append(f"+{ns_round:<6}", style="bold")
-        body.append("→  ", style=DIM)
-        body.append(str(running_ns), style=f"bold {BLUE}")
-        body.append("  /  ", style=DIM)
-        body.append(f"target {self.target_score}", style=DIM)
+        # Per-team breakdown table. Card points (trump-aware) from
+        # the tricks each team won, plus dix-de-der and belote
+        # bonuses, then the actual round score from the engine.
+        breakdown = self._recap_breakdown(round_)
+        trump = contract.suit if contract is not None else None
+        body.append_text(
+            self._format_recap_table(breakdown, ns_round, ew_round, trump)
+        )
         body.append("\n")
-        body.append("  E-W    ", style=f"bold {ORANGE}")
-        body.append(f"+{ew_round:<6}", style="bold")
-        body.append("→  ", style=DIM)
-        body.append(str(running_ew), style=f"bold {ORANGE}")
-        body.append("\n\n")
 
-        # Belote bonus advisory: K+Q of trump fell to the same team.
-        belote_team = self._belote_team_in_round(round_)
-        if belote_team is not None:
-            body.append("  Belote:    ", style=DIM)
-            body.append(_team_abbr(belote_team),
-                        style=f"bold {_team_color(belote_team)}")
-            body.append(" held K + Q of trump (+20).", style=DIM)
+        # Running totals + target.
+        body.append("  Running    ", style=DIM)
+        body.append(f"{running_ns:>6}", style=f"bold {BLUE}")
+        body.append(f"  {running_ew:>6}", style=f"bold {ORANGE}")
+        body.append(f"     target {self.target_score}", style=DIM)
 
         return Panel(
             body,
@@ -1590,6 +1590,137 @@ class RichView:
             box=ROUNDED,
             width=70,
         )
+
+    def _recap_breakdown(self, round_) -> dict:
+        """Per-team point components used by the recap panel.
+
+        Returns a dict keyed by team name with:
+            card_points:  sum of card.get_points(trump) across the
+                          team's tricks (trump-aware so trump K/Q/J/9
+                          count their trump values).
+            dix_de_der:   10 if the team took the last trick, else 0.
+            belote:       20 if the team holds both K and Q of trump
+                          in its tricks, else 0.
+            trick_count:  number of tricks won.
+        """
+        contract = getattr(round_, "contract", None)
+        trump = contract.suit if contract else None
+        team_tricks = getattr(round_, "team_tricks", {}) or {}
+        last_trick_team = None
+        last_trick_winner = getattr(round_, "last_trick_winner", None)
+        if last_trick_winner is not None and last_trick_winner.team is not None:
+            last_trick_team = last_trick_winner.team.name
+
+        belote_team = self._belote_team_in_round(round_)
+
+        out = {}
+        for team_name in ("North-South", "East-West"):
+            tricks = team_tricks.get(team_name, [])
+            card_pts = 0
+            for trick in tricks:
+                for _, card in trick.get_plays():
+                    card_pts += card.get_points(trump)
+            out[team_name] = {
+                "card_points": card_pts,
+                "dix_de_der": 10 if team_name == last_trick_team else 0,
+                "belote": 20 if team_name == belote_team else 0,
+                "trick_count": len(tricks),
+            }
+        return out
+
+    def _format_recap_table(
+        self,
+        breakdown: dict,
+        ns_round: int,
+        ew_round: int,
+        trump: Optional[Suit] = None,
+    ) -> Text:
+        """Render the per-team breakdown table inside the recap panel."""
+        ns = breakdown.get("North-South", {})
+        ew = breakdown.get("East-West", {})
+
+        def _num_cell(value: int, *, show_zero: bool = True, sign: bool = False) -> Text:
+            t = Text()
+            if value == 0 and not show_zero:
+                t.append(f"{'—':>6}", style=DIM)
+                return t
+            if sign and value > 0:
+                t.append(f"{('+' + str(value)):>6}", style="bold")
+            else:
+                t.append(f"{value:>6}", style="bold")
+            return t
+
+        # Header row: "                          N-S     E-W"
+        header = Text()
+        header.append(f"  {'':<22}", style=DIM)
+        header.append(f"{'N-S':>6}", style=f"bold {BLUE}")
+        header.append(f"  {'E-W':>6}", style=f"bold {ORANGE}")
+        header.append("\n")
+
+        # Card points row (sum across the team's tricks).
+        ns_tricks = ns.get("trick_count", 0)
+        ew_tricks = ew.get("trick_count", 0)
+        row_cards = Text()
+        row_cards.append(
+            f"  Tricks won (cards)    ", style=FG,
+        )
+        row_cards.append_text(_num_cell(ns.get("card_points", 0)))
+        row_cards.append("  ")
+        row_cards.append_text(_num_cell(ew.get("card_points", 0)))
+        row_cards.append(f"   ({ns_tricks}/{ew_tricks} tricks)", style=DIM)
+        row_cards.append("\n")
+
+        # Dix-de-der.
+        row_dxd = Text()
+        row_dxd.append(f"  Dix de der            ", style=FG)
+        row_dxd.append_text(
+            _num_cell(ns.get("dix_de_der", 0), show_zero=False, sign=True)
+        )
+        row_dxd.append("  ")
+        row_dxd.append_text(
+            _num_cell(ew.get("dix_de_der", 0), show_zero=False, sign=True)
+        )
+        row_dxd.append("\n")
+
+        # Belote (suit glyph reflects the actual trump suit).
+        row_bel = Text()
+        row_bel.append(f"  Belote (K + Q ", style=FG)
+        if trump is not None and trump != Suit.NO_TRUMP:
+            row_bel.append(_suit_glyph(trump), style=_suit_color(trump))
+        else:
+            row_bel.append("—", style=DIM)
+        # Keep the column alignment stable: 2 cols for the glyph block.
+        row_bel.append(")      ", style=FG)
+        row_bel.append_text(_num_cell(ns.get("belote", 0), show_zero=False, sign=True))
+        row_bel.append("  ")
+        row_bel.append_text(_num_cell(ew.get("belote", 0), show_zero=False, sign=True))
+        row_bel.append("\n")
+
+        # Divider sits under the two numeric columns only, signalling
+        # "the next row is the round-score subtotal". Label area stays
+        # blank so the eye lands on the numbers.
+        divider = Text()
+        divider.append(" " * 24, style=DIM)
+        divider.append("─" * 6, style=DIM)
+        divider.append("  ", style=DIM)
+        divider.append("─" * 6, style=DIM)
+        divider.append("\n")
+
+        row_total = Text()
+        row_total.append(f"  Round score           ", style=f"bold {GOLD}")
+        row_total.append_text(_num_cell(ns_round, sign=True))
+        row_total.append("  ")
+        row_total.append_text(_num_cell(ew_round, sign=True))
+        row_total.append("\n")
+
+        out = Text()
+        out.append_text(header)
+        out.append_text(row_cards)
+        out.append_text(row_dxd)
+        out.append_text(row_bel)
+        out.append_text(divider)
+        out.append_text(row_total)
+        return out
 
     @staticmethod
     def _belote_team_in_round(round_) -> Optional[str]:
