@@ -569,6 +569,103 @@ class TestAiPlayerTrickTaking:
         result = ai_player_with_tracking.choose_card(mock_trick, contract, ai_player_with_tracking.hand)
         assert result.rank == Rank.ACE  # Should play ace
 
+    def test_cut_with_lowest_trump_when_partner_master_non_trump_trick(
+        self, ai_player_with_tracking, mock_trick
+    ):
+        """When the AI cannot follow suit and partner is master of a
+        non-trump-led trick, the AI cuts with the lowest trump (instead
+        of discarding). Reinforces the win and quietly drains trumps."""
+        # Hearts trump. Partner led ♠ A and is currently master.
+        ai_player_with_tracking.hand = Hand([
+            Card(Suit.HEARTS, Rank.JACK),    # top trump
+            Card(Suit.HEARTS, Rank.NINE),    # 2nd-best trump
+            Card(Suit.HEARTS, Rank.SEVEN),   # lowest trump
+            Card(Suit.DIAMONDS, Rank.KING),  # discard candidate
+        ])
+        mock_trick.cards = [Card(Suit.SPADES, Rank.ACE)]
+        mock_trick.trump_suit = Suit.HEARTS
+        ai_player_with_tracking._is_team_winning_trick = lambda t: True
+
+        contract = _contract(ai_player_with_tracking, 100, Suit.HEARTS)
+        result = ai_player_with_tracking.choose_card(
+            mock_trick, contract, list(ai_player_with_tracking.hand)
+        )
+        # Lowest trump — not the Jack, not the 9, and not the diamond.
+        assert result.suit == Suit.HEARTS
+        assert result.rank == Rank.SEVEN
+
+    def test_cut_with_lowest_trump_when_partner_cut_already(
+        self, ai_player_with_tracking, mock_trick
+    ):
+        """Partner already cut the non-trump-led trick. AI has trumps
+        BELOW partner's trump → AI still plays its lowest trump (under
+        partner, partner remains master)."""
+        ai_player_with_tracking.hand = Hand([
+            Card(Suit.HEARTS, Rank.SEVEN),   # lowest trump
+            Card(Suit.HEARTS, Rank.EIGHT),
+            Card(Suit.DIAMONDS, Rank.ACE),
+        ])
+        # Spades led; partner trumped with ♥ A.
+        mock_trick.cards = [
+            Card(Suit.SPADES, Rank.KING),
+            Card(Suit.HEARTS, Rank.ACE),
+        ]
+        mock_trick.trump_suit = Suit.HEARTS
+        ai_player_with_tracking._is_team_winning_trick = lambda t: True
+
+        contract = _contract(ai_player_with_tracking, 100, Suit.HEARTS)
+        result = ai_player_with_tracking.choose_card(
+            mock_trick, contract, list(ai_player_with_tracking.hand)
+        )
+        assert result.suit == Suit.HEARTS
+        assert result.rank == Rank.SEVEN
+
+    def test_no_cut_when_trump_led_and_partner_master(
+        self, ai_player_with_tracking, mock_trick
+    ):
+        """The cut-on-partner-master rule is restricted to non-trump
+        tricks. When trump itself is led and AI can't follow, the AI
+        falls through to the regular discard logic — it does NOT
+        invent a cut, and it dumps a non-master card."""
+        ai_player_with_tracking.hand = Hand([
+            Card(Suit.SPADES, Rank.KING),    # K of off-suit (non-master if A♠ still out)
+            Card(Suit.DIAMONDS, Rank.ACE),   # A of off-suit (master)
+        ])
+        # Trump led (hearts), partner played J♥ — partner master.
+        mock_trick.cards = [Card(Suit.HEARTS, Rank.JACK)]
+        mock_trick.trump_suit = Suit.HEARTS
+        ai_player_with_tracking._is_team_winning_trick = lambda t: True
+
+        contract = _contract(ai_player_with_tracking, 100, Suit.HEARTS)
+        result = ai_player_with_tracking.choose_card(
+            mock_trick, contract, list(ai_player_with_tracking.hand)
+        )
+        # Discard branch picks the highest-points NON-MASTER. The Ace
+        # of diamonds is a master (no higher diamond exists), so it's
+        # filtered. K♠ is the only non-master and is picked.
+        assert result.suit == Suit.SPADES
+        assert result.rank == Rank.KING
+
+    def test_no_cut_when_no_trump_in_hand(
+        self, ai_player_with_tracking, mock_trick
+    ):
+        """Falls back to discard when the AI has no trumps to cut with."""
+        ai_player_with_tracking.hand = Hand([
+            Card(Suit.DIAMONDS, Rank.KING),
+            Card(Suit.CLUBS, Rank.SEVEN),
+        ])
+        mock_trick.cards = [Card(Suit.SPADES, Rank.ACE)]
+        mock_trick.trump_suit = Suit.HEARTS
+        ai_player_with_tracking._is_team_winning_trick = lambda t: True
+
+        contract = _contract(ai_player_with_tracking, 100, Suit.HEARTS)
+        result = ai_player_with_tracking.choose_card(
+            mock_trick, contract, list(ai_player_with_tracking.hand)
+        )
+        # No trumps to cut with → discard the high-points non-master.
+        assert result.rank == Rank.KING
+        assert result.suit == Suit.DIAMONDS
+
     def test_follow_suit_when_team_winning(self, ai_player_with_tracking, mock_trick):
         """Test following suit when team is winning"""
         ai_player_with_tracking.hand = Hand([
