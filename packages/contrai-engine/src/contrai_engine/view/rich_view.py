@@ -637,6 +637,26 @@ class RichView:
         )
         time.sleep(_resolve_delay("CONTRAI_AI_CARD_DELAY", default=0.9))
 
+    def show_round_recap(
+        self, round_: "Round", running_scores: dict
+    ) -> None:
+        """Full-screen recap shown between rounds; waits for Enter.
+
+        Follows the trick-won UX pattern: clear, print the recap panel,
+        block on input. Called from the CLI loop after
+        ``on_round_complete`` and only when the game is not already
+        over (the end-game banner takes precedence in that case)."""
+        self.console.clear()
+        self.console.print(self._panel_round_recap(round_, running_scores))
+        self.console.print(self._panel_prompt(
+            Text("Press [Enter] to deal the next round…", style=FG),
+            mandatory=False,
+        ))
+        try:
+            self.console.input(Text("> ", style=f"bold {GOLD}").markup)
+        except (EOFError, KeyboardInterrupt):
+            pass
+
     def on_round_complete(self, round_: "Round", running_scores: dict) -> None:
         """Append a row to the end-game history."""
         contract = round_.contract
@@ -1404,6 +1424,91 @@ class RichView:
         t.append(f"{label} ", style=f"bold {color}")
         t.append(f"wins trick ({trick_points} pts).", style=f"bold {GOLD}")
         return t
+
+    def _panel_round_recap(
+        self,
+        round_: "Round",
+        running_scores: dict,
+    ) -> Panel:
+        """Between-rounds recap panel — what just happened, in one read."""
+        body = Text()
+        body.append("\n")
+        contract = getattr(round_, "contract", None)
+        ns_round = round_.round_scores.get("North-South", 0)
+        ew_round = round_.round_scores.get("East-West", 0)
+        running_ns = running_scores.get("North-South", 0)
+        running_ew = running_scores.get("East-West", 0)
+
+        # Contract line
+        body.append("  Contract:  ", style=DIM)
+        if contract is None:
+            body.append("All passed — no contract", style=f"bold {YELLOW}")
+            body.append("\n\n")
+        else:
+            body.append_text(_format_contract_short(contract))
+            body.append("\n")
+            # Made/failed badge
+            contract_team = contract.team.name
+            made = round_.round_scores.get(contract_team, 0) > 0
+            body.append("  Result:    ", style=DIM)
+            if made:
+                body.append("✓ Contract made", style=f"bold {GREEN_CHECK}")
+            else:
+                body.append("✗ Contract failed", style=f"bold {RED}")
+            body.append("\n\n")
+
+        # Per-team points and running totals.
+        body.append("  N-S    ", style=f"bold {BLUE}")
+        body.append(f"+{ns_round:<6}", style="bold")
+        body.append("→  ", style=DIM)
+        body.append(str(running_ns), style=f"bold {BLUE}")
+        body.append("  /  ", style=DIM)
+        body.append(f"target {self.target_score}", style=DIM)
+        body.append("\n")
+        body.append("  E-W    ", style=f"bold {ORANGE}")
+        body.append(f"+{ew_round:<6}", style="bold")
+        body.append("→  ", style=DIM)
+        body.append(str(running_ew), style=f"bold {ORANGE}")
+        body.append("\n\n")
+
+        # Belote bonus advisory: K+Q of trump fell to the same team.
+        belote_team = self._belote_team_in_round(round_)
+        if belote_team is not None:
+            body.append("  Belote:    ", style=DIM)
+            body.append(_team_abbr(belote_team),
+                        style=f"bold {_team_color(belote_team)}")
+            body.append(" held K + Q of trump (+20).", style=DIM)
+
+        return Panel(
+            body,
+            title=Text(
+                f"Round {getattr(round_, 'round_number', '?')} recap",
+                style=f"bold {GOLD}",
+            ),
+            border_style=GOLD,
+            box=ROUNDED,
+            width=70,
+        )
+
+    @staticmethod
+    def _belote_team_in_round(round_) -> Optional[str]:
+        """Return the team name that took both K and Q of trump this round."""
+        contract = getattr(round_, "contract", None)
+        if contract is None or contract.suit == Suit.NO_TRUMP:
+            return None
+        trump = contract.suit
+        for team_name, tricks in getattr(round_, "team_tricks", {}).items():
+            has_king = False
+            has_queen = False
+            for trick in tricks:
+                for _, card in trick.get_plays():
+                    if card.suit == trump and card.rank == Rank.KING:
+                        has_king = True
+                    if card.suit == trump and card.rank == Rank.QUEEN:
+                        has_queen = True
+            if has_king and has_queen:
+                return team_name
+        return None
 
     def _panel_event_log(self) -> Panel:
         """Bottom panel showing the last ``LOG_MAX`` events."""

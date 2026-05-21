@@ -517,6 +517,91 @@ class TestEventLog:
         assert view.event_log == []
 
 
+class TestRoundRecapPanel:
+    """Between-rounds recap: contract, made/failed, totals, belote."""
+
+    class _StubContract:
+        def __init__(self, value, suit, team_name, double=False, redouble=False):
+            self.value = value
+            self.suit = suit
+            class _T: pass
+            self.team = _T()
+            self.team.name = team_name
+            self.double = double
+            self.redouble = redouble
+
+    class _StubRound:
+        def __init__(self, *, round_number, contract, round_scores,
+                     team_tricks=None):
+            self.round_number = round_number
+            self.contract = contract
+            self.round_scores = round_scores
+            self.team_tricks = team_tricks or {}
+
+    def test_recap_made_contract_shows_check(self):
+        view = RichView()
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        round_ = self._StubRound(
+            round_number=3,
+            contract=contract,
+            round_scores={"North-South": 162, "East-West": 0},
+        )
+        panel = view._panel_round_recap(round_, {"North-South": 500, "East-West": 0})
+        text = panel.renderable.plain
+        assert "Round 3 recap" in panel.title.plain
+        assert "Contract made" in text
+        assert "+162" in text
+        assert "500" in text  # running NS total
+
+    def test_recap_failed_contract_shows_cross(self):
+        view = RichView()
+        contract = self._StubContract(120, Suit.SPADES, "East-West")
+        round_ = self._StubRound(
+            round_number=4,
+            contract=contract,
+            round_scores={"North-South": 280, "East-West": 0},
+        )
+        panel = view._panel_round_recap(round_, {"North-South": 280, "East-West": 0})
+        text = panel.renderable.plain
+        assert "Contract failed" in text
+
+    def test_recap_all_passed(self):
+        view = RichView()
+        round_ = self._StubRound(
+            round_number=5,
+            contract=None,
+            round_scores={"North-South": 0, "East-West": 0},
+        )
+        panel = view._panel_round_recap(round_, {"North-South": 0, "East-West": 0})
+        text = panel.renderable.plain
+        assert "All passed" in text
+        # No made/failed line for an all-passed round.
+        assert "made" not in text
+        assert "failed" not in text
+
+    def test_recap_includes_belote_when_kq_of_trump_taken_together(
+        self, four_players
+    ):
+        view = RichView()
+        north, *_ = four_players
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        # Build a fake trick where N took both K♥ and Q♥.
+        trick1 = Trick()
+        trick1.add_play(north, Card(Suit.HEARTS, Rank.KING))
+        trick2 = Trick()
+        trick2.add_play(north, Card(Suit.HEARTS, Rank.QUEEN))
+        round_ = self._StubRound(
+            round_number=2,
+            contract=contract,
+            round_scores={"North-South": 200, "East-West": 0},
+            team_tricks={"North-South": [trick1, trick2], "East-West": []},
+        )
+        panel = view._panel_round_recap(round_, {"North-South": 200, "East-West": 0})
+        text = panel.renderable.plain
+        assert "Belote" in text
+        assert "+20" in text
+
+
 class TestPanelRoundTitle:
     """The Round panel's title shows the active round number."""
 
