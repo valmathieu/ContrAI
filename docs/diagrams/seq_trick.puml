@@ -106,10 +106,11 @@ loop **for player in trick_order**  (×4)
         R -> R : _transition_belote_state(player)\n→ "belote" (first) or "rebelote" (second)
         R -->> V : view.on_belote_announced(player, kind, self)
         note right of V
-          Log "X announces Belote/Rebelote".
-          The persistent ★ badge under the
-          seat is rendered by
-          `_render_diamond` from
+          Log line: "X announces Belote"
+          (first play) or "Rebelote" (second).
+          The seat badge always reads
+          "★ Belote" regardless of kind —
+          rendered by `_render_diamond` from
           `round_.belote_state`. Sleeps
           for `CONTRAI_AI_CARD_DELAY`.
         end note

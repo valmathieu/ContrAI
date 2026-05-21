@@ -593,9 +593,12 @@ class TestBeloteAnnouncement:
         # "N · " in linear text order.
         assert text.index("N") < text.index("★ Belote")
 
-    def test_diamond_renders_rebelote_after_second(
+    def test_diamond_badge_is_belote_regardless_of_kind(
         self, monkeypatch, four_players
     ):
+        """After the second K-or-Q of trump (kind='rebelote'), the
+        seat badge still reads '★ Belote' — the rebelote distinction
+        lives only in the event log, not under the seat."""
         view = self._make_view(monkeypatch)
         diamond = view._render_diamond(
             Trick(),
@@ -606,7 +609,8 @@ class TestBeloteAnnouncement:
             width=42,
             belote_by_position={"South": "rebelote"},
         )
-        assert "★ Rebelote" in diamond.plain
+        assert "★ Belote" in diamond.plain
+        assert "Rebelote" not in diamond.plain
 
     def test_diamond_no_badge_when_state_empty(self, monkeypatch):
         view = self._make_view(monkeypatch)

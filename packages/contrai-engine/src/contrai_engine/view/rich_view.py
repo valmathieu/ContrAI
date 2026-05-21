@@ -1186,13 +1186,16 @@ class RichView:
         belote_by_position = belote_by_position or {}
 
         def _belote_badge(pos: str) -> Optional[Text]:
-            kind = belote_by_position.get(pos)
-            if kind is None:
+            # The seat badge always reads "★ Belote" once the holder
+            # has played either the K or the Q of trump. The belote /
+            # rebelote distinction is narrative-only and lives in the
+            # event log; under the seat we just signal "this player
+            # has the K+Q pair".
+            if belote_by_position.get(pos) is None:
                 return None
-            label = "Belote" if kind == "belote" else "Rebelote"
             t = Text()
             t.append("★ ", style=f"bold {GOLD}")
-            t.append(label, style=f"bold {GOLD}")
+            t.append("Belote", style=f"bold {GOLD}")
             return t
 
         plays = trick.get_plays() if trick else []
