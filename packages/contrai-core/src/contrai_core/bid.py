@@ -107,20 +107,30 @@ class ContractBid(Bid):
 
     def is_valid_after(self, previous_bids: list) -> bool:
         """
-        Contract bid must be higher than the last contract bid.
+        Contract bid must be higher than the last contract bid AND the
+        auction must not be frozen by a Double/Redouble.
+
+        Per contree-domain.md §5.3, a *contre* (Double) *freezes the
+        auction at the current contract* — no more numeric bids are
+        legal until the auction completes. Walking backwards from
+        the most recent bid, if we hit a Double or Redouble before
+        the last ContractBid, this new ContractBid is invalid.
 
         Args:
             previous_bids: List of previous Bid objects
 
         Returns:
             True if this bid is higher than previous contract bids
+            and no Double/Redouble has frozen the auction.
         """
-        # Find the last contract bid
         last_contract = None
         for bid in reversed(previous_bids):
             if isinstance(bid, ContractBid):
                 last_contract = bid
                 break
+            if isinstance(bid, (DoubleBid, RedoubleBid)):
+                # Auction is frozen; new numeric bids cannot reopen it.
+                return False
 
         if last_contract is None:
             return True  # First contract bid is always valid

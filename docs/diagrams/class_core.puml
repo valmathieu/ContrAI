@@ -160,6 +160,15 @@ package "bid.py" as p_bid {
         + __gt__(other) : bool
     }
 
+    note bottom of ContractBid
+      ``is_valid_after`` rejects the bid if a
+      DoubleBid or RedoubleBid sits between
+      the previous ContractBid and now —
+      per contree-domain.md §5.3, a Contre
+      *freezes* the auction at the current
+      contract.
+    end note
+
     class DoubleBid {
         + is_valid_after(...) : bool
         + can_be_doubled() : bool     ' False

@@ -186,6 +186,47 @@ class TestContractBidPrecedence:
         assert ContractBid(east, 110, Suit.HEARTS).is_valid_after(history) is True
         assert ContractBid(east, 100, Suit.HEARTS).is_valid_after(history) is False
 
+    def test_invalid_after_double_freezes_auction(self, north, east, south):
+        """Per contree-domain.md §5.3, a Double freezes the auction —
+        no more numeric bids of any value are accepted."""
+        history = [
+            ContractBid(east, 100, Suit.HEARTS),
+            DoubleBid(south),
+        ]
+        # Higher than 100 → still invalid because the auction is frozen.
+        assert (
+            ContractBid(north, 110, Suit.HEARTS).is_valid_after(history) is False
+        )
+        # Even a Capot can't reopen the auction.
+        assert (
+            ContractBid(north, "Capot", Suit.SPADES).is_valid_after(history) is False
+        )
+
+    def test_invalid_after_redouble_freezes_auction(self, north, east, south):
+        """Once the contracting team has redoubled, the auction is
+        equally frozen — no new numeric bids."""
+        history = [
+            ContractBid(east, 100, Suit.HEARTS),
+            DoubleBid(south),
+            RedoubleBid(east),
+        ]
+        assert (
+            ContractBid(north, 130, Suit.SPADES).is_valid_after(history) is False
+        )
+
+    def test_passes_after_double_still_freeze_auction(self, north, east, south, four_players):
+        """A pass between a Double and our turn doesn't thaw the
+        freeze — only the underlying Double/Redouble matters."""
+        _, _, _, west = four_players
+        history = [
+            ContractBid(east, 100, Suit.HEARTS),
+            DoubleBid(south),
+            PassBid(west),
+        ]
+        assert (
+            ContractBid(north, 110, Suit.HEARTS).is_valid_after(history) is False
+        )
+
 
 class TestContractBidComparison:
     """Numeric value extraction and __gt__."""

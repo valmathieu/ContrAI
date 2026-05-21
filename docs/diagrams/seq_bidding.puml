@@ -82,7 +82,7 @@ loop **while True** (outer)
         R -> R : bid_obj = _create_bid_from_choice(\n  player, bid_choice\n)\n→ PassBid / DoubleBid / RedoubleBid\n   / ContractBid / PassBid (on ValueError)
 
         R -> BV : is_bid_valid(bid_obj, bid_objects)
-        BV -> BV : bid_obj.is_valid_after(\n  previous_bids\n)\n(higher contract / valid double / etc.)
+        BV -> BV : bid_obj.is_valid_after(\n  previous_bids\n)\n• ContractBid: must be higher AND no\n  Double/Redouble frozen the auction\n• DoubleBid: opponent of contractor, no\n  intervening passes, not already doubled\n• RedoubleBid: contractor's team, no\n  intervening passes
         BV --> R : bool
 
         alt valid
