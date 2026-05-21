@@ -91,6 +91,30 @@ loop **for player in trick_order**  (×4)
         R -> T : current_trick.add_play(\n  player, playable_cards[0]\n)
     end
 
+    R -->> V : view.on_card_played(player, played_card,\n                       current_trick)
+    note right of V
+      RichView logs "X plays Y" in the
+      event log. For AI players it
+      re-renders the playing screen and
+      sleeps `CONTRAI_AI_CARD_DELAY`
+      (0.9s default). Humans skip the
+      pause — their own request_card_action
+      already drove the frame.
+    end note
+
+    alt player is belote_holder\nAND card is K-or-Q of trump
+        R -> R : _transition_belote_state(player)\n→ "belote" (first) or "rebelote" (second)
+        R -->> V : view.on_belote_announced(player, kind, self)
+        note right of V
+          Log "X announces Belote/Rebelote".
+          The persistent ★ badge under the
+          seat is rendered by
+          `_render_diamond` from
+          `round_.belote_state`. Sleeps
+          for `CONTRAI_AI_CARD_DELAY`.
+        end note
+    end
+
 end
 
 == Winner + bookkeeping ==
@@ -134,12 +158,18 @@ note over R, V
   **Legality (SF-09 / SF-10) — `_get_playable_cards`:**
 
   1. **Empty trick** → any card.
-  2. Player has the **lead suit** → must follow suit.
-  3. No lead-suit cards, **partner is leading** → any card (no obligation to trump).
-  4. No lead-suit cards, opponent led:
-     • no trump suit, or lead = trump → any card.
-     • opponent already trumped → must over-trump if possible;
-       else play any trump if any; else discard.
+  2. Player has the **lead suit**:
+     • lead = trump → must **over-trump** every trump on the table
+       if able (`_higher_trumps_than_played`); else play any trump.
+     • lead ≠ trump → must follow suit (no over-trump duty).
+  3. No lead-suit cards, **partner is currently master**
+     (`Trick.get_current_winner(trump_suit)`) → any card.
+     A partner who led but has been over-trumped no longer protects you.
+  4. No lead-suit cards, partner is not master:
+     • no trump suit → any card.
+     • opponent already trumped → must over-trump
+       (`_highest_opponent_trump`) if possible; else play any trump
+       if any; else discard.
      • no opponent trump yet → must trump if any; else discard.
 end note
 

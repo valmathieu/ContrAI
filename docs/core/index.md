@@ -26,7 +26,7 @@ Everything above is re-exported from `contrai_core/__init__.py` and is part of t
 ```plantuml format="svg" source="class_core.puml"
 ```
 
-The full domain model in one view. Note `Contract.get_defending_team()` is annotated as a TODO — today it returns `None` and is meant to be wired up at the game level. See [Diagrams](../diagrams/) for the colour convention.
+The full domain model in one view. Two trick-winner methods sit on `Trick`: `get_winner()` (uses the trump bound at construction time) and `get_current_winner(trump_suit)` (takes trump as an argument and works on partial tricks). The engine constructs `Trick()` without binding trump — the authoritative trump suit lives on the contract — and consumes `get_current_winner` for the partner-master legality check and the view's live winner highlight. Note `Contract.get_defending_team()` is annotated as a TODO — today it returns `None` and is meant to be wired up at the game level. See [Diagrams](../diagrams/) for the colour convention.
 
 ## Consumers
 

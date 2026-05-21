@@ -7,19 +7,22 @@ stateDiagram-v2
     [*] --> Landing : uv run contrai
 
     Landing : <b>0. Landing</b><br/>target-score picker<br/>(500 / 1000 / 1500 / 2000 / 3000)
-    Bidding : <b>1. Bidding</b><br/>request_bid_action(player, history)<br/>"80 h" / "pass" / "double" / "redouble"
-    MidTrick : <b>2. Mid-trick</b><br/>request_card_action(player, trick, contract, playable)<br/>diamond + live-winner gold pill
+    Bidding : <b>1. Bidding</b><br/>request_bid_action(player, history)<br/>"80 h" / "pass" / "double" / "redouble"<br/>(hint adapts to '(pass / redouble)'<br/>when contractor was just doubled)
+    MidTrick : <b>2. Mid-trick</b><br/>request_card_action(player, trick, contract, playable)<br/>diamond + live-winner gold pill<br/>★ Belote / ★ Rebelote badge under holder
     TrickWon : <b>3. Trick won</b><br/>on_trick_complete(trick, winner, round)<br/>"Press [Enter] to continue…"
-    EndGame : <b>4. End game</b><br/>show_end_game(status)<br/>[n] new · [r] rematch · [q] quit
+    RoundRecap : <b>4. Round recap</b><br/>show_round_recap(round, scores)<br/>contract · made/failed · round pts · running totals<br/>"Press [Enter] to deal next round…"
+    EndGame : <b>5. End game</b><br/>show_end_game(status)<br/>[n] new · [r] rematch · [q] quit
 
     Landing --> Bidding : Enter
-    Bidding --> Bidding : AI bids,<br/>still bidding
-    Bidding --> Landing : all 4 pass<br/>(redeal)
+    Bidding --> Bidding : AI bids,<br/>still bidding<br/>(view.on_bid_made paces)
+    Bidding --> RoundRecap : all 4 pass<br/>(no contract → recap → redeal)
     Bidding --> MidTrick : contract set,<br/>play_all_tricks starts
+    MidTrick --> MidTrick : AI plays,<br/>same trick<br/>(view.on_card_played paces)
     MidTrick --> TrickWon : 4th card played,<br/>Round fires hook
     TrickWon --> MidTrick : next trick<br/>(round not done)
-    TrickWon --> Bidding : 8 tricks done,<br/>round scored,<br/>target not reached
+    TrickWon --> RoundRecap : 8 tricks done,<br/>round scored,<br/>target not reached
     TrickWon --> EndGame : 8 tricks done,<br/>round scored,<br/>check_game_over true
+    RoundRecap --> Bidding : Enter,<br/>next deal
 
     EndGame --> Landing : [n] new game<br/>(fresh target prompt)
     EndGame --> Bidding : [r] rematch<br/>(same target)
@@ -30,7 +33,8 @@ stateDiagram-v2
         dim for illegal. Hint line below
         explains the constraint
         ("must follow ♠" / "must trump — W led K♣"
-        / "free discard").
+        / "free discard"). Rolling 'Log' panel
+        (last 5 events) sits below the hand.
     end note
 
     note right of TrickWon
@@ -40,14 +44,24 @@ stateDiagram-v2
         Non-Rich callers are unaffected.
     end note
 
+    note right of RoundRecap
+        Skipped when check_game_over(target)
+        is already true after the last trick —
+        the EndGame banner takes over.
+        Shown for all-pass rounds too
+        ("All passed — no contract").
+    end note
+
     classDef screen0 fill:#FFEFD9,stroke:#B26A28,stroke-width:2px,color:#5C3A14;
     classDef screen1 fill:#FFEFD9,stroke:#B26A28,stroke-width:2px,color:#5C3A14;
     classDef screen2 fill:#FFEFD9,stroke:#B26A28,stroke-width:2px,color:#5C3A14;
     classDef screen3 fill:#FFF3E0,stroke:#E89A4F,stroke-width:2px,color:#5C3A14;
-    classDef screen4 fill:#FFD9B3,stroke:#B26A28,stroke-width:2px,color:#5C3A14;
+    classDef screen4 fill:#FFF3E0,stroke:#E89A4F,stroke-width:2px,color:#5C3A14;
+    classDef screen5 fill:#FFD9B3,stroke:#B26A28,stroke-width:2px,color:#5C3A14;
 
     class Landing screen0
     class Bidding screen1
     class MidTrick screen2
     class TrickWon screen3
-    class EndGame screen4
+    class RoundRecap screen4
+    class EndGame screen5

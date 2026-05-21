@@ -33,12 +33,15 @@ participant "Game" as G <<engine>>
 participant "Round" as R <<engine>>
 participant "Deck" as D <<from contrai-core>> #E1F0FF
 participant "Player\n(per turn)" as P <<engine>>
+participant "RichView" as V <<engine>>
 
 C -> G : manage_round(view)
 note right of G
   `view` is typically a **RichView**
   (passed by `cli.py`); tests and
   headless callers can pass `None`.
+  Every view hook below is gated on
+  `hasattr(view, …)`.
 end note
 activate G
 
@@ -59,10 +62,18 @@ G -> R : deal_cards()
 R -> D : deal(players_order)\n(dealer gets last cards)
 return
 
+G -->> V : on_round_dealt(current_round)
+note right of V
+  RichView appends
+  "Round N: X deals."
+  to the rolling event log.
+end note
+
 == Bidding phase ==
 
 G -> R : manage_bidding(view)
 ref over R, P : **seq_bidding** — bid loop, validation, termination
+R -> R : _detect_belote_holder()\n(if a contract was made)
 R --> G : Contract | None
 G -> G : current_contract = contract
 
@@ -70,6 +81,7 @@ alt all players passed (contract is None)
     G -> R : handle_failed_contract()
     R -> D : add_cards(all hands)
     R --> G : {team: 0}
+    G -->> V : on_all_pass_redeal(current_round)
     G --> C : { contract: None,\n  message: "All players passed.\n  Cards redistributed." }
     return
 end
@@ -98,13 +110,31 @@ end
 G --> C : { contract, scores, total_scores,\n  message: "Round completed" }
 deactivate G
 
+== Between rounds — cli.py ==
+
+C -->> V : on_round_complete(round_, scores)
+note right of V
+  Append a RoundSummary to
+  `history` for the end-game
+  scoreboard table.
+end note
+alt not check_game_over(target)
+    C -->> V : show_round_recap(round_, scores)
+    note right of V
+      Full-screen recap panel:
+      contract, made/failed, per-team
+      round points, running totals,
+      belote advisory. Blocks on Enter.
+    end note
+end
+
 note over C, P
   Caller typically loops `manage_round` then `check_game_over(target)`
   until a team crosses the target. Game ↔ Round delegation:
   Game owns the loop; Round owns one round's lifecycle. The CLI
-  (`cli.py`) additionally calls `view.on_round_complete(...)` after
-  each `manage_round` so the end-game scoreboard table fills in
-  view-side without `Game` carrying UI state.
+  (`cli.py`) owns the between-rounds choreography: `on_round_complete`
+  feeds the end-game scoreboard, then `show_round_recap` blocks for
+  the user to take stock before the next deal.
 end note
 
 @enduml

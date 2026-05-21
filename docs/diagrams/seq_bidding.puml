@@ -59,10 +59,11 @@ loop **while True** (outer)
               bidding screen, parses
               the human's string
               (`pass`, `80 h`,
-              `coinche`/`double`,
-              `surcoinche`/`redouble`,
-              …), and loops on
-              parse errors.
+              `double`, `redouble`, …),
+              and loops on parse errors.
+              When the contractor was just
+              doubled, the example hint
+              switches to `(pass / redouble)`.
             end note
             V -->> R : 'Pass' | 'Double' | 'Redouble' | (value, suit)
         end
@@ -84,6 +85,18 @@ loop **while True** (outer)
             R -> R : bid_objects.append(PassBid(player))
             R -> R : passes_count += 1
         end
+
+        R -->> V : view.on_bid_made(player, bid_objects[-1],\n                    list(bid_objects))
+        note right of V
+          RichView logs the bid in the
+          rolling event log. For AI bidders
+          it re-renders the bidding screen
+          with the new action visible and
+          sleeps `CONTRAI_AI_BID_DELAY`
+          (1.4s default). Humans skip the
+          pause — `request_bid_action`
+          already drove their frame.
+        end note
 
         alt passes_count ≥ 3 AND len(bid_objects) > 3\nAND any non-pass
             R -> R : **break** (inner)
@@ -114,6 +127,7 @@ else
     R -> CT : new Contract(\n  contract_bid,\n  double=has_double,\n  redouble=has_redouble\n)
     CT --> R : Contract
     R -> R : self.contract = contract
+    R -> R : _detect_belote_holder()\n(scan hands for K + Q of trump;\n NO_TRUMP contracts → no holder)
 end
 
 [<-- R : return self.contract  (Contract | None)

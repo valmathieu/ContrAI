@@ -121,6 +121,8 @@ package "model/round.py" as p_round {
         + last_trick_winner : Player?
         + team_tricks : dict<str, list<Trick>>
         + round_scores : dict<str, int>
+        + belote_holder : Player?
+        + belote_state : dict<Player, str>
         --
         + __init__(players_order, dealer, deck, round_number)
         + deal_cards() : None
@@ -133,7 +135,12 @@ package "model/round.py" as p_round {
         - _create_bid_from_choice(player, choice) : Bid
         - _bid_to_legacy_format(bid: Bid)
         - _get_playable_cards(player) : list<Card>
+        - _higher_trumps_than_played(trumps, plays, trump) : list<Card>
+        - _highest_opponent_trump(plays, team, trump) : Card?
         - _determine_trick_winner(trick: Trick) : Player?
+        - _detect_belote_holder() : None
+        - _is_belote_event(player, card) : bool
+        - _transition_belote_state(player) : str?
     }
 
     note right of Round
@@ -141,11 +148,24 @@ package "model/round.py" as p_round {
       `Trick.get_winner()` from contrai-core
       (open question: pick one).
       ----
-      After each trick, Round calls
-      ``view.on_trick_complete(trick, winner,
-      self)`` if the view declares the hook
-      (``hasattr``-guarded so non-Rich
-      callers stay unaffected).
+      `_get_playable_cards` enforces:
+      • follow suit if able,
+      • over-trump when trump is led,
+      • partner-master exemption (current
+        winner, not whoever led),
+      • over-trump opponents otherwise.
+      The partner-master check delegates to
+      `Trick.get_current_winner(trump_suit)`.
+      ----
+      During play Round fires (each `hasattr`-guarded):
+      • `view.on_bid_made(player, bid, history)`
+      • `view.on_card_played(player, card, trick)`
+      • `view.on_belote_announced(player, kind, self)`
+      • `view.on_trick_complete(trick, winner, self)`
+      `Game.manage_round` additionally fires
+      `view.on_round_dealt(round_)` after the deal
+      and `view.on_all_pass_redeal(round_)` when
+      everyone passes.
     end note
 }
 
@@ -187,11 +207,13 @@ package "view/rich_view.py" as p_view {
     }
 
     class RichView {
+        + {static} LOG_MAX : int = 5
         + console : rich.Console
         + target_score : int
         + history : list<RoundSummary>
         + last_completed_trick : (Trick, Player)?
         + game : Game?
+        + event_log : list<Text>
         --
         + attach(game, target_score) : None
         + reset_for_rematch() : None
@@ -199,26 +221,42 @@ package "view/rich_view.py" as p_view {
         ' Engine hooks
         + request_bid_action(player, legacy_bids) : str | tuple
         + request_card_action(player, trick, contract, playable) : Card
+        + on_round_dealt(round_) : None
+        + on_all_pass_redeal(round_) : None
+        + on_bid_made(player, bid, history) : None
+        + on_card_played(player, card, trick) : None
+        + on_belote_announced(player, kind, round_) : None
         + on_trick_complete(trick, winner, round_) : None
         + on_round_complete(round_, running_scores) : None
         --
         ' CLI flow screens
         + show_landing(selected_target=1500) : int
+        + show_round_recap(round_, running_scores) : None
         + show_end_game(status) : str  ('n' | 'r' | 'q')
     }
 
     note right of RichView
-      Five-screen UI: landing, bidding,
-      mid-trick, trick-won, end-game.
-      Per-round summaries tracked here
-      (`history`) so Game stays UI-free.
+      Six-screen UI: landing, bidding,
+      mid-trick, trick-won, round-recap,
+      end-game. Per-round summaries tracked
+      here (`history`) so Game stays UI-free.
+      A rolling 5-line `event_log` is shown
+      below the hand in every in-game state.
+      ----
+      AI pacing is tunable per-hook via the
+      env vars `CONTRAI_AI_BID_DELAY` (1.4s)
+      and `CONTRAI_AI_CARD_DELAY` (0.9s).
+      The belote hook reuses the card delay.
       ----
       Pure helpers (parsers, sorter,
-      current-winner, hint) live at
-      module scope and are covered by
+      current-winner wrapper, hint,
+      `_redouble_available_to`,
+      `_resolve_delay`, `_bid_to_legacy`,
+      `_belote_by_position`) live at module
+      scope. Rendering panels are validated
+      by `uv run contrai` smoke testing plus
+      title/text smoke assertions in
       `tests/test_view/test_rich_view.py`.
-      Rendering panels are validated by
-      `uv run contrai` smoke testing.
     end note
 }
 
