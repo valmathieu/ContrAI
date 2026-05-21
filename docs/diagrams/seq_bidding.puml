@@ -43,29 +43,40 @@ loop **while True** (outer)
 
     loop **for player in players_order**
 
-        R -> R : legacy_bids = [\n  (b.player, _bid_to_legacy_format(b))\n  for b in bid_objects\n]
-
-        alt player has choose_bid (AI / Human)
-            R -> P : player.choose_bid(legacy_bids)
-            P --> R : 'Pass' | 'Double' | 'Redouble' | (value, suit)
-        else fallback
+        alt _should_auto_pass(player, bid_objects)
             R -> R : bid_choice = 'Pass'
-        end
-
-        alt view ≠ None AND player.is_human
-            R -->> V : view.request_bid_action(player, legacy_bids)
-            note right of V
-              RichView renders the
-              bidding screen, parses
-              the human's string
-              (`pass`, `80 h`,
-              `double`, `redouble`, …),
-              and loops on parse errors.
-              When the contractor was just
-              doubled, the example hint
-              switches to `(pass / redouble)`.
+            note right of R
+              Partner has doubled or
+              redoubled — Pass is the
+              only meaningful action.
+              Skip both the AI strategy
+              and the human prompt.
             end note
-            V -->> R : 'Pass' | 'Double' | 'Redouble' | (value, suit)
+        else normal turn
+            R -> R : legacy_bids = [\n  (b.player, _bid_to_legacy_format(b))\n  for b in bid_objects\n]
+
+            alt player has choose_bid (AI / Human)
+                R -> P : player.choose_bid(legacy_bids)
+                P --> R : 'Pass' | 'Double' | 'Redouble' | (value, suit)
+            else fallback
+                R -> R : bid_choice = 'Pass'
+            end
+
+            alt view ≠ None AND player.is_human
+                R -->> V : view.request_bid_action(player, legacy_bids)
+                note right of V
+                  RichView renders the
+                  bidding screen, parses
+                  the human's string
+                  (`pass`, `80 h`,
+                  `double`, `redouble`, …),
+                  and loops on parse errors.
+                  When the contractor was just
+                  doubled, the example hint
+                  switches to `(pass / redouble)`.
+                end note
+                V -->> R : 'Pass' | 'Double' | 'Redouble' | (value, suit)
+            end
         end
 
         R -> R : bid_obj = _create_bid_from_choice(\n  player, bid_choice\n)\n→ PassBid / DoubleBid / RedoubleBid\n   / ContractBid / PassBid (on ValueError)

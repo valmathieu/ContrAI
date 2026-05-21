@@ -134,6 +134,7 @@ package "model/round.py" as p_round {
         --
         - _create_bid_from_choice(player, choice) : Bid
         - _bid_to_legacy_format(bid: Bid)
+        - _should_auto_pass(player, bid_objects) : bool
         - _get_playable_cards(player) : list<Card>
         - _higher_trumps_than_played(trumps, plays, trump) : list<Card>
         - _highest_opponent_trump(plays, team, trump) : Card?

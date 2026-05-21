@@ -79,19 +79,28 @@ class Round:
 
         while True:
             for player in self.players_order:
-                # Get bid choice from player (returns string or tuple)
-                if hasattr(player, 'choose_bid'):
-                    # Convert bid objects to legacy format for compatibility
-                    legacy_bids = [(bid.player, self._bid_to_legacy_format(bid)) for bid in bid_objects]
-                    bid_choice = player.choose_bid(legacy_bids)
-                else:
+                # Short-circuit: when the player's partner has just
+                # doubled or redoubled, the only meaningful action is
+                # Pass (they can't double again, and only the contracting
+                # team can redouble). Auto-pass without prompting either
+                # the AI strategy or the human view — the AI's prompt
+                # is wasteful and the human prompt is confusing.
+                if self._should_auto_pass(player, bid_objects):
                     bid_choice = 'Pass'
+                else:
+                    # Get bid choice from player (returns string or tuple)
+                    if hasattr(player, 'choose_bid'):
+                        # Convert bid objects to legacy format for compatibility
+                        legacy_bids = [(bid.player, self._bid_to_legacy_format(bid)) for bid in bid_objects]
+                        bid_choice = player.choose_bid(legacy_bids)
+                    else:
+                        bid_choice = 'Pass'
 
-                # If view is provided and player is human, use view for input
-                if view and hasattr(player, 'is_human') and player.is_human:
-                    # Convert bid objects to legacy format for view compatibility
-                    legacy_bids = [(bid.player, self._bid_to_legacy_format(bid)) for bid in bid_objects]
-                    bid_choice = view.request_bid_action(player, legacy_bids)
+                    # If view is provided and player is human, use view for input
+                    if view and hasattr(player, 'is_human') and player.is_human:
+                        # Convert bid objects to legacy format for view compatibility
+                        legacy_bids = [(bid.player, self._bid_to_legacy_format(bid)) for bid in bid_objects]
+                        bid_choice = view.request_bid_action(player, legacy_bids)
 
                 # Create appropriate Bid object from player's choice
                 bid_obj = self._create_bid_from_choice(player, bid_choice)
@@ -427,6 +436,32 @@ class Round:
         teams = set(player.team for player in self.players_order)
         self.round_scores = {team.name: 0 for team in teams}
         return self.round_scores
+
+    def _should_auto_pass(self, player: 'Player', bid_objects: list) -> bool:
+        """True when *player* has no meaningful action besides Pass.
+
+        The rule covers the *partner has doubled/redoubled* situation:
+        once a Double is on the table you can't double again, and only
+        the contracting team can Redouble — so a defender whose
+        partner just doubled (or a contractor whose partner just
+        redoubled) literally cannot take any active action. Asking
+        them is a noisy prompt for the human and a coin flip for the
+        AI, so the engine passes for them.
+        """
+        for bid in reversed(bid_objects):
+            if isinstance(bid, PassBid):
+                continue
+            if isinstance(bid, (DoubleBid, RedoubleBid)):
+                # Partner = same team, different player. The same-player
+                # guard is defensive: a player can't double after their
+                # own action without three intervening bids anyway.
+                if (
+                    bid.player is not player
+                    and bid.player.team is player.team
+                ):
+                    return True
+            return False
+        return False
 
     def _create_bid_from_choice(self, player: 'Player', choice) -> Bid:
         """

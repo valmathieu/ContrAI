@@ -23,14 +23,14 @@ from __future__ import annotations
 import pytest
 
 from contrai_core import Hand
-from contrai_core.bid import ContractBid
+from contrai_core.bid import ContractBid, DoubleBid, PassBid, RedoubleBid
 from contrai_core.card import Card
 from contrai_core.contract import Contract
 from contrai_core.team import Team
 from contrai_core.trick import Trick
 from contrai_core.types import Rank, Suit
 
-from contrai_engine.model.player import AiPlayer
+from contrai_engine.model.player import AiPlayer, HumanPlayer
 from contrai_engine.model.round import Round
 
 
@@ -426,3 +426,133 @@ class TestBeloteTransition:
             round_._is_belote_event(players["N"], Card(Suit.HEARTS, Rank.KING))
             is False
         )
+
+
+# ---------------------------------------------------------------------------
+# Auto-pass when partner has doubled/redoubled
+# ---------------------------------------------------------------------------
+
+
+def _empty_round(players_dict):
+    """A Round with no contract / no trick — enough for bidding helpers."""
+    order = [players_dict[s] for s in ("N", "E", "S", "W")]
+    return Round(order, dealer=players_dict["N"], deck=None, round_number=1)
+
+
+class TestShouldAutoPass:
+    """Round._should_auto_pass: the *only meaningful action is pass* check."""
+
+    def test_empty_history_no_auto_pass(self, players):
+        round_ = _empty_round(players)
+        assert round_._should_auto_pass(players["S"], []) is False
+
+    def test_only_passes_no_auto_pass(self, players):
+        round_ = _empty_round(players)
+        bids = [PassBid(players["N"]), PassBid(players["E"])]
+        assert round_._should_auto_pass(players["S"], bids) is False
+
+    def test_partner_doubled_triggers_auto_pass(self, players):
+        """E (opponent) bids 100 ♥; N (S's partner) doubles. S's only
+        meaningful next action is Pass."""
+        round_ = _empty_round(players)
+        bids = [
+            ContractBid(players["E"], 100, Suit.HEARTS),
+            DoubleBid(players["N"]),
+        ]
+        assert round_._should_auto_pass(players["S"], bids) is True
+
+    def test_opponent_doubled_no_auto_pass(self, players):
+        """N (S's partner) bids 100 ♥; E (opponent) doubles. S is on
+        the contracting team and CAN redouble — must not auto-pass."""
+        round_ = _empty_round(players)
+        bids = [
+            ContractBid(players["N"], 100, Suit.HEARTS),
+            DoubleBid(players["E"]),
+        ]
+        assert round_._should_auto_pass(players["S"], bids) is False
+
+    def test_partner_redoubled_triggers_auto_pass(self, players):
+        """N bids 100, W doubles, S (N's partner) redoubles. Now N is
+        up — partner just redoubled and there's nothing left to do."""
+        round_ = _empty_round(players)
+        bids = [
+            ContractBid(players["N"], 100, Suit.HEARTS),
+            DoubleBid(players["W"]),
+            RedoubleBid(players["S"]),
+        ]
+        assert round_._should_auto_pass(players["N"], bids) is True
+
+    def test_passes_after_double_still_trigger_auto_pass(self, players):
+        """A pass between the partner-double and our turn doesn't break
+        the rule — what matters is the last NON-PASS bid."""
+        round_ = _empty_round(players)
+        bids = [
+            ContractBid(players["E"], 100, Suit.HEARTS),
+            DoubleBid(players["N"]),
+            PassBid(players["W"]),
+        ]
+        assert round_._should_auto_pass(players["S"], bids) is True
+
+
+class TestManageBiddingAutoPasses:
+    """End-to-end: the manage_bidding loop never asks the view when
+    the player should be auto-passed."""
+
+    def test_human_is_not_prompted_after_partner_double(self, players):
+        """Stub view that records request_bid_action calls. Pre-script
+        a bidding sequence that lands the human (S) right after their
+        partner (N) doubled the opponents' bid.
+
+        Sequence (cyclic order W → N → E → S):
+          1. W: 100 ♥
+          2. N (S's partner): Double          ← DoubleBid is valid only
+                                                immediately after the
+                                                ContractBid, so the
+                                                doubler MUST be next in
+                                                cycle after the contractor.
+          3. E (W's partner, contracting team): pass
+          4. S (HUMAN): AUTO-PASS — partner doubled
+          5. W: pass    (now passes_count = 3 → bidding ends)
+        """
+        # Make S a HumanPlayer so the view path is exercised.
+        human = HumanPlayer("You", "South")
+        human.team = players["S"].team  # same N-S team
+        players["S"] = human
+
+        # Pre-seed each AI's choose_bid via a scripted queue.
+        scripted = {
+            players["W"]: [(100, Suit.HEARTS), "Pass", "Pass", "Pass"],
+            players["N"]: ["Double", "Pass", "Pass", "Pass"],
+            players["E"]: ["Pass", "Pass", "Pass", "Pass"],
+        }
+        for ai, choices in scripted.items():
+            queue = list(choices)
+            ai.choose_bid = lambda *_args, _q=queue: (
+                _q.pop(0) if _q else "Pass"
+            )
+
+        # Stub view: records request_bid_action calls. Asserting it
+        # is NEVER called is the whole point of the test.
+        prompts = []
+
+        class _View:
+            def request_bid_action(self, player, history):
+                prompts.append((player, list(history)))
+                return "Pass"
+
+        round_ = _empty_round(players)
+        # Cycle order: W → N → E → S (dealer is S, so the next player
+        # after the dealer leads).
+        round_.players_order = [
+            players["W"], players["N"], players["E"], players["S"],
+        ]
+
+        contract = round_.manage_bidding(view=_View())
+
+        # W contracted 100 ♥; N (S's partner) doubled.
+        assert contract is not None
+        assert contract.value == 100
+        assert contract.suit == Suit.HEARTS
+        assert contract.double is True
+        # And the critical assertion: S was never prompted.
+        assert prompts == []
