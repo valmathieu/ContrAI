@@ -338,6 +338,19 @@ def _parse_card_input(
     return card
 
 
+def _belote_by_position(round_) -> dict[str, str]:
+    """Project ``round_.belote_state`` (player → kind) onto positions.
+
+    Returns an empty dict when no round is active, the round has no
+    belote_state, or none has been triggered yet. Used to render the
+    persistent ★ Belote/Rebelote badge in the trick diamond.
+    """
+    if round_ is None:
+        return {}
+    state = getattr(round_, "belote_state", None) or {}
+    return {player.position: kind for player, kind in state.items()}
+
+
 def _resolve_delay(env_var: str, default: float) -> float:
     """Read a float pacing value from the environment with a default.
 
@@ -635,6 +648,34 @@ class RichView:
             prompt_question=self._ai_card_announcement(player, card),
             mandatory=False,
         )
+        time.sleep(_resolve_delay("CONTRAI_AI_CARD_DELAY", default=0.9))
+
+    def on_belote_announced(
+        self, player: BasePlayer, kind: str, round_: "Round"
+    ) -> None:
+        """Belote / rebelote announcement: log + brief pause.
+
+        The persistent ★ badge under the player's seat is rendered by
+        ``_render_diamond`` from ``round_.belote_state``, so this hook
+        only needs to record the moment and pace it visibly. The pause
+        uses the card delay so it fits the per-play rhythm."""
+        trump = round_.contract.suit if round_ and round_.contract else None
+        line = Text()
+        label = _position_short(player.position)
+        color = _position_color(player.position)
+        line.append(f"{label} ", style=f"bold {color}")
+        line.append("announces ", style=FG)
+        line.append(
+            "Belote" if kind == "belote" else "Rebelote",
+            style=f"bold {GOLD}",
+        )
+        if trump is not None:
+            line.append(" (", style=DIM)
+            line.append(_suit_glyph(trump), style=_suit_color(trump))
+            line.append(").", style=DIM)
+        else:
+            line.append(".", style=DIM)
+        self._log(line)
         time.sleep(_resolve_delay("CONTRAI_AI_CARD_DELAY", default=0.9))
 
     def show_round_recap(
@@ -1049,6 +1090,7 @@ class RichView:
             winner_position=winner.position if winner else None,
             dimmed=True,
             width=18,
+            belote_by_position=_belote_by_position(round_),
         )
         body.append("\n")
         body.append("Won: ", style=DIM)
@@ -1104,6 +1146,7 @@ class RichView:
             winner_position=winner_position,
             dimmed=False,
             width=42,
+            belote_by_position=_belote_by_position(round_),
         )
         body.append("\n")
         if phase == "trick_won" and trick_winner is not None:
@@ -1132,8 +1175,26 @@ class RichView:
         winner_position: Optional[str],
         dimmed: bool,
         width: int,
+        belote_by_position: Optional[dict[str, str]] = None,
     ) -> Text:
-        """Render the 4-player diamond: N top, E right, S bottom, W left."""
+        """Render the 4-player diamond: N top, E right, S bottom, W left.
+
+        ``belote_by_position`` maps a position string (``"North"`` etc.)
+        to either ``"belote"`` or ``"rebelote"`` for seats that have
+        announced. The badge persists for the rest of the round.
+        """
+        belote_by_position = belote_by_position or {}
+
+        def _belote_badge(pos: str) -> Optional[Text]:
+            kind = belote_by_position.get(pos)
+            if kind is None:
+                return None
+            label = "Belote" if kind == "belote" else "Rebelote"
+            t = Text()
+            t.append("★ ", style=f"bold {GOLD}")
+            t.append(label, style=f"bold {GOLD}")
+            return t
+
         plays = trick.get_plays() if trick else []
         plays_by_pos: dict[str, tuple[BasePlayer, Card]] = {}
         led_position: Optional[str] = None
@@ -1188,7 +1249,9 @@ class RichView:
                 t.append(" (led)", style=DIM)
             return t
 
-        # Build five rows of fixed-width text.
+        # Build rows of fixed-width text. Belote badges (when any seat
+        # has announced) are inserted as a centered line below the seat
+        # that owns them.
         out = Text()
         # Row 1: blank
         out.append("\n")
@@ -1198,6 +1261,13 @@ class RichView:
         out.append(" " * pad_left)
         out.append_text(n)
         out.append("\n")
+        # N's belote badge (centered)
+        n_badge = _belote_badge("North")
+        if n_badge is not None:
+            pad = max(0, (width - n_badge.cell_len) // 2)
+            out.append(" " * pad)
+            out.append_text(n_badge)
+            out.append("\n")
         # Row 3: W left, E right
         w = slot("West")
         e = slot("East")
@@ -1207,11 +1277,33 @@ class RichView:
         out.append(" " * gap)
         out.append_text(e)
         out.append("\n")
+        # W/E badges share a row (left-aligned for W, right-aligned for E).
+        w_badge = _belote_badge("West")
+        e_badge = _belote_badge("East")
+        if w_badge is not None or e_badge is not None:
+            wb_len = w_badge.cell_len if w_badge else 0
+            eb_len = e_badge.cell_len if e_badge else 0
+            badge_gap = max(2, width - wb_len - eb_len)
+            if w_badge is not None:
+                out.append_text(w_badge)
+            else:
+                out.append(" " * wb_len)
+            out.append(" " * badge_gap)
+            if e_badge is not None:
+                out.append_text(e_badge)
+            out.append("\n")
         # Row 4: S centered
         s = slot("South")
         pad_left = max(0, (width - s.cell_len) // 2)
         out.append(" " * pad_left)
         out.append_text(s)
+        # S's belote badge (centered)
+        s_badge = _belote_badge("South")
+        if s_badge is not None:
+            out.append("\n")
+            pad = max(0, (width - s_badge.cell_len) // 2)
+            out.append(" " * pad)
+            out.append_text(s_badge)
         return out
 
     def _panel_hand(

@@ -303,3 +303,126 @@ class TestFollowSuitWhenNonTrumpLed:
         )
         legal = round_._get_playable_cards(players["S"])
         assert _ids(legal) == {(Suit.HEARTS, Rank.ACE)}
+
+
+# ---------------------------------------------------------------------------
+# Belote / rebelote tracking
+# ---------------------------------------------------------------------------
+
+
+class TestBeloteHolderDetection:
+    """``_detect_belote_holder`` finds the player holding K+Q of trump."""
+
+    def test_sets_belote_holder_when_pair_present(self, players):
+        contract = _contract(players["N"], 100, Suit.HEARTS)
+        round_ = _make_round(
+            players,
+            {
+                "N": [],
+                "E": [],
+                "S": [
+                    Card(Suit.HEARTS, Rank.KING),
+                    Card(Suit.HEARTS, Rank.QUEEN),
+                ],
+                "W": [],
+            },
+            contract,
+            [],
+        )
+        round_._detect_belote_holder()
+        assert round_.belote_holder is players["S"]
+
+    def test_no_holder_when_pair_split(self, players):
+        contract = _contract(players["N"], 100, Suit.HEARTS)
+        round_ = _make_round(
+            players,
+            {
+                "N": [Card(Suit.HEARTS, Rank.KING)],
+                "E": [],
+                "S": [Card(Suit.HEARTS, Rank.QUEEN)],
+                "W": [],
+            },
+            contract,
+            [],
+        )
+        round_._detect_belote_holder()
+        assert round_.belote_holder is None
+
+    def test_no_holder_at_no_trump(self, players):
+        contract = _contract(players["N"], 100, Suit.NO_TRUMP)
+        round_ = _make_round(
+            players,
+            {
+                "N": [],
+                "E": [],
+                "S": [
+                    Card(Suit.HEARTS, Rank.KING),
+                    Card(Suit.HEARTS, Rank.QUEEN),
+                    Card(Suit.SPADES, Rank.KING),
+                    Card(Suit.SPADES, Rank.QUEEN),
+                ],
+                "W": [],
+            },
+            contract,
+            [],
+        )
+        round_._detect_belote_holder()
+        assert round_.belote_holder is None
+
+
+class TestBeloteTransition:
+    """State machine for belote → rebelote announcements."""
+
+    def _setup(self, players):
+        contract = _contract(players["N"], 100, Suit.HEARTS)
+        # South holds both K♥ and Q♥ plus filler.
+        round_ = _make_round(
+            players,
+            {
+                "N": [],
+                "E": [],
+                "S": [
+                    Card(Suit.HEARTS, Rank.KING),
+                    Card(Suit.HEARTS, Rank.QUEEN),
+                    Card(Suit.SPADES, Rank.SEVEN),
+                ],
+                "W": [],
+            },
+            contract,
+            [],
+        )
+        round_.belote_holder = players["S"]
+        return round_
+
+    def test_first_play_returns_belote(self, players):
+        round_ = self._setup(players)
+        card = Card(Suit.HEARTS, Rank.KING)
+        assert round_._is_belote_event(players["S"], card) is True
+        kind = round_._transition_belote_state(players["S"])
+        assert kind == "belote"
+        assert round_.belote_state == {players["S"]: "belote"}
+
+    def test_second_play_returns_rebelote(self, players):
+        round_ = self._setup(players)
+        round_._transition_belote_state(players["S"])  # first → belote
+        kind = round_._transition_belote_state(players["S"])
+        assert kind == "rebelote"
+        assert round_.belote_state == {players["S"]: "rebelote"}
+
+    def test_non_kq_trump_not_an_event(self, players):
+        round_ = self._setup(players)
+        # Seven of trump is not part of the pair.
+        assert (
+            round_._is_belote_event(
+                players["S"], Card(Suit.HEARTS, Rank.SEVEN)
+            )
+            is False
+        )
+
+    def test_non_holder_not_an_event(self, players):
+        round_ = self._setup(players)
+        # N plays K♥ — but N is not the belote holder.
+        assert (
+            round_._is_belote_event(players["N"], Card(Suit.HEARTS, Rank.KING))
+            is False
+        )

@@ -5,7 +5,7 @@ from typing import Optional, Dict, List, TYPE_CHECKING
 from contrai_core.trick import Trick
 from contrai_core.contract import Contract
 from contrai_core.bid import Bid, PassBid, ContractBid, DoubleBid, RedoubleBid, BidValidator
-from contrai_core.types import Rank
+from contrai_core.types import Rank, Suit
 
 if TYPE_CHECKING:
     from .player import Player
@@ -42,6 +42,15 @@ class Round:
         self.last_trick_winner: Optional['Player'] = None
         self.team_tricks: Dict[str, List[Trick]] = {}
         self.round_scores: Dict[str, int] = {}
+
+        # Belote / rebelote announcement state. ``belote_holder`` is the
+        # unique player holding both the K and the Q of trump at deal time
+        # (None when no one has both, or when the contract is NO_TRUMP /
+        # passed). ``belote_state`` tracks which of the two cards they
+        # have already played: missing → not yet announced; "belote" →
+        # one played; "rebelote" → both played.
+        self.belote_holder: Optional['Player'] = None
+        self.belote_state: Dict['Player', str] = {}
 
         # Initialize team tricks dictionary
         if players_order:
@@ -134,10 +143,63 @@ class Round:
             has_redouble = BidValidator.has_redouble(bid_objects)
 
             self.contract = Contract(contract_bid, double=has_double, redouble=has_redouble)
+            self._detect_belote_holder()
         else:
             self.contract = None
 
         return self.contract
+
+    def _is_belote_event(self, player: 'Player', card) -> bool:
+        """True if *player* playing *card* counts toward a belote announcement."""
+        if self.belote_holder is None or self.contract is None:
+            return False
+        if player is not self.belote_holder:
+            return False
+        trump = self.contract.suit
+        return card.suit == trump and card.rank in (Rank.KING, Rank.QUEEN)
+
+    def _transition_belote_state(self, player: 'Player') -> Optional[str]:
+        """Advance the belote_state machine and return the new state name.
+
+        Returns ``"belote"`` if this is the first of the K+Q pair played,
+        ``"rebelote"`` if it's the second, or ``None`` if the player has
+        already fired both (defensive — shouldn't happen, since each card
+        is unique).
+        """
+        current = self.belote_state.get(player)
+        if current is None:
+            self.belote_state[player] = "belote"
+            return "belote"
+        if current == "belote":
+            self.belote_state[player] = "rebelote"
+            return "rebelote"
+        return None
+
+    def _detect_belote_holder(self) -> None:
+        """Snapshot which player (if any) holds the K + Q of trump.
+
+        Belote/rebelote is a per-round, per-holder narrative event:
+        whoever holds both cards announces ``Belote`` on the first they
+        play and ``Rebelote`` on the second. No-trump contracts have no
+        belote.
+        """
+        if self.contract is None or self.contract.suit == Suit.NO_TRUMP:
+            self.belote_holder = None
+            return
+        trump = self.contract.suit
+        for player in self.players_order:
+            has_king = any(
+                card.suit == trump and card.rank == Rank.KING
+                for card in player.hand
+            )
+            has_queen = any(
+                card.suit == trump and card.rank == Rank.QUEEN
+                for card in player.hand
+            )
+            if has_king and has_queen:
+                self.belote_holder = player
+                return
+        self.belote_holder = None
 
     def play_trick(self, view=None) -> Optional['Player']:
         """
@@ -196,6 +258,15 @@ class Round:
                 and hasattr(view, 'on_card_played')
             ):
                 view.on_card_played(player, played_card, self.current_trick)
+
+            # Belote / rebelote announcement. Fires only when the holder
+            # plays one of the K/Q of trump. Each card fires at most once.
+            if played_card is not None and self._is_belote_event(player, played_card):
+                kind = self._transition_belote_state(player)
+                if kind is not None and view is not None and hasattr(
+                    view, 'on_belote_announced'
+                ):
+                    view.on_belote_announced(player, kind, self)
 
         # Determine trick winner
         winner = self._determine_trick_winner(self.current_trick)

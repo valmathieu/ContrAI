@@ -517,6 +517,112 @@ class TestEventLog:
         assert view.event_log == []
 
 
+class TestBeloteAnnouncement:
+    """Belote announcement hook + diamond badge."""
+
+    def _make_view(self, monkeypatch):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        return RichView()
+
+    class _StubContract:
+        def __init__(self, suit):
+            self.suit = suit
+            class _T: pass
+            self.team = _T()
+            self.team.name = "North-South"
+
+    class _StubRound:
+        def __init__(self, contract, belote_state):
+            self.contract = contract
+            self.belote_state = belote_state
+            self.tricks = []
+            self.team_tricks = {}
+
+    def test_on_belote_announced_logs_belote(self, monkeypatch, four_players):
+        view = self._make_view(monkeypatch)
+        north, *_ = four_players
+        round_ = self._StubRound(self._StubContract(Suit.HEARTS), {north: "belote"})
+        view.on_belote_announced(north, "belote", round_)
+        line = view.event_log[-1].plain
+        assert "Belote" in line
+        assert "Rebelote" not in line
+
+    def test_on_belote_announced_logs_rebelote(self, monkeypatch, four_players):
+        view = self._make_view(monkeypatch)
+        north, *_ = four_players
+        round_ = self._StubRound(self._StubContract(Suit.HEARTS),
+                                 {north: "rebelote"})
+        view.on_belote_announced(north, "rebelote", round_)
+        assert "Rebelote" in view.event_log[-1].plain
+
+    def test_on_belote_announced_sleeps(self, monkeypatch, four_players):
+        """Announcement uses the AI card delay so it lands visibly."""
+        from contrai_engine.view import rich_view
+
+        sleep_calls = []
+        monkeypatch.setattr(rich_view.time, "sleep",
+                            lambda s: sleep_calls.append(s))
+        monkeypatch.setenv("CONTRAI_AI_CARD_DELAY", "0.01")
+        north, *_ = four_players
+        view = RichView()
+        round_ = self._StubRound(self._StubContract(Suit.HEARTS), {})
+        view.on_belote_announced(north, "belote", round_)
+        assert sleep_calls == [0.01]
+
+    def test_diamond_renders_belote_badge_for_announcer(
+        self, monkeypatch, four_players
+    ):
+        view = self._make_view(monkeypatch)
+        north, *_ = four_players
+        trick = Trick()
+        # Empty trick is fine — the badge is keyed off belote_by_position.
+        diamond = view._render_diamond(
+            trick,
+            Suit.HEARTS,
+            pending_position=None,
+            winner_position=None,
+            dimmed=False,
+            width=42,
+            belote_by_position={"North": "belote"},
+        )
+        text = diamond.plain
+        assert "★ Belote" in text
+        # The badge sits below the N slot, so the badge appears AFTER
+        # "N · " in linear text order.
+        assert text.index("N") < text.index("★ Belote")
+
+    def test_diamond_renders_rebelote_after_second(
+        self, monkeypatch, four_players
+    ):
+        view = self._make_view(monkeypatch)
+        diamond = view._render_diamond(
+            Trick(),
+            Suit.HEARTS,
+            pending_position=None,
+            winner_position=None,
+            dimmed=False,
+            width=42,
+            belote_by_position={"South": "rebelote"},
+        )
+        assert "★ Rebelote" in diamond.plain
+
+    def test_diamond_no_badge_when_state_empty(self, monkeypatch):
+        view = self._make_view(monkeypatch)
+        diamond = view._render_diamond(
+            Trick(),
+            Suit.HEARTS,
+            pending_position=None,
+            winner_position=None,
+            dimmed=False,
+            width=42,
+            belote_by_position=None,
+        )
+        assert "Belote" not in diamond.plain
+        assert "Rebelote" not in diamond.plain
+
+
 class TestRoundRecapPanel:
     """Between-rounds recap: contract, made/failed, totals, belote."""
 
