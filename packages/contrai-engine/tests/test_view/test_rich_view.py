@@ -16,6 +16,7 @@ smoke-test pass on ``uv run contrai`` validates them end-to-end.
 from __future__ import annotations
 
 import pytest
+from rich.text import Text
 
 from contrai_core import Card, Rank, Suit, Trick
 from contrai_engine.model.player import AiPlayer
@@ -400,6 +401,120 @@ class TestOnCardPlayedPacing:
         view = RichView()
         view.on_card_played(human, Card(Suit.HEARTS, Rank.ACE), Trick())
         assert sleep_calls == []
+
+
+class TestEventLog:
+    """Rolling narrative log shown below the hand panel."""
+
+    def _make_view(self, monkeypatch):
+        """RichView with sleep patched out — we don't want real pauses."""
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        return RichView()
+
+    def test_log_appends_and_trims(self, monkeypatch):
+        view = self._make_view(monkeypatch)
+        for i in range(view.LOG_MAX + 3):
+            view._log(Text(f"line {i}"))
+        assert len(view.event_log) == view.LOG_MAX
+        # Earliest entries are dropped first.
+        assert view.event_log[0].plain == f"line {3}"
+        assert view.event_log[-1].plain == f"line {view.LOG_MAX + 2}"
+
+    def test_on_bid_made_logs_styled_entry(self, monkeypatch, four_players):
+        view = self._make_view(monkeypatch)
+        north, *_ = four_players
+        bid = ContractBid(north, 100, Suit.HEARTS)
+        view.on_bid_made(north, bid, [bid])
+        assert any("bid 100" in line.plain for line in view.event_log)
+        assert any("♥" in line.plain for line in view.event_log)
+
+    def test_on_bid_made_logs_pass(self, monkeypatch, four_players):
+        view = self._make_view(monkeypatch)
+        north, *_ = four_players
+        view.on_bid_made(north, PassBid(north), [PassBid(north)])
+        assert any(line.plain.endswith("passed.") for line in view.event_log)
+
+    def test_on_card_played_logs(self, monkeypatch, four_players):
+        view = self._make_view(monkeypatch)
+        north, *_ = four_players
+        view.on_card_played(north, Card(Suit.HEARTS, Rank.JACK), Trick())
+        # Card log: "N plays J♥."
+        assert any("plays" in line.plain for line in view.event_log)
+        assert any("J♥" in line.plain for line in view.event_log)
+
+    def test_on_trick_complete_logs_winner_with_points(
+        self, monkeypatch, four_players
+    ):
+        view = self._make_view(monkeypatch)
+        north, east, south, west = four_players
+
+        class _StubRound:
+            def __init__(self, contract):
+                self.contract = contract
+                self.tricks = []
+                self.team_tricks = {}
+
+        class _StubContract:
+            suit = Suit.HEARTS
+
+        trick = Trick()
+        # Build a real-ish trick. With Hearts trump, J♥(20)+A♥(11)+K♥(4)+Q♥(3)=38.
+        trick.add_play(north, Card(Suit.HEARTS, Rank.JACK))
+        trick.add_play(east, Card(Suit.HEARTS, Rank.ACE))
+        trick.add_play(south, Card(Suit.HEARTS, Rank.KING))
+        trick.add_play(west, Card(Suit.HEARTS, Rank.QUEEN))
+        # Avoid blocking on console.input — patch it.
+        view.console.input = lambda *_a, **_kw: ""
+        view.on_trick_complete(trick, north, _StubRound(_StubContract()))
+
+        win_line = view.event_log[-1].plain
+        assert "wins trick" in win_line
+        assert "38" in win_line
+
+    def test_on_round_dealt_logs(self, monkeypatch, four_players):
+        view = self._make_view(monkeypatch)
+        north, *_ = four_players
+
+        class _StubRound:
+            round_number = 5
+            dealer = north
+
+        view.on_round_dealt(_StubRound())
+        assert any("Round 5" in line.plain for line in view.event_log)
+        assert any("deals" in line.plain for line in view.event_log)
+
+    def test_on_all_pass_redeal_logs(self, monkeypatch):
+        view = self._make_view(monkeypatch)
+        view.on_all_pass_redeal(round_=None)
+        assert any("redealing" in line.plain for line in view.event_log)
+
+    def test_panel_event_log_renders_lines(self, monkeypatch):
+        view = self._make_view(monkeypatch)
+        view._log(Text("alpha"))
+        view._log(Text("beta"))
+        panel = view._panel_event_log()
+        assert "alpha" in panel.renderable.plain
+        assert "beta" in panel.renderable.plain
+        assert panel.title.plain == "Log"
+
+    def test_panel_event_log_empty_placeholder(self, monkeypatch):
+        view = self._make_view(monkeypatch)
+        panel = view._panel_event_log()
+        assert "(no events yet)" in panel.renderable.plain
+
+    def test_attach_resets_log(self, monkeypatch, four_players):
+        view = self._make_view(monkeypatch)
+        view._log(Text("from previous game"))
+        # Attach without a real Game (just enough for the method to work).
+        class _StubGame:
+            def __init__(self):
+                self.current_round = None
+                self.scores = {"North-South": 0, "East-West": 0}
+
+        view.attach(_StubGame(), target_score=1500)
+        assert view.event_log == []
 
 
 class TestPanelRoundTitle:

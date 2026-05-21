@@ -457,12 +457,19 @@ class RichView:
     can reach team scores without each call passing them.
     """
 
+    LOG_MAX = 5
+
     def __init__(self) -> None:
         self.console: Console = Console()
         self.target_score: int = DEFAULT_TARGET
         self.history: list[RoundSummary] = []
         self.last_completed_trick: Optional[tuple[Trick, BasePlayer]] = None
         self.game: Optional["Game"] = None
+        # Rolling narrative log shown below the hand. Captures the last
+        # ``LOG_MAX`` events (deal, bids, plays, trick winners, redeal,
+        # belote announcements). Survives across rounds so the end of
+        # round N and the start of round N+1 share continuity.
+        self.event_log: list[Text] = []
 
     # ------------------------------------------------------------------
     # Lifecycle wiring (called by the CLI)
@@ -474,12 +481,14 @@ class RichView:
         self.target_score = target_score
         self.history = []
         self.last_completed_trick = None
+        self.event_log = []
 
     def reset_for_rematch(self) -> None:
         """Drop per-game state but keep the console and target."""
         self.game = None
         self.history = []
         self.last_completed_trick = None
+        self.event_log = []
 
     # ------------------------------------------------------------------
     # Engine hooks
@@ -551,7 +560,10 @@ class RichView:
     def on_trick_complete(
         self, trick: Trick, winner: BasePlayer, round_: "Round"
     ) -> None:
-        """Render the trick-won state and wait for Enter."""
+        """Record the winner in the log, render the trick-won state, wait for Enter."""
+        trump = round_.contract.suit if round_ and round_.contract else None
+        trick_points = sum(card.get_points(trump) for _, card in trick.get_plays())
+        self._log(self._format_trick_won_log(winner, trick_points))
         # State 3: full trick shown, winner highlighted, Press Enter.
         self._render_in_game(
             phase="trick_won",
@@ -567,10 +579,27 @@ class RichView:
         # Rotate: this is now the "last trick" for the next panel.
         self.last_completed_trick = (trick, winner)
 
+    def on_round_dealt(self, round_: "Round") -> None:
+        """Engine hook: cards have just been dealt for a new round."""
+        dealer = (
+            _position_short(round_.dealer.position)
+            if round_ and round_.dealer
+            else "—"
+        )
+        line = Text()
+        line.append(f"Round {round_.round_number}: ", style=f"bold {YELLOW}")
+        line.append(f"{dealer} deals.", style=FG)
+        self._log(line)
+
+    def on_all_pass_redeal(self, round_: "Round") -> None:
+        """Engine hook: every bid was a pass, the deal will be repeated."""
+        line = Text("All passed — redealing.", style=f"bold {YELLOW}")
+        self._log(line)
+
     def on_bid_made(
         self, player: BasePlayer, bid: Bid, history: list
     ) -> None:
-        """Render an AI bid and pause briefly. No-op for humans.
+        """Record the bid in the event log; render+pause for AI players.
 
         Humans already drove the render through ``request_bid_action``;
         the engine calls this hook after their input has been recorded,
@@ -578,16 +607,16 @@ class RichView:
         without a frame — this hook gives the user time to read the
         bidding history.
         """
+        legacy_bid = _bid_to_legacy(bid)
+        self._log(self._format_bid_log(player, legacy_bid))
         if getattr(player, "is_human", False):
             return
         legacy_history = [(b.player, _bid_to_legacy(b)) for b in history]
-        # Echo the AI action in the prompt so it's clear what just happened.
-        last_bid = legacy_history[-1][1] if legacy_history else None
         self._render_in_game(
             phase="bidding",
             current_player=None,
             bidding_history=legacy_history,
-            prompt_question=self._ai_bid_announcement(player, last_bid),
+            prompt_question=self._ai_bid_announcement(player, legacy_bid),
             mandatory=False,
         )
         time.sleep(_resolve_delay("CONTRAI_AI_BID_DELAY", default=1.4))
@@ -595,7 +624,8 @@ class RichView:
     def on_card_played(
         self, player: BasePlayer, card: Card, trick: Trick
     ) -> None:
-        """Render an AI card play and pause briefly. No-op for humans."""
+        """Record the card in the event log; render+pause for AI players."""
+        self._log(self._format_card_log(player, card))
         if getattr(player, "is_human", False):
             return
         self._render_in_game(
@@ -749,6 +779,8 @@ class RichView:
             self.console.print(history_panel)
         if hand_panel is not None:
             self.console.print(hand_panel)
+        # Event log: a rolling narrative of the last few engine events.
+        self.console.print(self._panel_event_log())
         self.console.print(self._panel_prompt(prompt_question, mandatory))
 
     # ------------------------------------------------------------------
@@ -1323,6 +1355,78 @@ class RichView:
             t.append("Only one legal play. ", style=f"bold {YELLOW}")
         t.append(f"Choose card [1-{hand_size}]:", style=f"bold {YELLOW}")
         return t
+
+    # ------------------------------------------------------------------
+    # Event log
+    # ------------------------------------------------------------------
+
+    def _log(self, line: Text) -> None:
+        """Append a styled line and trim to ``LOG_MAX``."""
+        self.event_log.append(line)
+        if len(self.event_log) > self.LOG_MAX:
+            del self.event_log[: len(self.event_log) - self.LOG_MAX]
+
+    def _format_bid_log(self, player: BasePlayer, bid) -> Text:
+        """Build the log line for a single bid action."""
+        label = _position_short(player.position)
+        color = _position_color(player.position)
+        t = Text()
+        t.append(f"{label} ", style=f"bold {color}")
+        if bid == "Pass":
+            t.append("passed.", style=DIM)
+        elif bid == "Double":
+            t.append("doubled.", style=f"bold {GOLD}")
+        elif bid == "Redouble":
+            t.append("redoubled.", style=f"bold {GOLD}")
+        elif isinstance(bid, tuple):
+            value, suit = bid
+            t.append(f"bid {value} ", style=FG)
+            t.append(_suit_glyph(suit), style=_suit_color(suit))
+            t.append(".", style=FG)
+        return t
+
+    def _format_card_log(self, player: BasePlayer, card: Card) -> Text:
+        label = _position_short(player.position)
+        color = _position_color(player.position)
+        t = Text()
+        t.append(f"{label} ", style=f"bold {color}")
+        t.append("plays ", style=FG)
+        t.append_text(_format_card_compact(card))
+        t.append(".", style=FG)
+        return t
+
+    def _format_trick_won_log(
+        self, winner: BasePlayer, trick_points: int
+    ) -> Text:
+        label = _position_short(winner.position)
+        color = _position_color(winner.position)
+        t = Text()
+        t.append(f"{label} ", style=f"bold {color}")
+        t.append(f"wins trick ({trick_points} pts).", style=f"bold {GOLD}")
+        return t
+
+    def _panel_event_log(self) -> Panel:
+        """Bottom panel showing the last ``LOG_MAX`` events."""
+        body = Text()
+        if not self.event_log:
+            body.append("(no events yet)", style=DIM)
+        else:
+            for i, line in enumerate(self.event_log):
+                if i > 0:
+                    body.append("\n")
+                body.append_text(line)
+        return Panel(
+            body,
+            title=Text("Log", style=f"bold {TITLE}"),
+            border_style=BORDER_DIM,
+            box=ROUNDED,
+            width=70,
+            height=self.LOG_MAX + 2,
+        )
+
+    # ------------------------------------------------------------------
+    # Prompt text builders (continued)
+    # ------------------------------------------------------------------
 
     def _ai_bid_announcement(
         self, player: BasePlayer, bid
