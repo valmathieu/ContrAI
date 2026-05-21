@@ -20,13 +20,16 @@ import pytest
 from contrai_core import Card, Rank, Suit, Trick
 from contrai_engine.model.player import AiPlayer
 from contrai_core.team import Team
+from contrai_core.bid import ContractBid, DoubleBid, PassBid
 from contrai_engine.view.rich_view import (
     RichView,
+    _bid_to_legacy,
     _current_winner,
     _explain_constraint,
     _parse_bid_input,
     _parse_card_input,
     _redouble_available_to,
+    _resolve_delay,
     _sort_hand_for_display,
 )
 
@@ -294,6 +297,109 @@ class TestPanelBiddingHistorySeparator:
         before, after = text.split(" - ", 1)
         assert before.endswith("W Pass")
         assert after.startswith("S 100")
+
+
+class TestResolveDelay:
+    """Env-var pacing resolver — used by the AI hooks."""
+
+    def test_default_when_unset(self, monkeypatch):
+        monkeypatch.delenv("CONTRAI_AI_TEST", raising=False)
+        assert _resolve_delay("CONTRAI_AI_TEST", default=0.7) == 0.7
+
+    def test_reads_float_from_env(self, monkeypatch):
+        monkeypatch.setenv("CONTRAI_AI_TEST", "0.25")
+        assert _resolve_delay("CONTRAI_AI_TEST", default=0.7) == 0.25
+
+    def test_garbage_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("CONTRAI_AI_TEST", "fast")
+        assert _resolve_delay("CONTRAI_AI_TEST", default=0.7) == 0.7
+
+    def test_negative_clamped_to_zero(self, monkeypatch):
+        monkeypatch.setenv("CONTRAI_AI_TEST", "-2.0")
+        assert _resolve_delay("CONTRAI_AI_TEST", default=0.7) == 0.0
+
+
+class TestBidToLegacy:
+    def test_pass(self):
+        assert _bid_to_legacy(PassBid(player=None)) == "Pass"
+
+    def test_double(self):
+        assert _bid_to_legacy(DoubleBid(player=None)) == "Double"
+
+    def test_contract(self, four_players):
+        north, *_ = four_players
+        bid = ContractBid(north, 100, Suit.HEARTS)
+        assert _bid_to_legacy(bid) == (100, Suit.HEARTS)
+
+
+class TestOnBidMadePacing:
+    """on_bid_made renders + sleeps for AI players, skips humans."""
+
+    def test_ai_bid_calls_sleep_with_env_delay(
+        self, monkeypatch, four_players
+    ):
+        from contrai_engine.view import rich_view
+
+        north, *_ = four_players
+        sleep_calls = []
+        monkeypatch.setattr(rich_view.time, "sleep",
+                            lambda s: sleep_calls.append(s))
+        monkeypatch.setenv("CONTRAI_AI_BID_DELAY", "0.01")
+
+        view = RichView()
+        bid = ContractBid(north, 100, Suit.HEARTS)
+        view.on_bid_made(north, bid, [bid])
+
+        assert sleep_calls == [0.01]
+
+    def test_human_bid_does_not_sleep(
+        self, monkeypatch, four_players
+    ):
+        from contrai_engine.view import rich_view
+        from contrai_engine.model.player import HumanPlayer
+
+        sleep_calls = []
+        monkeypatch.setattr(rich_view.time, "sleep",
+                            lambda s: sleep_calls.append(s))
+
+        human = HumanPlayer("You", "South")
+        human.team = four_players[0].team  # any team
+        view = RichView()
+        bid = PassBid(human)
+        view.on_bid_made(human, bid, [bid])
+
+        assert sleep_calls == []
+
+
+class TestOnCardPlayedPacing:
+    def test_ai_card_calls_sleep(self, monkeypatch, four_players):
+        from contrai_engine.view import rich_view
+
+        north, *_ = four_players
+        sleep_calls = []
+        monkeypatch.setattr(rich_view.time, "sleep",
+                            lambda s: sleep_calls.append(s))
+        monkeypatch.setenv("CONTRAI_AI_CARD_DELAY", "0.01")
+
+        trick = Trick()
+        view = RichView()
+        view.on_card_played(north, Card(Suit.HEARTS, Rank.ACE), trick)
+
+        assert sleep_calls == [0.01]
+
+    def test_human_card_does_not_sleep(self, monkeypatch, four_players):
+        from contrai_engine.view import rich_view
+        from contrai_engine.model.player import HumanPlayer
+
+        sleep_calls = []
+        monkeypatch.setattr(rich_view.time, "sleep",
+                            lambda s: sleep_calls.append(s))
+
+        human = HumanPlayer("You", "South")
+        human.team = four_players[0].team
+        view = RichView()
+        view.on_card_played(human, Card(Suit.HEARTS, Rank.ACE), Trick())
+        assert sleep_calls == []
 
 
 class TestPanelRoundTitle:

@@ -16,8 +16,12 @@ by the end-game scoreboard are tracked here, not in ``Game``.
 
 from __future__ import annotations
 
+import os
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
+
+from contrai_core.bid import Bid, ContractBid, DoubleBid, PassBid, RedoubleBid
 
 from contrai_core import (
     BasePlayer,
@@ -334,6 +338,36 @@ def _parse_card_input(
     return card
 
 
+def _resolve_delay(env_var: str, default: float) -> float:
+    """Read a float pacing value from the environment with a default.
+
+    Pacing for AI actions is tunable so the user can dial the game
+    speed without code edits. Garbage values fall back to ``default``
+    rather than raising — this is UI pacing, not a correctness path.
+    """
+    raw = os.environ.get(env_var)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(0.0, value)
+
+
+def _bid_to_legacy(bid: Bid):
+    """Convert a Bid object to the legacy tuple/string history shape."""
+    if isinstance(bid, PassBid):
+        return "Pass"
+    if isinstance(bid, DoubleBid):
+        return "Double"
+    if isinstance(bid, RedoubleBid):
+        return "Redouble"
+    if isinstance(bid, ContractBid):
+        return (bid.value, bid.suit)
+    return "Pass"
+
+
 def _redouble_available_to(history: list, player: BasePlayer) -> bool:
     """True if *player* may currently redouble — narrows the prompt hint.
 
@@ -532,6 +566,46 @@ class RichView:
             pass
         # Rotate: this is now the "last trick" for the next panel.
         self.last_completed_trick = (trick, winner)
+
+    def on_bid_made(
+        self, player: BasePlayer, bid: Bid, history: list
+    ) -> None:
+        """Render an AI bid and pause briefly. No-op for humans.
+
+        Humans already drove the render through ``request_bid_action``;
+        the engine calls this hook after their input has been recorded,
+        so we skip the redundant frame for them. AI bids otherwise pass
+        without a frame — this hook gives the user time to read the
+        bidding history.
+        """
+        if getattr(player, "is_human", False):
+            return
+        legacy_history = [(b.player, _bid_to_legacy(b)) for b in history]
+        # Echo the AI action in the prompt so it's clear what just happened.
+        last_bid = legacy_history[-1][1] if legacy_history else None
+        self._render_in_game(
+            phase="bidding",
+            current_player=None,
+            bidding_history=legacy_history,
+            prompt_question=self._ai_bid_announcement(player, last_bid),
+            mandatory=False,
+        )
+        time.sleep(_resolve_delay("CONTRAI_AI_BID_DELAY", default=1.4))
+
+    def on_card_played(
+        self, player: BasePlayer, card: Card, trick: Trick
+    ) -> None:
+        """Render an AI card play and pause briefly. No-op for humans."""
+        if getattr(player, "is_human", False):
+            return
+        self._render_in_game(
+            phase="playing",
+            current_player=None,
+            current_trick=trick,
+            prompt_question=self._ai_card_announcement(player, card),
+            mandatory=False,
+        )
+        time.sleep(_resolve_delay("CONTRAI_AI_CARD_DELAY", default=0.9))
 
     def on_round_complete(self, round_: "Round", running_scores: dict) -> None:
         """Append a row to the end-game history."""
@@ -1248,6 +1322,38 @@ class RichView:
         if playable_cards and len(playable_cards) == 1:
             t.append("Only one legal play. ", style=f"bold {YELLOW}")
         t.append(f"Choose card [1-{hand_size}]:", style=f"bold {YELLOW}")
+        return t
+
+    def _ai_bid_announcement(
+        self, player: BasePlayer, bid
+    ) -> Text:
+        """Prompt text shown during an AI's brief post-bid pause."""
+        label = _position_short(player.position)
+        t = Text()
+        if bid == "Pass":
+            t.append(f"{label} passes.", style=DIM)
+        elif bid == "Double":
+            t.append(f"{label} doubles.", style=f"bold {GOLD}")
+        elif bid == "Redouble":
+            t.append(f"{label} redoubles.", style=f"bold {GOLD}")
+        elif isinstance(bid, tuple):
+            value, suit = bid
+            t.append(f"{label} bids {value} ", style=FG)
+            t.append(_suit_glyph(suit), style=_suit_color(suit))
+            t.append(".", style=FG)
+        else:
+            t.append(f"{label} is thinking…", style=DIM)
+        return t
+
+    def _ai_card_announcement(
+        self, player: BasePlayer, card: Card
+    ) -> Text:
+        """Prompt text shown during an AI's brief post-play pause."""
+        label = _position_short(player.position)
+        t = Text()
+        t.append(f"{label} plays ", style=FG)
+        t.append_text(_format_card_compact(card))
+        t.append(".", style=FG)
         return t
 
     def _trick_won_prompt_text(self, winner: BasePlayer) -> Text:

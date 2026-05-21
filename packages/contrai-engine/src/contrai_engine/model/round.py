@@ -101,6 +101,12 @@ class Round:
                     bid_objects.append(PassBid(player))
                     passes_count += 1
 
+                # Notify the view that a bid was just registered. Used
+                # by interactive views to render the AI action and
+                # pause briefly before the next bidder.
+                if view is not None and hasattr(view, 'on_bid_made'):
+                    view.on_bid_made(player, bid_objects[-1], list(bid_objects))
+
                 # Check for end conditions
                 # End if 3 passes after a valid contract/double/redouble
                 if passes_count >= 3 and len(bid_objects) > 3:
@@ -170,14 +176,26 @@ class Round:
                 card = view.request_card_action(player, self.current_trick, self.contract, playable_cards)
 
             # Validate that the chosen card is legal
+            played_card = None
             if card and card in playable_cards and card in player.hand:
                 player.hand.remove(card)
                 self.current_trick.add_play(player, card)
+                played_card = card
             elif card and playable_cards:
                 # Card chosen is not legal - fallback to first playable card
                 fallback_card = playable_cards[0]
                 player.hand.remove(fallback_card)
                 self.current_trick.add_play(player, fallback_card)
+                played_card = fallback_card
+
+            # Notify the view that a card just landed on the table.
+            # Lets interactive views render the AI action and pause.
+            if (
+                played_card is not None
+                and view is not None
+                and hasattr(view, 'on_card_played')
+            ):
+                view.on_card_played(player, played_card, self.current_trick)
 
         # Determine trick winner
         winner = self._determine_trick_winner(self.current_trick)
