@@ -153,6 +153,10 @@ class Round:
 
             self.contract = Contract(contract_bid, double=has_double, redouble=has_redouble)
             self._detect_belote_holder()
+            # Bookmark the contract in the event log so the start of
+            # play is clearly delimited.
+            if view is not None and hasattr(view, 'on_contract_established'):
+                view.on_contract_established(self)
         else:
             self.contract = None
 

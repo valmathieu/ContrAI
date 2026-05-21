@@ -609,6 +609,17 @@ class RichView:
         line = Text("All passed — redealing.", style=f"bold {YELLOW}")
         self._log(line)
 
+    def on_contract_established(self, round_: "Round") -> None:
+        """Engine hook: bidding ended on a contract — bookmark it in the log."""
+        contract = getattr(round_, "contract", None)
+        if contract is None:
+            return
+        line = Text()
+        line.append("Contract set: ", style=f"bold {GOLD}")
+        line.append_text(_format_contract_short(contract))
+        line.append(".", style=DIM)
+        self._log(line)
+
     def on_bid_made(
         self, player: BasePlayer, bid: Bid, history: list
     ) -> None:

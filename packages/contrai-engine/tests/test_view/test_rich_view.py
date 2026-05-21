@@ -490,6 +490,58 @@ class TestEventLog:
         view.on_all_pass_redeal(round_=None)
         assert any("redealing" in line.plain for line in view.event_log)
 
+    def test_on_contract_established_logs(self, monkeypatch, four_players):
+        view = self._make_view(monkeypatch)
+        north, *_ = four_players
+
+        class _StubContract:
+            value = 100
+            suit = Suit.HEARTS
+            double = False
+            redouble = False
+            class _T: name = "North-South"
+            team = _T()
+
+        class _StubRound:
+            contract = _StubContract()
+
+        view.on_contract_established(_StubRound())
+        line = view.event_log[-1].plain
+        assert "Contract set:" in line
+        # The contract short label embeds value + team.
+        assert "100" in line
+        assert "N-S" in line
+
+    def test_on_contract_established_includes_double_multiplier(
+        self, monkeypatch, four_players
+    ):
+        view = self._make_view(monkeypatch)
+
+        class _StubContract:
+            value = 120
+            suit = Suit.SPADES
+            double = True
+            redouble = False
+            class _T: name = "East-West"
+            team = _T()
+
+        class _StubRound:
+            contract = _StubContract()
+
+        view.on_contract_established(_StubRound())
+        assert "×2" in view.event_log[-1].plain
+
+    def test_on_contract_established_no_op_when_no_contract(
+        self, monkeypatch
+    ):
+        view = self._make_view(monkeypatch)
+
+        class _StubRound:
+            contract = None
+
+        view.on_contract_established(_StubRound())
+        assert view.event_log == []
+
     def test_panel_event_log_renders_lines(self, monkeypatch):
         view = self._make_view(monkeypatch)
         view._log(Text("alpha"))

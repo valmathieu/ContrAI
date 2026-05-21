@@ -160,6 +160,9 @@ package "model/round.py" as p_round {
       ----
       During play Round fires (each `hasattr`-guarded):
       • `view.on_bid_made(player, bid, history)`
+      • `view.on_contract_established(self)`
+        (once, immediately after the final
+        Contract is built)
       • `view.on_card_played(player, card, trick)`
       • `view.on_belote_announced(player, kind, self)`
       • `view.on_trick_complete(trick, winner, self)`
@@ -225,6 +228,7 @@ package "view/rich_view.py" as p_view {
         + on_round_dealt(round_) : None
         + on_all_pass_redeal(round_) : None
         + on_bid_made(player, bid, history) : None
+        + on_contract_established(round_) : None
         + on_card_played(player, card, trick) : None
         + on_belote_announced(player, kind, round_) : None
         + on_trick_complete(trick, winner, round_) : None

@@ -9,7 +9,7 @@ Source at `packages/contrai-engine/src/contrai_engine/`:
 - `model/` — engine-side model layer:
   - `player.py` — `Player`, `HumanPlayer`, `AiPlayer` (all extending `BasePlayer` from `contrai-core`)
   - `game.py` — `Game` (fires `view.on_round_dealt(...)` after the deal and `view.on_all_pass_redeal(...)` when nobody contracts)
-  - `round.py` — `Round` (publishes `view.on_bid_made(...)`, `view.on_card_played(...)`, `view.on_trick_complete(...)`, and `view.on_belote_announced(...)` so the view can pace and narrate AI turns)
+  - `round.py` — `Round` (publishes `view.on_bid_made(...)`, `view.on_contract_established(...)`, `view.on_card_played(...)`, `view.on_trick_complete(...)`, and `view.on_belote_announced(...)` so the view can pace and narrate AI turns)
 - `controller/` — `GameController` (partial — see `CLAUDE.md` §2)
 - `view/` — `RichView` (terminal UI, see [CLI](#cli) below)
 - `cli.py` — `contrai` console-script entry point: landing → game-loop → end-game
@@ -41,7 +41,7 @@ Everything else (`Card`, `Deck`, `Hand`, `Suit`, `Rank`, `Bid`, `Contract`, `Tri
 | **Round recap** | `cli.py` calls `view.show_round_recap` after `view.on_round_complete` | Between-round panel: contract (or "All passed"), made / failed badge, then a two-column breakdown showing per-team card-points sum across the team's tricks (with trick count), dix-de-der bonus, belote bonus (label uses the actual trump glyph), the engine-computed round score, and running totals vs. target. Waits for Enter; skipped when the game just ended (the end-game banner takes over). |
 | **Game over** | `Game.check_game_over(target)` true     | Double-line gold banner, round-by-round summary table. `[n]` new game · `[r]` rematch · `[q]` quit.                                                                                          |
 
-Every in-game screen also carries a rolling **event log** panel (5 lines, "Log") slotted between the hand and the prompt. It captures the last few engine events — deal, all-pass redeal, every bid, every card play, every trick winner, belote / rebelote announcements — so the user always sees the narrative continuity, even when AI players act faster than they can read.
+Every in-game screen also carries a rolling **event log** panel (5 lines, "Log") slotted between the hand and the prompt. It captures the last few engine events — deal, all-pass redeal, every bid, the *contract-set* bookmark when bidding ends on a deal, every card play, every trick winner, belote / rebelote announcements — so the user always sees the narrative continuity, even when AI players act faster than they can read.
 
 Per-round summaries shown on the end-game scoreboard are tracked **view-side** (`RichView.history: list[RoundSummary]`), so `Game` itself stays free of UI state.
 

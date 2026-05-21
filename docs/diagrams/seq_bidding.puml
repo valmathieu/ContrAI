@@ -139,6 +139,13 @@ else
     CT --> R : Contract
     R -> R : self.contract = contract
     R -> R : _detect_belote_holder()\n(scan hands for K + Q of trump;\n NO_TRUMP contracts → no holder)
+    R -->> V : view.on_contract_established(self)
+    note right of V
+      RichView appends a
+      "Contract set: 100 ♥ by N-S ×2"
+      bookmark to the event log so
+      the start of play is visible.
+    end note
 end
 
 [<-- R : return self.contract  (Contract | None)
