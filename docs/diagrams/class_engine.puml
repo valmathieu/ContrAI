@@ -253,9 +253,16 @@ package "view/rich_view.py" as p_view {
       ----
       The round-recap panel breaks the round
       score down per team:
-      card points (sum across the team's
-      tricks) + dix-de-der + belote bonus →
-      `round_scores[team]` → running total.
+      contract bonus (attacker base on
+      normal made, 160+base×mult on doubled
+      made, (160+base)×mult on failed
+      defender) + card points + dix-de-der
+      + belote → `round_scores[team]` →
+      running total. The card/dix/belote
+      rows em-dash when the engine ignores
+      them (doubled-made attacker, failed
+      defender) so the addition matches
+      the engine's round_score.
       Helpers: `_recap_breakdown`,
       `_format_recap_table`,
       `_belote_team_in_round`.

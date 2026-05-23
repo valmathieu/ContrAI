@@ -820,6 +820,194 @@ class TestRoundRecapPanel:
         assert "Dix de der" in text
         assert "+10" in text
 
+    def test_recap_contract_row_shows_contract_value_when_made_normal(
+        self, four_players
+    ):
+        """100 ♥ made by N-S → 'Contract' row shows +100 on N-S column,
+        em-dash on E-W."""
+        view = RichView()
+        north, *_ = four_players
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        round_ = self._StubRound(
+            round_number=2,
+            contract=contract,
+            round_scores={"North-South": 162, "East-West": 0},
+            team_tricks={"North-South": [], "East-West": []},
+        )
+        breakdown = view._recap_breakdown(round_)
+        assert breakdown["North-South"]["contract"] == 100
+        assert breakdown["East-West"]["contract"] == 0
+        # Cards / dix / belote DO contribute on a normal-made contract.
+        assert breakdown["North-South"]["cards_count"] is True
+        assert breakdown["East-West"]["cards_count"] is True
+
+    def test_recap_contract_row_uses_capot_base(self, four_players):
+        """A Capot contract substitutes the base value 250 wherever
+        the contract value would normally feed the score."""
+        view = RichView()
+        contract = self._StubContract("Capot", Suit.SPADES, "East-West")
+        round_ = self._StubRound(
+            round_number=3,
+            contract=contract,
+            round_scores={"North-South": 0, "East-West": 412},  # arbitrary
+            team_tricks={"North-South": [], "East-West": []},
+        )
+        breakdown = view._recap_breakdown(round_)
+        assert breakdown["East-West"]["contract"] == 250
+        assert breakdown["North-South"]["contract"] == 0
+
+    def test_recap_contract_row_includes_full_bonus_when_doubled_made(
+        self, four_players
+    ):
+        """When the engine substitutes the flat 160+base*mult bonus
+        (doubled or redoubled made), the 'Contract' row carries the
+        full amount and the cards/dix/belote rows are zeroed for the
+        attacker so the breakdown sums to round_score."""
+        view = RichView()
+        contract = self._StubContract(
+            100, Suit.HEARTS, "North-South", double=True
+        )
+        round_ = self._StubRound(
+            round_number=4,
+            contract=contract,
+            round_scores={"North-South": 360, "East-West": 0},
+            team_tricks={"North-South": [], "East-West": []},
+        )
+        breakdown = view._recap_breakdown(round_)
+        # 160 + 100*2 = 360
+        assert breakdown["North-South"]["contract"] == 360
+        # Attacker's cards/dix/belote are ignored by the engine — the
+        # recap reflects that so the addition matches round_score.
+        assert breakdown["North-South"]["cards_count"] is False
+        assert breakdown["North-South"]["card_points"] == 0
+        assert breakdown["North-South"]["dix_de_der"] == 0
+        assert breakdown["North-South"]["belote"] == 0
+
+    def test_recap_contract_row_includes_full_bonus_when_redoubled_made(
+        self, four_players
+    ):
+        view = RichView()
+        contract = self._StubContract(
+            100, Suit.HEARTS, "North-South", redouble=True
+        )
+        round_ = self._StubRound(
+            round_number=4,
+            contract=contract,
+            round_scores={"North-South": 560, "East-West": 0},  # 160 + 100*4
+            team_tricks={"North-South": [], "East-West": []},
+        )
+        breakdown = view._recap_breakdown(round_)
+        # 160 + 100*4 = 560
+        assert breakdown["North-South"]["contract"] == 560
+        assert breakdown["North-South"]["cards_count"] is False
+
+    def test_recap_contract_row_shows_defender_bonus_when_failed(
+        self, four_players
+    ):
+        """100 ♥ failed by N-S → E-W gets (160 + 100) * 1 = 260 in
+        their 'Contract' row; their cards/dix/belote are zeroed."""
+        view = RichView()
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        round_ = self._StubRound(
+            round_number=4,
+            contract=contract,
+            round_scores={"North-South": 0, "East-West": 260},
+            team_tricks={"North-South": [], "East-West": []},
+        )
+        breakdown = view._recap_breakdown(round_)
+        assert breakdown["East-West"]["contract"] == 260
+        assert breakdown["North-South"]["contract"] == 0
+        # Defender's cards/dix/belote don't contribute on a failed
+        # contract — the engine pays them a flat bonus instead.
+        assert breakdown["East-West"]["cards_count"] is False
+        # Attacker gets 0 on a failed contract; their cards/dix/belote
+        # also don't contribute (round_score is 0).
+        assert breakdown["North-South"]["cards_count"] is False
+
+    def test_recap_contract_row_failed_doubled_quadruples_bonus(
+        self, four_players
+    ):
+        """Failed 100 ♥ ×2 by N-S → E-W gets (160+100)*2 = 520."""
+        view = RichView()
+        contract = self._StubContract(
+            100, Suit.HEARTS, "North-South", double=True
+        )
+        round_ = self._StubRound(
+            round_number=4,
+            contract=contract,
+            round_scores={"North-South": 0, "East-West": 520},
+            team_tricks={"North-South": [], "East-West": []},
+        )
+        breakdown = view._recap_breakdown(round_)
+        assert breakdown["East-West"]["contract"] == 520
+
+    def test_recap_panel_renders_contract_row(self, four_players):
+        """End-to-end: the rendered panel contains a 'Contract' row."""
+        view = RichView()
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        round_ = self._StubRound(
+            round_number=3,
+            contract=contract,
+            round_scores={"North-South": 162, "East-West": 0},
+            team_tricks={"North-South": [], "East-West": []},
+        )
+        panel = view._panel_round_recap(
+            round_, {"North-South": 500, "East-West": 0}
+        )
+        text = panel.renderable.plain
+        assert "Contract " in text  # row label
+        assert "+100" in text  # attacker contract bonus
+
+    def test_recap_breakdown_sums_to_round_score_normal_made(
+        self, four_players
+    ):
+        """Invariant: for any team, the four component rows must sum
+        to the engine's round_score. This is the test for the normal
+        (un-doubled) made case."""
+        view = RichView()
+        north, east, south, west = four_players
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        # N-S took two tricks; sum of card.get_points(♥) =
+        #   J♥(20)+7♥(0)+9♥(14)+8♥(0) = 34
+        #   A♠(11)+7♠(0)+K♠(4)+8♠(0)  = 15
+        # Total card points: 49.
+        ns_trick1 = Trick()
+        for p, c in [
+            (north, Card(Suit.HEARTS, Rank.JACK)),
+            (east, Card(Suit.HEARTS, Rank.SEVEN)),
+            (south, Card(Suit.HEARTS, Rank.NINE)),
+            (west, Card(Suit.HEARTS, Rank.EIGHT)),
+        ]:
+            ns_trick1.add_play(p, c)
+        ns_trick2 = Trick()
+        for p, c in [
+            (north, Card(Suit.SPADES, Rank.ACE)),
+            (east, Card(Suit.SPADES, Rank.SEVEN)),
+            (south, Card(Suit.SPADES, Rank.KING)),
+            (west, Card(Suit.SPADES, Rank.EIGHT)),
+        ]:
+            ns_trick2.add_play(p, c)
+        # Engine score = 100 (contract) + 49 (cards) + 10 (dix) = 159.
+        round_ = self._StubRound(
+            round_number=3,
+            contract=contract,
+            round_scores={"North-South": 159, "East-West": 0},
+            team_tricks={
+                "North-South": [ns_trick1, ns_trick2],
+                "East-West": [],
+            },
+        )
+        round_.last_trick_winner = north
+        breakdown = view._recap_breakdown(round_)
+        ns = breakdown["North-South"]
+        sum_ns = (
+            ns["contract"]
+            + ns["card_points"]
+            + ns["dix_de_der"]
+            + ns["belote"]
+        )
+        assert sum_ns == 159
+
     def test_recap_table_uses_trump_glyph_in_belote_label(self, four_players):
         """The Belote row label reflects the actual trump suit."""
         view = RichView()

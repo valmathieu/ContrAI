@@ -1606,6 +1606,10 @@ class RichView:
         """Per-team point components used by the recap panel.
 
         Returns a dict keyed by team name with:
+            contract:     contract-related bonus credited to this team
+                          (attacker base on normal made, 160+base*mult
+                          on doubled/redoubled made, (160+base)*mult on
+                          failed for the defender; 0 otherwise).
             card_points:  sum of card.get_points(trump) across the
                           team's tricks (trump-aware so trump K/Q/J/9
                           count their trump values).
@@ -1613,6 +1617,17 @@ class RichView:
             belote:       20 if the team holds both K and Q of trump
                           in its tricks, else 0.
             trick_count:  number of tricks won.
+            cards_count:  True when the engine actually folds card /
+                          dix / belote values into the round score for
+                          this team. False when the engine substitutes
+                          a flat bonus (doubled-made attacker, failed
+                          defender) — the recap then shows em-dashes
+                          for those rows so the visible addition
+                          matches the engine-computed round score.
+
+        Each component is the *contribution to round_score* — so
+        contract + card_points + dix_de_der + belote always equals
+        the engine's round_score for that team.
         """
         contract = getattr(round_, "contract", None)
         trump = contract.suit if contract else None
@@ -1623,19 +1638,66 @@ class RichView:
             last_trick_team = last_trick_winner.team.name
 
         belote_team = self._belote_team_in_round(round_)
+        round_scores = getattr(round_, "round_scores", {}) or {}
+
+        attacking_team = (
+            contract.team.name if contract is not None else None
+        )
+        contract_made = (
+            attacking_team is not None
+            and round_scores.get(attacking_team, 0) > 0
+        )
+        if contract is not None:
+            base = 250 if contract.value == "Capot" else contract.value
+            mult = 4 if contract.redouble else 2 if contract.double else 1
+        else:
+            base = 0
+            mult = 1
 
         out = {}
         for team_name in ("North-South", "East-West"):
             tricks = team_tricks.get(team_name, [])
-            card_pts = 0
-            for trick in tricks:
-                for _, card in trick.get_plays():
-                    card_pts += card.get_points(trump)
+            raw_card_pts = sum(
+                card.get_points(trump)
+                for tr in tricks
+                for _, card in tr.get_plays()
+            )
+            raw_dix = 10 if team_name == last_trick_team else 0
+            raw_belote = 20 if team_name == belote_team else 0
+
+            is_attacker = (team_name == attacking_team)
+            contract_row = 0
+            cards_count = True
+
+            if contract is None:
+                # All passed — nothing scores.
+                cards_count = False
+            elif is_attacker:
+                if contract_made:
+                    if mult > 1:
+                        # Doubled or redoubled made → flat bonus,
+                        # the engine ignores the attacker's cards.
+                        contract_row = 160 + base * mult
+                        cards_count = False
+                    else:
+                        contract_row = base
+                else:
+                    # Failed → attacker gets 0; cards don't add.
+                    contract_row = 0
+                    cards_count = False
+            else:
+                # Defender.
+                if not contract_made:
+                    contract_row = (160 + base) * mult
+                    cards_count = False
+
             out[team_name] = {
-                "card_points": card_pts,
-                "dix_de_der": 10 if team_name == last_trick_team else 0,
-                "belote": 20 if team_name == belote_team else 0,
+                "contract": contract_row,
+                "card_points": raw_card_pts if cards_count else 0,
+                "dix_de_der": raw_dix if cards_count else 0,
+                "belote": raw_belote if cards_count else 0,
                 "trick_count": len(tricks),
+                "cards_count": cards_count,
             }
         return out
 
@@ -1646,7 +1708,16 @@ class RichView:
         ew_round: int,
         trump: Optional[Suit] = None,
     ) -> Text:
-        """Render the per-team breakdown table inside the recap panel."""
+        """Render the per-team breakdown table inside the recap panel.
+
+        Rows: Contract (the bonus a team earns from the contract being
+        made or failed), Tricks won (cards), Dix de der, Belote, then
+        a divider and the engine-computed Round score. The four
+        component rows always sum to the Round score — when the engine
+        substitutes a flat formula (doubled-made attacker, failed
+        defender), the cards / dix / belote rows display em-dashes so
+        the addition stays honest.
+        """
         ns = breakdown.get("North-South", {})
         ew = breakdown.get("East-West", {})
 
@@ -1661,6 +1732,17 @@ class RichView:
                 t.append(f"{value:>6}", style="bold")
             return t
 
+        def _dash_cell() -> Text:
+            return Text(f"{'—':>6}", style=DIM)
+
+        def _cards_cell(side: dict, key: str) -> Text:
+            """Number cell that shows '—' when the engine ignores this
+            team's card-based contributions (doubled-made attacker,
+            failed defender)."""
+            if not side.get("cards_count", True):
+                return _dash_cell()
+            return _num_cell(side.get(key, 0), show_zero=False, sign=True)
+
         # Header row: "                          N-S     E-W"
         header = Text()
         header.append(f"  {'':<22}", style=DIM)
@@ -1668,29 +1750,45 @@ class RichView:
         header.append(f"  {'E-W':>6}", style=f"bold {ORANGE}")
         header.append("\n")
 
-        # Card points row (sum across the team's tricks).
+        # Contract row — the bonus each team gets from the contract.
+        row_contract = Text()
+        row_contract.append(f"  Contract              ", style=FG)
+        row_contract.append_text(
+            _num_cell(ns.get("contract", 0), show_zero=False, sign=True)
+        )
+        row_contract.append("  ")
+        row_contract.append_text(
+            _num_cell(ew.get("contract", 0), show_zero=False, sign=True)
+        )
+        row_contract.append("\n")
+
+        # Card points row (sum across the team's tricks). Trick count
+        # is shown even when card points don't contribute — it's an
+        # honest fact independent of the score formula.
         ns_tricks = ns.get("trick_count", 0)
         ew_tricks = ew.get("trick_count", 0)
         row_cards = Text()
         row_cards.append(
             f"  Tricks won (cards)    ", style=FG,
         )
-        row_cards.append_text(_num_cell(ns.get("card_points", 0)))
+        if ns.get("cards_count", True):
+            row_cards.append_text(_num_cell(ns.get("card_points", 0)))
+        else:
+            row_cards.append_text(_dash_cell())
         row_cards.append("  ")
-        row_cards.append_text(_num_cell(ew.get("card_points", 0)))
+        if ew.get("cards_count", True):
+            row_cards.append_text(_num_cell(ew.get("card_points", 0)))
+        else:
+            row_cards.append_text(_dash_cell())
         row_cards.append(f"   ({ns_tricks}/{ew_tricks} tricks)", style=DIM)
         row_cards.append("\n")
 
         # Dix-de-der.
         row_dxd = Text()
         row_dxd.append(f"  Dix de der            ", style=FG)
-        row_dxd.append_text(
-            _num_cell(ns.get("dix_de_der", 0), show_zero=False, sign=True)
-        )
+        row_dxd.append_text(_cards_cell(ns, "dix_de_der"))
         row_dxd.append("  ")
-        row_dxd.append_text(
-            _num_cell(ew.get("dix_de_der", 0), show_zero=False, sign=True)
-        )
+        row_dxd.append_text(_cards_cell(ew, "dix_de_der"))
         row_dxd.append("\n")
 
         # Belote (suit glyph reflects the actual trump suit).
@@ -1702,9 +1800,9 @@ class RichView:
             row_bel.append("—", style=DIM)
         # Keep the column alignment stable: 2 cols for the glyph block.
         row_bel.append(")      ", style=FG)
-        row_bel.append_text(_num_cell(ns.get("belote", 0), show_zero=False, sign=True))
+        row_bel.append_text(_cards_cell(ns, "belote"))
         row_bel.append("  ")
-        row_bel.append_text(_num_cell(ew.get("belote", 0), show_zero=False, sign=True))
+        row_bel.append_text(_cards_cell(ew, "belote"))
         row_bel.append("\n")
 
         # Divider sits under the two numeric columns only, signalling
@@ -1726,6 +1824,7 @@ class RichView:
 
         out = Text()
         out.append_text(header)
+        out.append_text(row_contract)
         out.append_text(row_cards)
         out.append_text(row_dxd)
         out.append_text(row_bel)
