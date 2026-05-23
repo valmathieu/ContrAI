@@ -10,7 +10,7 @@ stateDiagram-v2
     Bidding : <b>1. Bidding</b><br/>request_bid_action(player, history)<br/>"80 h" / "pass" / "double" / "redouble"<br/>(hint adapts to '(pass / redouble)'<br/>when contractor was just doubled)
     MidTrick : <b>2. Mid-trick</b><br/>request_card_action(player, trick, contract, playable)<br/>diamond + live-winner gold pill<br/>★ Belote badge under holder (Belote/Rebelote in log)
     TrickWon : <b>3. Trick won</b><br/>on_trick_complete(trick, winner, round)<br/>"Press [Enter] to continue…"
-    RoundRecap : <b>4. Round recap</b><br/>show_round_recap(round, scores)<br/>contract · made/failed<br/>per-team breakdown: contract · card pts · dix de der · belote · round score<br/>running totals · target<br/>"Press [Enter] to deal next round…"
+    RoundRecap : <b>4. Round recap</b><br/>show_round_recap(round, scores, is_final)<br/>contract · made/failed<br/>per-team breakdown: contract · card pts · dix de der · belote · round score<br/>running totals · target<br/>"Press [Enter] to deal next round…"<br/>(or "…to see the final score…" when is_final)
     EndGame : <b>5. End game</b><br/>show_end_game(status)<br/>[n] new · [r] rematch · [q] quit
 
     Landing --> Bidding : Enter
@@ -20,9 +20,9 @@ stateDiagram-v2
     MidTrick --> MidTrick : AI plays,<br/>same trick<br/>(view.on_card_played paces)
     MidTrick --> TrickWon : 4th card played,<br/>Round fires hook
     TrickWon --> MidTrick : next trick<br/>(round not done)
-    TrickWon --> RoundRecap : 8 tricks done,<br/>round scored,<br/>target not reached
-    TrickWon --> EndGame : 8 tricks done,<br/>round scored,<br/>check_game_over true
-    RoundRecap --> Bidding : Enter,<br/>next deal
+    TrickWon --> RoundRecap : 8 tricks done,<br/>round scored
+    RoundRecap --> Bidding : Enter,<br/>target not reached,<br/>next deal
+    RoundRecap --> EndGame : Enter,<br/>check_game_over true
 
     EndGame --> Landing : [n] new game<br/>(fresh target prompt)
     EndGame --> Bidding : [r] rematch<br/>(same target)
@@ -45,11 +45,13 @@ stateDiagram-v2
     end note
 
     note right of RoundRecap
-        Skipped when check_game_over(target)
-        is already true after the last trick —
-        the EndGame banner takes over.
-        Shown for all-pass rounds too
-        ("All passed — no contract").
+        Shown after every round — including the
+        one that just crossed the target. The
+        prompt flips to "see the final score…"
+        on that final pass, so the EndGame
+        banner is the next screen instead of a
+        fresh deal. Also shown for all-pass
+        rounds ("All passed — no contract").
     end note
 
     classDef screen0 fill:#FFEFD9,stroke:#B26A28,stroke-width:2px,color:#5C3A14;

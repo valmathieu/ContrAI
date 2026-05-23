@@ -118,15 +118,17 @@ note right of V
   `history` for the end-game
   scoreboard table.
 end note
-alt not check_game_over(target)
-    C -->> V : show_round_recap(round_, scores)
-    note right of V
-      Full-screen recap panel:
-      contract, made/failed, per-team
-      round points, running totals,
-      belote advisory. Blocks on Enter.
-    end note
-end
+C -->> V : show_round_recap(round_, scores,\n              is_final=check_game_over(target))
+note right of V
+  Full-screen recap panel:
+  contract, made/failed, per-team
+  round points, running totals,
+  belote advisory. Blocks on Enter.
+  When `is_final` is true the prompt
+  switches to "see the final score…"
+  so the next screen is the EndGame
+  banner, not another deal.
+end note
 
 note over C, P
   Caller typically loops `manage_round` then `check_game_over(target)`
@@ -134,7 +136,8 @@ note over C, P
   Game owns the loop; Round owns one round's lifecycle. The CLI
   (`cli.py`) owns the between-rounds choreography: `on_round_complete`
   feeds the end-game scoreboard, then `show_round_recap` blocks for
-  the user to take stock before the next deal.
+  the user to take stock — on every round, including the final one
+  before the game-over banner appears.
 end note
 
 @enduml

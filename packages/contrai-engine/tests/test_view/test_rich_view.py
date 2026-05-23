@@ -1026,6 +1026,59 @@ class TestRoundRecapPanel:
         # Spade glyph in the Belote row, not the hearts glyph.
         assert "Belote (K + Q ♠)" in text
 
+    def _capture_recap_prompt(self, view, round_, scores, **kwargs) -> str:
+        """Run ``show_round_recap`` and return the printed plain text.
+
+        Panels carry a ``renderable`` Text whose ``.plain`` is the
+        prompt copy we want to assert on. Walk every printed argument
+        and concatenate any plain-text payloads we can extract.
+        """
+        view.console.input = lambda *_a, **_kw: ""
+        view.console.clear = lambda *_a, **_kw: None
+        captured: list[str] = []
+        def _record(*args, **_kw):
+            for a in args:
+                if hasattr(a, "plain"):
+                    captured.append(a.plain)
+                elif hasattr(a, "renderable") and hasattr(a.renderable, "plain"):
+                    captured.append(a.renderable.plain)
+                else:
+                    captured.append(str(a))
+        view.console.print = _record
+        view.show_round_recap(round_, scores, **kwargs)
+        return "\n".join(captured)
+
+    def test_show_round_recap_default_prompt(self):
+        """Without ``is_final`` the prompt invites the next deal."""
+        view = RichView()
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        round_ = self._StubRound(
+            round_number=3,
+            contract=contract,
+            round_scores={"North-South": 162, "East-West": 0},
+        )
+        output = self._capture_recap_prompt(
+            view, round_, {"North-South": 162, "East-West": 0}
+        )
+        assert "deal the next round" in output
+        assert "final score" not in output
+
+    def test_show_round_recap_final_prompt(self):
+        """With ``is_final=True`` the prompt points at the final score."""
+        view = RichView()
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        round_ = self._StubRound(
+            round_number=10,
+            contract=contract,
+            round_scores={"North-South": 162, "East-West": 0},
+        )
+        output = self._capture_recap_prompt(
+            view, round_, {"North-South": 1620, "East-West": 1300},
+            is_final=True,
+        )
+        assert "final score" in output
+        assert "deal the next round" not in output
+
 
 class TestPanelRoundTitle:
     """The Round panel's title shows the active round number."""

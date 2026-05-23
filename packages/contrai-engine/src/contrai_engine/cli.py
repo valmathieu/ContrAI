@@ -56,10 +56,14 @@ def main() -> None:
                 game.manage_round(view=view)
                 view.on_round_complete(game.current_round, game.scores)
                 # Show a between-round recap (contract, made/failed,
-                # round points, running totals). Skipped when the game
-                # has just ended — the end-game banner takes over.
-                if not game.check_game_over(target)["game_over"]:
-                    view.show_round_recap(game.current_round, game.scores)
+                # round points, running totals). Always shown, including
+                # before the end-game banner so the player can read the
+                # final round's breakdown before the scoreboard takes
+                # over — the prompt adapts to the final-round case.
+                is_final = game.check_game_over(target)["game_over"]
+                view.show_round_recap(
+                    game.current_round, game.scores, is_final=is_final
+                )
             choice = view.show_end_game(game.check_game_over(target))
             if choice == "q":
                 break

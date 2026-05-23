@@ -690,20 +690,28 @@ class RichView:
         time.sleep(_resolve_delay("CONTRAI_AI_CARD_DELAY", default=0.9))
 
     def show_round_recap(
-        self, round_: "Round", running_scores: dict
+        self, round_: "Round", running_scores: dict, *, is_final: bool = False
     ) -> None:
-        """Full-screen recap shown between rounds; waits for Enter.
+        """Full-screen recap shown after each round; waits for Enter.
 
         Follows the trick-won UX pattern: clear, print the recap panel,
         block on input. Called from the CLI loop after
-        ``on_round_complete`` and only when the game is not already
-        over (the end-game banner takes precedence in that case)."""
+        ``on_round_complete`` for *every* round — including the one
+        that just clinched the game. When ``is_final`` is true the
+        prompt switches to "see the final score" so the user knows the
+        next screen is the game-over scoreboard, not another deal.
+        """
         self.console.clear()
         self.console.print(self._panel_round_recap(round_, running_scores))
-        self.console.print(self._panel_prompt(
-            Text("Press [Enter] to deal the next round…", style=FG),
-            mandatory=False,
-        ))
+        if is_final:
+            prompt_text = Text(
+                "Press [Enter] to see the final score…", style=FG
+            )
+        else:
+            prompt_text = Text(
+                "Press [Enter] to deal the next round…", style=FG
+            )
+        self.console.print(self._panel_prompt(prompt_text, mandatory=False))
         try:
             self.console.input(Text("> ", style=f"bold {GOLD}").markup)
         except (EOFError, KeyboardInterrupt):

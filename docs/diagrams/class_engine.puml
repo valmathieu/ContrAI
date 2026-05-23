@@ -236,7 +236,7 @@ package "view/rich_view.py" as p_view {
         --
         ' CLI flow screens
         + show_landing(selected_target=1500) : int
-        + show_round_recap(round_, running_scores) : None
+        + show_round_recap(round_, running_scores, *, is_final=False) : None
         + show_end_game(status) : str  ('n' | 'r' | 'q')
     }
 
