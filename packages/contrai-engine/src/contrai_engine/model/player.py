@@ -554,21 +554,44 @@ class AiPlayer(Player):
             return self._play_when_team_losing(trick, contract, playable_cards)
 
     def _play_when_team_winning(self, trick, contract, playable_cards):
-        """Play when our team is currently winning the trick."""
+        """Play when our team is currently winning the trick.
 
+        Partner already secures the trick, so the goal is to add value
+        (high-points cards) to the pile WITHOUT wasting trumps:
+
+        1. Follow suit if able — pile the highest-points lead-suit card
+           on partner's win.
+        2. Cannot follow suit → discard a NON-TRUMP card. Don't dump
+           trumps onto a trick the partner has already locked down.
+           Prefer non-master cards (preserve cards that can still win
+           their suit later); within the candidate set, pick the
+           highest-points to maximize this trick's value.
+        3. Hand has nothing but trumps → forced to play one. Use the
+           lowest trump so we don't waste the Jack or 9.
+        """
         trump_suit = contract.suit if contract else None
         led_suit = trick.get_led_suit()
 
-        # Try to follow suit with the highest point card
+        # 1. Follow suit if able.
         same_suit_cards = [c for c in playable_cards if c.suit == led_suit]
         if same_suit_cards:
             return max(same_suit_cards, key=lambda c: c.get_points(trump_suit))
 
-        # Can't follow suit - play the highest point card (excluding masters)
-        non_master_cards = [c for c in playable_cards if not self._is_master_card(c, trump_suit)]
-        if non_master_cards:
-            return max(non_master_cards, key=lambda c: c.get_points(trump_suit))
+        # 2. Discard a non-trump card.
+        non_trump_cards = [
+            c for c in playable_cards if c.suit != trump_suit
+        ]
+        if non_trump_cards:
+            non_master_non_trump = [
+                c for c in non_trump_cards
+                if not self._is_master_card(c, trump_suit)
+            ]
+            candidates = non_master_non_trump or non_trump_cards
+            return max(candidates, key=lambda c: c.get_points(trump_suit))
 
+        # 3. Only trumps in hand — dump the lowest one.
+        if playable_cards:
+            return min(playable_cards, key=lambda c: c.get_order(trump_suit))
         return playable_cards[0]
 
     def _play_when_team_losing(self, trick, contract, playable_cards):

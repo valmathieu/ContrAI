@@ -28,6 +28,8 @@ Everything else (`Card`, `Deck`, `Hand`, `Suit`, `Rank`, `Bid`, `Contract`, `Tri
 
 `AiPlayer` implements the expert bidding table (80–160 plus Capot) and the card-play strategy from the functional specs (`SF-09`, `SF-10`). The ~25 private strategy helpers are summarised on the class diagram above as a collapsed `<<strategy>>` note. `choose_card` lazy-initialises card tracking on first call (no need for callers to remember `initialize_card_tracking`), and consumes the real `Contract` object from `Round` rather than the legacy `(player, value, suit)` tuple some older tests once passed.
 
+When the AI's team is currently winning the trick (`_play_when_team_winning`) and the AI cannot follow the led suit, the rule is *don't waste trumps*: prefer a non-trump discard over playing a trump card, even though a trump would add more points to the pile. Within the non-trump discard pool the AI prefers non-master cards (preserving cards that can still win their suit later) and picks the highest-points to maximise this trick's value. Only when the hand has nothing left but trumps does the AI play one — and it picks the lowest trump in that case, so the Jack or 9 of trump aren't dumped onto an already-won trick.
+
 ## CLI
 
 `uv run contrai` (or `python -m contrai_engine.cli`) launches a six-screen Rich-based terminal UI driven by `RichView` and wired in `cli.py`:
