@@ -147,7 +147,6 @@ note as N_independence
   **suit-agnostic** probability abstraction — what matters
   for combinatorial math is whether a slot is trump,
   not which French suit it represents.
-  (CLAUDE.md §2 item 4, §4.1)
 end note
 
 N_independence .. SuitSlot

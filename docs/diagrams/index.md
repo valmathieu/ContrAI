@@ -6,8 +6,6 @@ Per-package diagrams live next to the package they describe; this page is the co
 
 ## Two-tool policy
 
-Per `CLAUDE.md` §5:
-
 - **[PlantUML](https://plantuml.com/)** — *only* for **sequence** and **class** diagrams. Sources are `.puml` files.
 - **[Mermaid](https://mermaid.js.org/)** — for **everything else** (component, state, flowchart, ER, Gantt, mindmap, deployment, …). Sources are `.mmd` files.
 

@@ -11,7 +11,7 @@ A [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/) with f
 | `contrai-core`     | Shared domain model — `Suit`/`Rank` enums, `Card`, `Deck`, `Hand`, `Team`, `BasePlayer`, the `Bid` hierarchy (`PassBid`/`ContractBid`/`DoubleBid`/`RedoubleBid`), `Contract`, `Trick`, and exceptions. |
 | `contrai-engine`   | Game engine on top of `contrai-core`: `Player`/`HumanPlayer`/`AiPlayer`, `Game` / `Round` orchestration, CLI controller and view.                                                 |
 | `contrai-analyzer` | Streamlit dashboard for opening-hand strength analysis. Independent of `contrai-core` by design (uses its own `SuitSlot` abstraction).                                            |
-| `contrai-scraper`  | Playwright spectator-mode scraper for online games on `app.belote-rebelote.fr`.                                                                                                   |
+| `contrai-scraper`  | Playwright spectator-mode scraper for online Coinche games.                                                                                                                       |
 
 ## Setup
 

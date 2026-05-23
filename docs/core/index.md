@@ -46,4 +46,4 @@ The full domain model in one view. Two trick-winner methods sit on `Trick`: `get
 Coverage is now complete across every module:
 `test_types.py`, `test_card.py`, `test_deck.py`, `test_hand.py`, `test_team.py`, `test_base_player.py`, `test_bid.py`, `test_contract.py`, `test_trick.py`, `test_exceptions.py`.
 
-The earlier `CLAUDE.md` §10 backfill note (Bid / Contract / Trick) is closed. The remaining engine-side gap is `Round` — see [`engine/index.md`](../engine/index.md#open-work).
+The earlier backfill gap for Bid / Contract / Trick is closed. The remaining engine-side gap is `Round` — see [`engine/index.md`](../engine/index.md#open-work).

@@ -189,9 +189,9 @@ package "controller/" as p_ctrl {
     note right of GameController
       **Stub.** References undefined `pygame`;
       no integration with Game / Round.
-      Open question (CLAUDE.md §10): keep
-      for a future GUI path, or delete now
-      that the Rich CLI handles input/output?
+      Open question: keep for a future GUI
+      path, or delete now that the Rich CLI
+      handles input/output?
     end note
 }
 

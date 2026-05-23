@@ -108,7 +108,6 @@ note as N_analyzer_indep
   from `contrai_core`. Its `SuitSlot` is a
   suit-agnostic abstraction for combinatorial
   math, not a duplicate of core's `Suit`.
-  (CLAUDE.md §2 item 4)
 end note
 P_analyzer .. N_analyzer_indep
 

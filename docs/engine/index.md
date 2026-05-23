@@ -10,7 +10,7 @@ Source at `packages/contrai-engine/src/contrai_engine/`:
   - `player.py` — `Player`, `HumanPlayer`, `AiPlayer` (all extending `BasePlayer` from `contrai-core`)
   - `game.py` — `Game` (fires `view.on_round_dealt(...)` after the deal and `view.on_all_pass_redeal(...)` when nobody contracts)
   - `round.py` — `Round` (publishes `view.on_bid_made(...)`, `view.on_contract_established(...)`, `view.on_card_played(...)`, `view.on_trick_complete(...)`, and `view.on_belote_announced(...)` so the view can pace and narrate AI turns)
-- `controller/` — `GameController` (partial — see `CLAUDE.md` §2)
+- `controller/` — `GameController` (partial stub — see [Open work](#open-work))
 - `view/` — `RichView` (terminal UI, see [CLI](#cli) below)
 - `cli.py` — `contrai` console-script entry point: landing → game-loop → end-game
 - `tests/` — pytest suite (`test_model/`, `test_view/`)
@@ -86,8 +86,6 @@ The two zoom diagrams below break out the dense parts.
     Leader determination → four players play in order → winner + bookkeeping → `view.on_card_played(player, card, trick)` after each landing card → optional `view.on_belote_announced(player, kind, round_)` when the trump K-or-Q is played by the holder → `view.on_trick_complete(trick, winner, round_)` callback (each hook is gated on `hasattr(view, …)`, so non-Rich callers stay unaffected). Two subtleties to know: `Trick()` is built without a `trump_suit`, so `Round._determine_trick_winner` reads `self.contract.suit` directly and duplicates the logic that lives on `Trick.get_winner()`; and an illegal `choose_card` result is silently replaced with `playable_cards[0]`. Legality (`_get_playable_cards`) now correctly forces over-trump when trump is led and keys the partner exemption on the *current master* of the partial trick — see the legality note at the foot of the diagram.
 
 ## Open work
-
-Refreshed from `CLAUDE.md` §10:
 
 - `Round` now has its first dedicated pytest file (`tests/test_model/test_round.py`) covering the `_get_playable_cards` legality oracle and the belote tracking helpers. The lifecycle path (`manage_bidding` / `play_all_tricks` / `calculate_round_scores`) is still un-tested end-to-end — backfill needed.
 - `RichView`'s `Panel`/`Table` *rendering* methods (`_panel_*`) are now lightly covered: title/text smoke tests for the round panel, bidding-history, event-log, and round-recap panels, plus the diamond's belote badge. Layouts that aren't asserted on are still validated by `uv run contrai` smoke-running.
