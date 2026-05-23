@@ -1,12 +1,12 @@
 """Tests for the Suit / Rank enums and CARD_SUITS tuple."""
 
-from contrai_core.types import CARD_SUITS, Rank, Suit
+from contrai_core import CARD_SUITS, Rank, Suit
 
 
 class TestSuit:
     def test_expected_members(self):
         names = {s.name for s in Suit}
-        assert names == {"SPADES", "HEARTS", "DIAMONDS", "CLUBS", "NO_TRUMP"}
+        assert names == {"SPADES", "HEARTS", "DIAMONDS", "CLUBS", "NO_TRUMP", "ALL_TRUMP"}
 
     def test_values_preserve_display_strings(self):
         assert Suit.SPADES.value == "Spades"
@@ -14,6 +14,7 @@ class TestSuit:
         assert Suit.DIAMONDS.value == "Diamonds"
         assert Suit.CLUBS.value == "Clubs"
         assert Suit.NO_TRUMP.value == "NoTrump"
+        assert Suit.ALL_TRUMP.value == "AllTrump"
 
 
 class TestRank:

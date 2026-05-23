@@ -21,6 +21,7 @@ class Suit(Enum):
     DIAMONDS = "Diamonds"
     CLUBS = "Clubs"
     NO_TRUMP = "NoTrump"
+    ALL_TRUMP = "AllTrump"
 
 
 #: The four card-bearing suits (excludes ``Suit.NO_TRUMP``).

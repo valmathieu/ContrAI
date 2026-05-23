@@ -35,6 +35,7 @@ package "types.py" as p_types {
         DIAMONDS  = "Diamonds"
         CLUBS     = "Clubs"
         NO_TRUMP  = "NoTrump"
+        ALL_TRUMP = "AllTrump"
     }
 
     enum Rank <<enum>> {
@@ -46,7 +47,13 @@ package "types.py" as p_types {
       Module constant:
       **CARD_SUITS** : tuple[Suit, Suit, Suit, Suit]
       = (SPADES, HEARTS, DIAMONDS, CLUBS)
-      —— the 4 real suits, NO_TRUMP excluded.
+      —— the 4 real suits; NO_TRUMP and
+      ALL_TRUMP are contract-only suits
+      (sans atout / tout atout variants —
+      see contree-domain.md §9, §13).
+      ALL_TRUMP is currently inert: it is
+      reserved in the enum but no engine
+      logic produces or consumes it.
     end note
 }
 
