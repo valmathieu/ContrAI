@@ -1394,3 +1394,213 @@ class TestExplainConstraint:
         playable = list(south.hand)
         result = _explain_constraint(south, trick, playable, Suit.HEARTS)
         assert "free discard" in result.plain
+
+
+# ======================================================================
+# Hand panel — always visible while a human is seated
+# ======================================================================
+
+
+class TestPanelHandPersistence:
+    """The hand slot stays visible across non-interactive frames.
+
+    Bug: previously the panel was only rendered when ``current_player``
+    was the human, so it vanished during AI bidding/play frames and the
+    trick-won pause. Tests below lock the new "always render when a
+    human is seated" contract, plus the empty-hand and non-interactive
+    styling branches.
+    """
+
+    def _build_view_with_human(self):
+        """RichView wired to a minimal Game-like stub holding one human."""
+        from contrai_engine.model.player import HumanPlayer
+
+        human = HumanPlayer("You", "South")
+        human.team = None  # not exercised by these tests
+
+        class _StubGame:
+            def __init__(self, human):
+                self.players = [human]
+                self.current_round = None
+                self.scores = {"North-South": 0, "East-West": 0}
+
+        view = RichView()
+        view.attach(_StubGame(human), target_score=1500)
+        return view, human
+
+    def test_find_human_returns_human_player(self):
+        view, human = self._build_view_with_human()
+        assert view._find_human_player() is human
+
+    def test_find_human_returns_none_when_no_game(self):
+        view = RichView()
+        assert view._find_human_player() is None
+
+    def test_panel_hand_empty_hand_renders_placeholder(self):
+        """After the 8th trick the hand is empty — show an explicit
+        empty-state line so the slot stays in the layout rather than
+        disappearing."""
+        view, human = self._build_view_with_human()
+        human.hand.clear()
+        panel = view._panel_hand(
+            human, trick=None, playable_cards=None,
+            phase="trick_won", round_=None, interactive=False,
+        )
+        text = panel.renderable.plain
+        assert "(no cards left)" in text
+        assert "(hand empty)" in text
+
+    def test_panel_hand_non_interactive_omits_constraint_hint(self):
+        """During AI/trick-won frames the hand renders neutrally — no
+        green playable pills, no '↑ playable …' constraint hint."""
+        view, human = self._build_view_with_human()
+        human.hand.clear()
+        human.hand.extend([
+            Card(Suit.SPADES, Rank.ACE),
+            Card(Suit.HEARTS, Rank.JACK),
+        ])
+        # Pretend hearts is trump and clubs were led — interactive mode
+        # would emit "must trump"; non-interactive mode must not.
+        from contrai_core.trick import Trick as _Trick
+
+        trick = _Trick()
+        trick.add_play(human, Card(Suit.CLUBS, Rank.KING))
+        panel = view._panel_hand(
+            human, trick=trick, playable_cards=[human.hand[1]],
+            phase="playing", round_=None, interactive=False,
+        )
+        text = panel.renderable.plain
+        assert "must trump" not in text
+        assert "↑ playable" not in text
+        # Size readout takes the hint slot.
+        assert "2 cards remaining" in text
+
+    def test_panel_hand_interactive_still_shows_constraint_hint(self):
+        """The interactive path is unchanged — the constraint hint
+        still appears when the human is the acting player."""
+        view, human = self._build_view_with_human()
+        human.hand.clear()
+        human.hand.extend([
+            Card(Suit.HEARTS, Rank.JACK),
+            Card(Suit.HEARTS, Rank.ACE),
+        ])
+        from contrai_core.trick import Trick as _Trick
+
+        west_stub = type("_W", (), {"position": "West", "team": None})()
+        trick = _Trick()
+        trick.add_play(west_stub, Card(Suit.CLUBS, Rank.KING))
+        # Stub a round with hearts trump so the explain helper knows
+        # the human's hearts are trumps and emits the "must trump" hint.
+        contract_stub = type("_C", (), {"suit": Suit.HEARTS})()
+        round_stub = type("_R", (), {"contract": contract_stub})()
+        panel = view._panel_hand(
+            human, trick=trick, playable_cards=list(human.hand),
+            phase="playing", round_=round_stub, interactive=True,
+        )
+        text = panel.renderable.plain
+        assert "must trump" in text
+
+
+class TestRenderInGameHandSlot:
+    """End-to-end: the hand slot persists across in-game frames."""
+
+    def _make_view(self, monkeypatch):
+        from contrai_engine.view import rich_view
+        from contrai_engine.model.player import HumanPlayer
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        human = HumanPlayer("You", "South")
+        human.team = None
+        human.hand.clear()
+        human.hand.extend([
+            Card(Suit.SPADES, Rank.ACE),
+            Card(Suit.HEARTS, Rank.JACK),
+            Card(Suit.HEARTS, Rank.ACE),
+        ])
+
+        class _StubGame:
+            def __init__(self, human):
+                self.players = [human]
+                self.current_round = None
+                self.scores = {"North-South": 0, "East-West": 0}
+
+        view = RichView()
+        view.attach(_StubGame(human), target_score=1500)
+        return view, human
+
+    @staticmethod
+    def _capture_render(view) -> list[str]:
+        """Intercept console output and return the plain-text body of
+        every panel/text printed during the next ``_render_in_game``.
+
+        Walks Panel titles as well as renderables so assertions can
+        target the ``Your hand (South)`` title line.
+        """
+        captured: list[str] = []
+
+        def _record(*args, **_kw):
+            for a in args:
+                title = getattr(a, "title", None)
+                if title is not None and hasattr(title, "plain"):
+                    captured.append(title.plain)
+                if hasattr(a, "plain"):
+                    captured.append(a.plain)
+                elif hasattr(a, "renderable") and hasattr(a.renderable, "plain"):
+                    captured.append(a.renderable.plain)
+
+        view.console.clear = lambda *_a, **_kw: None
+        view.console.print = _record
+        return captured
+
+    def test_hand_visible_during_ai_bidding_frame(self, monkeypatch):
+        """No current_player (AI just bid) — the hand must still render."""
+        view, human = self._make_view(monkeypatch)
+        captured = self._capture_render(view)
+        view._render_in_game(
+            phase="bidding",
+            current_player=None,
+            bidding_history=[],
+            prompt_question=Text(""),
+            mandatory=False,
+        )
+        combined = "\n".join(captured)
+        assert "Your hand (South)" in combined
+
+    def test_hand_visible_during_trick_won_frame(self, monkeypatch):
+        """Trick-won frame uses current_player=None — hand must persist."""
+        view, human = self._make_view(monkeypatch)
+        captured = self._capture_render(view)
+        view._render_in_game(
+            phase="trick_won",
+            current_player=None,
+            current_trick=None,
+            trick_winner=None,
+            prompt_question=Text(""),
+            mandatory=False,
+        )
+        combined = "\n".join(captured)
+        assert "Your hand (South)" in combined
+
+    def test_hand_omitted_when_no_human_seated(self, monkeypatch):
+        """All-AI table (no human) — hand panel is correctly suppressed."""
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView()
+
+        class _StubGame:
+            players = []
+            current_round = None
+            scores = {"North-South": 0, "East-West": 0}
+
+        view.attach(_StubGame(), target_score=1500)
+        captured = self._capture_render(view)
+        view._render_in_game(
+            phase="bidding",
+            current_player=None,
+            bidding_history=[],
+            prompt_question=Text(""),
+            mandatory=False,
+        )
+        combined = "\n".join(captured)
+        assert "Your hand" not in combined

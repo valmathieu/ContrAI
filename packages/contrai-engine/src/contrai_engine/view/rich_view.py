@@ -846,10 +846,19 @@ class RichView:
             round_, current_trick, phase, current_player, trick_winner
         )
         self.console.print(_two_column(mid_left, mid_right, left_width=24))
-        # Hand panel
-        if current_player is not None and current_player.is_human:
+        # Hand panel — always rendered when a human is seated, so the
+        # slot stays put across AI bid frames, AI play frames, and the
+        # trick-won pause. ``interactive`` is true only when the human
+        # is the actively-acting player; otherwise the row is shown in
+        # neutral styling (no green playable pills, no constraint hint).
+        human = self._find_human_player()
+        if human is not None:
+            is_human_turn = (
+                current_player is not None and current_player is human
+            )
             hand_panel = self._panel_hand(
-                current_player, current_trick, playable_cards, phase, round_
+                human, current_trick, playable_cards, phase, round_,
+                interactive=is_human_turn,
             )
         else:
             hand_panel = None
@@ -1341,31 +1350,62 @@ class RichView:
         playable_cards: Optional[list[Card]],
         phase: str,
         round_: Optional["Round"],
+        *,
+        interactive: bool = True,
     ) -> Panel:
+        """Render the human's hand row.
+
+        ``interactive`` is true only when the human is the actively-
+        acting player and the view is gathering their input. In every
+        other in-game frame (AI bidding, AI playing, the trick-won
+        pause) the panel still appears — keeping the slot stable in
+        the layout — but cards are rendered with neutral styling: no
+        green playable pills, no constraint hint, just the row plus a
+        size readout.
+
+        An empty hand (after the last trick of the round) still
+        produces a panel; the row reads ``(no cards left)`` so the
+        slot doesn't pop in and out at the trick-won frame for the
+        eighth trick.
+        """
         trump_suit = round_.contract.suit if round_ and round_.contract else None
         sorted_hand = _sort_hand_for_display(list(player.hand), trump_suit)
-        # Render one row of cards, then a hint line below.
+
         cards_row = Text()
-        playable_set = set(id(c) for c in (playable_cards or sorted_hand))
-        for idx, card in enumerate(sorted_hand, start=1):
-            is_playable = id(card) in playable_set
-            cell = self._render_card_cell(idx, card, is_playable, phase)
-            cards_row.append_text(cell)
-            cards_row.append(" ")
-        # Center the row inside 70-col panel inner.
+        if not sorted_hand:
+            cards_row.append("(no cards left)", style=DIM)
+        else:
+            # In non-interactive frames we render every card with the
+            # bidding-style "yellow numbers, bold rank+suit" treatment.
+            # Passing a phase that isn't "playing" routes the cell
+            # renderer down the neutral branch.
+            cell_phase = phase if interactive else "neutral"
+            playable_set = (
+                set(id(c) for c in (playable_cards or sorted_hand))
+                if interactive
+                else set()
+            )
+            for idx, card in enumerate(sorted_hand, start=1):
+                is_playable = id(card) in playable_set
+                cell = self._render_card_cell(idx, card, is_playable, cell_phase)
+                cards_row.append_text(cell)
+                cards_row.append(" ")
+
         body = Text()
         body.append("\n")
         pad = max(0, (66 - cards_row.cell_len) // 2)
         body.append(" " * pad)
         body.append_text(cards_row)
         body.append("\n")
-        # Hint
-        if phase == "bidding":
+
+        if not sorted_hand:
+            hint = Text("(hand empty)", style=DIM, justify="center")
+        elif phase == "bidding":
             hint = Text(
                 "(no card-play obligation yet — bidding phase)",
                 style=DIM, justify="center",
             )
-        elif phase == "playing" and trick is not None:
+        elif phase == "playing" and interactive and trick is not None:
             hint = _explain_constraint(player, trick, playable_cards or [], trump_suit)
             hint.justify = "center"
         else:
@@ -1381,6 +1421,22 @@ class RichView:
             width=70,
             height=5,
         )
+
+    def _find_human_player(self) -> Optional[BasePlayer]:
+        """Return the human player at the table, or ``None`` if absent.
+
+        Used by the in-game render to decide whether to draw the hand
+        panel. We look up the human from the attached game rather than
+        the per-frame ``current_player`` so the panel stays visible
+        across frames where the engine has no human in focus (AI
+        actions, trick-won pauses).
+        """
+        if self.game is None:
+            return None
+        for p in self.game.players:
+            if getattr(p, "is_human", False):
+                return p
+        return None
 
     def _render_card_cell(
         self, idx: int, card: Card, is_playable: bool, phase: str
