@@ -554,37 +554,17 @@ class AiPlayer(Player):
             return self._play_when_team_losing(trick, contract, playable_cards)
 
     def _play_when_team_winning(self, trick, contract, playable_cards):
-        """Play when our team is currently winning the trick.
-
-        Strategy:
-        1. Follow suit (if able) with the highest-points card — partner
-           is winning, so we secure the trick value by piling on points.
-        2. Cannot follow suit AND the led suit is not trump → cut with
-           the lowest trump available. The partner-master exemption in
-           the legality oracle already lets us discard freely here, but
-           the AI house rule is to add a trump anyway: it secures the
-           trick against any later opponent over-trump and quietly
-           drains trumps from the hand. Picks the lowest trump so we
-           don't waste a master.
-        3. Cannot follow suit AND no trump (or led suit is trump) →
-           discard the highest-points non-master card.
-        """
+        """Play when our team is currently winning the trick."""
 
         trump_suit = contract.suit if contract else None
         led_suit = trick.get_led_suit()
 
-        # 1. Follow suit if able.
+        # Try to follow suit with the highest point card
         same_suit_cards = [c for c in playable_cards if c.suit == led_suit]
         if same_suit_cards:
             return max(same_suit_cards, key=lambda c: c.get_points(trump_suit))
 
-        # 2. Non-trump led + we hold a trump → cut with the lowest trump.
-        if trump_suit is not None and led_suit != trump_suit:
-            trump_cards = [c for c in playable_cards if c.suit == trump_suit]
-            if trump_cards:
-                return min(trump_cards, key=lambda c: c.get_order(trump_suit))
-
-        # 3. Discard the highest-points non-master card.
+        # Can't follow suit - play the highest point card (excluding masters)
         non_master_cards = [c for c in playable_cards if not self._is_master_card(c, trump_suit)]
         if non_master_cards:
             return max(non_master_cards, key=lambda c: c.get_points(trump_suit))
