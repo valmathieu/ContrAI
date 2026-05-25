@@ -1,8 +1,10 @@
 # Deck class for managing a deck of cards in the "contree" game.
 
+import random
+
 from .card import Card
+from .exceptions import InvalidCardCountError, InvalidPlayerCountError
 from .types import CARD_SUITS, Rank
-from contrai_core.exceptions import InvalidPlayerCountError, InvalidCardCountError
 
 class Deck:
     def __init__(self):
@@ -26,7 +28,6 @@ class Deck:
         """
         Shuffles the deck of cards in place.
         """
-        import random
         random.shuffle(self.cards)
 
     def cut(self):
@@ -34,7 +35,6 @@ class Deck:
         Cuts the deck at a random position (excluding the first and last 3 cards).
         Modifies the order of the cards in the deck.
         """
-        import random
         cut_index = random.randint(3, len(self.cards) - 4)
         self.cards = self.cards[cut_index:] + self.cards[:cut_index]
 

@@ -1,7 +1,8 @@
 # Team class for "contree" game, representing a team of two players.
 
 from __future__ import annotations
-from contrai_core.exceptions import InvalidPlayerCountError
+
+from .exceptions import InvalidPlayerCountError
 from .player import BasePlayer
 
 class Team:

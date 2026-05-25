@@ -3,10 +3,11 @@
 
 from typing import Optional, TYPE_CHECKING
 
+from .bid import ContractBid
+
 if TYPE_CHECKING:
     from .player import Player
-    from contrai_core.team import Team
-    from .bid import ContractBid
+    from .team import Team
 
 class Contract:
     """
@@ -16,7 +17,7 @@ class Contract:
     and handles double/redouble states with score calculations.
     """
 
-    def __init__(self, contract_bid: 'ContractBid', double: bool = False, redouble: bool = False):
+    def __init__(self, contract_bid: ContractBid, double: bool = False, redouble: bool = False):
         """
         Initialize a contract from a ContractBid.
 
@@ -46,9 +47,6 @@ class Contract:
             double: Whether contract has been doubled
             redouble: Whether contract has been redoubled
         """
-        # Import here to avoid circular imports
-        from .bid import ContractBid
-
         contract_bid = ContractBid(player, value, suit)
         return cls(contract_bid, double, redouble)
 
