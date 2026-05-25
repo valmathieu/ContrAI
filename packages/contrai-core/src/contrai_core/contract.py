@@ -6,7 +6,7 @@ from typing import Optional, TYPE_CHECKING
 from .bid import ContractBid
 
 if TYPE_CHECKING:
-    from .player import Player
+    from .player import BasePlayer as Player
     from .team import Team
 
 class Contract:
