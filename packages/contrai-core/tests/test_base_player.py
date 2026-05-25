@@ -1,12 +1,12 @@
 """Tests for BasePlayer data class."""
 
-from contrai_core import BasePlayer, Hand
+from contrai_core import BasePlayer, Hand, Team
 
 
 def test_base_player_initialization():
     """A BasePlayer is created with name and position; hand and team start empty."""
-    player = BasePlayer("Alice", "North")
-    assert player.name == "Alice"
+    player = BasePlayer("Corentin", "North")
+    assert player.name == "Corentin"
     assert player.position == "North"
     assert isinstance(player.hand, Hand)
     assert len(player.hand) == 0
@@ -15,7 +15,7 @@ def test_base_player_initialization():
 
 def test_base_player_hand_is_mutable():
     """The hand attribute can be appended to and cleared in place."""
-    player = BasePlayer("Bob", "South")
+    player = BasePlayer("Samuel", "South")
     player.hand.append("placeholder_card")
     assert len(player.hand) == 1
     player.hand.clear()
@@ -24,8 +24,10 @@ def test_base_player_hand_is_mutable():
 
 def test_base_player_team_settable():
     """The team attribute can be assigned after init."""
-    player = BasePlayer("Carol", "East")
-    player.team = "team_obj"  # type: ignore[assignment]
+    player = BasePlayer("Nabil", "East")
+    partner = BasePlayer("Alexandre", "West")
+    team = Team("EW", [player, partner])
+    player.team = team
     assert player.team == "team_obj"
 
 
@@ -44,5 +46,5 @@ def test_all_table_positions_construct():
     so any drift here would silently break partner lookup.
     """
     for position in ("North", "South", "East", "West"):
-        player = BasePlayer("Anon", position)
+        player = BasePlayer("Hugo", position)
         assert player.position == position
