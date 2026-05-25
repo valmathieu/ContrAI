@@ -39,16 +39,6 @@ class Bid(ABC):
         pass
 
     @abstractmethod
-    def can_be_doubled(self) -> bool:
-        """
-        Check if this bid can be doubled by opponents.
-
-        Returns:
-            True if this bid can be doubled, False otherwise
-        """
-        pass
-
-    @abstractmethod
     def __str__(self) -> str:
         """String representation of the bid."""
         pass
@@ -64,10 +54,6 @@ class PassBid(Bid):
     def is_valid_after(self, previous_bids: list) -> bool:
         """Pass is always valid."""
         return True
-
-    def can_be_doubled(self) -> bool:
-        """Pass cannot be doubled."""
-        return False
 
     def __str__(self) -> str:
         return "Pass"
@@ -147,10 +133,6 @@ class ContractBid(Bid):
         # Compare numeric values
         return self.value > last_contract.value
 
-    def can_be_doubled(self) -> bool:
-        """Contract bids can be doubled."""
-        return True
-
     def get_numeric_value(self) -> int:
         """
         Get the numeric value for comparison purposes.
@@ -222,10 +204,6 @@ class DoubleBid(Bid):
 
         return True
 
-    def can_be_doubled(self) -> bool:
-        """Double cannot be doubled (but can be redoubled)."""
-        return False
-
     def __str__(self) -> str:
         return "Double"
 
@@ -287,10 +265,6 @@ class RedoubleBid(Bid):
             return False
 
         return True
-
-    def can_be_doubled(self) -> bool:
-        """Redouble cannot be doubled."""
-        return False
 
     def __str__(self) -> str:
         return "Redouble"

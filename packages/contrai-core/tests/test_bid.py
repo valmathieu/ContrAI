@@ -74,7 +74,7 @@ def four_players(team_ns, team_ew, north, south, east, west):
 
 
 class TestPassBid:
-    """A PassBid is always valid and can never be doubled."""
+    """A PassBid is always valid."""
 
     def test_pass_valid_on_empty_history(self, north):
         assert PassBid(north).is_valid_after([]) is True
@@ -85,9 +85,6 @@ class TestPassBid:
             PassBid(north),
         ]
         assert PassBid(north).is_valid_after(history) is True
-
-    def test_pass_cannot_be_doubled(self, north):
-        assert PassBid(north).can_be_doubled() is False
 
     def test_pass_str(self, north):
         assert str(PassBid(north)) == "Pass"
@@ -274,9 +271,6 @@ class TestContractBidDunders:
         assert a != d
         assert a != PassBid(north)
 
-    def test_can_be_doubled(self, north):
-        assert ContractBid(north, 100, Suit.SPADES).can_be_doubled() is True
-
 
 # ---------------------------------------------------------------------------
 # DoubleBid validation
@@ -326,9 +320,6 @@ class TestDoubleBid:
         ]
         # Once the next player passes, the doubling window closes.
         assert DoubleBid(east).is_valid_after(history) is False
-
-    def test_double_cannot_be_doubled(self, east):
-        assert DoubleBid(east).can_be_doubled() is False
 
     def test_double_str_and_equality(self, north, east):
         assert str(DoubleBid(east)) == "Double"
@@ -387,9 +378,6 @@ class TestRedoubleBid:
             PassBid(south),
         ]
         assert RedoubleBid(north).is_valid_after(history) is False
-
-    def test_redouble_cannot_be_doubled(self, north):
-        assert RedoubleBid(north).can_be_doubled() is False
 
     def test_redouble_str_and_equality(self, north, south):
         assert str(RedoubleBid(north)) == "Redouble"

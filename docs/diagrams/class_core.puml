@@ -144,14 +144,12 @@ package "bid.py" as p_bid {
         --
         + __init__(player: BasePlayer)
         + {abstract} is_valid_after(previous_bids: list<Bid>) : bool
-        + {abstract} can_be_doubled() : bool
         + {abstract} __str__() : str
         + {abstract} __eq__(other) : bool
     }
 
     class PassBid {
         + is_valid_after(...) : bool  ' always True
-        + can_be_doubled() : bool     ' False
     }
 
     class ContractBid {
@@ -162,7 +160,6 @@ package "bid.py" as p_bid {
         --
         + __init__(player, value, suit)
         + is_valid_after(...) : bool
-        + can_be_doubled() : bool     ' True
         + get_numeric_value() : int   ' Capot → 250
         + __gt__(other) : bool
     }
@@ -178,12 +175,10 @@ package "bid.py" as p_bid {
 
     class DoubleBid {
         + is_valid_after(...) : bool
-        + can_be_doubled() : bool     ' False
     }
 
     class RedoubleBid {
         + is_valid_after(...) : bool
-        + can_be_doubled() : bool     ' False
     }
 
     class BidValidator <<utility>> {
