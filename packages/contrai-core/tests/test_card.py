@@ -233,16 +233,16 @@ class TestCardStringRepresentations:
     """Test __str__ and __repr__ output formats."""
 
     def test_str_uses_suit_symbol(self, sample_cards):
-        # Jack of Spades → "Jack♠"
-        assert str(sample_cards['spade_jack']) == "Jack♠"
-        assert str(sample_cards['heart_ace']) == "Ace♥"
-        assert str(sample_cards['diamond_9']) == "9♦"
-        assert str(sample_cards['club_king']) == "King♣"
+        # Jack of Spades → "Jack ♠"
+        assert str(sample_cards['spade_jack']) == "Jack ♠"
+        assert str(sample_cards['heart_ace']) == "Ace ♥"
+        assert str(sample_cards['diamond_9']) == "9 ♦"
+        assert str(sample_cards['club_king']) == "King ♣"
 
     def test_str_uses_rank_display_value(self):
         # Rank.TEN.value is "10" — make sure str doesn't show "TEN".
-        assert str(Card(Suit.HEARTS, Rank.TEN)) == "10♥"
-        assert str(Card(Suit.SPADES, Rank.SEVEN)) == "7♠"
+        assert str(Card(Suit.HEARTS, Rank.TEN)) == "10 ♥"
+        assert str(Card(Suit.SPADES, Rank.SEVEN)) == "7 ♠"
 
     def test_repr_is_debuggable(self, sample_cards):
         card = sample_cards['spade_jack']

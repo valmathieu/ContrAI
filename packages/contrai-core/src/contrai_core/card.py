@@ -87,7 +87,7 @@ class Card:
         self.order_trump = Card.TRUMP_ORDER[rank]
 
     def __str__(self) -> str:
-        return f"{self.rank.value}{Card.SUIT_SYMBOLS[self.suit]}"
+        return f"{self.rank.value} {Card.SUIT_SYMBOLS[self.suit]}"
 
     def __repr__(self) -> str:
         return f"Card({self.suit!r}, {self.rank!r})"

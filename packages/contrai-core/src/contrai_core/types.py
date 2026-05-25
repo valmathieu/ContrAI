@@ -1,8 +1,9 @@
 """Enum types for card suits and ranks.
 
-Shared across all ContrAI packages. Enum values preserve the engine's display
+Shared across all ContrAI packages. Enum values are the human-readable display
 strings (``Rank.JACK.value == "Jack"``, ``Suit.SPADES.value == "Spades"``) so
-``str(card)`` output is unchanged.
+``str(card)`` renders as e.g. ``"Jack ♠"`` directly from ``rank.value`` plus the
+suit glyph — no separate display map needed.
 """
 
 from enum import Enum
