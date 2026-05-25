@@ -13,11 +13,14 @@ tracked as future work.
 
 import pytest
 
-from contrai_core.bid import ContractBid, PassBid
-from contrai_core.contract import Contract
-from contrai_core.player import BasePlayer
-from contrai_core.team import Team
-from contrai_core.types import Suit
+from contrai_core import (
+    BasePlayer,
+    Contract,
+    ContractBid,
+    PassBid,
+    Suit,
+    Team,
+)
 
 
 @pytest.fixture

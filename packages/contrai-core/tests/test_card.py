@@ -1,6 +1,6 @@
 import pytest
-from contrai_core.card import Card
-from contrai_core.types import Suit, Rank
+
+from contrai_core import Card, Rank, Suit
 
 
 @pytest.fixture

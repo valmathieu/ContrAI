@@ -7,16 +7,16 @@ double/redouble authorisation logic.
 
 import pytest
 
-from contrai_core.bid import (
+from contrai_core import (
+    BasePlayer,
     BidValidator,
     ContractBid,
     DoubleBid,
     PassBid,
     RedoubleBid,
+    Suit,
+    Team,
 )
-from contrai_core.player import BasePlayer
-from contrai_core.team import Team
-from contrai_core.types import Suit
 
 
 # ---------------------------------------------------------------------------

@@ -8,10 +8,7 @@ trump-over-trump scenarios from contree-domain.md §6.4.
 
 import pytest
 
-from contrai_core.card import Card
-from contrai_core.player import BasePlayer
-from contrai_core.trick import Trick
-from contrai_core.types import Rank, Suit
+from contrai_core import BasePlayer, Card, Rank, Suit, Trick
 
 
 @pytest.fixture

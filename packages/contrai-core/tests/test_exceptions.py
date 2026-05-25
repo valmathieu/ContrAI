@@ -2,7 +2,7 @@
 
 import pytest
 
-from contrai_core.exceptions import InvalidCardCountError, InvalidPlayerCountError
+from contrai_core import InvalidCardCountError, InvalidPlayerCountError
 
 
 class TestInvalidPlayerCountError:

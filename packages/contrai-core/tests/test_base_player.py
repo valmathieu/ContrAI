@@ -1,7 +1,6 @@
 """Tests for BasePlayer data class."""
 
-from contrai_core import Hand
-from contrai_core.player import BasePlayer
+from contrai_core import BasePlayer, Hand
 
 
 def test_base_player_initialization():
