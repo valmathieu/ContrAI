@@ -26,19 +26,12 @@ def test_deck_initialization(deck):
 def test_deck_has_all_card_combinations():
     """
     Test that the deck contains all expected card combinations.
+
+    Builds the expected set via ``str(Card(...))`` so this test tracks
+    ``Card.__str__`` automatically instead of duplicating its format.
     """
     deck = Deck()
-    expected_cards = set()
-    suit_symbols = {
-        Suit.SPADES: '♠',
-        Suit.HEARTS: '♥',
-        Suit.DIAMONDS: '♦',
-        Suit.CLUBS: '♣'
-    }
-    for suit in CARD_SUITS:
-        for rank in Rank:
-            expected_cards.add(f"{rank.value}{suit_symbols[suit]}")
-
+    expected_cards = {str(Card(suit, rank)) for suit in CARD_SUITS for rank in Rank}
     actual_cards = {str(card) for card in deck.cards}
     assert actual_cards == expected_cards
 
