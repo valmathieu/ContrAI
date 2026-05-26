@@ -1,15 +1,22 @@
-"""Tests for the Bid hierarchy and BidValidator.
+"""Tests for the :class:`Bid` value-carrier hierarchy.
 
-Covers PassBid / ContractBid / DoubleBid / RedoubleBid validity, Capot
-precedence rules from contree-domain.md §5.2, and the team-based
-double/redouble authorisation logic.
+Bids are now frozen dataclasses with no auction-state behaviour —
+:meth:`Bid.is_valid_after` and ``BidValidator`` moved to
+:class:`contrai_core.Auction` (covered in ``test_auction.py``). What
+remains here is the data contract of each variant:
+
+- Construction validation (``ContractBid`` rejects unknown value / suit).
+- Equality / hashing semantics (player excluded from comparison,
+  variant types still distinct).
+- :meth:`ContractBid.get_numeric_value` and the strict ``__gt__``
+  ordering used inside the AI's bidding helpers.
+- ``__str__`` for the rendering layer.
 """
 
 import pytest
 
 from contrai_core import (
     BasePlayer,
-    BidValidator,
     ContractBid,
     DoubleBid,
     PassBid,
@@ -20,9 +27,10 @@ from contrai_core import (
 
 
 # ---------------------------------------------------------------------------
-# Fixtures: real BasePlayer + Team instances (matches test_team.py house style).
-# DoubleBid/RedoubleBid validation compares team identity, so real objects are
-# clearer than mocks.
+# Fixtures — four positioned players + their teams. Some equality tests
+# rely on two seats from the same team being constructible, so we keep
+# the team-wired fixtures even though Bid equality itself is now
+# player-agnostic.
 # ---------------------------------------------------------------------------
 
 
@@ -54,45 +62,27 @@ def team_ns(north, south):
     return team
 
 
-@pytest.fixture
-def team_ew(east, west):
-    team = Team("East-West", [east, west])
-    east.team = team
-    west.team = team
-    return team
-
-
-@pytest.fixture
-def four_players(team_ns, team_ew, north, south, east, west):
-    """Force fixture instantiation so all four players have teams assigned."""
-    return north, east, south, west
-
-
 # ---------------------------------------------------------------------------
 # PassBid
 # ---------------------------------------------------------------------------
 
 
 class TestPassBid:
-    """A PassBid is always valid."""
-
-    def test_pass_valid_on_empty_history(self, north):
-        assert PassBid(north).is_valid_after([]) is True
-
-    def test_pass_valid_after_any_bids(self, north, east, four_players):
-        history = [
-            ContractBid(east, 90, Suit.HEARTS),
-            PassBid(north),
-        ]
-        assert PassBid(north).is_valid_after(history) is True
-
-    def test_pass_str(self, north):
+    def test_str(self, north):
         assert str(PassBid(north)) == "Pass"
 
-    def test_pass_equality(self, north, south):
-        # PassBid equality is type-only; player identity is ignored.
+    def test_equality_ignores_player(self, north, south):
+        # Player is field(compare=False); two PassBids compare equal
+        # regardless of who made them.
         assert PassBid(north) == PassBid(south)
+
+    def test_distinct_from_other_variants(self, north):
         assert PassBid(north) != ContractBid(north, 80, Suit.SPADES)
+        assert PassBid(north) != DoubleBid(north)
+        assert PassBid(north) != RedoubleBid(north)
+
+    def test_player_stored(self, north):
+        assert PassBid(north).player is north
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +91,7 @@ class TestPassBid:
 
 
 class TestContractBidConstruction:
-    """Validation of value + suit at construction time."""
+    """Frozen dataclass validates value + suit in __post_init__."""
 
     @pytest.mark.parametrize(
         "value", [80, 90, 100, 110, 120, 130, 140, 150, 160, "Capot"]
@@ -113,11 +103,13 @@ class TestContractBidConstruction:
 
     @pytest.mark.parametrize("suit", list(Suit))
     def test_valid_suits(self, north, suit):
-        # NO_TRUMP is in VALID_SUITS today (list(Suit)) — pin current behaviour.
+        # NO_TRUMP and ALL_TRUMP are in VALID_SUITS today (list(Suit)).
         bid = ContractBid(north, 80, suit)
         assert bid.suit == suit
 
-    @pytest.mark.parametrize("bad_value", [70, 85, 170, 0, -10, "capot", "CAPOT", "80"])
+    @pytest.mark.parametrize(
+        "bad_value", [70, 85, 170, 0, -10, "capot", "CAPOT", "80"]
+    )
     def test_invalid_value_raises(self, north, bad_value):
         with pytest.raises(ValueError, match="Invalid contract value"):
             ContractBid(north, bad_value, Suit.SPADES)
@@ -132,97 +124,8 @@ class TestContractBidConstruction:
 
 
 # ---------------------------------------------------------------------------
-# ContractBid: ordering / precedence (incl. Capot)
+# ContractBid: ordering / numeric value
 # ---------------------------------------------------------------------------
-
-
-class TestContractBidPrecedence:
-    """Precedence rules from contree-domain.md §5.2."""
-
-    def test_first_contract_always_valid(self, north):
-        assert ContractBid(north, 80, Suit.SPADES).is_valid_after([]) is True
-
-    def test_higher_numeric_over_lower(self, north, east):
-        history = [ContractBid(east, 90, Suit.HEARTS)]
-        assert ContractBid(north, 100, Suit.SPADES).is_valid_after(history) is True
-
-    def test_lower_numeric_over_higher_invalid(self, north, east):
-        history = [ContractBid(east, 110, Suit.HEARTS)]
-        assert ContractBid(north, 100, Suit.SPADES).is_valid_after(history) is False
-
-    def test_equal_numeric_invalid(self, north, east):
-        history = [ContractBid(east, 100, Suit.HEARTS)]
-        assert ContractBid(north, 100, Suit.SPADES).is_valid_after(history) is False
-
-    def test_capot_over_any_numeric_valid(self, north, east):
-        # Capot outranks any numeric bid (domain §5.2).
-        for value in [80, 90, 100, 130, 160]:
-            history = [ContractBid(east, value, Suit.HEARTS)]
-            assert (
-                ContractBid(north, "Capot", Suit.SPADES).is_valid_after(history)
-                is True
-            )
-
-    def test_numeric_over_capot_invalid(self, north, east):
-        history = [ContractBid(east, "Capot", Suit.HEARTS)]
-        assert ContractBid(north, 160, Suit.SPADES).is_valid_after(history) is False
-
-    def test_capot_over_capot_invalid(self, north, east):
-        # Capot is the top of the table — you cannot bid over it.
-        history = [ContractBid(east, "Capot", Suit.HEARTS)]
-        assert (
-            ContractBid(north, "Capot", Suit.SPADES).is_valid_after(history) is False
-        )
-
-    def test_passes_in_between_do_not_change_precedence(self, north, east, south):
-        history = [
-            ContractBid(east, 100, Suit.HEARTS),
-            PassBid(south),
-            PassBid(north),
-        ]
-        assert ContractBid(east, 110, Suit.HEARTS).is_valid_after(history) is True
-        assert ContractBid(east, 100, Suit.HEARTS).is_valid_after(history) is False
-
-    def test_invalid_after_double_freezes_auction(self, north, east, south):
-        """Per contree-domain.md §5.3, a Double freezes the auction —
-        no more numeric bids of any value are accepted."""
-        history = [
-            ContractBid(east, 100, Suit.HEARTS),
-            DoubleBid(south),
-        ]
-        # Higher than 100 → still invalid because the auction is frozen.
-        assert (
-            ContractBid(north, 110, Suit.HEARTS).is_valid_after(history) is False
-        )
-        # Even a Capot can't reopen the auction.
-        assert (
-            ContractBid(north, "Capot", Suit.SPADES).is_valid_after(history) is False
-        )
-
-    def test_invalid_after_redouble_freezes_auction(self, north, east, south):
-        """Once the contracting team has redoubled, the auction is
-        equally frozen — no new numeric bids."""
-        history = [
-            ContractBid(east, 100, Suit.HEARTS),
-            DoubleBid(south),
-            RedoubleBid(east),
-        ]
-        assert (
-            ContractBid(north, 130, Suit.SPADES).is_valid_after(history) is False
-        )
-
-    def test_passes_after_double_still_freeze_auction(self, north, east, south, four_players):
-        """A pass between a Double and our turn doesn't thaw the
-        freeze — only the underlying Double/Redouble matters."""
-        _, _, _, west = four_players
-        history = [
-            ContractBid(east, 100, Suit.HEARTS),
-            DoubleBid(south),
-            PassBid(west),
-        ]
-        assert (
-            ContractBid(north, 110, Suit.HEARTS).is_valid_after(history) is False
-        )
 
 
 class TestContractBidComparison:
@@ -251,6 +154,11 @@ class TestContractBidComparison:
         assert (ContractBid(north, 100, Suit.SPADES) > PassBid(north)) is False
 
 
+# ---------------------------------------------------------------------------
+# ContractBid: __str__ + equality semantics
+# ---------------------------------------------------------------------------
+
+
 class TestContractBidDunders:
     def test_str(self, north):
         bid = ContractBid(north, 100, Suit.SPADES)
@@ -260,201 +168,71 @@ class TestContractBidDunders:
         bid = ContractBid(north, "Capot", Suit.SPADES)
         assert str(bid) == f"Capot {Suit.SPADES}"
 
-    def test_equality(self, north, south):
+    def test_equality_ignores_player(self, north, south):
+        # Player is excluded from comparison; two ContractBids with
+        # the same value + suit but different players still compare equal.
         a = ContractBid(north, 100, Suit.SPADES)
         b = ContractBid(south, 100, Suit.SPADES)
+        assert a == b
+
+    def test_equality_by_value_and_suit(self, north):
+        a = ContractBid(north, 100, Suit.SPADES)
         c = ContractBid(north, 110, Suit.SPADES)
         d = ContractBid(north, 100, Suit.HEARTS)
-        # Equality compares value + suit only (not player).
-        assert a == b
         assert a != c
         assert a != d
+
+    def test_distinct_from_other_variants(self, north):
+        a = ContractBid(north, 100, Suit.SPADES)
         assert a != PassBid(north)
+        assert a != DoubleBid(north)
 
 
 # ---------------------------------------------------------------------------
-# DoubleBid validation
+# DoubleBid / RedoubleBid — value-carrier behaviour
 # ---------------------------------------------------------------------------
 
 
 class TestDoubleBid:
-    def test_double_invalid_on_empty_history(self, east):
-        assert DoubleBid(east).is_valid_after([]) is False
-
-    def test_double_valid_against_opponent_contract(
-        self, north, east, four_players
-    ):
-        history = [ContractBid(north, 100, Suit.SPADES)]
-        # East (opponent of North) doubles — valid.
-        assert DoubleBid(east).is_valid_after(history) is True
-
-    def test_double_invalid_against_own_team_contract(
-        self, north, south, four_players
-    ):
-        history = [ContractBid(north, 100, Suit.SPADES)]
-        # South is North's partner — cannot double own contract.
-        assert DoubleBid(south).is_valid_after(history) is False
-
-    def test_double_invalid_if_already_doubled(self, north, east, four_players):
-        history = [
-            ContractBid(north, 100, Suit.SPADES),
-            DoubleBid(east),
-        ]
-        # West cannot re-double once east has already doubled.
-        assert DoubleBid(east).is_valid_after(history) is False
-
-    def test_double_invalid_after_redouble(self, north, east, four_players):
-        history = [
-            ContractBid(north, 100, Suit.SPADES),
-            DoubleBid(east),
-            RedoubleBid(north),
-        ]
-        assert DoubleBid(east).is_valid_after(history) is False
-
-    def test_double_invalid_after_pass_since_contract(
-        self, north, east, south, four_players
-    ):
-        history = [
-            ContractBid(north, 100, Suit.SPADES),
-            PassBid(east),
-        ]
-        # Once the next player passes, the doubling window closes.
-        assert DoubleBid(east).is_valid_after(history) is False
-
-    def test_double_str_and_equality(self, north, east):
+    def test_str(self, east):
         assert str(DoubleBid(east)) == "Double"
+
+    def test_equality_ignores_player(self, north, east):
         assert DoubleBid(east) == DoubleBid(north)
+
+    def test_distinct_from_other_variants(self, east):
         assert DoubleBid(east) != PassBid(east)
-
-
-# ---------------------------------------------------------------------------
-# RedoubleBid validation
-# ---------------------------------------------------------------------------
+        assert DoubleBid(east) != RedoubleBid(east)
 
 
 class TestRedoubleBid:
-    def test_redouble_invalid_on_empty_history(self, north):
-        assert RedoubleBid(north).is_valid_after([]) is False
-
-    def test_redouble_invalid_without_double(self, north, four_players):
-        history = [ContractBid(north, 100, Suit.SPADES)]
-        assert RedoubleBid(north).is_valid_after(history) is False
-
-    def test_redouble_valid_for_contracting_team(
-        self, north, south, east, four_players
-    ):
-        history = [
-            ContractBid(north, 100, Suit.SPADES),
-            DoubleBid(east),
-        ]
-        # Either member of the contracting team may redouble.
-        assert RedoubleBid(north).is_valid_after(history) is True
-        assert RedoubleBid(south).is_valid_after(history) is True
-
-    def test_redouble_invalid_for_opposing_team(self, north, east, west, four_players):
-        history = [
-            ContractBid(north, 100, Suit.SPADES),
-            DoubleBid(east),
-        ]
-        # Doubling side cannot then redouble.
-        assert RedoubleBid(west).is_valid_after(history) is False
-
-    def test_redouble_invalid_if_already_redoubled(
-        self, north, east, four_players
-    ):
-        history = [
-            ContractBid(north, 100, Suit.SPADES),
-            DoubleBid(east),
-            RedoubleBid(north),
-        ]
-        assert RedoubleBid(north).is_valid_after(history) is False
-
-    def test_redouble_invalid_after_pass_since_double(
-        self, north, east, south, four_players
-    ):
-        history = [
-            ContractBid(north, 100, Suit.SPADES),
-            DoubleBid(east),
-            PassBid(south),
-        ]
-        assert RedoubleBid(north).is_valid_after(history) is False
-
-    def test_redouble_str_and_equality(self, north, south):
+    def test_str(self, north):
         assert str(RedoubleBid(north)) == "Redouble"
+
+    def test_equality_ignores_player(self, north, south):
         assert RedoubleBid(north) == RedoubleBid(south)
+
+    def test_distinct_from_other_variants(self, north):
+        assert RedoubleBid(north) != PassBid(north)
         assert RedoubleBid(north) != DoubleBid(north)
 
 
 # ---------------------------------------------------------------------------
-# BidValidator
+# Immutability — frozen dataclass forbids field reassignment
 # ---------------------------------------------------------------------------
 
 
-class TestBidValidator:
-    def test_is_bid_valid_delegates(self, north):
-        # is_bid_valid is a thin wrapper over Bid.is_valid_after.
-        assert (
-            BidValidator.is_bid_valid(ContractBid(north, 80, Suit.SPADES), [])
-            is True
-        )
-        assert BidValidator.is_bid_valid(PassBid(north), []) is True
+class TestImmutability:
+    """Frozen dataclasses raise on any attribute reassignment."""
 
-    def test_get_last_contract_none_when_no_contract(self, north):
-        assert BidValidator.get_last_contract([]) is None
-        assert BidValidator.get_last_contract([PassBid(north)]) is None
+    def test_pass_bid_is_frozen(self, north, south):
+        bid = PassBid(north)
+        with pytest.raises(Exception):
+            bid.player = south
 
-    def test_get_last_contract_returns_most_recent(self, north, east):
-        first = ContractBid(north, 80, Suit.SPADES)
-        second = ContractBid(east, 90, Suit.HEARTS)
-        last = BidValidator.get_last_contract([first, PassBid(east), second])
-        assert last is second
-
-    def test_has_double_true_when_double_after_contract(
-        self, north, east, four_players
-    ):
-        history = [
-            ContractBid(north, 100, Suit.SPADES),
-            DoubleBid(east),
-        ]
-        assert BidValidator.has_double(history) is True
-
-    def test_has_double_false_when_no_double(self, north, four_players):
-        assert (
-            BidValidator.has_double([ContractBid(north, 100, Suit.SPADES)]) is False
-        )
-
-    def test_has_redouble_true_when_redouble_after_double(
-        self, north, east, four_players
-    ):
-        history = [
-            ContractBid(north, 100, Suit.SPADES),
-            DoubleBid(east),
-            RedoubleBid(north),
-        ]
-        assert BidValidator.has_redouble(history) is True
-
-    def test_has_redouble_false_when_only_double(self, north, east, four_players):
-        history = [
-            ContractBid(north, 100, Suit.SPADES),
-            DoubleBid(east),
-        ]
-        assert BidValidator.has_redouble(history) is False
-
-    def test_count_passes_after_last_action(self, north, east, south):
-        bid = ContractBid(north, 100, Suit.SPADES)
-        assert BidValidator.count_passes_after_last_action([]) == 0
-        assert BidValidator.count_passes_after_last_action([bid]) == 0
-        assert BidValidator.count_passes_after_last_action([bid, PassBid(east)]) == 1
-        assert (
-            BidValidator.count_passes_after_last_action(
-                [bid, PassBid(east), PassBid(south)]
-            )
-            == 2
-        )
-        # Trailing non-pass resets the count.
-        assert (
-            BidValidator.count_passes_after_last_action(
-                [bid, PassBid(east), ContractBid(south, 110, Suit.HEARTS)]
-            )
-            == 0
-        )
+    def test_contract_bid_is_frozen(self, north):
+        bid = ContractBid(north, 80, Suit.SPADES)
+        with pytest.raises(Exception):
+            bid.value = 100
+        with pytest.raises(Exception):
+            bid.suit = Suit.HEARTS

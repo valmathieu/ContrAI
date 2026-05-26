@@ -10,7 +10,7 @@ from .deck import Deck
 from .hand import Hand
 from .team import Team
 from .player import BasePlayer
-from .bid import Bid, PassBid, ContractBid, DoubleBid, RedoubleBid, BidValidator
+from .bid import Bid, PassBid, ContractBid, DoubleBid, RedoubleBid
 from .auction import Auction
 from .contract import Contract
 from .trick import Trick
@@ -34,7 +34,6 @@ __all__ = [
     "ContractBid",
     "DoubleBid",
     "RedoubleBid",
-    "BidValidator",
     "Auction",
     "Contract",
     "Trick",
