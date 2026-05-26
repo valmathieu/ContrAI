@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Optional
 from contrai_core.bid import Bid, ContractBid, DoubleBid, PassBid, RedoubleBid
 
 from contrai_core import (
+    Auction,
     BasePlayer,
     Card,
     Contract,
@@ -31,6 +32,7 @@ from contrai_core import (
     Suit,
     Trick,
 )
+from contrai_engine.model.player import wire_to_bid
 from rich.align import Align
 from rich.box import DOUBLE, ROUNDED, SQUARE
 from rich.console import Console
@@ -508,9 +510,23 @@ class RichView:
     # ------------------------------------------------------------------
 
     def request_bid_action(
-        self, player: BasePlayer, legacy_bids: list[tuple[BasePlayer, object]]
-    ) -> str | tuple:
-        """Prompt the human for a bid. Loops until input parses."""
+        self, player: BasePlayer, auction: Auction
+    ) -> Bid:
+        """Prompt the human for a bid. Loops until input parses.
+
+        Args:
+            player: The human player whose turn it is.
+            auction: The current auction state — projected to the
+                legacy ``(player, wire_bid)`` shape internally for the
+                renderer, which still consumes that format.
+
+        Returns:
+            The parsed :class:`Bid`. Round validates legality via
+            :meth:`Auction.apply` and raises if the bid is illegal.
+        """
+        legacy_bids = [
+            (bid.player, _bid_to_legacy(bid)) for bid in auction.bids
+        ]
         while True:
             self._render_in_game(
                 phase="bidding",
@@ -532,7 +548,7 @@ class RichView:
                     )
                 )
                 continue
-            return parsed
+            return wire_to_bid(player, parsed)
 
     def request_card_action(
         self,

@@ -1,10 +1,13 @@
 # Round class for the "contree" card game.
 # This class represents a complete round of the card game from dealing to scoring.
 
+import itertools
 from typing import Optional, Dict, List, TYPE_CHECKING
-from contrai_core.trick import Trick
+
+from contrai_core.auction import Auction
+from contrai_core.bid import Bid
 from contrai_core.contract import Contract
-from contrai_core.bid import Bid, PassBid, ContractBid, DoubleBid, RedoubleBid, BidValidator
+from contrai_core.trick import Trick
 from contrai_core.types import Rank, Suit
 
 if TYPE_CHECKING:
@@ -65,102 +68,102 @@ class Round:
         self.deck.deal(self.players_order)
 
     def manage_bidding(self, view=None) -> Optional[Contract]:
-        """
-        Handle complete bidding phase.
+        """Handle the complete bidding phase.
+
+        Drives an :class:`Auction` through the standard cyclic
+        ``players_order``. Each iteration:
+
+        1. Look up the legal actions for the active player. When the
+           only legal action is :class:`PassBid` (partner just doubled
+           or redoubled, or a pass already closed the redouble window)
+           the engine auto-applies it without prompting the player or
+           the view.
+        2. Otherwise consult ``player.choose_bid`` and — for the
+           human seat — ``view.request_bid_action`` to gather the
+           player's chosen :class:`Bid`.
+        3. Apply the bid via :meth:`Auction.apply`. An illegal bid
+           raises :class:`IllegalBidError` — there is no silent
+           "force a Pass on illegal" fallback any more.
 
         Args:
-            view: Optional view for human player interaction
+            view: Optional view that drives human input and pacing
+                hooks.
 
         Returns:
-            Contract: The established contract or None if all players passed
+            The established :class:`Contract`, or ``None`` if every
+            player passed.
         """
-        bid_objects = []  # List of Bid objects
-        passes_count = 0
 
-        while True:
-            for player in self.players_order:
-                # Short-circuit: when the player's partner has just
-                # doubled or redoubled, the only meaningful action is
-                # Pass (they can't double again, and only the contracting
-                # team can redouble). Auto-pass without prompting either
-                # the AI strategy or the human view — the AI's prompt
-                # is wasteful and the human prompt is confusing.
-                if self._should_auto_pass(player, bid_objects):
-                    bid_choice = 'Pass'
-                else:
-                    # Get bid choice from player (returns string or tuple)
-                    if hasattr(player, 'choose_bid'):
-                        # Convert bid objects to legacy format for compatibility
-                        legacy_bids = [(bid.player, self._bid_to_legacy_format(bid)) for bid in bid_objects]
-                        bid_choice = player.choose_bid(legacy_bids)
-                    else:
-                        bid_choice = 'Pass'
+        auction = Auction.empty()
+        player_iter = itertools.cycle(self.players_order)
 
-                    # If view is provided and player is human, use view for input
-                    if view and hasattr(player, 'is_human') and player.is_human:
-                        # Convert bid objects to legacy format for view compatibility
-                        legacy_bids = [(bid.player, self._bid_to_legacy_format(bid)) for bid in bid_objects]
-                        bid_choice = view.request_bid_action(player, legacy_bids)
+        while not auction.is_terminal():
+            player = next(player_iter)
+            legal = auction.legal_actions(player)
+            if len(legal) == 1:
+                # Pass is the only legal action — skip both the AI
+                # strategy and the human prompt entirely. Covers the
+                # "partner doubled / redoubled" UX as a special case
+                # of the general "no real choice" rule.
+                bid = legal[0]
+            else:
+                bid = self._gather_bid(player, auction, view)
+            auction = auction.apply(bid)
+            # Notify the view that a bid was just registered. Used by
+            # interactive views to render the AI action and pause
+            # briefly before the next bidder.
+            if view is not None and hasattr(view, 'on_bid_made'):
+                view.on_bid_made(player, bid, list(auction.bids))
 
-                # Create appropriate Bid object from player's choice
-                bid_obj = self._create_bid_from_choice(player, bid_choice)
-
-                # Validate the bid
-                if BidValidator.is_bid_valid(bid_obj, bid_objects):
-                    bid_objects.append(bid_obj)
-
-                    # Reset pass count for non-pass bids
-                    if not isinstance(bid_obj, PassBid):
-                        passes_count = 0
-                    else:
-                        passes_count += 1
-                else:
-                    # Invalid bid - force a pass
-                    bid_objects.append(PassBid(player))
-                    passes_count += 1
-
-                # Notify the view that a bid was just registered. Used
-                # by interactive views to render the AI action and
-                # pause briefly before the next bidder.
-                if view is not None and hasattr(view, 'on_bid_made'):
-                    view.on_bid_made(player, bid_objects[-1], list(bid_objects))
-
-                # Check for end conditions
-                # End if 3 passes after a valid contract/double/redouble
-                if passes_count >= 3 and len(bid_objects) > 3:
-                    # Check if there's any non-pass bid
-                    has_non_pass = any(not isinstance(bid, PassBid) for bid in bid_objects)
-                    if has_non_pass:
-                        break
-
-            # Break outer loop if bidding should end
-            if passes_count >= 3 and len(bid_objects) > 3:
-                has_non_pass = any(not isinstance(bid, PassBid) for bid in bid_objects)
-                if has_non_pass:
-                    break
-
-            # If all players passed in first round
-            if len(bid_objects) >= 4 and all(isinstance(bid, PassBid) for bid in bid_objects[-4:]):
-                break
-
-        # Create Contract from final bid sequence
-        contract_bid = BidValidator.get_last_contract(bid_objects)
-
-        if contract_bid:
-            # Check for double and redouble
-            has_double = BidValidator.has_double(bid_objects)
-            has_redouble = BidValidator.has_redouble(bid_objects)
-
-            self.contract = Contract(contract_bid, double=has_double, redouble=has_redouble)
+        self.contract = auction.contract()
+        if self.contract is not None:
             self._detect_belote_holder()
             # Bookmark the contract in the event log so the start of
             # play is clearly delimited.
             if view is not None and hasattr(view, 'on_contract_established'):
                 view.on_contract_established(self)
-        else:
-            self.contract = None
 
         return self.contract
+
+    def _gather_bid(
+        self,
+        player: 'Player',
+        auction: Auction,
+        view,
+    ) -> Bid:
+        """Ask ``player`` for a :class:`Bid`, consulting ``view`` for humans.
+
+        Args:
+            player: The active bidder.
+            auction: The current auction state. Passed verbatim to
+                both ``player.choose_bid`` and (for humans)
+                ``view.request_bid_action``.
+            view: The optional view.
+
+        Returns:
+            The player's chosen :class:`Bid`.
+
+        Raises:
+            RuntimeError: If neither the player nor the view produced
+                a bid — that's an engine wiring bug (e.g. a
+                :class:`HumanPlayer` with no view attached).
+        """
+
+        bid: Optional[Bid] = None
+        if hasattr(player, 'choose_bid'):
+            bid = player.choose_bid(auction)
+        if (
+            view is not None
+            and getattr(player, 'is_human', False)
+            and hasattr(view, 'request_bid_action')
+        ):
+            bid = view.request_bid_action(player, auction)
+        if bid is None:
+            raise RuntimeError(
+                f"No bid produced for {player.position}: "
+                f"choose_bid returned None and the view did not intercept."
+            )
+        return bid
 
     def _is_belote_event(self, player: 'Player', card) -> bool:
         """True if *player* playing *card* counts toward a belote announcement."""
@@ -440,82 +443,6 @@ class Round:
         teams = set(player.team for player in self.players_order)
         self.round_scores = {team.name: 0 for team in teams}
         return self.round_scores
-
-    def _should_auto_pass(self, player: 'Player', bid_objects: list) -> bool:
-        """True when *player* has no meaningful action besides Pass.
-
-        The rule covers the *partner has doubled/redoubled* situation:
-        once a Double is on the table you can't double again, and only
-        the contracting team can Redouble — so a defender whose
-        partner just doubled (or a contractor whose partner just
-        redoubled) literally cannot take any active action. Asking
-        them is a noisy prompt for the human and a coin flip for the
-        AI, so the engine passes for them.
-        """
-        for bid in reversed(bid_objects):
-            if isinstance(bid, PassBid):
-                continue
-            if isinstance(bid, (DoubleBid, RedoubleBid)):
-                # Partner = same team, different player. The same-player
-                # guard is defensive: a player can't double after their
-                # own action without three intervening bids anyway.
-                if (
-                    bid.player is not player
-                    and bid.player.team is player.team
-                ):
-                    return True
-            return False
-        return False
-
-    def _create_bid_from_choice(self, player: 'Player', choice) -> Bid:
-        """
-        Create a Bid object from a player's choice.
-
-        Args:
-            player: The player making the bid
-            choice: The bid choice (string or tuple)
-
-        Returns:
-            Appropriate Bid object
-        """
-        if choice == 'Pass':
-            return PassBid(player)
-        elif choice == 'Double':
-            return DoubleBid(player)
-        elif choice == 'Redouble':
-            return RedoubleBid(player)
-        elif isinstance(choice, tuple) and len(choice) == 2:
-            # Contract bid: (value, suit)
-            value, suit = choice
-            try:
-                return ContractBid(player, value, suit)
-            except ValueError:
-                # Invalid contract parameters - return pass
-                return PassBid(player)
-        else:
-            # Unknown bid format - return pass
-            return PassBid(player)
-
-    def _bid_to_legacy_format(self, bid: Bid):
-        """
-        Convert a Bid object to legacy format for compatibility.
-
-        Args:
-            bid: Bid object to convert
-
-        Returns:
-            Legacy format bid representation
-        """
-        if isinstance(bid, PassBid):
-            return 'Pass'
-        elif isinstance(bid, DoubleBid):
-            return 'Double'
-        elif isinstance(bid, RedoubleBid):
-            return 'Redouble'
-        elif isinstance(bid, ContractBid):
-            return (bid.value, bid.suit)
-        else:
-            return 'Pass'
 
     def _get_playable_cards(self, player: 'Player'):
         """

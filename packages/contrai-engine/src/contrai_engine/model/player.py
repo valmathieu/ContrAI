@@ -1,10 +1,88 @@
 # Player, HumanPlayer, AiPlayer classes
 
 from abc import ABC, abstractmethod
-from contrai_core.player import BasePlayer
+from typing import Optional
+
+from contrai_core.auction import Auction
+from contrai_core.bid import (
+    Bid,
+    ContractBid,
+    DoubleBid,
+    PassBid,
+    RedoubleBid,
+)
 from contrai_core.card import Card
-from contrai_core.types import Suit, Rank, CARD_SUITS
+from contrai_core.player import BasePlayer
+from contrai_core.types import CARD_SUITS, Rank, Suit
 SUITS = CARD_SUITS
+
+
+# ---------------------------------------------------------------------------
+# Wire format bridge
+# ---------------------------------------------------------------------------
+# The AI strategy in this module still operates internally on the
+# legacy "wire" representation of a bid:
+#
+#     'Pass' | 'Double' | 'Redouble' | (value, suit)
+#
+# The Auction API works on real :class:`Bid` instances. These two
+# module-level helpers bridge between the two formats so the engine
+# boundary can pass Bid objects while the AI's expert table keeps
+# using its existing tuple-based helpers. Future AI families should
+# consume :meth:`Auction.legal_actions` directly and let these go.
+
+
+def wire_to_bid(player: BasePlayer, wire) -> Bid:
+    """Lift a legacy wire bid choice to a :class:`Bid` instance.
+
+    Args:
+        player: The player making the bid (attached to the result).
+        wire: ``'Pass'``, ``'Double'``, ``'Redouble'`` or
+            ``(value, suit)``. Unrecognised payloads fall back to a
+            :class:`PassBid` so the caller can still hand the result
+            to :meth:`Auction.apply`, which raises
+            :class:`IllegalBidError` if the engine wiring is broken.
+
+    Returns:
+        The matching :class:`Bid` subclass instance.
+    """
+
+    if wire == 'Pass':
+        return PassBid(player)
+    if wire == 'Double':
+        return DoubleBid(player)
+    if wire == 'Redouble':
+        return RedoubleBid(player)
+    if isinstance(wire, tuple) and len(wire) == 2:
+        value, suit = wire
+        try:
+            return ContractBid(player, value, suit)
+        except ValueError:
+            # Bad contract parameters — fall back to Pass. The Auction
+            # will reject this if it isn't actually legal.
+            return PassBid(player)
+    return PassBid(player)
+
+
+def bid_to_wire(bid: Bid):
+    """Project a :class:`Bid` instance back to the legacy wire format.
+
+    Used by the AI strategy and by the Rich view's bidding-history
+    renderer, both of which still consume the legacy
+    ``'Pass'`` / ``'Double'`` / ``'Redouble'`` / ``(value, suit)``
+    shape.
+    """
+
+    if isinstance(bid, PassBid):
+        return 'Pass'
+    if isinstance(bid, DoubleBid):
+        return 'Double'
+    if isinstance(bid, RedoubleBid):
+        return 'Redouble'
+    if isinstance(bid, ContractBid):
+        return (bid.value, bid.suit)
+    return 'Pass'
+
 
 class Player(BasePlayer, ABC):
     @property
@@ -13,7 +91,22 @@ class Player(BasePlayer, ABC):
         return isinstance(self, HumanPlayer)
 
     @abstractmethod
-    def choose_bid(self, current_bids):
+    def choose_bid(self, auction: Auction) -> Optional[Bid]:
+        """Choose a :class:`Bid` for the current auction state.
+
+        Args:
+            auction: The current :class:`Auction`. Use
+                ``auction.legal_actions(self)`` to enumerate legal
+                bids, or query ``auction.last_contract`` /
+                ``auction.partner_bid(self)`` for the strategy
+                helpers.
+
+        Returns:
+            A :class:`Bid` instance (validated by the engine via
+            :meth:`Auction.apply`), or ``None`` to defer to the view
+            (the contract for :class:`HumanPlayer`).
+        """
+
         pass
 
     @abstractmethod
@@ -21,10 +114,14 @@ class Player(BasePlayer, ABC):
         pass
 
 class HumanPlayer(Player):
-    def choose_bid(self, current_bids):
-        # This method should be called by the controller via the view
-        # Example: return ('Pass') or (value, suit) or 'Double' or 'Redouble'
-        return None  # To be implemented in controller/view
+    def choose_bid(self, auction: Auction) -> None:
+        """Defer to the view's :meth:`request_bid_action`.
+
+        Returns ``None`` by design — Round's bidding loop then
+        consults the view to actually drive the human's input.
+        """
+
+        return None
 
     def choose_card(self, trick, contract, playable_cards):
         # This method should be called by the controller via the view
@@ -67,15 +164,38 @@ class AiPlayer(Player):
     # Suit preference order (Spades, Hearts, Diamonds, Clubs)
     SUIT_PREFERENCE = SUITS
 
-    def choose_bid(self, current_bids):
-        """
-        Choose a bid based on simple AI strategy.
+    def choose_bid(self, auction: Auction) -> Bid:
+        """Choose a :class:`Bid` for the current auction state.
+
+        The expert bidding table still operates on the legacy wire
+        format internally; this method adapts the :class:`Auction`
+        boundary into wire-format inputs, delegates to
+        :meth:`_choose_wire`, and lifts the result back to a
+        :class:`Bid` for the engine to apply. The engine is
+        responsible for validating legality — see
+        :meth:`Auction.apply`.
 
         Args:
-            current_bids: List of (player, bid) tuples from the current bidding round
+            auction: The current :class:`Auction` state.
 
         Returns:
-            str or tuple: 'Pass', 'Double', 'Redouble', or (value, suit)
+            A :class:`Bid` instance the engine will validate.
+        """
+
+        current_bids = [(b.player, bid_to_wire(b)) for b in auction.bids]
+        wire_choice = self._choose_wire(current_bids)
+        return wire_to_bid(self, wire_choice)
+
+    def _choose_wire(self, current_bids):
+        """Strategy core: pick a wire-format bid for ``current_bids``.
+
+        Args:
+            current_bids: List of ``(player, wire_bid)`` tuples from
+                the current bidding round in chronological order.
+
+        Returns:
+            ``'Pass'``, ``'Double'``, ``'Redouble'``, or
+            ``(value, suit)``.
         """
 
         # Get current game state
