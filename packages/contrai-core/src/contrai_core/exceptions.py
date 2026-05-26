@@ -52,3 +52,36 @@ class InvalidCardCountError(ValueError):
         self.expected_count = expected_count
         self.actual_count = actual_count
         self.context = context
+
+
+class IllegalBidError(ValueError):
+    """Raised when a bid is applied to an :class:`Auction` in which it is illegal.
+
+    The auction state machine surfaces illegal bids as a loud failure
+    rather than silently downgrading them to a Pass. The offending bid
+    and the prior bid history are attached so callers can render
+    diagnostics — engine wiring bugs around bidding should be obvious
+    rather than swallowed.
+    """
+
+    def __init__(self, bid, bids, context=""):
+        """Initialize the IllegalBidError.
+
+        Args:
+            bid: The bid that was rejected. Typed as ``Any`` to avoid a
+                circular import on :class:`contrai_core.bid.Bid` here.
+            bids: The chronological iterable of prior bids the bid was
+                applied against. Coerced to a tuple for diagnostics.
+            context: Optional free-form context (e.g. originating call
+                site or player position) appended to the message.
+        """
+        bids_tuple = tuple(bids)
+        base = (
+            f"Illegal bid {bid!r} for auction with "
+            f"{len(bids_tuple)} prior bid(s)"
+        )
+        message = f"{context}: {base}" if context else base
+        super().__init__(message)
+        self.bid = bid
+        self.bids = bids_tuple
+        self.context = context
