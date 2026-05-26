@@ -35,12 +35,12 @@ package "model/player.py" as p_player {
     abstract class Player <<abstract>> {
         + is_human : bool <<property>>
         --
-        + {abstract} choose_bid(current_bids) : str | tuple
+        + {abstract} choose_bid(auction: Auction) : Bid?
         + {abstract} choose_card(trick, contract, playable_cards) : Card
     }
 
     class HumanPlayer {
-        + choose_bid(current_bids) : None  <<no-op>>
+        + choose_bid(auction) : None  <<no-op>>
         + choose_card(trick, contract, playable_cards) : None  <<no-op>>
     }
 
@@ -48,13 +48,19 @@ package "model/player.py" as p_player {
         + {static} BIDDING_TABLE : list<tuple>
         + {static} SUIT_PREFERENCE : tuple<Suit>
         --
-        + choose_bid(current_bids) : str | tuple
+        + choose_bid(auction: Auction) : Bid
         + choose_card(trick, contract, playable_cards) : Card
         + initialize_card_tracking() : None
         + update_card_tracking(card, player, led_suit, trump_suit) : None
         --
+        - _choose_wire(current_bids) : str | tuple
         - _fallen_cards : dict<Suit, set<Rank>>
         - _players_without_trump : set<Player>
+    }
+
+    class "wire_to_bid / bid_to_wire" as p_bridge <<module helpers>> #FFEFD9 {
+        wire_to_bid(player, wire) : Bid
+        bid_to_wire(bid : Bid)    : str | tuple
     }
 
     note right of AiPlayer
@@ -71,9 +77,21 @@ package "model/player.py" as p_player {
     end note
 
     note bottom of AiPlayer
-      **BIDDING_TABLE** rows (9 levels, 80–160):
-      (contract, trump_req, trump_min, aces, tricks_min, belote_required).
-      No 'Capot' row today.
+      ``choose_bid(auction)`` is a thin
+      adapter: it projects ``auction.bids``
+      to the legacy ``(player, wire_bid)``
+      tuples the expert table still uses,
+      delegates to ``_choose_wire``, and
+      lifts the wire choice back to a
+      :class:`Bid` via ``wire_to_bid``.
+      Future AI families should read
+      ``auction.legal_actions(self)``
+      directly and let the wire format go.
+
+      **BIDDING_TABLE** rows (10 levels,
+      80–160 + Capot): (contract,
+      trump_req, trump_min, aces,
+      tricks_min, belote_required).
     end note
 
     note bottom of HumanPlayer
@@ -82,6 +100,20 @@ package "model/player.py" as p_player {
       serviced by **RichView** through the
       ``view.request_*_action`` hooks Round
       calls when ``player.is_human``.
+    end note
+
+    note right of p_bridge
+      Module-level helpers in
+      ``contrai_engine.model.player``.
+      Bridge between the
+      :class:`contrai_core.Bid` boundary
+      (used at the engine perimeter) and
+      the legacy ``'Pass'`` / ``'Double'`` /
+      ``'Redouble'`` / ``(value, suit)``
+      wire format the AI expert table
+      and the Rich view's renderer still
+      consume. Shared by AiPlayer, Round
+      (test scaffolding), and RichView.
     end note
 }
 
@@ -132,9 +164,7 @@ package "model/round.py" as p_round {
         + calculate_round_scores() : dict<str, int>
         + handle_failed_contract() : dict<str, int>
         --
-        - _create_bid_from_choice(player, choice) : Bid
-        - _bid_to_legacy_format(bid: Bid)
-        - _should_auto_pass(player, bid_objects) : bool
+        - _gather_bid(player, auction, view) : Bid
         - _get_playable_cards(player) : list<Card>
         - _higher_trumps_than_played(trumps, plays, trump) : list<Card>
         - _highest_opponent_trump(plays, team, trump) : Card?
@@ -145,30 +175,42 @@ package "model/round.py" as p_round {
     }
 
     note right of Round
-      `_determine_trick_winner` duplicates
-      `Trick.get_winner()` from contrai-core
+      ``manage_bidding`` drives an
+      :class:`contrai_core.Auction` through
+      the cyclic ``players_order``. Each
+      turn: query ``legal_actions(player)``;
+      if the only legal action is Pass
+      (partner just doubled / redoubled),
+      auto-apply it without prompting;
+      otherwise gather a Bid from the
+      player and the view. ``auction.apply``
+      raises :class:`IllegalBidError` on an
+      illegal bid — no silent force-Pass.
+      ----
+      ``_determine_trick_winner`` duplicates
+      ``Trick.get_winner()`` from contrai-core
       (open question: pick one).
       ----
-      `_get_playable_cards` enforces:
+      ``_get_playable_cards`` enforces:
       • follow suit if able,
       • over-trump when trump is led,
       • partner-master exemption (current
         winner, not whoever led),
       • over-trump opponents otherwise.
       The partner-master check delegates to
-      `Trick.get_current_winner(trump_suit)`.
+      ``Trick.get_current_winner(trump_suit)``.
       ----
-      During play Round fires (each `hasattr`-guarded):
-      • `view.on_bid_made(player, bid, history)`
-      • `view.on_contract_established(self)`
+      During play Round fires (each ``hasattr``-guarded):
+      • ``view.on_bid_made(player, bid, history)``
+      • ``view.on_contract_established(self)``
         (once, immediately after the final
         Contract is built)
-      • `view.on_card_played(player, card, trick)`
-      • `view.on_belote_announced(player, kind, self)`
-      • `view.on_trick_complete(trick, winner, self)`
-      `Game.manage_round` additionally fires
-      `view.on_round_dealt(round_)` after the deal
-      and `view.on_all_pass_redeal(round_)` when
+      • ``view.on_card_played(player, card, trick)``
+      • ``view.on_belote_announced(player, kind, self)``
+      • ``view.on_trick_complete(trick, winner, self)``
+      ``Game.manage_round`` additionally fires
+      ``view.on_round_dealt(round_)`` after the deal
+      and ``view.on_all_pass_redeal(round_)`` when
       everyone passes.
     end note
 }
@@ -223,7 +265,7 @@ package "view/rich_view.py" as p_view {
         + reset_for_rematch() : None
         --
         ' Engine hooks
-        + request_bid_action(player, legacy_bids) : str | tuple
+        + request_bid_action(player, auction: Auction) : Bid
         + request_card_action(player, trick, contract, playable) : Card
         + on_round_dealt(round_) : None
         + on_all_pass_redeal(round_) : None

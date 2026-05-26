@@ -30,113 +30,133 @@ skinparam note {
 
 participant "Round" as R <<engine>>
 participant "Player" as P <<engine>>
-participant "BidValidator" as BV <<from contrai-core>> #E1F0FF
+participant "Auction" as A <<from contrai-core>> #E1F0FF
 participant "Contract" as CT <<from contrai-core>> #E1F0FF
 participant "RichView" as V <<engine>>
 
 [-> R : manage_bidding(view)
 activate R
 
-R -> R : bid_objects = []\npasses_count = 0
+R -> A : Auction.empty()
+A --> R : auction
+R -> R : player_iter = itertools.cycle(\n  players_order\n)
 
-loop **while True** (outer)
+loop **while not auction.is_terminal()**
 
-    loop **for player in players_order**
+    R -> R : player = next(player_iter)
 
-        alt _should_auto_pass(player, bid_objects)
-            R -> R : bid_choice = 'Pass'
-            note right of R
-              Partner has doubled or
-              redoubled — Pass is the
-              only meaningful action.
-              Skip both the AI strategy
-              and the human prompt.
-            end note
-        else normal turn
-            R -> R : legacy_bids = [\n  (b.player, _bid_to_legacy_format(b))\n  for b in bid_objects\n]
+    R -> A : legal_actions(player)
+    A --> R : tuple<Bid>
+    note right of A
+      Enumerates every legal Bid for
+      ``player``: always a PassBid first,
+      then every ContractBid that beats
+      the current contract without
+      crossing a Double/Redouble freeze,
+      plus the DoubleBid / RedoubleBid
+      candidates if their team-and-timing
+      rules pass.
+    end note
 
-            alt player has choose_bid (AI / Human)
-                R -> P : player.choose_bid(legacy_bids)
-                P --> R : 'Pass' | 'Double' | 'Redouble' | (value, suit)
-            else fallback
-                R -> R : bid_choice = 'Pass'
-            end
-
-            alt view ≠ None AND player.is_human
-                R -->> V : view.request_bid_action(player, legacy_bids)
-                note right of V
-                  RichView renders the
-                  bidding screen, parses
-                  the human's string
-                  (`pass`, `80 h`,
-                  `double`, `redouble`, …),
-                  and loops on parse errors.
-                  When the contractor was just
-                  doubled, the example hint
-                  switches to `(pass / redouble)`.
-                end note
-                V -->> R : 'Pass' | 'Double' | 'Redouble' | (value, suit)
-            end
-        end
-
-        R -> R : bid_obj = _create_bid_from_choice(\n  player, bid_choice\n)\n→ PassBid / DoubleBid / RedoubleBid\n   / ContractBid / PassBid (on ValueError)
-
-        R -> BV : is_bid_valid(bid_obj, bid_objects)
-        BV -> BV : bid_obj.is_valid_after(\n  previous_bids\n)\n• ContractBid: must be higher AND no\n  Double/Redouble frozen the auction\n• DoubleBid: opponent of contractor, no\n  intervening passes, not already doubled\n• RedoubleBid: contractor's team, no\n  intervening passes
-        BV --> R : bool
-
-        alt valid
-            R -> R : bid_objects.append(bid_obj)
-            alt isinstance(bid_obj, PassBid)
-                R -> R : passes_count += 1
-            else other bid
-                R -> R : passes_count = 0
-            end
-        else invalid → force pass
-            R -> R : bid_objects.append(PassBid(player))
-            R -> R : passes_count += 1
-        end
-
-        R -->> V : view.on_bid_made(player, bid_objects[-1],\n                    list(bid_objects))
-        note right of V
-          RichView logs the bid in the
-          rolling event log. For AI bidders
-          it re-renders the bidding screen
-          with the new action visible and
-          sleeps `CONTRAI_AI_BID_DELAY`
-          (1.4s default). Humans skip the
-          pause — `request_bid_action`
-          already drove their frame.
+    alt len(legal) == 1  (only Pass is legal)
+        R -> R : bid = legal[0]  ' PassBid
+        note right of R
+          Partner has just doubled or
+          redoubled (or a pass has
+          already closed the redouble
+          window). Pass is the only
+          meaningful action — skip both
+          the AI prompt and the human
+          view prompt entirely.
         end note
+    else normal turn
+        R -> R : bid = _gather_bid(\n  player, auction, view\n)
 
-        alt passes_count ≥ 3 AND len(bid_objects) > 3\nAND any non-pass
-            R -> R : **break** (inner)
+        alt player has choose_bid (AI / Human)
+            R -> P : player.choose_bid(auction)
+            note right of P
+              AiPlayer adapts auction.bids
+              back to the legacy
+              ``(player, wire_bid)``
+              tuples its expert table
+              still uses, picks a wire
+              choice, and lifts the
+              result to a Bid via
+              ``wire_to_bid``.
+
+              HumanPlayer.choose_bid
+              returns None by design.
+            end note
+            P --> R : Bid | None
         end
 
+        alt view ≠ None AND player.is_human
+            R -->> V : view.request_bid_action(\n  player, auction\n)
+            note right of V
+              RichView projects
+              ``auction.bids`` to the
+              legacy ``(player, wire_bid)``
+              shape its renderer
+              internals still consume,
+              renders the bidding screen,
+              parses the human's input
+              (``pass``, ``80 h``,
+              ``double``, ``redouble``,
+              …), and loops on parse
+              errors.
+
+              The parsed wire choice is
+              lifted to a Bid via
+              ``wire_to_bid`` and
+              returned.
+            end note
+            V -->> R : Bid
+        end
     end
 
-    alt termination — 3 passes after a non-pass
-        R -> R : **break** (outer)
-    else last 4 bids all PassBid (first-round wipe)
-        R -> R : **break** (outer)
-    end
+    R -> A : auction.apply(bid)
+    A -> A : is_legal(bid) ?
+    note right of A
+      ``apply`` raises
+      :class:`IllegalBidError` if the
+      bid is illegal — *no* silent
+      downgrade to a Pass any more. A
+      raised IllegalBidError is an
+      engine-wiring bug (e.g. an AI
+      strategy returning a bid that
+      doesn't match the auction state).
+    end note
+    A --> R : auction'  (new instance with bid appended)
+
+    R -->> V : view.on_bid_made(player, bid,\n                    list(auction.bids))
+    note right of V
+      RichView logs the bid in the
+      rolling event log. For AI bidders
+      it re-renders the bidding screen
+      with the new action visible and
+      sleeps ``CONTRAI_AI_BID_DELAY``
+      (1.4 s default). Humans skip the
+      pause — ``request_bid_action``
+      already drove their frame.
+    end note
 
 end
 
 == Build the Contract ==
 
-R -> BV : get_last_contract(bid_objects)
-BV --> R : ContractBid | None
+R -> A : auction.contract()
+A --> R : Contract | None
+note right of A
+  ``Auction.contract()`` walks the
+  bids backwards for the last
+  ``ContractBid`` and folds in
+  ``has_double`` / ``has_redouble``
+  to build the final Contract.
+end note
 
-alt no ContractBid found
+alt no ContractBid (all-pass wipe)
     R -> R : self.contract = None
 else
-    R -> BV : has_double(bid_objects)
-    BV --> R : bool
-    R -> BV : has_redouble(bid_objects)
-    BV --> R : bool
-    R -> CT : new Contract(\n  contract_bid,\n  double=has_double,\n  redouble=has_redouble\n)
-    CT --> R : Contract
     R -> R : self.contract = contract
     R -> R : _detect_belote_holder()\n(scan hands for K + Q of trump;\n NO_TRUMP contracts → no holder)
     R -->> V : view.on_contract_established(self)
@@ -152,11 +172,14 @@ end
 deactivate R
 
 note over R, V
-  **Bid choice shape (legacy format on the wire):**
-    `'Pass'` | `'Double'` | `'Redouble'` | `(value, suit)`
-  `_create_bid_from_choice` upgrades it to a proper `Bid` subclass;
-  `_bid_to_legacy_format` is the reverse, used when handing bids
-  back to `Player.choose_bid` (which still expects legacy tuples).
+  **Wire format vs Bid objects.** Bidding flows through real
+  :class:`Bid` subclass instances at every boundary
+  (``Player.choose_bid``, ``view.request_bid_action``,
+  ``Auction.apply``, ``view.on_bid_made``). The legacy
+  ``'Pass'`` / ``'Double'`` / ``'Redouble'`` / ``(value, suit)`` wire
+  format only survives *inside* AiPlayer's expert table and RichView's
+  renderer; the ``wire_to_bid`` / ``bid_to_wire`` helpers in
+  ``contrai_engine.model.player`` are the bridge.
 end note
 
 @enduml

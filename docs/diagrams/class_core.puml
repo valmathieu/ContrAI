@@ -136,58 +136,86 @@ package "team.py / player.py" as p_team {
 }
 
 ' =========================================================
-' Bid hierarchy (bid.py)
+' Bid hierarchy (bid.py) — frozen dataclass sum type
 ' =========================================================
 package "bid.py" as p_bid {
-    abstract class Bid <<abstract>> {
-        + player : BasePlayer
-        --
-        + __init__(player: BasePlayer)
-        + {abstract} is_valid_after(previous_bids: list<Bid>) : bool
-        + {abstract} __str__() : str
-        + {abstract} __eq__(other) : bool
+    class Bid <<frozen dataclass>> {
+        + player : BasePlayer  ' field(compare=False)
     }
 
-    class PassBid {
-        + is_valid_after(...) : bool  ' always True
+    class PassBid <<frozen dataclass>> {
+        + __str__() : str  ' "Pass"
     }
 
-    class ContractBid {
+    class ContractBid <<frozen dataclass>> {
         + {static} VALID_VALUES = [80..160, "Capot"]
         + {static} VALID_SUITS = list(Suit)
         + value : int | str
         + suit : Suit
         --
-        + __init__(player, value, suit)
-        + is_valid_after(...) : bool
+        + __post_init__() : None  ' validates value + suit
         + get_numeric_value() : int   ' Capot → 250
-        + __gt__(other) : bool
+        + __gt__(other) : bool         ' strict numeric ordering
+        + __str__() : str
     }
 
-    note bottom of ContractBid
-      ``is_valid_after`` rejects the bid if a
-      DoubleBid or RedoubleBid sits between
-      the previous ContractBid and now —
-      per contree-domain.md §5.3, a Contre
-      *freezes* the auction at the current
-      contract.
+    class DoubleBid <<frozen dataclass>> {
+        + __str__() : str  ' "Double"
+    }
+
+    class RedoubleBid <<frozen dataclass>> {
+        + __str__() : str  ' "Redouble"
+    }
+
+    note bottom of Bid
+      Pure value carriers — no auction-state
+      behaviour. ``player`` is excluded from
+      ``__eq__`` and ``__hash__`` (matching
+      bid equality on *what was announced*,
+      not who announced it). All four
+      variants are ``@dataclass(frozen=True,
+      slots=True)``.
     end note
+}
 
-    class DoubleBid {
-        + is_valid_after(...) : bool
+' =========================================================
+' Auction (auction.py) — bidding-state rule oracle
+' =========================================================
+package "auction.py" as p_auction {
+    class Auction <<frozen dataclass>> {
+        + bids : tuple<Bid> = ()
+        --
+        + {static} empty() : Auction
+        + is_legal(bid: Bid) : bool
+        + legal_actions(player: BasePlayer) : tuple<Bid>
+        + apply(bid: Bid) : Auction    ' raises IllegalBidError
+        + is_terminal() : bool
+        + contract() : Contract?
+        --
+        + last_contract : ContractBid? <<property>>
+        + has_double : bool             <<property>>
+        + has_redouble : bool           <<property>>
+        + consecutive_passes : int      <<property>>
+        + partner_bid(player) : Bid?
     }
 
-    class RedoubleBid {
-        + is_valid_after(...) : bool
-    }
-
-    class BidValidator <<utility>> {
-        + {static} is_bid_valid(bid, previous) : bool
-        + {static} get_last_contract(bids) : ContractBid?
-        + {static} has_double(bids) : bool
-        + {static} has_redouble(bids) : bool
-        + {static} count_passes_after_last_action(bids) : int
-    }
+    note bottom of Auction
+      Immutable bidding-phase state.
+      Owns the chronological bid history
+      and the contrée rules (see
+      ``contree-domain.md §5.2`` and §5.3).
+      ``is_legal`` / ``legal_actions``
+      replace ``Bid.is_valid_after`` and
+      ``BidValidator``; ``apply`` raises
+      :class:`IllegalBidError` rather than
+      silently downgrading an illegal bid
+      to a Pass.
+      The shape (``legal_actions`` +
+      ``apply``) mirrors MCTS / RL game-state
+      interfaces, so the auction phase is
+      ready to drop into a future
+      imperfect-information state object.
+    end note
 }
 
 ' =========================================================
@@ -260,8 +288,15 @@ package "exceptions.py" as p_exc {
         + context : str
     }
 
+    class IllegalBidError {
+        + bid : Bid
+        + bids : tuple<Bid>
+        + context : str
+    }
+
     InvalidPlayerCountError --|> ValueError
     InvalidCardCountError   --|> ValueError
+    IllegalBidError         --|> ValueError
 }
 
 ' =========================================================
@@ -295,8 +330,10 @@ Team "1" o-- "2" BasePlayer : players
 Bid "1" o-- "1" BasePlayer : player
 ContractBid --> Suit : suit
 
-' BidValidator inspects Bid lists (utility, not composition)
-BidValidator ..> Bid : <<inspects>>
+' Auction composes a tuple of Bids and materialises a Contract
+Auction "1" *-- "0..N" Bid       : bids
+Auction ..> Contract             : <<materialises>>
+Auction ..> IllegalBidError      : <<raises (apply)>>
 
 ' Contract references ContractBid + BasePlayer + Team
 Contract "1" o-- "1" ContractBid : contract_bid
