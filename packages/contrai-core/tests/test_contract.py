@@ -204,10 +204,46 @@ class TestContractSlamHelpers:
         assert numeric_contract.get_base_points() == 100
 
     def test_get_base_points_slam(self, slam_contract):
-        assert slam_contract.get_base_points() == 500
+        # 250 = the contract base (auction precedence + half of the
+        # at-risk amount). The other half is the flat card-pile
+        # substitute returned by get_slam_card_substitute().
+        assert slam_contract.get_base_points() == 250
 
     def test_get_base_points_solo_slam(self, solo_slam_contract):
-        assert solo_slam_contract.get_base_points() == 1000
+        assert solo_slam_contract.get_base_points() == 500
+
+    def test_get_slam_card_substitute_numeric_is_zero(self, numeric_contract):
+        # Numeric contracts use the actual 162 of card points — no
+        # substitute applies.
+        assert numeric_contract.get_slam_card_substitute() == 0
+
+    def test_get_slam_card_substitute_slam(self, slam_contract):
+        # The 162 trick-pile is replaced by a flat 250 for Slam.
+        assert slam_contract.get_slam_card_substitute() == 250
+
+    def test_get_slam_card_substitute_solo_slam(self, solo_slam_contract):
+        # Solo Slam: substitute is 500.
+        assert solo_slam_contract.get_slam_card_substitute() == 500
+
+    def test_at_risk_total_slam_normal(self, slam_contract):
+        # The full at-risk amount for a Slam at normal multiplier:
+        # (base + substitute) × 1 = 250 + 250 = 500.
+        amount = (
+            slam_contract.get_base_points()
+            + slam_contract.get_slam_card_substitute()
+        ) * slam_contract.get_multiplier()
+        assert amount == 500
+
+    def test_at_risk_total_solo_slam_doubled(self, north, team_ns):
+        # Solo Slam doubled: (500 + 500) × 2 = 2000.
+        contract = Contract(
+            ContractBid(north, "SoloSlam", Suit.HEARTS), double=True
+        )
+        amount = (
+            contract.get_base_points()
+            + contract.get_slam_card_substitute()
+        ) * contract.get_multiplier()
+        assert amount == 2000
 
 
 class TestContractTeamAccessors:

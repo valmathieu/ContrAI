@@ -137,10 +137,14 @@ class TestContractBidComparison:
         assert ContractBid(north, 160, Suit.SPADES).get_numeric_value() == 160
 
     def test_get_numeric_value_for_slam(self, north):
-        assert ContractBid(north, "Slam", Suit.SPADES).get_numeric_value() == 500
+        # 250 = the contract base value (what the bidder commits to);
+        # it is one half of the Slam at-risk amount, the other being
+        # the flat card-pile substitute. Outranks the 160 numeric ceiling.
+        assert ContractBid(north, "Slam", Suit.SPADES).get_numeric_value() == 250
 
     def test_get_numeric_value_for_solo_slam(self, north):
-        assert ContractBid(north, "SoloSlam", Suit.SPADES).get_numeric_value() == 1000
+        # 500 = the Solo Slam contract base value; outranks Slam (250).
+        assert ContractBid(north, "SoloSlam", Suit.SPADES).get_numeric_value() == 500
 
     def test_gt_numeric(self, north):
         a = ContractBid(north, 100, Suit.SPADES)

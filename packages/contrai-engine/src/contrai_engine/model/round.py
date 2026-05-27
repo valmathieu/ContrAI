@@ -404,7 +404,12 @@ class Round:
             multiplier = 2
 
         # ----- Slam / Solo Slam scoring path -----
-        # Replaces the base + card_points formula with a symmetric grid.
+        # The 162 of trick-card points is replaced by a flat substitute
+        # equal to the contract base (see Contract.get_slam_card_substitute).
+        # The full at-risk amount is (base + substitute) × multiplier,
+        # giving 500 / 1000 / 2000 for Slam and 1000 / 2000 / 4000 for
+        # Solo Slam at normal / doubled / redoubled. The grid is symmetric:
+        # whichever side wins the contract scores the at-risk amount.
         # See contree-domain.md §7.2.
         if self.contract.is_slam_family():
             contract_team_trick_count = len(self.team_tricks[contract_team_name])
@@ -419,7 +424,9 @@ class Round:
                 )
                 contract_made = contract_made and bidder_personal_tricks == 8
 
-            at_risk = self.contract.get_base_points() * multiplier
+            base = self.contract.get_base_points()
+            substitute = self.contract.get_slam_card_substitute()
+            at_risk = (base + substitute) * multiplier
             if contract_made:
                 team_scores[contract_team_name] = at_risk
             else:

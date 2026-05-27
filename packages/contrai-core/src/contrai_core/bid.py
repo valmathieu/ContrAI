@@ -120,15 +120,22 @@ class ContractBid(Bid):
     def get_numeric_value(self) -> int:
         """Numeric value for comparison purposes.
 
-        Sentinels map to the same base-point value used for scoring so
-        the auction's ``>``-ordering stays aligned with the score grid:
-        ``"Slam"`` → 500, ``"SoloSlam"`` → 1000.
+        Sentinels map to the contract's *base value* — i.e. the amount
+        the bidder commits to, used both for auction precedence and as
+        one of the two halves of the Slam-family scoring formula.
+        ``"Slam"`` → 250, ``"SoloSlam"`` → 500. (Both still outrank the
+        numeric ceiling of 160.)
+
+        The final at-risk amount on a Slam-family round is
+        ``(base + substitute) × multiplier`` where ``substitute``
+        equals the base — see :meth:`contrai_core.Contract.get_base_points`
+        and :meth:`contrai_core.Contract.get_slam_card_substitute`.
         """
 
         if self.value == "Slam":
-            return 500
+            return 250
         if self.value == "SoloSlam":
-            return 1000
+            return 500
         return self.value
 
     def __gt__(self, other) -> bool:

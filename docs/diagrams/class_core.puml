@@ -154,7 +154,7 @@ package "bid.py" as p_bid {
         + suit : Suit
         --
         + __post_init__() : None  ' validates value + suit
-        + get_numeric_value() : int   ' Slam → 500, SoloSlam → 1000
+        + get_numeric_value() : int   ' Slam → 250, SoloSlam → 500
         + __gt__(other) : bool         ' strict numeric ordering
         + __str__() : str
     }
@@ -240,7 +240,8 @@ package "contract.py / trick.py" as p_contract {
         + is_slam() : bool
         + is_solo_slam() : bool
         + is_slam_family() : bool
-        + get_base_points() : int          ' Slam → 500, SoloSlam → 1000
+        + get_base_points() : int           ' Slam → 250, SoloSlam → 500
+        + get_slam_card_substitute() : int  ' Slam → 250, SoloSlam → 500, else 0
     }
 
     class Trick {

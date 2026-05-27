@@ -117,16 +117,16 @@ proceeds anticlockwise.
   - Maximum numeric bid: **160**.
   - Each new bid must be strictly higher than the current one.
 - **Bid Slam** (*Capot*). A special bid declaring your team will take **all 8
-  tricks**. Base value **500** points. Slam outranks any numeric bid: once
-  declared, no further contract bid is legal (numeric, Slam, or Solo Slam).
-  *Contre* and *surcontre* remain available against a Slam.
+  tricks**. Contract base value **250** points. Slam outranks any numeric
+  bid: once declared, no further contract bid is legal (numeric, Slam, or
+  Solo Slam). *Contre* and *surcontre* remain available against a Slam.
 - **Bid Solo Slam** (*Capot général*). A stronger all-tricks bid declaring
   that the **bidder personally** will win every one of the 8 tricks — their
-  partner may play normally but is forbidden from winning any trick. Base
-  value **1000** points (2× Slam at every multiplier level). Solo Slam
-  outranks any numeric bid, but it **cannot be announced after a Slam** —
-  once a Slam is on the table, the auction is closed to further contract
-  bids (asymmetric block). *Contre* and *surcontre* remain available.
+  partner may play normally but is forbidden from winning any trick. Contract
+  base value **500** points. Solo Slam outranks any numeric bid, but it
+  **cannot be announced after a Slam** — once a Slam is on the table, the
+  auction is closed to further contract bids (asymmetric block). *Contre*
+  and *surcontre* remain available.
 - **Pass** (*passer*). A player who passes may re-enter the bidding later, as
   long as the auction has not yet ended.
 - **Contrer** (double) — see §5.3.
@@ -258,17 +258,33 @@ defense 60.
 
 Worked example: contract `100 ♠`, failed → defense 262, declarer 0.
 
-#### Slam and Solo Slam (symmetric grid)
+#### Slam and Solo Slam
 
-Slam-family contracts use a **symmetric scoring grid** that *replaces* the
-`base + card_points` formula entirely — card points (the 162) are **not added
-on top**. The amount at risk is identical for both sides: whoever wins the
-contract (declarer if made, defense if failed) scores it.
+Slam-family contracts keep the same shape as numeric contracts — the at-risk
+amount is **contract + trick-points × multiplier** — but the trick pile
+(normally up to 162) is *replaced* by a flat **substitute** equal to the
+contract base. So the at-risk amount is:
+
+> `(contract + substitute) × multiplier`
+
+with `substitute = contract` for both Slam and Solo Slam.
+
+| Bid       | Contract (`C`) | Substitute (replaces 162) | At-risk per `M`        |
+| --------- | -------------- | ------------------------- | ---------------------- |
+| Slam      | 250            | 250                       | `(250 + 250) × M`      |
+| Solo Slam | 500            | 500                       | `(500 + 500) × M`      |
+
+Both halves are multiplied by `M` (1 for normal, 2 for *contre*, 4 for
+*surcontre*), giving:
 
 | Contract  | Normal | Doubled | Redoubled |
 | --------- | ------ | ------- | --------- |
 | Slam      | 500    | 1000    | 2000      |
 | Solo Slam | 1000   | 2000    | 4000      |
+
+The grid is **symmetric**: whichever side wins the contract scores the
+at-risk amount (declarer if made, defense if failed). The other side scores
+zero (modulo Belote — see below).
 
 **Slam** (*Capot*) is **made** when the declaring team wins **all 8 tricks**.
 Anything less is a failure → defense scores the at-risk amount.
@@ -280,6 +296,9 @@ defense scores the at-risk amount.
 
 **Belote (+20)** still applies on top of the Slam grid: it goes to whichever
 team holds the K + Q of trump, independent of which side wins the contract.
+
+**Dix de der** does **not** apply on a Slam-family round — the substitute
+already covers the full trick pile.
 
 ### 7.3. Double/ Redouble multiplier
 

@@ -1704,23 +1704,36 @@ class RichView:
 
         Returns a dict keyed by team name with:
             contract:     contract-related bonus credited to this team
-                          (attacker base on normal made, 160+base*mult
-                          on doubled/redoubled made, (160+base)*mult on
-                          failed for the defender; 0 otherwise).
+                          (attacker base on numeric normal-made,
+                          160+base*mult on numeric doubled/redoubled
+                          made, (160+base)*mult on numeric failed for
+                          the defender; base*mult on Slam family for
+                          the side winning the contract; 0 otherwise).
             card_points:  sum of card.get_points(trump) across the
-                          team's tricks (trump-aware so trump K/Q/J/9
-                          count their trump values).
+                          team's tricks (trump-aware) for numeric
+                          contracts, *or* the flat substitute
+                          ``slam_card_substitute * multiplier`` credited
+                          to the side winning a Slam-family contract.
+                          The ``card_points_substituted`` flag tells the
+                          renderer which kind it is.
+            card_points_substituted:
+                          True iff this round uses a Slam-family flat
+                          substitute instead of the actual trick pile.
+                          Drives the row label ("Tricks won (cards)" vs
+                          "Tricks won (subst.)").
             dix_de_der:   10 if the team took the last trick, else 0.
             belote:       20 if the team holds both K and Q of trump
                           in its tricks, else 0.
             trick_count:  number of tricks won.
-            cards_count:  True when the engine actually folds card /
-                          dix / belote values into the round score for
-                          this team. False when the engine substitutes
-                          a flat bonus (doubled-made attacker, failed
-                          defender) — the recap then shows em-dashes
-                          for those rows so the visible addition
-                          matches the engine-computed round score.
+            cards_count:  True when ``card_points`` contributes to the
+                          team's round score (and should render as a
+                          number). False → em-dash.
+            dix_count:    True when ``dix_de_der`` contributes; False →
+                          em-dash. (Always False for Slam family — the
+                          flat substitute already covers the 162.)
+            belote_count: True when ``belote`` contributes; False →
+                          em-dash. (True for Slam family regardless of
+                          contract outcome — belote always applies.)
 
         Each component is the *contribution to round_score* — so
         contract + card_points + dix_de_der + belote always equals
@@ -1748,10 +1761,12 @@ class RichView:
             base = contract.get_base_points()
             mult = contract.get_multiplier()
             is_slam_family = contract.is_slam_family()
+            slam_substitute = contract.get_slam_card_substitute()
         else:
             base = 0
             mult = 1
             is_slam_family = False
+            slam_substitute = 0
 
         out = {}
         for team_name in ("North-South", "East-West"):
@@ -1766,26 +1781,41 @@ class RichView:
 
             is_attacker = (team_name == attacking_team)
             contract_row = 0
+            card_points_value = raw_card_pts
+            card_points_substituted = False
             cards_count = True
+            dix_count = True
             belote_count = True
 
             if contract is None:
                 # All passed — nothing scores.
                 cards_count = False
+                dix_count = False
                 belote_count = False
             elif is_slam_family:
-                # Slam family uses the symmetric grid: at_risk goes to the
-                # side that wins the contract (attacker if made, defender
-                # if failed). Card points and dix de der do NOT add. The
-                # belote bonus (+20) is layered on top for whichever team
-                # holds it, independent of which side wins.
-                cards_count = False
+                # Slam family: the 162 of trick-card points is replaced
+                # by a flat substitute equal to the contract base. The
+                # at-risk amount on each half (contract / substitute)
+                # scales with the multiplier and goes to the side that
+                # wins the contract. Belote (+20) still applies on top
+                # for whichever team holds it. Dix de der does NOT — the
+                # substitute already covers the 162.
+                card_points_substituted = True
+                dix_count = False
                 belote_count = True
-                at_risk = base * mult
-                if is_attacker:
-                    contract_row = at_risk if contract_made else 0
+                contract_half = base * mult
+                substitute_half = slam_substitute * mult
+                wins = (is_attacker and contract_made) or (
+                    not is_attacker and not contract_made
+                )
+                if wins:
+                    contract_row = contract_half
+                    card_points_value = substitute_half
+                    cards_count = True
                 else:
-                    contract_row = at_risk if not contract_made else 0
+                    contract_row = 0
+                    card_points_value = 0
+                    cards_count = False
             elif is_attacker:
                 if contract_made:
                     if mult > 1:
@@ -1793,6 +1823,7 @@ class RichView:
                         # the engine ignores the attacker's cards.
                         contract_row = 160 + base * mult
                         cards_count = False
+                        dix_count = False
                         belote_count = False
                     else:
                         contract_row = base
@@ -1800,21 +1831,26 @@ class RichView:
                     # Failed → attacker gets 0; cards don't add.
                     contract_row = 0
                     cards_count = False
+                    dix_count = False
                     belote_count = False
             else:
                 # Defender.
                 if not contract_made:
                     contract_row = (160 + base) * mult
                     cards_count = False
+                    dix_count = False
                     belote_count = False
 
             out[team_name] = {
                 "contract": contract_row,
-                "card_points": raw_card_pts if cards_count else 0,
-                "dix_de_der": raw_dix if cards_count else 0,
+                "card_points": card_points_value if cards_count else 0,
+                "card_points_substituted": card_points_substituted,
+                "dix_de_der": raw_dix if dix_count else 0,
                 "belote": raw_belote if belote_count else 0,
                 "trick_count": len(tricks),
                 "cards_count": cards_count,
+                "dix_count": dix_count,
+                "belote_count": belote_count,
             }
         return out
 
@@ -1852,11 +1888,12 @@ class RichView:
         def _dash_cell() -> Text:
             return Text(f"{'—':>6}", style=DIM)
 
-        def _cards_cell(side: dict, key: str) -> Text:
+        def _component_cell(side: dict, key: str, count_flag: str) -> Text:
             """Number cell that shows '—' when the engine ignores this
-            team's card-based contributions (doubled-made attacker,
-            failed defender)."""
-            if not side.get("cards_count", True):
+            team's contribution for ``key``. ``count_flag`` selects
+            which boolean in ``side`` gates the display (one of
+            ``cards_count`` / ``dix_count`` / ``belote_count``)."""
+            if not side.get(count_flag, True):
                 return _dash_cell()
             return _num_cell(side.get(key, 0), show_zero=False, sign=True)
 
@@ -1879,33 +1916,34 @@ class RichView:
         )
         row_contract.append("\n")
 
-        # Card points row (sum across the team's tricks). Trick count
-        # is shown even when card points don't contribute — it's an
-        # honest fact independent of the score formula.
+        # Card points row (sum across the team's tricks, *or* the flat
+        # Slam-family substitute scaled by the multiplier). Trick count
+        # is shown either way — it's an honest fact independent of the
+        # score formula.
         ns_tricks = ns.get("trick_count", 0)
         ew_tricks = ew.get("trick_count", 0)
-        row_cards = Text()
-        row_cards.append(
-            f"  Tricks won (cards)    ", style=FG,
+        # Slam family rounds replace the 162-card pile with a flat
+        # substitute; the row label flips so the user sees that the
+        # number isn't a literal card count.
+        card_pts_substituted = (
+            ns.get("card_points_substituted", False)
+            or ew.get("card_points_substituted", False)
         )
-        if ns.get("cards_count", True):
-            row_cards.append_text(_num_cell(ns.get("card_points", 0)))
-        else:
-            row_cards.append_text(_dash_cell())
+        card_label = "Tricks won (subst.)" if card_pts_substituted else "Tricks won (cards)"
+        row_cards = Text()
+        row_cards.append(f"  {card_label:<22}", style=FG)
+        row_cards.append_text(_component_cell(ns, "card_points", "cards_count"))
         row_cards.append("  ")
-        if ew.get("cards_count", True):
-            row_cards.append_text(_num_cell(ew.get("card_points", 0)))
-        else:
-            row_cards.append_text(_dash_cell())
+        row_cards.append_text(_component_cell(ew, "card_points", "cards_count"))
         row_cards.append(f"   ({ns_tricks}/{ew_tricks} tricks)", style=DIM)
         row_cards.append("\n")
 
         # Dix-de-der.
         row_dxd = Text()
         row_dxd.append(f"  Dix de der            ", style=FG)
-        row_dxd.append_text(_cards_cell(ns, "dix_de_der"))
+        row_dxd.append_text(_component_cell(ns, "dix_de_der", "dix_count"))
         row_dxd.append("  ")
-        row_dxd.append_text(_cards_cell(ew, "dix_de_der"))
+        row_dxd.append_text(_component_cell(ew, "dix_de_der", "dix_count"))
         row_dxd.append("\n")
 
         # Belote (suit glyph reflects the actual trump suit).
@@ -1917,9 +1955,9 @@ class RichView:
             row_bel.append("—", style=DIM)
         # Keep the column alignment stable: 2 cols for the glyph block.
         row_bel.append(")      ", style=FG)
-        row_bel.append_text(_cards_cell(ns, "belote"))
+        row_bel.append_text(_component_cell(ns, "belote", "belote_count"))
         row_bel.append("  ")
-        row_bel.append_text(_cards_cell(ew, "belote"))
+        row_bel.append_text(_component_cell(ew, "belote", "belote_count"))
         row_bel.append("\n")
 
         # Divider sits under the two numeric columns only, signalling

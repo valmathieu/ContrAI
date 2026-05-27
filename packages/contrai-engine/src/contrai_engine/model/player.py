@@ -138,10 +138,12 @@ class AiPlayer(Player):
     4. If multiple bid are possible : choose best suit based on strength, belote
     """
 
-    # Bidding table. The ``contract`` column is stored numerically. The two
-    # all-tricks sentinels live at the bottom of the table:
-    #   - ``SLAM_NUMERIC``     (500) — team must win all 8 tricks.
-    #   - ``SOLO_SLAM_NUMERIC`` (1000) — bidder personally must win all 8.
+    # Bidding table. The ``contract`` column is stored numerically and
+    # matches each contract's *base value* (what the bidder commits to,
+    # used for auction precedence). The two all-tricks sentinels live
+    # at the bottom of the table:
+    #   - ``SLAM_NUMERIC``      (250) — team must win all 8 tricks.
+    #   - ``SOLO_SLAM_NUMERIC`` (500) — bidder personally must win all 8.
     # Both rows are gated purely by the trick estimator (``tricks_min=8``)
     # in this first pass. The numeric values match
     # ``ContractBid.get_numeric_value`` / ``Contract.get_base_points`` in
@@ -159,16 +161,16 @@ class AiPlayer(Player):
         (140, {'jack_or_nine': True, 'jack_and_nine': False}, 4, 3, 6, True),
         (150, {'jack_or_nine': False, 'jack_and_nine': True}, 4, 3, 6, True),
         (160, {'jack_or_nine': False, 'jack_and_nine': True, 'ace_required': True}, 5, 3, 7, True),
-        (500, {}, 0, 0, 8, False),   # Slam — only the trick estimator gates it.
+        (250, {}, 0, 0, 8, False),  # Slam — only the trick estimator gates it.
         # TODO: tune SoloSlam gate — currently shares Slam's gate. A
         # stricter rule (e.g. holds the 8 top trumps in trump-led play,
         # or all aces + trump master) would make this conservative.
-        (1000, {}, 0, 0, 8, False),  # Solo Slam — same gate as Slam for now.
+        (500, {}, 0, 0, 8, False),  # Solo Slam — same gate as Slam for now.
     ]
 
     # Internal numeric values used in BIDDING_TABLE for the all-tricks bids.
-    SLAM_NUMERIC = 500
-    SOLO_SLAM_NUMERIC = 1000
+    SLAM_NUMERIC = 250
+    SOLO_SLAM_NUMERIC = 500
 
     # Suit preference order (Spades, Hearts, Diamonds, Clubs)
     SUIT_PREFERENCE = SUITS
@@ -238,7 +240,7 @@ class AiPlayer(Player):
         wire-format bridge in :mod:`contrai_engine.model.player`), so
         comparisons anywhere upstream of the wire boundary must
         normalise. Sentinel values map to their auction-precedence /
-        base-point numeric: ``'Slam'`` → 500, ``'SoloSlam'`` → 1000.
+        base-point numeric: ``'Slam'`` → 250, ``'SoloSlam'`` → 500.
         """
 
         if value == 'Slam':
