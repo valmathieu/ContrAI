@@ -291,11 +291,14 @@ class Auction:
                 return False
         if last_contract is None:
             return True
-        # Nothing outranks a prior Slam — checked before the Slam
-        # shortcut below so Slam-over-Slam doesn't slip through.
-        if last_contract.value == "Slam":
+        # Once a Slam or SoloSlam has been announced, no further contract
+        # bid is legal. This is asymmetric for the Slam → SoloSlam
+        # progression: Slam (500) blocks SoloSlam (1000) even though the
+        # latter outranks it numerically, per the user-confirmed rule.
+        if last_contract.value in ("Slam", "SoloSlam"):
             return False
-        if bid.value == "Slam":
+        # Slam and SoloSlam outrank every numeric contract (80–160).
+        if bid.value in ("Slam", "SoloSlam"):
             return True
         return bid.value > last_contract.value
 

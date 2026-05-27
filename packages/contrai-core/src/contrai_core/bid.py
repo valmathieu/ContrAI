@@ -4,8 +4,8 @@ Each :class:`Bid` is a frozen dataclass attached to the player who made
 it. The four concrete variants are:
 
 - :class:`PassBid` — the player declines to act.
-- :class:`ContractBid` — a numeric contract or *Slam* announcement
-  with an associated trump suit.
+- :class:`ContractBid` — a numeric contract or *Slam* / *Solo Slam*
+  announcement with an associated trump suit.
 - :class:`DoubleBid` — *contre*.
 - :class:`RedoubleBid` — *surcontre*.
 
@@ -68,21 +68,30 @@ class PassBid(Bid):
 
 @dataclass(frozen=True, slots=True)
 class ContractBid(Bid):
-    """A numeric contract or *Slam* announcement with a trump suit.
+    """A numeric contract or *Slam* / *Solo Slam* announcement.
 
     Validated at construction via ``__post_init__``: the value must be
     one of the table-defined steps and the suit must be a known
     :class:`Suit`.
 
+    Two string sentinels represent the all-tricks contracts:
+
+    - ``"Slam"`` — the contracting team must win all 8 tricks. Outranks
+      every numeric bid (80–160).
+    - ``"SoloSlam"`` — the contracting **player personally** must win
+      all 8 tricks (their partner may not win any). Outranks Slam in
+      raw numeric value, but is asymmetrically blocked once a Slam has
+      been announced (see :class:`contrai_core.Auction`).
+
     Attributes:
-        value: A numeric step (80, 90, 100, …, 160) or the literal
-            string ``"Slam"``.
+        value: A numeric step (80, 90, 100, …, 160), or one of the
+            literal strings ``"Slam"`` / ``"SoloSlam"``.
         suit: The trump suit — any :class:`Suit`, including
             ``Suit.NO_TRUMP``.
     """
 
     VALID_VALUES: ClassVar[list] = [
-        80, 90, 100, 110, 120, 130, 140, 150, 160, "Slam",
+        80, 90, 100, 110, 120, 130, 140, 150, 160, "Slam", "SoloSlam",
     ]
     VALID_SUITS: ClassVar[list] = list(Suit)
 
@@ -109,9 +118,18 @@ class ContractBid(Bid):
             )
 
     def get_numeric_value(self) -> int:
-        """Numeric value for comparison purposes (``"Slam"`` → 250)."""
+        """Numeric value for comparison purposes.
 
-        return 250 if self.value == "Slam" else self.value
+        Sentinels map to the same base-point value used for scoring so
+        the auction's ``>``-ordering stays aligned with the score grid:
+        ``"Slam"`` → 500, ``"SoloSlam"`` → 1000.
+        """
+
+        if self.value == "Slam":
+            return 500
+        if self.value == "SoloSlam":
+            return 1000
+        return self.value
 
     def __gt__(self, other) -> bool:
         """Strict numeric ordering against another :class:`ContractBid`.

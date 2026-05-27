@@ -137,6 +137,20 @@ class TestParseBidInput:
     def test_slam(self, raw, suit):
         assert _parse_bid_input(raw) == ("Slam", suit)
 
+    @pytest.mark.parametrize(
+        "raw,suit",
+        [
+            ("soloslam s", Suit.SPADES),
+            ("solo slam h", Suit.HEARTS),  # two-word form
+            ("solo slam d", Suit.DIAMONDS),
+            ("soloslam c", Suit.CLUBS),
+            ("soloslams", Suit.SPADES),  # glued
+            ("SOLO SLAM H", Suit.HEARTS),  # case-insensitive
+        ],
+    )
+    def test_solo_slam(self, raw, suit):
+        assert _parse_bid_input(raw) == ("SoloSlam", suit)
+
     def test_capital_letters_in_value_suit(self):
         assert _parse_bid_input("100 H") == (100, Suit.HEARTS)
 
@@ -154,6 +168,7 @@ class TestParseBidInput:
             "170 h",     # value above 160
             "abc h",     # non-numeric value
             "80 h s",    # too many tokens
+            "capot s",   # legacy name no longer accepted
         ],
     )
     def test_rejects_garbage(self, raw):
@@ -692,6 +707,29 @@ class TestRoundRecapPanel:
             self.double = double
             self.redouble = redouble
 
+        def is_slam_family(self) -> bool:
+            return self.value in ("Slam", "SoloSlam")
+
+        def is_slam(self) -> bool:
+            return self.value == "Slam"
+
+        def is_solo_slam(self) -> bool:
+            return self.value == "SoloSlam"
+
+        def get_base_points(self) -> int:
+            if self.value == "Slam":
+                return 500
+            if self.value == "SoloSlam":
+                return 1000
+            return self.value
+
+        def get_multiplier(self) -> int:
+            if self.redouble:
+                return 4
+            if self.double:
+                return 2
+            return 1
+
     class _StubRound:
         def __init__(self, *, round_number, contract, round_scores,
                      team_tricks=None):
@@ -841,20 +879,69 @@ class TestRoundRecapPanel:
         assert breakdown["North-South"]["cards_count"] is True
         assert breakdown["East-West"]["cards_count"] is True
 
-    def test_recap_contract_row_uses_slam_base(self, four_players):
-        """A Slam contract substitutes the base value 250 wherever
-        the contract value would normally feed the score."""
+    def test_recap_contract_row_uses_slam_base_when_made(self, four_players):
+        """A made Slam contract awards the symmetric grid (500 normal) to
+        the attacker, with no card-points / dix de der contribution."""
         view = RichView()
         contract = self._StubContract("Slam", Suit.SPADES, "East-West")
         round_ = self._StubRound(
             round_number=3,
             contract=contract,
-            round_scores={"North-South": 0, "East-West": 412},  # arbitrary
+            round_scores={"North-South": 0, "East-West": 500},
             team_tricks={"North-South": [], "East-West": []},
         )
         breakdown = view._recap_breakdown(round_)
-        assert breakdown["East-West"]["contract"] == 250
+        # Slam normal: 500 * 1 = 500 to the winning side (attacker here).
+        assert breakdown["East-West"]["contract"] == 500
         assert breakdown["North-South"]["contract"] == 0
+        # Card points and dix de der do not contribute for Slam family.
+        assert breakdown["East-West"]["cards_count"] is False
+        assert breakdown["East-West"]["card_points"] == 0
+        assert breakdown["East-West"]["dix_de_der"] == 0
+
+    def test_recap_contract_row_uses_slam_grid_when_failed(self, four_players):
+        """Failed Slam: defender gets the at-risk amount (500 normal)."""
+        view = RichView()
+        contract = self._StubContract("Slam", Suit.SPADES, "East-West")
+        round_ = self._StubRound(
+            round_number=3,
+            contract=contract,
+            round_scores={"North-South": 500, "East-West": 0},
+            team_tricks={"North-South": [], "East-West": []},
+        )
+        breakdown = view._recap_breakdown(round_)
+        assert breakdown["North-South"]["contract"] == 500
+        assert breakdown["East-West"]["contract"] == 0
+        assert breakdown["North-South"]["cards_count"] is False
+
+    def test_recap_contract_row_uses_solo_slam_grid_when_made(self, four_players):
+        """Made Solo Slam normal: 1000 to the attacker."""
+        view = RichView()
+        contract = self._StubContract("SoloSlam", Suit.SPADES, "East-West")
+        round_ = self._StubRound(
+            round_number=3,
+            contract=contract,
+            round_scores={"North-South": 0, "East-West": 1000},
+            team_tricks={"North-South": [], "East-West": []},
+        )
+        breakdown = view._recap_breakdown(round_)
+        assert breakdown["East-West"]["contract"] == 1000
+        assert breakdown["North-South"]["contract"] == 0
+
+    def test_recap_contract_row_uses_solo_slam_doubled_grid(self, four_players):
+        """Doubled Solo Slam made: 1000 * 2 = 2000 to the attacker."""
+        view = RichView()
+        contract = self._StubContract(
+            "SoloSlam", Suit.SPADES, "East-West", double=True
+        )
+        round_ = self._StubRound(
+            round_number=3,
+            contract=contract,
+            round_scores={"North-South": 0, "East-West": 2000},
+            team_tricks={"North-South": [], "East-West": []},
+        )
+        breakdown = view._recap_breakdown(round_)
+        assert breakdown["East-West"]["contract"] == 2000
 
     def test_recap_contract_row_includes_full_bonus_when_doubled_made(
         self, four_players

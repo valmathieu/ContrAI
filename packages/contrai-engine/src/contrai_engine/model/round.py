@@ -331,6 +331,23 @@ class Round:
         """
         Calculate scores for this round.
 
+        Two scoring paths coexist:
+
+        - **Numeric contracts (80–160)** use the historical formula
+          ``base + card_points`` (made) and ``(160 + base) * multiplier``
+          (failed). Card points include the *dix de der* (10 pts for
+          the last trick) and the belote bonus (+20 for the team
+          capturing both K and Q of trump).
+        - **Slam / Solo Slam** use a symmetric grid that *replaces*
+          ``base + card_points`` entirely: the winning side (attacker
+          if made, defender if failed) scores ``base * multiplier``
+          (500 / 1000 / 2000 for Slam; 1000 / 2000 / 4000 for Solo
+          Slam). The belote bonus (+20) still applies and is layered
+          on top of the grid. Solo Slam additionally requires that
+          the *contracting player personally* win every trick — if
+          their partner takes any trick the contract fails even when
+          the team wins all 8 collectively.
+
         Returns:
             Dict: Team scores for this round
         """
@@ -378,21 +395,48 @@ class Round:
             team_card_points[last_trick_team] += 10
 
         contract_team_name = contract_team.name
-        contract_team_points = team_card_points[contract_team_name]
 
-        # Check if contract is made
-        if contract_value == 'Slam':
-            # For Slam, team must win all tricks (all 162 points)
-            contract_made = contract_team_points >= 162
-        else:
-            contract_made = contract_team_points >= contract_value
-
-        # Calculate multiplier for double/redouble
+        # Calculate multiplier for double/redouble (shared by both paths).
         multiplier = 1
         if is_redoubled:
             multiplier = 4
         elif is_doubled:
             multiplier = 2
+
+        # ----- Slam / Solo Slam scoring path -----
+        # Replaces the base + card_points formula with a symmetric grid.
+        # See contree-domain.md §7.2.
+        if self.contract.is_slam_family():
+            contract_team_trick_count = len(self.team_tricks[contract_team_name])
+            contract_made = contract_team_trick_count == 8
+
+            # Solo Slam: the bidder *personally* must win all 8 tricks.
+            # Even if their team takes every trick collectively, the
+            # contract fails when the partner won any of them.
+            if self.contract.is_solo_slam():
+                bidder_personal_tricks = self._count_player_tricks(
+                    self.contract.player
+                )
+                contract_made = contract_made and bidder_personal_tricks == 8
+
+            at_risk = self.contract.get_base_points() * multiplier
+            if contract_made:
+                team_scores[contract_team_name] = at_risk
+            else:
+                for team_name in team_scores:
+                    if team_name != contract_team_name:
+                        team_scores[team_name] = at_risk
+
+            # Belote (+20) layered on top — independent of who won the contract.
+            for team_name in belote_teams:
+                team_scores[team_name] += 20
+
+            self.round_scores = team_scores
+            return team_scores
+
+        # ----- Numeric contract scoring path (80-160) -----
+        contract_team_points = team_card_points[contract_team_name]
+        contract_made = contract_team_points >= contract_value
 
         # Calculate final scores
         if contract_made:
@@ -400,8 +444,7 @@ class Round:
             if is_doubled or is_redoubled:
                 # When contract is made with double/redouble, attacking team gets
                 # the same points that defending team would have gotten if contract failed
-                base_value = 250 if contract_value == 'Slam' else contract_value
-                team_scores[contract_team_name] = 160 + base_value * multiplier
+                team_scores[contract_team_name] = 160 + contract_value * multiplier
 
                 # Defending team gets their actual points (no multiplier)
                 for team_name, points in team_card_points.items():
@@ -409,8 +452,7 @@ class Round:
                         team_scores[team_name] = points
             else:
                 # Normal contract made without double/redouble
-                base_value = 250 if contract_value == 'Slam' else contract_value
-                team_scores[contract_team_name] = base_value + contract_team_points
+                team_scores[contract_team_name] = contract_value + contract_team_points
                 # Opposing team gets their points
                 for team_name, points in team_card_points.items():
                     if team_name != contract_team_name:
@@ -419,13 +461,38 @@ class Round:
             # Contract failed
             team_scores[contract_team_name] = 0  # Contract team gets 0
             # Opposing team gets all points + contract value
-            base_value = 250 if contract_value == 'Slam' else contract_value
             for team_name in team_scores:
                 if team_name != contract_team_name:
-                    team_scores[team_name] = (160 + base_value) * multiplier
+                    team_scores[team_name] = (160 + contract_value) * multiplier
 
         self.round_scores = team_scores
         return team_scores
+
+    def _count_player_tricks(self, player: 'Player') -> int:
+        """Count the number of completed tricks personally won by ``player``.
+
+        Walks the round's trick history and asks each trick for its
+        winner via :meth:`contrai_core.Trick.get_current_winner`,
+        forcing the contract's trump suit so trump beats lead-suit
+        regardless of whether the trick had its ``trump_suit`` bound
+        at construction time. Used by the Solo Slam predicate in
+        :meth:`calculate_round_scores`.
+
+        Args:
+            player: The player whose personal trick tally we want.
+
+        Returns:
+            The number of completed tricks won outright by ``player``.
+        """
+        if not self.tricks or self.contract is None:
+            return 0
+        trump_suit = self.contract.suit
+        count = 0
+        for trick in self.tricks:
+            winner = trick.get_current_winner(trump_suit)
+            if winner is player:
+                count += 1
+        return count
 
     def handle_failed_contract(self) -> Dict[str, int]:
         """

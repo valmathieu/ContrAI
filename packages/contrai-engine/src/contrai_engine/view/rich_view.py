@@ -244,7 +244,12 @@ def _explain_constraint(
 def _format_contract_short(contract: Contract) -> Text:
     """Short label: ``"100 by E-W"`` with team in team color."""
     t = Text()
-    value_str = "Slam" if contract.value == "Slam" else str(contract.value)
+    if contract.value == "Slam":
+        value_str = "Slam"
+    elif contract.value == "SoloSlam":
+        value_str = "Solo Slam"
+    else:
+        value_str = str(contract.value)
     t.append(value_str, style="bold")
     t.append(" by ", style=DIM)
     team_abbr = _team_abbr(contract.team.name)
@@ -273,10 +278,12 @@ def _parse_bid_input(raw: str) -> Optional[str | tuple[int | str, Suit]]:
     """Parse a human bid string. Returns engine bid representation or None.
 
     Accepted forms:
-        pass / p / passe   -> 'Pass'
-        double / d         -> 'Double'
-        redouble / r       -> 'Redouble'
-        "80 h" / "100 hearts" / "150nt" / "slam s" -> (value, Suit)
+        pass / p / passe       -> 'Pass'
+        double / d             -> 'Double'
+        redouble / r           -> 'Redouble'
+        "80 h" / "100 hearts" / "150nt"   -> (value, Suit)
+        "slam s" / "slams"                -> ("Slam", Suit)
+        "solo slam h" / "soloslam h"      -> ("SoloSlam", Suit)
     """
     s = raw.strip().lower()
     if not s:
@@ -291,6 +298,12 @@ def _parse_bid_input(raw: str) -> Optional[str | tuple[int | str, Suit]]:
     # Try "<value><sep><suit>" with optional whitespace; also accept
     # the value and suit being glued together ("100h", "slams").
     parts = s.replace(",", " ").split()
+
+    # Accept the two-word form "solo slam <suit>" by collapsing the
+    # first two tokens into the canonical "soloslam" wire form.
+    if len(parts) == 3 and parts[0] == "solo" and parts[1] == "slam":
+        parts = ["soloslam", parts[2]]
+
     if len(parts) == 1:
         token = parts[0]
         # Split alpha tail (suit) from leading value.
@@ -298,8 +311,10 @@ def _parse_bid_input(raw: str) -> Optional[str | tuple[int | str, Suit]]:
         while i < len(token) and (token[i].isdigit() or token[i] == "-"):
             i += 1
         if i == 0:
-            # All-alpha: maybe "slams" -> slam + s
-            if token.startswith("slam") and len(token) > len("slam"):
+            # All-alpha: maybe "soloslams" -> soloslam + s, or "slams" -> slam + s
+            if token.startswith("soloslam") and len(token) > len("soloslam"):
+                parts = ["soloslam", token[len("soloslam"):]]
+            elif token.startswith("slam") and len(token) > len("slam"):
                 parts = ["slam", token[len("slam"):]]
             else:
                 return None
@@ -315,6 +330,8 @@ def _parse_bid_input(raw: str) -> Optional[str | tuple[int | str, Suit]]:
 
     if raw_value == "slam":
         return ("Slam", suit)
+    if raw_value == "soloslam":
+        return ("SoloSlam", suit)
     try:
         value = int(raw_value)
     except ValueError:
@@ -1728,11 +1745,13 @@ class RichView:
             and round_scores.get(attacking_team, 0) > 0
         )
         if contract is not None:
-            base = 250 if contract.value == "Slam" else contract.value
-            mult = 4 if contract.redouble else 2 if contract.double else 1
+            base = contract.get_base_points()
+            mult = contract.get_multiplier()
+            is_slam_family = contract.is_slam_family()
         else:
             base = 0
             mult = 1
+            is_slam_family = False
 
         out = {}
         for team_name in ("North-South", "East-West"):
@@ -1748,10 +1767,25 @@ class RichView:
             is_attacker = (team_name == attacking_team)
             contract_row = 0
             cards_count = True
+            belote_count = True
 
             if contract is None:
                 # All passed — nothing scores.
                 cards_count = False
+                belote_count = False
+            elif is_slam_family:
+                # Slam family uses the symmetric grid: at_risk goes to the
+                # side that wins the contract (attacker if made, defender
+                # if failed). Card points and dix de der do NOT add. The
+                # belote bonus (+20) is layered on top for whichever team
+                # holds it, independent of which side wins.
+                cards_count = False
+                belote_count = True
+                at_risk = base * mult
+                if is_attacker:
+                    contract_row = at_risk if contract_made else 0
+                else:
+                    contract_row = at_risk if not contract_made else 0
             elif is_attacker:
                 if contract_made:
                     if mult > 1:
@@ -1759,23 +1793,26 @@ class RichView:
                         # the engine ignores the attacker's cards.
                         contract_row = 160 + base * mult
                         cards_count = False
+                        belote_count = False
                     else:
                         contract_row = base
                 else:
                     # Failed → attacker gets 0; cards don't add.
                     contract_row = 0
                     cards_count = False
+                    belote_count = False
             else:
                 # Defender.
                 if not contract_made:
                     contract_row = (160 + base) * mult
                     cards_count = False
+                    belote_count = False
 
             out[team_name] = {
                 "contract": contract_row,
                 "card_points": raw_card_pts if cards_count else 0,
                 "dix_de_der": raw_dix if cards_count else 0,
-                "belote": raw_belote if cards_count else 0,
+                "belote": raw_belote if belote_count else 0,
                 "trick_count": len(tricks),
                 "cards_count": cards_count,
             }
@@ -2117,7 +2154,12 @@ class RichView:
         team_color = _team_color(row.contract_team_name or "")
         t.append(team_abbr, style=f"bold {team_color}")
         t.append(" ", style=FG)
-        value_str = "Slam" if row.contract.value == "Slam" else str(row.contract.value)
+        if row.contract.value == "Slam":
+            value_str = "Slam"
+        elif row.contract.value == "SoloSlam":
+            value_str = "Solo Slam"
+        else:
+            value_str = str(row.contract.value)
         t.append(value_str, style="bold")
         t.append(" ", style=FG)
         t.append(_suit_glyph(row.contract.suit),

@@ -6,8 +6,8 @@ produce?" questions previously scattered across ``Bid.is_valid_after``
 and ``BidValidator``. These tests cover:
 
 - :meth:`Auction.is_legal` for each :class:`Bid` subtype, including
-  the Slam precedence rules from ``contree-domain.md §5.2`` and the
-  Double-freezes-the-auction rule from §5.3.
+  the Slam / Solo Slam precedence rules from ``contree-domain.md §5.2``
+  and the Double-freezes-the-auction rule from §5.3.
 - :meth:`Auction.legal_actions` enumeration shape and the "only Pass
   is legal" cases (partner just doubled / redoubled) that drive the
   engine's auto-pass shortcut.
@@ -181,14 +181,49 @@ class TestContractBidPrecedence:
                 is True
             )
 
+    def test_solo_slam_over_any_numeric_legal(self, north, east):
+        for value in (80, 90, 100, 130, 160):
+            auction = Auction((ContractBid(east, value, Suit.HEARTS),))
+            assert (
+                auction.is_legal(ContractBid(north, "SoloSlam", Suit.SPADES))
+                is True
+            )
+
     def test_numeric_over_slam_illegal(self, north, east):
         auction = Auction((ContractBid(east, "Slam", Suit.HEARTS),))
+        assert auction.is_legal(ContractBid(north, 160, Suit.SPADES)) is False
+
+    def test_numeric_over_solo_slam_illegal(self, north, east):
+        auction = Auction((ContractBid(east, "SoloSlam", Suit.HEARTS),))
         assert auction.is_legal(ContractBid(north, 160, Suit.SPADES)) is False
 
     def test_slam_over_slam_illegal(self, north, east):
         auction = Auction((ContractBid(east, "Slam", Suit.HEARTS),))
         assert (
             auction.is_legal(ContractBid(north, "Slam", Suit.SPADES)) is False
+        )
+
+    def test_solo_slam_after_slam_illegal(self, north, east):
+        """Asymmetric block: SoloSlam (1000) outranks Slam (500), but
+        once a Slam is on the table the auction is closed to further
+        contract bids — including the otherwise-higher SoloSlam."""
+        auction = Auction((ContractBid(east, "Slam", Suit.HEARTS),))
+        assert (
+            auction.is_legal(ContractBid(north, "SoloSlam", Suit.SPADES))
+            is False
+        )
+
+    def test_slam_after_solo_slam_illegal(self, north, east):
+        auction = Auction((ContractBid(east, "SoloSlam", Suit.HEARTS),))
+        assert (
+            auction.is_legal(ContractBid(north, "Slam", Suit.SPADES)) is False
+        )
+
+    def test_solo_slam_over_solo_slam_illegal(self, north, east):
+        auction = Auction((ContractBid(east, "SoloSlam", Suit.HEARTS),))
+        assert (
+            auction.is_legal(ContractBid(north, "SoloSlam", Suit.SPADES))
+            is False
         )
 
     def test_passes_do_not_change_precedence(self, north, east, south):
@@ -208,9 +243,13 @@ class TestContractBidPrecedence:
         )
         # No new numeric bid can reopen a frozen auction.
         assert auction.is_legal(ContractBid(north, 110, Suit.HEARTS)) is False
-        # Even Slam can't.
+        # Even Slam / SoloSlam can't.
         assert (
             auction.is_legal(ContractBid(north, "Slam", Suit.SPADES))
+            is False
+        )
+        assert (
+            auction.is_legal(ContractBid(north, "SoloSlam", Suit.SPADES))
             is False
         )
 
@@ -281,6 +320,18 @@ class TestDoubleLegality:
         )
         assert auction.is_legal(DoubleBid(east)) is False
 
+    def test_legal_against_opponent_slam(self, north, east, four_players):
+        """Slam closes the auction to numeric / Slam-family bids but
+        coinche must remain available — opponents can still Double."""
+        auction = Auction((ContractBid(north, "Slam", Suit.SPADES),))
+        assert auction.is_legal(DoubleBid(east)) is True
+
+    def test_legal_against_opponent_solo_slam(
+        self, north, east, four_players
+    ):
+        auction = Auction((ContractBid(north, "SoloSlam", Suit.SPADES),))
+        assert auction.is_legal(DoubleBid(east)) is True
+
 
 # ---------------------------------------------------------------------------
 # RedoubleBid legality
@@ -345,9 +396,9 @@ class TestLegalActions:
         actions = Auction().legal_actions(north)
         # Always starts with the Pass action.
         assert isinstance(actions[0], PassBid)
-        # 10 values × 6 suits = 60 ContractBids legal at start, plus the Pass.
+        # 11 values × 6 suits = 66 ContractBids legal at start, plus the Pass.
         contracts = [a for a in actions if isinstance(a, ContractBid)]
-        assert len(contracts) == 10 * 6
+        assert len(contracts) == 11 * 6
         # No Double / Redouble before there's a contract to challenge.
         assert not any(isinstance(a, DoubleBid) for a in actions)
         assert not any(isinstance(a, RedoubleBid) for a in actions)
@@ -361,7 +412,8 @@ class TestLegalActions:
         # And opponents of the contractor *also* get the legal numeric raises.
         contract_raises = [
             a for a in actions
-            if isinstance(a, ContractBid) and a.value != "Slam"
+            if isinstance(a, ContractBid)
+            and a.value not in ("Slam", "SoloSlam")
             and a.value > 100
         ]
         assert contract_raises  # at least one higher-value contract exists

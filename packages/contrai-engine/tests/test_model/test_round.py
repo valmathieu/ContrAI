@@ -512,3 +512,324 @@ class TestManageBiddingAutoPasses:
         assert contract.double is True
         # And the critical assertion: S was never prompted.
         assert prompts == []
+
+
+# ---------------------------------------------------------------------------
+# Slam / Solo Slam scoring (calculate_round_scores)
+# ---------------------------------------------------------------------------
+#
+# Tests below build a Round directly and stuff it with the minimal state
+# the scoring path reads:
+#   - ``self.contract``         — drives base / multiplier / family check.
+#   - ``self.team_tricks``      — number of tricks per team (length used).
+#   - ``self.tricks``           — per-trick winners (used by Solo Slam).
+#   - ``self.last_trick_winner``— "dix de der" (irrelevant for Slam family).
+#
+# Cards inside each Trick only matter when belote / card points are
+# computed; for Slam family they are not — we still seed at least one
+# card per trick so :meth:`Trick.get_current_winner` has something to
+# answer with.
+
+
+def _slam_round(
+    players_dict,
+    *,
+    contract,
+    trick_winners,
+):
+    """Build a Round with synthesised tricks.
+
+    Args:
+        players_dict: the ``players`` fixture (seat → Player).
+        contract: a Contract bound to one of the players.
+        trick_winners: ordered list of seat letters — one per completed
+            trick. Each entry is the player who wins that trick. Cards
+            are filler (the suit-7), and the winner leads it so
+            :meth:`Trick.get_current_winner` returns them.
+
+    Returns:
+        Round with ``contract``, ``tricks``, ``team_tricks``, and
+        ``last_trick_winner`` populated.
+    """
+    order = [players_dict[s] for s in ("N", "E", "S", "W")]
+    round_ = Round(order, dealer=players_dict["N"], deck=None, round_number=1)
+    round_.contract = contract
+
+    # Filler card per trick: a low non-trump card. The winner plays it
+    # solo so get_current_winner returns them regardless of trump.
+    filler = Card(Suit.CLUBS, Rank.SEVEN)
+    for seat in trick_winners:
+        trick = Trick()
+        trick.add_play(players_dict[seat], filler)
+        round_.tricks.append(trick)
+        winner = players_dict[seat]
+        if winner.team is not None:
+            round_.team_tricks[winner.team.name].append(trick)
+
+    if trick_winners:
+        round_.last_trick_winner = players_dict[trick_winners[-1]]
+    return round_
+
+
+class TestSlamScoring:
+    """Symmetric grid: 500 / 1000 / 2000 to the winning side."""
+
+    def test_slam_made_normal_attacker_scores_500(self, players):
+        contract = _contract(players["N"], "Slam", Suit.SPADES)
+        round_ = _slam_round(
+            players, contract=contract, trick_winners=["N"] * 8
+        )
+        scores = round_.calculate_round_scores()
+        assert scores["North-South"] == 500
+        assert scores["East-West"] == 0
+
+    def test_slam_failed_normal_defender_scores_500(self, players):
+        # Attacker (N) takes only 7 tricks; W steals one → contract fails.
+        contract = _contract(players["N"], "Slam", Suit.SPADES)
+        winners = ["N"] * 7 + ["W"]
+        round_ = _slam_round(players, contract=contract, trick_winners=winners)
+        scores = round_.calculate_round_scores()
+        assert scores["North-South"] == 0
+        assert scores["East-West"] == 500
+
+    def test_slam_made_doubled_attacker_scores_1000(self, players):
+        contract = Contract(
+            ContractBid(players["N"], "Slam", Suit.SPADES), double=True
+        )
+        round_ = _slam_round(
+            players, contract=contract, trick_winners=["N"] * 8
+        )
+        scores = round_.calculate_round_scores()
+        assert scores["North-South"] == 1000
+        assert scores["East-West"] == 0
+
+    def test_slam_failed_doubled_defender_scores_1000(self, players):
+        contract = Contract(
+            ContractBid(players["N"], "Slam", Suit.SPADES), double=True
+        )
+        winners = ["N"] * 6 + ["E", "W"]
+        round_ = _slam_round(players, contract=contract, trick_winners=winners)
+        scores = round_.calculate_round_scores()
+        assert scores["North-South"] == 0
+        assert scores["East-West"] == 1000
+
+    def test_slam_made_redoubled_attacker_scores_2000(self, players):
+        contract = Contract(
+            ContractBid(players["N"], "Slam", Suit.SPADES),
+            double=True,
+            redouble=True,
+        )
+        round_ = _slam_round(
+            players, contract=contract, trick_winners=["N"] * 8
+        )
+        scores = round_.calculate_round_scores()
+        assert scores["North-South"] == 2000
+        assert scores["East-West"] == 0
+
+    def test_slam_failed_redoubled_defender_scores_2000(self, players):
+        contract = Contract(
+            ContractBid(players["N"], "Slam", Suit.SPADES),
+            double=True,
+            redouble=True,
+        )
+        winners = ["N"] * 7 + ["W"]
+        round_ = _slam_round(players, contract=contract, trick_winners=winners)
+        scores = round_.calculate_round_scores()
+        assert scores["North-South"] == 0
+        assert scores["East-West"] == 2000
+
+    def test_slam_team_partner_wins_a_trick_still_makes(self, players):
+        """Plain Slam only cares about the TEAM winning all 8. The
+        partner taking some tricks is fine — that's the Solo Slam
+        rule, not Slam."""
+        contract = _contract(players["N"], "Slam", Suit.SPADES)
+        # N takes 5, partner S takes 3 → team owns all 8 → contract made.
+        winners = ["N"] * 5 + ["S"] * 3
+        round_ = _slam_round(players, contract=contract, trick_winners=winners)
+        scores = round_.calculate_round_scores()
+        assert scores["North-South"] == 500
+        assert scores["East-West"] == 0
+
+
+class TestSoloSlamScoring:
+    """Bidder-personally rule + 1000 / 2000 / 4000 symmetric grid."""
+
+    def test_solo_slam_made_bidder_takes_all_8(self, players):
+        contract = _contract(players["N"], "SoloSlam", Suit.SPADES)
+        round_ = _slam_round(
+            players, contract=contract, trick_winners=["N"] * 8
+        )
+        scores = round_.calculate_round_scores()
+        assert scores["North-South"] == 1000
+        assert scores["East-West"] == 0
+
+    def test_solo_slam_failed_when_partner_takes_a_trick(self, players):
+        """Key Solo Slam invariant: team owning all 8 tricks is NOT
+        enough — the bidder personally must win them all."""
+        contract = _contract(players["N"], "SoloSlam", Suit.SPADES)
+        winners = ["N"] * 7 + ["S"]  # partner wins the last trick
+        round_ = _slam_round(players, contract=contract, trick_winners=winners)
+        scores = round_.calculate_round_scores()
+        # Team took all 8 tricks, but partner won one → Solo Slam fails.
+        # Defenders score the at-risk amount.
+        assert scores["North-South"] == 0
+        assert scores["East-West"] == 1000
+
+    def test_solo_slam_failed_when_opponent_takes_a_trick(self, players):
+        contract = _contract(players["N"], "SoloSlam", Suit.SPADES)
+        winners = ["N"] * 7 + ["W"]
+        round_ = _slam_round(players, contract=contract, trick_winners=winners)
+        scores = round_.calculate_round_scores()
+        assert scores["North-South"] == 0
+        assert scores["East-West"] == 1000
+
+    def test_solo_slam_made_doubled_scores_2000(self, players):
+        contract = Contract(
+            ContractBid(players["N"], "SoloSlam", Suit.SPADES), double=True
+        )
+        round_ = _slam_round(
+            players, contract=contract, trick_winners=["N"] * 8
+        )
+        scores = round_.calculate_round_scores()
+        assert scores["North-South"] == 2000
+        assert scores["East-West"] == 0
+
+    def test_solo_slam_made_redoubled_scores_4000(self, players):
+        contract = Contract(
+            ContractBid(players["N"], "SoloSlam", Suit.SPADES),
+            double=True,
+            redouble=True,
+        )
+        round_ = _slam_round(
+            players, contract=contract, trick_winners=["N"] * 8
+        )
+        scores = round_.calculate_round_scores()
+        assert scores["North-South"] == 4000
+        assert scores["East-West"] == 0
+
+    def test_solo_slam_failed_redoubled_defender_scores_4000(self, players):
+        contract = Contract(
+            ContractBid(players["N"], "SoloSlam", Suit.SPADES),
+            double=True,
+            redouble=True,
+        )
+        winners = ["N"] * 7 + ["S"]  # partner steals one → Solo Slam fails
+        round_ = _slam_round(players, contract=contract, trick_winners=winners)
+        scores = round_.calculate_round_scores()
+        assert scores["North-South"] == 0
+        assert scores["East-West"] == 4000
+
+
+class TestSlamFamilyBeloteLayering:
+    """Belote (+20) applies on top of the Slam grid for whichever team
+    holds it, independent of who wins the contract."""
+
+    @staticmethod
+    def _trick_with_kq_of_trump(holder, trump):
+        """One trick where ``holder`` plays both K and Q of trump.
+
+        Used so the belote-detection scan in ``calculate_round_scores``
+        finds both ranks of trump in the holder team's captured tricks
+        and awards the +20 bonus.
+        """
+        trick = Trick()
+        trick.add_play(holder, Card(trump, Rank.KING))
+        trick.add_play(holder, Card(trump, Rank.QUEEN))
+        return trick
+
+    def test_slam_made_belote_to_attacker(self, players):
+        """Slam made, attacker holds belote → 500 + 20 to attacker."""
+        contract = _contract(players["N"], "Slam", Suit.SPADES)
+        round_ = _slam_round(
+            players, contract=contract, trick_winners=["N"] * 8
+        )
+        # Splice K+Q of trump into one of N's captured tricks so the
+        # belote-detection scan flips North-South's belote flag.
+        kq_trick = self._trick_with_kq_of_trump(players["N"], Suit.SPADES)
+        round_.tricks[0] = kq_trick
+        round_.team_tricks["North-South"][0] = kq_trick
+        scores = round_.calculate_round_scores()
+        assert scores["North-South"] == 520  # 500 + 20
+        assert scores["East-West"] == 0
+
+    def test_slam_failed_belote_to_defender(self, players):
+        """Slam failed, defender holds belote → 500 + 20 to defender."""
+        contract = _contract(players["N"], "Slam", Suit.SPADES)
+        winners = ["N"] * 7 + ["W"]
+        round_ = _slam_round(players, contract=contract, trick_winners=winners)
+        # Splice K+Q of trump into W's captured trick.
+        kq_trick = self._trick_with_kq_of_trump(players["W"], Suit.SPADES)
+        round_.tricks[-1] = kq_trick
+        round_.team_tricks["East-West"][0] = kq_trick
+        scores = round_.calculate_round_scores()
+        assert scores["North-South"] == 0
+        assert scores["East-West"] == 520  # 500 + 20
+
+    def test_slam_failed_belote_to_attacker_independent_of_contract(
+        self, players
+    ):
+        """Belote is independent of contract outcome: attacker can hold
+        belote even when they lost the contract → defender scores 500,
+        attacker still scores +20."""
+        contract = _contract(players["N"], "Slam", Suit.SPADES)
+        winners = ["N"] * 7 + ["W"]
+        round_ = _slam_round(players, contract=contract, trick_winners=winners)
+        # Splice K+Q of trump into N's captured trick (attacker holds belote
+        # even though they failed the contract).
+        kq_trick = self._trick_with_kq_of_trump(players["N"], Suit.SPADES)
+        round_.tricks[0] = kq_trick
+        round_.team_tricks["North-South"][0] = kq_trick
+        scores = round_.calculate_round_scores()
+        # Attacker still gets +20 from belote even though the contract failed.
+        assert scores["North-South"] == 20
+        assert scores["East-West"] == 500
+
+
+class TestNumericContractScoringRegression:
+    """Confirms numeric (80–160) contracts are *not* affected by the
+    Slam-family branch added during this refactor."""
+
+    @staticmethod
+    def _trick_with_card(seat_player, card):
+        trick = Trick()
+        trick.add_play(seat_player, card)
+        return trick
+
+    def test_numeric_made_normal_uses_base_plus_card_points(self, players):
+        """80 made by N-S without double: attacker = 80 + card points,
+        defender = card points. Trump = clubs; bidder plays the trump
+        Jack alone in every trick (20 pts × 8 = 160), so card points
+        clear the 80 threshold and the formula path is exercised."""
+        contract = _contract(players["N"], 80, Suit.CLUBS)
+        order = [players[s] for s in ("N", "E", "S", "W")]
+        round_ = Round(
+            order, dealer=players["N"], deck=None, round_number=1
+        )
+        round_.contract = contract
+        # Eight tricks where N plays the trump Jack solo — 20 pts each.
+        # (Card identity is fine — Card doesn't have unique-per-instance
+        # invariants we care about for scoring.)
+        for _ in range(8):
+            trick = self._trick_with_card(
+                players["N"], Card(Suit.CLUBS, Rank.JACK)
+            )
+            round_.tricks.append(trick)
+            round_.team_tricks["North-South"].append(trick)
+        round_.last_trick_winner = players["N"]
+        scores = round_.calculate_round_scores()
+        # Card points = 20*8 = 160; dix de der = +10 → 170 card pts.
+        # Contract made (170 >= 80) → attacker score = 80 + 170 = 250.
+        assert scores["North-South"] == 250
+        # E-W captured no tricks → 0 card points.
+        assert scores["East-West"] == 0
+
+    def test_numeric_failed_normal_defender_gets_160_plus_base(self, players):
+        """Failed 80 contract by N-S: defender gets (160 + 80) * 1 = 240."""
+        contract = _contract(players["N"], 80, Suit.CLUBS)
+        # 0 tricks to N — contract fails immediately on points (0 < 80).
+        round_ = _slam_round(
+            players, contract=contract, trick_winners=["E"] * 8
+        )
+        scores = round_.calculate_round_scores()
+        assert scores["North-South"] == 0
+        assert scores["East-West"] == 240

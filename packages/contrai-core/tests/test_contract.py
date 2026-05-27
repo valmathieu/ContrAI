@@ -1,14 +1,14 @@
 """Tests for the Contract class.
 
 Covers contract construction (direct + legacy), multiplier semantics,
-Slam vs numeric is_made / base-points logic, and equality.
+Slam / Solo Slam vs numeric ``is_made`` / base-points logic, and
+equality.
 
-Note: ``is_made`` currently approximates Slam success as
-``points >= 162`` (see ``Contract.is_made`` / ``Round.calculate_round_scores``).
-Per contree-domain.md §7.2 a Slam requires winning *all 8 tricks* —
-with the Belote 20-point bonus in play those two conditions diverge.
-The tests below pin current behaviour; a strict "8-trick" check is
-tracked as future work.
+Note: ``is_made`` approximates Slam-family success as
+``team_points >= 162`` (see ``Contract.is_made`` /
+``Round.calculate_round_scores``). The strict per-player "bidder won
+all 8 tricks personally" predicate for Solo Slam lives in ``Round``
+(it requires per-player trick counts that ``Contract`` does not see).
 """
 
 import pytest
@@ -49,6 +49,11 @@ def numeric_contract(north, team_ns):
 @pytest.fixture
 def slam_contract(north, team_ns):
     return Contract(ContractBid(north, "Slam", Suit.HEARTS))
+
+
+@pytest.fixture
+def solo_slam_contract(north, team_ns):
+    return Contract(ContractBid(north, "SoloSlam", Suit.HEARTS))
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +127,7 @@ class TestContractMultiplier:
 
 
 # ---------------------------------------------------------------------------
-# is_made (incl. Slam edge case — see module docstring)
+# is_made (incl. Slam-family edge case — see module docstring)
 # ---------------------------------------------------------------------------
 
 
@@ -147,10 +152,18 @@ class TestContractIsMade:
         [(0, False), (100, False), (161, False), (162, True), (200, True)],
     )
     def test_slam_threshold(self, slam_contract, team_points, expected):
-        # TODO: strict rule is "all 8 tricks". With Belote (+20) a team could
-        # in principle reach 162 without taking all tricks — see module
-        # docstring and contree-domain.md §7.2.
         assert slam_contract.is_made(team_points) is expected
+
+    @pytest.mark.parametrize(
+        "team_points,expected",
+        [(0, False), (100, False), (161, False), (162, True), (200, True)],
+    )
+    def test_solo_slam_threshold(
+        self, solo_slam_contract, team_points, expected
+    ):
+        # Contract.is_made only checks team points — the per-player
+        # "bidder won all 8 tricks personally" gate lives in Round.
+        assert solo_slam_contract.is_made(team_points) is expected
 
 
 # ---------------------------------------------------------------------------
@@ -165,11 +178,36 @@ class TestContractSlamHelpers:
     def test_is_slam_false_for_numeric(self, numeric_contract):
         assert numeric_contract.is_slam() is False
 
+    def test_is_slam_false_for_solo_slam(self, solo_slam_contract):
+        # is_slam is the narrow Slam-only predicate.
+        assert solo_slam_contract.is_slam() is False
+
+    def test_is_solo_slam_true(self, solo_slam_contract):
+        assert solo_slam_contract.is_solo_slam() is True
+
+    def test_is_solo_slam_false_for_slam(self, slam_contract):
+        assert slam_contract.is_solo_slam() is False
+
+    def test_is_solo_slam_false_for_numeric(self, numeric_contract):
+        assert numeric_contract.is_solo_slam() is False
+
+    def test_is_slam_family_true_for_slam(self, slam_contract):
+        assert slam_contract.is_slam_family() is True
+
+    def test_is_slam_family_true_for_solo_slam(self, solo_slam_contract):
+        assert solo_slam_contract.is_slam_family() is True
+
+    def test_is_slam_family_false_for_numeric(self, numeric_contract):
+        assert numeric_contract.is_slam_family() is False
+
     def test_get_base_points_numeric(self, numeric_contract):
         assert numeric_contract.get_base_points() == 100
 
     def test_get_base_points_slam(self, slam_contract):
-        assert slam_contract.get_base_points() == 250
+        assert slam_contract.get_base_points() == 500
+
+    def test_get_base_points_solo_slam(self, solo_slam_contract):
+        assert solo_slam_contract.get_base_points() == 1000
 
 
 class TestContractTeamAccessors:

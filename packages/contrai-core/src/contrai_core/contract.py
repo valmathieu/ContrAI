@@ -72,9 +72,16 @@ class Contract:
 
         Returns:
             True if contract was made, False otherwise
+
+        Note:
+            For Solo Slam the team-points check is necessary but not
+            sufficient — the contracting *player* must personally win
+            every trick. That predicate requires per-player trick
+            counts and lives in :class:`contrai_engine.Round`, not on
+            ``Contract`` (which only sees team aggregates).
         """
-        if self.value == 'Slam':
-            # For Slam, team must win all tricks (all 162 points)
+        if self.value in ('Slam', 'SoloSlam'):
+            # All-tricks contracts: team must win every trick (162 pts).
             return team_points >= 162
         else:
             return team_points >= self.value
@@ -101,21 +108,45 @@ class Contract:
 
     def is_slam(self) -> bool:
         """
-        Check if this is a Slam contract.
+        Check if this is a Slam contract (team must win all 8 tricks).
 
         Returns:
-            True if contract value is 'Slam', False otherwise
+            True if contract value is 'Slam', False otherwise.
         """
         return self.value == 'Slam'
+
+    def is_solo_slam(self) -> bool:
+        """
+        Check if this is a Solo Slam contract.
+
+        In a Solo Slam the bidder *personally* must win every one of
+        the 8 tricks — their partner is forbidden from winning any.
+
+        Returns:
+            True if contract value is 'SoloSlam', False otherwise.
+        """
+        return self.value == 'SoloSlam'
+
+    def is_slam_family(self) -> bool:
+        """Whether this contract is a Slam or Solo Slam."""
+        return self.value in ('Slam', 'SoloSlam')
 
     def get_base_points(self) -> int:
         """
         Get the base point value of the contract.
 
         Returns:
-            Base points for the contract (250 for Slam, actual value otherwise)
+            500 for Slam, 1000 for Solo Slam, the numeric value
+            otherwise. These base points feed the symmetric
+            Slam-family score grid: ``base * multiplier`` is awarded
+            to the side that wins the contract (attacker if made,
+            defender if failed).
         """
-        return 250 if self.value == 'Slam' else self.value
+        if self.value == 'Slam':
+            return 500
+        if self.value == 'SoloSlam':
+            return 1000
+        return self.value
 
     def __str__(self) -> str:
         """String representation of the contract."""

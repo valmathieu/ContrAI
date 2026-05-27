@@ -94,7 +94,7 @@ class TestContractBidConstruction:
     """Frozen dataclass validates value + suit in __post_init__."""
 
     @pytest.mark.parametrize(
-        "value", [80, 90, 100, 110, 120, 130, 140, 150, 160, "Slam"]
+        "value", [80, 90, 100, 110, 120, 130, 140, 150, 160, "Slam", "SoloSlam"]
     )
     def test_valid_values(self, north, value):
         bid = ContractBid(north, value, Suit.SPADES)
@@ -108,7 +108,8 @@ class TestContractBidConstruction:
         assert bid.suit == suit
 
     @pytest.mark.parametrize(
-        "bad_value", [70, 85, 170, 0, -10, "slam", "SLAM", "80"]
+        "bad_value",
+        [70, 85, 170, 0, -10, "slam", "SLAM", "Capot", "solo", "Solo Slam", "80"],
     )
     def test_invalid_value_raises(self, north, bad_value):
         with pytest.raises(ValueError, match="Invalid contract value"):
@@ -136,7 +137,10 @@ class TestContractBidComparison:
         assert ContractBid(north, 160, Suit.SPADES).get_numeric_value() == 160
 
     def test_get_numeric_value_for_slam(self, north):
-        assert ContractBid(north, "Slam", Suit.SPADES).get_numeric_value() == 250
+        assert ContractBid(north, "Slam", Suit.SPADES).get_numeric_value() == 500
+
+    def test_get_numeric_value_for_solo_slam(self, north):
+        assert ContractBid(north, "SoloSlam", Suit.SPADES).get_numeric_value() == 1000
 
     def test_gt_numeric(self, north):
         a = ContractBid(north, 100, Suit.SPADES)
@@ -149,6 +153,12 @@ class TestContractBidComparison:
         max_numeric = ContractBid(north, 160, Suit.HEARTS)
         assert slam > max_numeric
         assert not (max_numeric > slam)
+
+    def test_gt_solo_slam_over_slam(self, north):
+        solo = ContractBid(north, "SoloSlam", Suit.SPADES)
+        slam = ContractBid(north, "Slam", Suit.HEARTS)
+        assert solo > slam
+        assert not (slam > solo)
 
     def test_gt_with_non_contract_bid_returns_false(self, north):
         assert (ContractBid(north, 100, Suit.SPADES) > PassBid(north)) is False
@@ -167,6 +177,10 @@ class TestContractBidDunders:
     def test_str_slam(self, north):
         bid = ContractBid(north, "Slam", Suit.SPADES)
         assert str(bid) == f"Slam {Suit.SPADES}"
+
+    def test_str_solo_slam(self, north):
+        bid = ContractBid(north, "SoloSlam", Suit.SPADES)
+        assert str(bid) == f"SoloSlam {Suit.SPADES}"
 
     def test_equality_ignores_player(self, north, south):
         # Player is excluded from comparison; two ContractBids with

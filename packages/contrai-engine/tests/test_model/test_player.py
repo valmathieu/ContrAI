@@ -296,10 +296,12 @@ class TestAiPlayerBidding:
 
         assert isinstance(bid, PassBid)
 
-    # --- Slam bidding -----------------------------------------------------
-    # _estimate_tricks is capped at 8 (player.py: `min(tricks, 8)`), so a hand
-    # holding 5 trumps (J + 9 + A + K + Q) plus all three external aces
-    # triggers the Slam row in BIDDING_TABLE.
+    # --- Slam / Solo Slam bidding -----------------------------------------
+    # _estimate_tricks is capped at 8 (player.py: `min(tricks, 8)`), so a
+    # hand holding 5 trumps (J + 9 + A + K + Q) plus all three external aces
+    # triggers the Slam-family rows in BIDDING_TABLE. Both Slam (500) and
+    # Solo Slam (1000) share the same trick-estimator gate today
+    # (tricks_min=8), so the table walks both and stops on the higher one.
 
     @pytest.fixture
     def sample_cards_slam_spades(self):
@@ -314,38 +316,63 @@ class TestAiPlayerBidding:
             Card(Suit.CLUBS, Rank.ACE),
         ])
 
-    def test_evaluate_suit_slam_qualifies(self, ai_player, sample_cards_slam_spades):
-        """A hand estimated at 8 tricks resolves to the Slam row (250)."""
+    def test_evaluate_suit_slam_family_qualifies(
+        self, ai_player, sample_cards_slam_spades
+    ):
+        """A hand estimated at 8 tricks resolves to the top Slam-family row.
+
+        With the current (deliberately permissive) Solo Slam gate that
+        shares Slam's ``tricks_min=8``, the table walk lands on
+        ``SOLO_SLAM_NUMERIC`` (1000). The Slam row (500) is still
+        reachable via the AI when partner bids below that — see the
+        sentinel-translation tests.
+        """
         ai_player.hand = sample_cards_slam_spades
         evaluations = ai_player._evaluate_suits()
-        assert evaluations[Suit.SPADES]['contract'] == 250
+        assert evaluations[Suit.SPADES]['contract'] == ai_player.SOLO_SLAM_NUMERIC
         assert evaluations[Suit.SPADES]['estimated_tricks'] == 8
 
-    def test_choose_bid_slam_strong_hand(self, ai_player, sample_cards_slam_spades):
-        """choose_bid lifts the 'Slam' wire choice to a ContractBid."""
+    def test_choose_bid_solo_slam_strong_hand(
+        self, ai_player, sample_cards_slam_spades
+    ):
+        """choose_bid lifts the 'SoloSlam' wire choice to a ContractBid."""
         ai_player.hand = sample_cards_slam_spades
         bid = ai_player.choose_bid(_auction())
         assert isinstance(bid, ContractBid)
-        assert bid.value == 'Slam'
+        assert bid.value == 'SoloSlam'
         assert bid.suit == Suit.SPADES
 
-    def test_can_overbid_partner_handles_slam_value(self, ai_player, sample_cards_weak):
-        """Normalising 'Slam' → 250 in _can_overbid_partner avoids TypeError."""
+    def test_can_overbid_partner_handles_slam_value(
+        self, ai_player, sample_cards_weak
+    ):
+        """Normalising 'Slam' → 500 in _can_overbid_partner avoids TypeError."""
         ai_player.hand = sample_cards_weak
         # Should not raise; nothing in our weak hand beats Slam.
         assert ai_player._can_overbid_partner(
             ('Slam', Suit.SPADES), ai_player._evaluate_suits()
         ) is False
 
-    def test_should_double_handles_slam_value(self, ai_player, sample_cards_weak):
-        """_should_double must not TypeError when value is 'Slam'.
+    def test_can_overbid_partner_handles_solo_slam_value(
+        self, ai_player, sample_cards_weak
+    ):
+        """Normalising 'SoloSlam' → 1000 in _can_overbid_partner avoids TypeError."""
+        ai_player.hand = sample_cards_weak
+        assert ai_player._can_overbid_partner(
+            ('SoloSlam', Suit.SPADES), ai_player._evaluate_suits()
+        ) is False
 
-        The heuristic itself (`strength > 162 - value`) is permissive against
-        Slam because 162 - 250 is negative; we only assert the boolean
-        contract here. Tuning that heuristic is a separate concern.
+    def test_should_double_handles_slam_value(self, ai_player, sample_cards_weak):
+        """_should_double must not TypeError when value is 'Slam' / 'SoloSlam'.
+
+        The heuristic itself (``strength > 162 - value``) is permissive
+        against Slam-family bids because ``162 - 500`` (and -1000) is
+        negative; we only assert the boolean contract here. Tuning the
+        heuristic is a separate concern.
         """
         ai_player.hand = sample_cards_weak
         result = ai_player._should_double(('Slam', Suit.SPADES))
+        assert isinstance(result, bool)
+        result = ai_player._should_double(('SoloSlam', Suit.SPADES))
         assert isinstance(result, bool)
 
     def test_choose_bid_passes_when_partner_announced_slam(
@@ -356,6 +383,16 @@ class TestAiPlayerBidding:
         partner = ai_player.team.players[1]
         auction = _auction([(partner, ('Slam', Suit.SPADES))])
         # Must not TypeError on the 130-vs-'Slam' comparison.
+        bid = ai_player.choose_bid(auction)
+        assert isinstance(bid, PassBid)
+
+    def test_choose_bid_passes_when_partner_announced_solo_slam(
+        self, ai_player, ai_opponent_player, sample_cards_strong_spades
+    ):
+        """A strong-but-not-Slam AI passes when partner announces Solo Slam."""
+        ai_player.hand = sample_cards_strong_spades
+        partner = ai_player.team.players[1]
+        auction = _auction([(partner, ('SoloSlam', Suit.SPADES))])
         bid = ai_player.choose_bid(auction)
         assert isinstance(bid, PassBid)
 
