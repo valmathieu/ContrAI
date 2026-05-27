@@ -279,6 +279,61 @@ class TestContractBidPrecedence:
 
 
 # ---------------------------------------------------------------------------
+# Contract legality is suit-independent
+# ---------------------------------------------------------------------------
+
+
+class TestContractLegalitySuitIndependence:
+    """Contract legality is a function of value only — never of suit.
+
+    The rule helper has been split into a suit-agnostic
+    :meth:`Auction._is_contract_value_legal` precisely so callers (most
+    importantly :meth:`Auction.legal_actions`) don't probe the same
+    question six times per value. These tests pin that invariant: the
+    answer for any given ``value`` must be identical across every
+    :class:`Suit`.
+    """
+
+    @pytest.mark.parametrize("value", ContractBid.VALID_VALUES)
+    def test_value_legal_iff_every_suit_legal_on_empty(self, north, value):
+        auction = Auction()
+        value_answer = auction._is_contract_value_legal(value)
+        for suit in ContractBid.VALID_SUITS:
+            assert (
+                auction._is_contract_legal(ContractBid(north, value, suit))
+                is value_answer
+            )
+
+    @pytest.mark.parametrize("value", ContractBid.VALID_VALUES)
+    def test_value_legal_iff_every_suit_legal_after_contract(
+        self, north, east, value
+    ):
+        auction = Auction((ContractBid(east, 100, Suit.HEARTS),))
+        value_answer = auction._is_contract_value_legal(value)
+        for suit in ContractBid.VALID_SUITS:
+            assert (
+                auction._is_contract_legal(ContractBid(north, value, suit))
+                is value_answer
+            )
+
+    def test_value_legal_false_when_frozen_by_double(
+        self, north, east, south, four_players
+    ):
+        auction = Auction(
+            (ContractBid(east, 100, Suit.HEARTS), DoubleBid(south)),
+        )
+        # Freeze blocks every value, including the Slam family.
+        for value in ContractBid.VALID_VALUES:
+            assert auction._is_contract_value_legal(value) is False
+
+    def test_value_legal_false_when_slam_announced(self, east):
+        auction = Auction((ContractBid(east, "Slam", Suit.HEARTS),))
+        # Slam closes the auction to every contract value (including SoloSlam).
+        for value in ContractBid.VALID_VALUES:
+            assert auction._is_contract_value_legal(value) is False
+
+
+# ---------------------------------------------------------------------------
 # DoubleBid legality
 # ---------------------------------------------------------------------------
 

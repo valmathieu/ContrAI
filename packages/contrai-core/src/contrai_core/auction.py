@@ -111,11 +111,15 @@ class Auction:
 
         actions: list[Bid] = [PassBid(player)]
 
+        # Contract legality depends only on the *value* (precedence vs
+        # the prior contract + the freeze rule), never on the suit. We
+        # therefore probe each value once and, if legal, fan out across
+        # every suit. See ``_is_contract_value_legal``.
         for value in ContractBid.VALID_VALUES:
+            if not self._is_contract_value_legal(value):
+                continue
             for suit in ContractBid.VALID_SUITS:
-                candidate = ContractBid(player, value, suit)
-                if self._is_contract_legal(candidate):
-                    actions.append(candidate)
+                actions.append(ContractBid(player, value, suit))
 
         double_candidate = DoubleBid(player)
         if self._is_double_legal(double_candidate):
@@ -279,6 +283,35 @@ class Auction:
         Per ``contree-domain.md §5.3`` a *contre* freezes the auction
         at the current contract — no more numeric bids are legal until
         the auction completes.
+
+        Contract legality is a function of the bid's *value* alone —
+        the suit never matters to precedence or to the freeze rule.
+        This method is a thin wrapper around
+        :meth:`_is_contract_value_legal`; suit-agnostic callers (notably
+        :meth:`legal_actions`) should use that helper directly to avoid
+        re-asking the same question for each suit.
+        """
+
+        return self._is_contract_value_legal(bid.value)
+
+    def _is_contract_value_legal(self, value: int | str) -> bool:
+        """Whether a contract at ``value`` would be legal regardless of suit.
+
+        Factored out of :meth:`_is_contract_legal` so :meth:`legal_actions`
+        can enumerate suits without re-running an identical legality
+        probe six times per value. The split also documents the rule:
+        contract legality in contrée depends on value precedence and the
+        Double/Redouble freeze state, never on the suit announced.
+
+        Args:
+            value: A numeric step (80, 90, …, 160) or the ``"Slam"`` /
+                ``"SoloSlam"`` sentinels. No validation is performed
+                here — ``ContractBid.__post_init__`` enforces the
+                domain of valid values.
+
+        Returns:
+            ``True`` if a :class:`ContractBid` at ``value`` (with any
+            suit) would be a legal next action, ``False`` otherwise.
         """
 
         last_contract = None
@@ -298,9 +331,9 @@ class Auction:
         if last_contract.value in ("Slam", "SoloSlam"):
             return False
         # Slam and SoloSlam outrank every numeric contract (80–160).
-        if bid.value in ("Slam", "SoloSlam"):
+        if value in ("Slam", "SoloSlam"):
             return True
-        return bid.value > last_contract.value
+        return value > last_contract.value
 
     def _is_double_legal(self, bid: DoubleBid) -> bool:
         """A :class:`DoubleBid` requires a live :class:`ContractBid`
