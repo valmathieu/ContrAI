@@ -1,11 +1,11 @@
 """Tests for the Contract class.
 
 Covers contract construction (direct + legacy), multiplier semantics,
-Capot vs numeric is_made / base-points logic, and equality.
+Slam vs numeric is_made / base-points logic, and equality.
 
-Note: ``is_made`` currently approximates Capot success as
+Note: ``is_made`` currently approximates Slam success as
 ``points >= 162`` (see ``Contract.is_made`` / ``Round.calculate_round_scores``).
-Per contree-domain.md §7.2 a Capot requires winning *all 8 tricks* —
+Per contree-domain.md §7.2 a Slam requires winning *all 8 tricks* —
 with the Belote 20-point bonus in play those two conditions diverge.
 The tests below pin current behaviour; a strict "8-trick" check is
 tracked as future work.
@@ -47,8 +47,8 @@ def numeric_contract(north, team_ns):
 
 
 @pytest.fixture
-def capot_contract(north, team_ns):
-    return Contract(ContractBid(north, "Capot", Suit.HEARTS))
+def slam_contract(north, team_ns):
+    return Contract(ContractBid(north, "Slam", Suit.HEARTS))
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +122,7 @@ class TestContractMultiplier:
 
 
 # ---------------------------------------------------------------------------
-# is_made (incl. Capot edge case — see module docstring)
+# is_made (incl. Slam edge case — see module docstring)
 # ---------------------------------------------------------------------------
 
 
@@ -146,30 +146,30 @@ class TestContractIsMade:
         "team_points,expected",
         [(0, False), (100, False), (161, False), (162, True), (200, True)],
     )
-    def test_capot_threshold(self, capot_contract, team_points, expected):
+    def test_slam_threshold(self, slam_contract, team_points, expected):
         # TODO: strict rule is "all 8 tricks". With Belote (+20) a team could
         # in principle reach 162 without taking all tricks — see module
         # docstring and contree-domain.md §7.2.
-        assert capot_contract.is_made(team_points) is expected
+        assert slam_contract.is_made(team_points) is expected
 
 
 # ---------------------------------------------------------------------------
-# Capot helpers and team accessors
+# Slam helpers and team accessors
 # ---------------------------------------------------------------------------
 
 
-class TestContractCapotHelpers:
-    def test_is_capot_true(self, capot_contract):
-        assert capot_contract.is_capot() is True
+class TestContractSlamHelpers:
+    def test_is_slam_true(self, slam_contract):
+        assert slam_contract.is_slam() is True
 
-    def test_is_capot_false_for_numeric(self, numeric_contract):
-        assert numeric_contract.is_capot() is False
+    def test_is_slam_false_for_numeric(self, numeric_contract):
+        assert numeric_contract.is_slam() is False
 
     def test_get_base_points_numeric(self, numeric_contract):
         assert numeric_contract.get_base_points() == 100
 
-    def test_get_base_points_capot(self, capot_contract):
-        assert capot_contract.get_base_points() == 250
+    def test_get_base_points_slam(self, slam_contract):
+        assert slam_contract.get_base_points() == 250
 
 
 class TestContractTeamAccessors:

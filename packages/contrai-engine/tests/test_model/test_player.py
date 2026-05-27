@@ -296,13 +296,13 @@ class TestAiPlayerBidding:
 
         assert isinstance(bid, PassBid)
 
-    # --- Capot bidding -----------------------------------------------------
+    # --- Slam bidding -----------------------------------------------------
     # _estimate_tricks is capped at 8 (player.py: `min(tricks, 8)`), so a hand
     # holding 5 trumps (J + 9 + A + K + Q) plus all three external aces
-    # triggers the Capot row in BIDDING_TABLE.
+    # triggers the Slam row in BIDDING_TABLE.
 
     @pytest.fixture
-    def sample_cards_capot_spades(self):
+    def sample_cards_slam_spades(self):
         return Hand([
             Card(Suit.SPADES, Rank.JACK),
             Card(Suit.SPADES, Rank.NINE),
@@ -314,48 +314,48 @@ class TestAiPlayerBidding:
             Card(Suit.CLUBS, Rank.ACE),
         ])
 
-    def test_evaluate_suit_capot_qualifies(self, ai_player, sample_cards_capot_spades):
-        """A hand estimated at 8 tricks resolves to the Capot row (250)."""
-        ai_player.hand = sample_cards_capot_spades
+    def test_evaluate_suit_slam_qualifies(self, ai_player, sample_cards_slam_spades):
+        """A hand estimated at 8 tricks resolves to the Slam row (250)."""
+        ai_player.hand = sample_cards_slam_spades
         evaluations = ai_player._evaluate_suits()
         assert evaluations[Suit.SPADES]['contract'] == 250
         assert evaluations[Suit.SPADES]['estimated_tricks'] == 8
 
-    def test_choose_bid_capot_strong_hand(self, ai_player, sample_cards_capot_spades):
-        """choose_bid lifts the 'Capot' wire choice to a ContractBid."""
-        ai_player.hand = sample_cards_capot_spades
+    def test_choose_bid_slam_strong_hand(self, ai_player, sample_cards_slam_spades):
+        """choose_bid lifts the 'Slam' wire choice to a ContractBid."""
+        ai_player.hand = sample_cards_slam_spades
         bid = ai_player.choose_bid(_auction())
         assert isinstance(bid, ContractBid)
-        assert bid.value == 'Capot'
+        assert bid.value == 'Slam'
         assert bid.suit == Suit.SPADES
 
-    def test_can_overbid_partner_handles_capot_value(self, ai_player, sample_cards_weak):
-        """Normalising 'Capot' → 250 in _can_overbid_partner avoids TypeError."""
+    def test_can_overbid_partner_handles_slam_value(self, ai_player, sample_cards_weak):
+        """Normalising 'Slam' → 250 in _can_overbid_partner avoids TypeError."""
         ai_player.hand = sample_cards_weak
-        # Should not raise; nothing in our weak hand beats Capot.
+        # Should not raise; nothing in our weak hand beats Slam.
         assert ai_player._can_overbid_partner(
-            ('Capot', Suit.SPADES), ai_player._evaluate_suits()
+            ('Slam', Suit.SPADES), ai_player._evaluate_suits()
         ) is False
 
-    def test_should_double_handles_capot_value(self, ai_player, sample_cards_weak):
-        """_should_double must not TypeError when value is 'Capot'.
+    def test_should_double_handles_slam_value(self, ai_player, sample_cards_weak):
+        """_should_double must not TypeError when value is 'Slam'.
 
         The heuristic itself (`strength > 162 - value`) is permissive against
-        Capot because 162 - 250 is negative; we only assert the boolean
+        Slam because 162 - 250 is negative; we only assert the boolean
         contract here. Tuning that heuristic is a separate concern.
         """
         ai_player.hand = sample_cards_weak
-        result = ai_player._should_double(('Capot', Suit.SPADES))
+        result = ai_player._should_double(('Slam', Suit.SPADES))
         assert isinstance(result, bool)
 
-    def test_choose_bid_passes_when_partner_announced_capot(
+    def test_choose_bid_passes_when_partner_announced_slam(
         self, ai_player, ai_opponent_player, sample_cards_strong_spades
     ):
-        """A strong-but-not-Capot AI passes cleanly when partner announces Capot."""
+        """A strong-but-not-Slam AI passes cleanly when partner announces Slam."""
         ai_player.hand = sample_cards_strong_spades  # estimates 7 tricks, max 130
         partner = ai_player.team.players[1]
-        auction = _auction([(partner, ('Capot', Suit.SPADES))])
-        # Must not TypeError on the 130-vs-'Capot' comparison.
+        auction = _auction([(partner, ('Slam', Suit.SPADES))])
+        # Must not TypeError on the 130-vs-'Slam' comparison.
         bid = ai_player.choose_bid(auction)
         assert isinstance(bid, PassBid)
 

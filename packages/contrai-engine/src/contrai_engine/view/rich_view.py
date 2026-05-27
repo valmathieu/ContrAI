@@ -244,7 +244,7 @@ def _explain_constraint(
 def _format_contract_short(contract: Contract) -> Text:
     """Short label: ``"100 by E-W"`` with team in team color."""
     t = Text()
-    value_str = "Capot" if contract.value == "Capot" else str(contract.value)
+    value_str = "Slam" if contract.value == "Slam" else str(contract.value)
     t.append(value_str, style="bold")
     t.append(" by ", style=DIM)
     team_abbr = _team_abbr(contract.team.name)
@@ -276,7 +276,7 @@ def _parse_bid_input(raw: str) -> Optional[str | tuple[int | str, Suit]]:
         pass / p / passe   -> 'Pass'
         double / d         -> 'Double'
         redouble / r       -> 'Redouble'
-        "80 h" / "100 hearts" / "150nt" / "capot s" -> (value, Suit)
+        "80 h" / "100 hearts" / "150nt" / "slam s" -> (value, Suit)
     """
     s = raw.strip().lower()
     if not s:
@@ -289,7 +289,7 @@ def _parse_bid_input(raw: str) -> Optional[str | tuple[int | str, Suit]]:
         return "Redouble"
 
     # Try "<value><sep><suit>" with optional whitespace; also accept
-    # the value and suit being glued together ("100h", "capots").
+    # the value and suit being glued together ("100h", "slams").
     parts = s.replace(",", " ").split()
     if len(parts) == 1:
         token = parts[0]
@@ -298,9 +298,9 @@ def _parse_bid_input(raw: str) -> Optional[str | tuple[int | str, Suit]]:
         while i < len(token) and (token[i].isdigit() or token[i] == "-"):
             i += 1
         if i == 0:
-            # All-alpha: maybe "capots" -> capot + s
-            if token.startswith("capot") and len(token) > len("capot"):
-                parts = ["capot", token[len("capot"):]]
+            # All-alpha: maybe "slams" -> slam + s
+            if token.startswith("slam") and len(token) > len("slam"):
+                parts = ["slam", token[len("slam"):]]
             else:
                 return None
         else:
@@ -313,8 +313,8 @@ def _parse_bid_input(raw: str) -> Optional[str | tuple[int | str, Suit]]:
     if suit is None:
         return None
 
-    if raw_value == "capot":
-        return ("Capot", suit)
+    if raw_value == "slam":
+        return ("Slam", suit)
     try:
         value = int(raw_value)
     except ValueError:
@@ -1728,7 +1728,7 @@ class RichView:
             and round_scores.get(attacking_team, 0) > 0
         )
         if contract is not None:
-            base = 250 if contract.value == "Capot" else contract.value
+            base = 250 if contract.value == "Slam" else contract.value
             mult = 4 if contract.redouble else 2 if contract.double else 1
         else:
             base = 0
@@ -2117,7 +2117,7 @@ class RichView:
         team_color = _team_color(row.contract_team_name or "")
         t.append(team_abbr, style=f"bold {team_color}")
         t.append(" ", style=FG)
-        value_str = "Capot" if row.contract.value == "Capot" else str(row.contract.value)
+        value_str = "Slam" if row.contract.value == "Slam" else str(row.contract.value)
         t.append(value_str, style="bold")
         t.append(" ", style=FG)
         t.append(_suit_glyph(row.contract.suit),

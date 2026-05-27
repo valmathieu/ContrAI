@@ -94,7 +94,7 @@ class TestContractBidConstruction:
     """Frozen dataclass validates value + suit in __post_init__."""
 
     @pytest.mark.parametrize(
-        "value", [80, 90, 100, 110, 120, 130, 140, 150, 160, "Capot"]
+        "value", [80, 90, 100, 110, 120, 130, 140, 150, 160, "Slam"]
     )
     def test_valid_values(self, north, value):
         bid = ContractBid(north, value, Suit.SPADES)
@@ -108,7 +108,7 @@ class TestContractBidConstruction:
         assert bid.suit == suit
 
     @pytest.mark.parametrize(
-        "bad_value", [70, 85, 170, 0, -10, "capot", "CAPOT", "80"]
+        "bad_value", [70, 85, 170, 0, -10, "slam", "SLAM", "80"]
     )
     def test_invalid_value_raises(self, north, bad_value):
         with pytest.raises(ValueError, match="Invalid contract value"):
@@ -135,8 +135,8 @@ class TestContractBidComparison:
         assert ContractBid(north, 80, Suit.SPADES).get_numeric_value() == 80
         assert ContractBid(north, 160, Suit.SPADES).get_numeric_value() == 160
 
-    def test_get_numeric_value_for_capot(self, north):
-        assert ContractBid(north, "Capot", Suit.SPADES).get_numeric_value() == 250
+    def test_get_numeric_value_for_slam(self, north):
+        assert ContractBid(north, "Slam", Suit.SPADES).get_numeric_value() == 250
 
     def test_gt_numeric(self, north):
         a = ContractBid(north, 100, Suit.SPADES)
@@ -144,11 +144,11 @@ class TestContractBidComparison:
         assert a > b
         assert not (b > a)
 
-    def test_gt_capot_over_max_numeric(self, north):
-        capot = ContractBid(north, "Capot", Suit.SPADES)
+    def test_gt_slam_over_max_numeric(self, north):
+        slam = ContractBid(north, "Slam", Suit.SPADES)
         max_numeric = ContractBid(north, 160, Suit.HEARTS)
-        assert capot > max_numeric
-        assert not (max_numeric > capot)
+        assert slam > max_numeric
+        assert not (max_numeric > slam)
 
     def test_gt_with_non_contract_bid_returns_false(self, north):
         assert (ContractBid(north, 100, Suit.SPADES) > PassBid(north)) is False
@@ -164,9 +164,9 @@ class TestContractBidDunders:
         bid = ContractBid(north, 100, Suit.SPADES)
         assert str(bid) == f"100 {Suit.SPADES}"
 
-    def test_str_capot(self, north):
-        bid = ContractBid(north, "Capot", Suit.SPADES)
-        assert str(bid) == f"Capot {Suit.SPADES}"
+    def test_str_slam(self, north):
+        bid = ContractBid(north, "Slam", Suit.SPADES)
+        assert str(bid) == f"Slam {Suit.SPADES}"
 
     def test_equality_ignores_player(self, north, south):
         # Player is excluded from comparison; two ContractBids with

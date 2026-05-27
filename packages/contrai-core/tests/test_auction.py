@@ -6,7 +6,7 @@ produce?" questions previously scattered across ``Bid.is_valid_after``
 and ``BidValidator``. These tests cover:
 
 - :meth:`Auction.is_legal` for each :class:`Bid` subtype, including
-  the Capot precedence rules from ``contree-domain.md §5.2`` and the
+  the Slam precedence rules from ``contree-domain.md §5.2`` and the
   Double-freezes-the-auction rule from §5.3.
 - :meth:`Auction.legal_actions` enumeration shape and the "only Pass
   is legal" cases (partner just doubled / redoubled) that drive the
@@ -173,22 +173,22 @@ class TestContractBidPrecedence:
         auction = Auction((ContractBid(east, 100, Suit.HEARTS),))
         assert auction.is_legal(ContractBid(north, 100, Suit.SPADES)) is False
 
-    def test_capot_over_any_numeric_legal(self, north, east):
+    def test_slam_over_any_numeric_legal(self, north, east):
         for value in (80, 90, 100, 130, 160):
             auction = Auction((ContractBid(east, value, Suit.HEARTS),))
             assert (
-                auction.is_legal(ContractBid(north, "Capot", Suit.SPADES))
+                auction.is_legal(ContractBid(north, "Slam", Suit.SPADES))
                 is True
             )
 
-    def test_numeric_over_capot_illegal(self, north, east):
-        auction = Auction((ContractBid(east, "Capot", Suit.HEARTS),))
+    def test_numeric_over_slam_illegal(self, north, east):
+        auction = Auction((ContractBid(east, "Slam", Suit.HEARTS),))
         assert auction.is_legal(ContractBid(north, 160, Suit.SPADES)) is False
 
-    def test_capot_over_capot_illegal(self, north, east):
-        auction = Auction((ContractBid(east, "Capot", Suit.HEARTS),))
+    def test_slam_over_slam_illegal(self, north, east):
+        auction = Auction((ContractBid(east, "Slam", Suit.HEARTS),))
         assert (
-            auction.is_legal(ContractBid(north, "Capot", Suit.SPADES)) is False
+            auction.is_legal(ContractBid(north, "Slam", Suit.SPADES)) is False
         )
 
     def test_passes_do_not_change_precedence(self, north, east, south):
@@ -208,9 +208,9 @@ class TestContractBidPrecedence:
         )
         # No new numeric bid can reopen a frozen auction.
         assert auction.is_legal(ContractBid(north, 110, Suit.HEARTS)) is False
-        # Even Capot can't.
+        # Even Slam can't.
         assert (
-            auction.is_legal(ContractBid(north, "Capot", Suit.SPADES))
+            auction.is_legal(ContractBid(north, "Slam", Suit.SPADES))
             is False
         )
 
@@ -361,7 +361,7 @@ class TestLegalActions:
         # And opponents of the contractor *also* get the legal numeric raises.
         contract_raises = [
             a for a in actions
-            if isinstance(a, ContractBid) and a.value != "Capot"
+            if isinstance(a, ContractBid) and a.value != "Slam"
             and a.value > 100
         ]
         assert contract_raises  # at least one higher-value contract exists

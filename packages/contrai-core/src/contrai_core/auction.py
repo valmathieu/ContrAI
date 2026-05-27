@@ -291,11 +291,11 @@ class Auction:
                 return False
         if last_contract is None:
             return True
-        # Nothing outranks a prior Capot — checked before the Capot
-        # shortcut below so Capot-over-Capot doesn't slip through.
-        if last_contract.value == "Capot":
+        # Nothing outranks a prior Slam — checked before the Slam
+        # shortcut below so Slam-over-Slam doesn't slip through.
+        if last_contract.value == "Slam":
             return False
-        if bid.value == "Capot":
+        if bid.value == "Slam":
             return True
         return bid.value > last_contract.value
 

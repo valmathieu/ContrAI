@@ -4,7 +4,7 @@ Each :class:`Bid` is a frozen dataclass attached to the player who made
 it. The four concrete variants are:
 
 - :class:`PassBid` — the player declines to act.
-- :class:`ContractBid` — a numeric contract or *Capot* announcement
+- :class:`ContractBid` — a numeric contract or *Slam* announcement
   with an associated trump suit.
 - :class:`DoubleBid` — *contre*.
 - :class:`RedoubleBid` — *surcontre*.
@@ -68,7 +68,7 @@ class PassBid(Bid):
 
 @dataclass(frozen=True, slots=True)
 class ContractBid(Bid):
-    """A numeric contract or *Capot* announcement with a trump suit.
+    """A numeric contract or *Slam* announcement with a trump suit.
 
     Validated at construction via ``__post_init__``: the value must be
     one of the table-defined steps and the suit must be a known
@@ -76,13 +76,13 @@ class ContractBid(Bid):
 
     Attributes:
         value: A numeric step (80, 90, 100, …, 160) or the literal
-            string ``"Capot"``.
+            string ``"Slam"``.
         suit: The trump suit — any :class:`Suit`, including
             ``Suit.NO_TRUMP``.
     """
 
     VALID_VALUES: ClassVar[list] = [
-        80, 90, 100, 110, 120, 130, 140, 150, 160, "Capot",
+        80, 90, 100, 110, 120, 130, 140, 150, 160, "Slam",
     ]
     VALID_SUITS: ClassVar[list] = list(Suit)
 
@@ -109,9 +109,9 @@ class ContractBid(Bid):
             )
 
     def get_numeric_value(self) -> int:
-        """Numeric value for comparison purposes (``"Capot"`` → 250)."""
+        """Numeric value for comparison purposes (``"Slam"`` → 250)."""
 
-        return 250 if self.value == "Capot" else self.value
+        return 250 if self.value == "Slam" else self.value
 
     def __gt__(self, other) -> bool:
         """Strict numeric ordering against another :class:`ContractBid`.

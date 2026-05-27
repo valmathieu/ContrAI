@@ -132,17 +132,17 @@ class AiPlayer(Player):
     AI Player with sophisticated bidding strategy based on functional specifications.
 
     Bidding strategy:
-    1. Evaluate hand according to bidding table (80-160 points + Capot)
+    1. Evaluate hand according to bidding table (80-160 points + Slam)
     2. If partner hasn't bid or bid lower, make initial bid if it's hand is strong enough
     3. If partner has bid, support with incremental bidding (+10 per external ace, +10 for trump complement)
     4. If multiple bid are possible : choose best suit based on strength, belote
     """
 
     # Bidding table. The `contract` column is stored numerically — 250 is the
-    # internal sentinel for Capot, matching ContractBid.get_numeric_value /
+    # internal sentinel for Slam, matching ContractBid.get_numeric_value /
     # Contract.get_base_points in contrai-core. It's translated back to the
-    # string 'Capot' at the bid-return boundary (see _make_initial_bid /
-    # _support_partner_bid). The Capot row is gated purely by the trick
+    # string 'Slam' at the bid-return boundary (see _make_initial_bid /
+    # _support_partner_bid). The Slam row is gated purely by the trick
     # estimator (tricks_min=8) per the agreed AI criterion.
     BIDDING_TABLE = [
         # (contract, trump_expected, trump_min, aces, tricks_min, belote_required)
@@ -155,11 +155,11 @@ class AiPlayer(Player):
         (140, {'jack_or_nine': True, 'jack_and_nine': False}, 4, 3, 6, True),
         (150, {'jack_or_nine': False, 'jack_and_nine': True}, 4, 3, 6, True),
         (160, {'jack_or_nine': False, 'jack_and_nine': True, 'ace_required': True}, 5, 3, 7, True),
-        (250, {}, 0, 0, 8, False),  # Capot — only the trick estimator gates it.
+        (250, {}, 0, 0, 8, False),  # Slam — only the trick estimator gates it.
     ]
 
-    # Internal numeric value used in BIDDING_TABLE for Capot.
-    CAPOT_NUMERIC = 250
+    # Internal numeric value used in BIDDING_TABLE for Slam.
+    SLAM_NUMERIC = 250
 
     # Suit preference order (Spades, Hearts, Diamonds, Clubs)
     SUIT_PREFERENCE = SUITS
@@ -222,14 +222,14 @@ class AiPlayer(Player):
 
     @classmethod
     def _bid_value_numeric(cls, value):
-        """Coerce a contract value (numeric or 'Capot' string) to int.
+        """Coerce a contract value (numeric or 'Slam' string) to int.
 
-        The wire format on `current_bids` carries Capot as the literal
-        string 'Capot' (see Round._bid_to_legacy_format), so comparisons
+        The wire format on `current_bids` carries Slam as the literal
+        string 'Slam' (see Round._bid_to_legacy_format), so comparisons
         anywhere upstream of the wire boundary must normalise.
         """
 
-        return cls.CAPOT_NUMERIC if value == 'Capot' else value
+        return cls.SLAM_NUMERIC if value == 'Slam' else value
 
     @staticmethod
     def _get_last_bid(current_bids):
@@ -421,8 +421,8 @@ class AiPlayer(Player):
         # Choose best suit among candidates
         chosen_suit = self._choose_best_suit(best_suits, suit_evaluations)
 
-        # Translate the internal Capot sentinel back to the wire format.
-        bid_value = 'Capot' if max_contract == self.CAPOT_NUMERIC else max_contract
+        # Translate the internal Slam sentinel back to the wire format.
+        bid_value = 'Slam' if max_contract == self.SLAM_NUMERIC else max_contract
         return bid_value, chosen_suit
 
     def _support_partner_bid(self, partner_bid, last_bid):
@@ -451,11 +451,11 @@ class AiPlayer(Player):
         last_value = self._bid_value_numeric(last_value)
         new_value = last_value + contribution
 
-        # Cap at Capot (the top of the table); don't try to raise past it.
-        if new_value > self.CAPOT_NUMERIC or contribution == 0:
+        # Cap at Slam (the top of the table); don't try to raise past it.
+        if new_value > self.SLAM_NUMERIC or contribution == 0:
             return 'Pass'
 
-        bid_value = 'Capot' if new_value == self.CAPOT_NUMERIC else new_value
+        bid_value = 'Slam' if new_value == self.SLAM_NUMERIC else new_value
         return bid_value, partner_suit
 
     def _choose_best_suit(self, candidate_suits, suit_evaluations):

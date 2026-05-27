@@ -73,8 +73,8 @@ class Contract:
         Returns:
             True if contract was made, False otherwise
         """
-        if self.value == 'Capot':
-            # For Capot, team must win all tricks (all 162 points)
+        if self.value == 'Slam':
+            # For Slam, team must win all tricks (all 162 points)
             return team_points >= 162
         else:
             return team_points >= self.value
@@ -99,23 +99,23 @@ class Contract:
         # For now, return None - this should be handled at game level
         return None
 
-    def is_capot(self) -> bool:
+    def is_slam(self) -> bool:
         """
-        Check if this is a Capot contract.
+        Check if this is a Slam contract.
 
         Returns:
-            True if contract value is 'Capot', False otherwise
+            True if contract value is 'Slam', False otherwise
         """
-        return self.value == 'Capot'
+        return self.value == 'Slam'
 
     def get_base_points(self) -> int:
         """
         Get the base point value of the contract.
 
         Returns:
-            Base points for the contract (250 for Capot, actual value otherwise)
+            Base points for the contract (250 for Slam, actual value otherwise)
         """
-        return 250 if self.value == 'Capot' else self.value
+        return 250 if self.value == 'Slam' else self.value
 
     def __str__(self) -> str:
         """String representation of the contract."""

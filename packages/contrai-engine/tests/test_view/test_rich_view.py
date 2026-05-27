@@ -126,16 +126,16 @@ class TestParseBidInput:
     @pytest.mark.parametrize(
         "raw,suit",
         [
-            ("capot s", Suit.SPADES),
-            ("capot h", Suit.HEARTS),
-            ("capot d", Suit.DIAMONDS),
-            ("capot c", Suit.CLUBS),
-            ("capots", Suit.SPADES),  # glued
-            ("CAPOT H", Suit.HEARTS),  # case-insensitive
+            ("slam s", Suit.SPADES),
+            ("slam h", Suit.HEARTS),
+            ("slam d", Suit.DIAMONDS),
+            ("slam c", Suit.CLUBS),
+            ("slams", Suit.SPADES),  # glued
+            ("SLAM H", Suit.HEARTS),  # case-insensitive
         ],
     )
-    def test_capot(self, raw, suit):
-        assert _parse_bid_input(raw) == ("Capot", suit)
+    def test_slam(self, raw, suit):
+        assert _parse_bid_input(raw) == ("Slam", suit)
 
     def test_capital_letters_in_value_suit(self):
         assert _parse_bid_input("100 H") == (100, Suit.HEARTS)
@@ -841,11 +841,11 @@ class TestRoundRecapPanel:
         assert breakdown["North-South"]["cards_count"] is True
         assert breakdown["East-West"]["cards_count"] is True
 
-    def test_recap_contract_row_uses_capot_base(self, four_players):
-        """A Capot contract substitutes the base value 250 wherever
+    def test_recap_contract_row_uses_slam_base(self, four_players):
+        """A Slam contract substitutes the base value 250 wherever
         the contract value would normally feed the score."""
         view = RichView()
-        contract = self._StubContract("Capot", Suit.SPADES, "East-West")
+        contract = self._StubContract("Slam", Suit.SPADES, "East-West")
         round_ = self._StubRound(
             round_number=3,
             contract=contract,

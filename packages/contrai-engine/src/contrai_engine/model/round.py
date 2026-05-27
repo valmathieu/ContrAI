@@ -381,8 +381,8 @@ class Round:
         contract_team_points = team_card_points[contract_team_name]
 
         # Check if contract is made
-        if contract_value == 'Capot':
-            # For Capot, team must win all tricks (all 162 points)
+        if contract_value == 'Slam':
+            # For Slam, team must win all tricks (all 162 points)
             contract_made = contract_team_points >= 162
         else:
             contract_made = contract_team_points >= contract_value
@@ -400,7 +400,7 @@ class Round:
             if is_doubled or is_redoubled:
                 # When contract is made with double/redouble, attacking team gets
                 # the same points that defending team would have gotten if contract failed
-                base_value = 250 if contract_value == 'Capot' else contract_value
+                base_value = 250 if contract_value == 'Slam' else contract_value
                 team_scores[contract_team_name] = 160 + base_value * multiplier
 
                 # Defending team gets their actual points (no multiplier)
@@ -409,7 +409,7 @@ class Round:
                         team_scores[team_name] = points
             else:
                 # Normal contract made without double/redouble
-                base_value = 250 if contract_value == 'Capot' else contract_value
+                base_value = 250 if contract_value == 'Slam' else contract_value
                 team_scores[contract_team_name] = base_value + contract_team_points
                 # Opposing team gets their points
                 for team_name, points in team_card_points.items():
@@ -419,7 +419,7 @@ class Round:
             # Contract failed
             team_scores[contract_team_name] = 0  # Contract team gets 0
             # Opposing team gets all points + contract value
-            base_value = 250 if contract_value == 'Capot' else contract_value
+            base_value = 250 if contract_value == 'Slam' else contract_value
             for team_name in team_scores:
                 if team_name != contract_team_name:
                     team_scores[team_name] = (160 + base_value) * multiplier
