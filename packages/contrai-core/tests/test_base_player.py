@@ -28,7 +28,7 @@ def test_base_player_team_settable():
     partner = BasePlayer("Alexandre", "West")
     team = Team("EW", [player, partner])
     player.team = team
-    assert player.team == "team_obj"
+    assert player.team is team
 
 
 def test_two_players_have_independent_hands():
