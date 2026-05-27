@@ -1,8 +1,8 @@
 """Auction: immutable bidding-phase state and rule oracle.
 
 The :class:`Auction` owns the chronological :class:`Bid` history and
-knows the rules of Contrée bidding (per ``contree-domain.md §5``). It
-exposes the questions callers actually need to answer:
+knows the rules of Contrée bidding. It exposes the questions callers
+actually need to answer:
 
 - :meth:`Auction.is_legal` / :meth:`Auction.legal_actions` so callers
   can avoid proposing illegal bids in the first place — there is no
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class Auction:
-    """Immutable bidding-phase state for one round of Contrée.
+    """Immutable bidding-phase state for one round of contrée.
 
     ``Auction`` is the canonical view of bidding-so-far: it owns the
     chronological tuple of :class:`Bid` objects, knows the contrée
