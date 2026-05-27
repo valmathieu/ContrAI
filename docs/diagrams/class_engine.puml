@@ -88,9 +88,9 @@ package "model/player.py" as p_player {
       ``auction.legal_actions(self)``
       directly and let the wire format go.
 
-      **BIDDING_TABLE** rows (10 levels,
-      80–160 + Capot): (contract,
-      trump_req, trump_min, aces,
+      **BIDDING_TABLE** rows (11 levels:
+      80–160 + Slam + Solo Slam):
+      (contract, trump_req, trump_min, aces,
       tricks_min, belote_required).
     end note
 

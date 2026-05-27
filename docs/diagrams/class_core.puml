@@ -148,13 +148,13 @@ package "bid.py" as p_bid {
     }
 
     class ContractBid <<frozen dataclass>> {
-        + {static} VALID_VALUES = [80..160, "Capot"]
+        + {static} VALID_VALUES = [80..160, "Slam", "SoloSlam"]
         + {static} VALID_SUITS = list(Suit)
         + value : int | str
         + suit : Suit
         --
         + __post_init__() : None  ' validates value + suit
-        + get_numeric_value() : int   ' Capot → 250
+        + get_numeric_value() : int   ' Slam → 500, SoloSlam → 1000
         + __gt__(other) : bool         ' strict numeric ordering
         + __str__() : str
     }
@@ -237,8 +237,10 @@ package "contract.py / trick.py" as p_contract {
         + is_made(team_points: int) : bool
         + get_attacking_team() : Team
         + get_defending_team() : Team?     ' TODO: currently None
-        + is_capot() : bool
-        + get_base_points() : int          ' Capot → 250
+        + is_slam() : bool
+        + is_solo_slam() : bool
+        + is_slam_family() : bool
+        + get_base_points() : int          ' Slam → 500, SoloSlam → 1000
     }
 
     class Trick {

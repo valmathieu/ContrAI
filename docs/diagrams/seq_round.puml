@@ -98,7 +98,8 @@ R --> G : team_tricks: dict<str, list<Trick>>
 
 G -> R : calculate_round_scores()
 R -> R : sum card_points per team\n(belote +20, dix-de-der +10)
-R -> R : compare to contract.value\n(Capot ≥ 162, else ≥ value)
+R -> R : Slam/SoloSlam: symmetric grid\n(500/1000/2000 or 1000/2000/4000\nto winning side; cards skipped)
+R -> R : numeric: compare points to value\nelse defender = (160 + value) * mult
 R -> R : apply double / redouble multiplier
 R --> G : round_scores: dict<str, int>
 deactivate R

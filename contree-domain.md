@@ -53,18 +53,18 @@ of most edge cases in the engine.
 
 ### 3.1. Trump suit (strongest first)
 
-| Card       | Jack | 9  | Ace | 10 | King | Queen | 8 | 7 |
-|------------|------|----|-----|----|------|-------|---|---|
-| **Points** | 20   | 14 | 11  | 10 | 4    | 3     | 0 | 0 |
+| Card       | Jack | 9   | Ace | 10  | King | Queen | 8   | 7   |
+| ---------- | ---- | --- | --- | --- | ---- | ----- | --- | --- |
+| **Points** | 20   | 14  | 11  | 10  | 4    | 3     | 0   | 0   |
 
 The Jack (*Valet*) and the 9 are the master cards at trump. Mnemonic:
 **V 9 A 10 R D 8 7**.
 
 ### 3.2. Non-trump suits (strongest first)
 
-| Card       | Ace | 10 | King | Queen | Jack | 9 | 8 | 7 |
-|------------|-----|----|------|-------|------|---|---|---|
-| **Points** | 11  | 10 | 4    | 3     | 2    | 0 | 0 | 0 |
+| Card       | Ace | 10  | King | Queen | Jack | 9   | 8   | 7   |
+| ---------- | --- | --- | ---- | ----- | ---- | --- | --- | --- |
+| **Points** | 11  | 10  | 4    | 3     | 2    | 0   | 0   | 0   |
 
 Standard order outside trump: **A 10 R D V 9 8 7**.
 
@@ -116,8 +116,17 @@ proceeds anticlockwise.
   - Increments: **10 points**.
   - Maximum numeric bid: **160**.
   - Each new bid must be strictly higher than the current one.
-- **Bid Capot.** A special bid declaring you will take all 8 tricks. Worth
-  **250** points. Capot outranks any numeric bid (you cannot bid over it).
+- **Bid Slam** (*Capot*). A special bid declaring your team will take **all 8
+  tricks**. Base value **500** points. Slam outranks any numeric bid: once
+  declared, no further contract bid is legal (numeric, Slam, or Solo Slam).
+  *Contre* and *surcontre* remain available against a Slam.
+- **Bid Solo Slam** (*Capot général*). A stronger all-tricks bid declaring
+  that the **bidder personally** will win every one of the 8 tricks — their
+  partner may play normally but is forbidden from winning any trick. Base
+  value **1000** points (2× Slam at every multiplier level). Solo Slam
+  outranks any numeric bid, but it **cannot be announced after a Slam** —
+  once a Slam is on the table, the auction is closed to further contract
+  bids (asymmetric block). *Contre* and *surcontre* remain available.
 - **Pass** (*passer*). A player who passes may re-enter the bidding later, as
   long as the auction has not yet ended.
 - **Contrer** (double) — see §5.3.
@@ -226,10 +235,12 @@ The total across both teams (excluding Belote) is always **162**.
 
 Let:
 
-- `C` = contract value (e.g. 90, 110, *capot* = 250)
+- `C` = numeric contract value (one of 80, 90, …, 160)
 - `P_attack` = points realized by the declaring team (cards + der + Belote if
   applicable)
 - `M` = multiplier: 1 (no contre), 2 (contre), 4 (surcontre)
+
+#### Numeric contracts (80–160)
 
 **Contract made** (`P_attack ≥ C`):
 
@@ -247,12 +258,30 @@ defense 60.
 
 Worked example: contract `100 ♠`, failed → defense 262, declarer 0.
 
-**Capot**:
+#### Slam and Solo Slam (symmetric grid)
 
-- A *capot* contract (250) is made only if the declaring team wins **all 8
-  tricks**. Anything less is a failure.
+Slam-family contracts use a **symmetric scoring grid** that *replaces* the
+`base + card_points` formula entirely — card points (the 162) are **not added
+on top**. The amount at risk is identical for both sides: whoever wins the
+contract (declarer if made, defense if failed) scores it.
 
-### 7.3. Contre / surcontre multiplier
+| Contract  | Normal | Doubled | Redoubled |
+| --------- | ------ | ------- | --------- |
+| Slam      | 500    | 1000    | 2000      |
+| Solo Slam | 1000   | 2000    | 4000      |
+
+**Slam** (*Capot*) is **made** when the declaring team wins **all 8 tricks**.
+Anything less is a failure → defense scores the at-risk amount.
+
+**Solo Slam** (*Capot général*) is **made** only when the **declaring player
+personally** wins every one of the 8 tricks. The team winning all 8 together
+is **not** enough — if the partner wins any trick, the Solo Slam fails and
+defense scores the at-risk amount.
+
+**Belote (+20)** still applies on top of the Slam grid: it goes to whichever
+team holds the K + Q of trump, independent of which side wins the contract.
+
+### 7.3. Double/ Redouble multiplier
 
 The multiplier `M` from §7.2 applies whether the contract is made or failed.
 Doubling cuts both ways — it punishes overbidding *and* rewards a successful
@@ -281,14 +310,13 @@ terminology.
   values become the trump values in every suit; total card points change
   accordingly.
 - **Corsica deal**: 4-4 dealing pattern instead of 3-2-3.
-- **Capot beloté**: a *capot* attempt that also holds the Belote — extra bonus.
-- **Générale**: a contract declaring that the bidder *alone* (without help
-  from their partner) will take all 8 tricks. Ranks above *capot*.
+- **Générale**: a regional synonym (or close cousin) of *Capot général* —
+  a contract declaring the bidder *alone* will take all 8 tricks. ContrAI
+  models this as **Solo Slam** in the canonical engine (see §5.2).
 - **Annonces**: extra bonuses declared at the start of the first trick for
   card combinations held in hand (*tierce*, *cinquante*, *cent*, *carré*…).
   Inherited from classical Belote. **Out of scope for ContrAI** — this is
-  what distinguishes Contrée (without annonces) from related variants in this
-  project's usage.
+  what distinguishes contrée (without annonces) from coinche.
 
 ---
 
@@ -296,37 +324,38 @@ terminology.
 
 For the bilingual report and for keeping Claude consistent across languages.
 
-| French                  | English                       | Notes |
-|-------------------------|-------------------------------|-------|
-| Atout                   | Trump                         | |
+| French                  | English                       | Notes                                                                   |
+| ----------------------- | ----------------------------- | ----------------------------------------------------------------------- |
+| Atout                   | Trump                         |                                                                         |
 | Annonce                 | Bid / announcement            | Context: a bidding announcement (the only meaning used in this project) |
-| Belote                  | Belote                        | The K+Q-of-trump bonus |
-| Capot                   | Slam                          | Taking all 8 tricks |
-| Chute / Chuter          | Failure / to fail             | Used when the declarer does not make the contract |
-| Contrat                 | Contract                      | The bid value |
-| Contre / Contrer        | Double / to double            | |
-| Coupe / Couper          | Trump (n.) / to trump (v.)    | *Couper* = play a trump on a non-trump-led trick |
-| Défausse / Se défausser | Discard / to discard          | |
-| Défense                 | Defense                       | The non-declaring team |
-| Der / Dix de der        | Last trick / last-trick bonus | 10 points |
-| Donneur                 | Dealer                        | |
-| Entame / Entamer        | Lead / to lead                | First card of a trick |
-| Fournir                 | To follow suit                | |
-| Levée                   | Trick                         | Synonym of *pli* |
-| Main                    | Hand                          | The 8 cards a player holds |
-| Manche                  | Round / hand                  | One complete deal + bidding + 8 tricks + scoring |
-| Maître / Maîtresse      | Master                        | A card guaranteed to win (in its suit, given what has fallen) |
-| Monter                  | To raise / to overtrump       | *Monter à l'atout* = play a higher trump |
-| Partie                  | Game                          | Multiple rounds, ending when a team reaches the target score |
-| Passer                  | To pass                       | |
-| Pli                     | Trick                         | Synonym of *levée* |
-| Preneur / Prenante      | Declarer / declaring team     | The team that won the contract |
-| Rebelote                | Rebelote                      | Second of the Belote pair |
-| Sans atout              | No trump                      | Variant |
-| Surcontre / Surcontrer  | Redouble / to redouble        | |
-| Surcouper               | To overtrump                  | |
-| Tout atout              | All trump                     | Variant |
-| Valet                   | Jack                          | Top trump card |
+| Belote                  | Belote                        | The K+Q-of-trump bonus                                                  |
+| Capot                   | Slam                          | Taking all 8 tricks (the *team* wins them all)                          |
+| Capot général           | Solo Slam                     | Bidder *personally* takes all 8 tricks (cannot follow a Slam)           |
+| Chute / Chuter          | Failure / to fail             | Used when the declarer does not make the contract                       |
+| Contrat                 | Contract                      | The bid value                                                           |
+| Contre / Contrer        | Double / to double            |                                                                         |
+| Coupe / Couper          | Trump (n.) / to trump (v.)    | *Couper* = play a trump on a non-trump-led trick                        |
+| Défausse / Se défausser | Discard / to discard          |                                                                         |
+| Défense                 | Defense                       | The non-declaring team                                                  |
+| Der / Dix de der        | Last trick / last-trick bonus | 10 points                                                               |
+| Donneur                 | Dealer                        |                                                                         |
+| Entame / Entamer        | Lead / to lead                | First card of a trick                                                   |
+| Fournir                 | To follow suit                |                                                                         |
+| Levée                   | Trick                         | Synonym of *pli*                                                        |
+| Main                    | Hand                          | The 8 cards a player holds                                              |
+| Manche                  | Round / hand                  | One complete deal + bidding + 8 tricks + scoring                        |
+| Maître / Maîtresse      | Master                        | A card guaranteed to win (in its suit, given what has fallen)           |
+| Monter                  | To raise / to overtrump       | *Monter à l'atout* = play a higher trump                                |
+| Partie                  | Game                          | Multiple rounds, ending when a team reaches the target score            |
+| Passer                  | To pass                       |                                                                         |
+| Pli                     | Trick                         | Synonym of *levée*                                                      |
+| Preneur / Prenante      | Declarer / declaring team     | The team that won the contract                                          |
+| Rebelote                | Rebelote                      | Second of the Belote pair                                               |
+| Sans atout              | No trump                      | Variant                                                                 |
+| Surcontre / Surcontrer  | Redouble / to redouble        |                                                                         |
+| Surcouper               | To overtrump                  |                                                                         |
+| Tout atout              | All trump                     | Variant                                                                 |
+| Valet                   | Jack                          | Top trump card                                                          |
 
 ---
 
@@ -341,16 +370,16 @@ can reasonably announce. Read each row as: *"If your hand contains at least
 the listed pieces, you can open at this level."*
 
 | Opening | Required trumps | Min trumps | Aces | Non-bare tens | Min tricks | Belote |
-|---------|-----------------|------------|------|---------------|------------|--------|
+| ------- | --------------- | ---------- | ---- | ------------- | ---------- | ------ |
 | 80      | J ⊕ 9 (one of)  | 3          | 1    |               | 4          |        |
 | 90      | J ∧ 9 (both)    | 3          | 1    |               | 4          |        |
 | 100     | J ⊕ 9           | 3          | 2    |               | 5          |        |
 | 110     | J ∧ 9           | 3          | 2    |               | 5          |        |
 | 120     | J ⊕ 9           | 3          | 3    |               | 6          |        |
 | 130     | J ∧ 9           | 3          | 3    |               | 6          |        |
-| 140     | J ⊕ 9           | 4          | 3    | 1             | 6          | ✅     |
-| 150     | J ∧ 9           | 4          | 3    | 1             | 6          | ✅     |
-| 160     | J ∧ 9 ∧ A       | 5          | 3    | 2             | 7          | ✅     |
+| 140     | J ⊕ 9           | 4          | 3    | 1             | 6          | ✅      |
+| 150     | J ∧ 9           | 4          | 3    | 1             | 6          | ✅      |
+| 160     | J ∧ 9 ∧ A       | 5          | 3    | 2             | 7          | ✅      |
 
 Where:
 
@@ -395,7 +424,7 @@ threshold; details live alongside the AI implementation.*
 [Deal]      → 8 cards each, 3-2-3 anticlockwise
    ↓
 [Bidding]   → starting right of dealer
-              actions: bid (80–160 or capot), contre, surcontre, pass
+              actions: bid (80–160, slam, or solo slam), contre, surcontre, pass
               ends: 3 consecutive passes after the last bid
    ↓
 [Card play] → 8 tricks, anticlockwise, lead = right of dealer
