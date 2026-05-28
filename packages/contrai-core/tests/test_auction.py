@@ -6,17 +6,31 @@ produce?" questions previously scattered across ``Bid.is_valid_after``
 and ``BidValidator``. These tests cover:
 
 - :meth:`Auction.is_legal` for each :class:`Bid` subtype, including
-  the Slam / Solo Slam precedence rules from ``contree-domain.md §5.2``
-  and the Double-freezes-the-auction rule from §5.3.
+  the Slam / Solo Slam precedence rules and the
+  Double-freezes-the-auction rule.
 - :meth:`Auction.legal_actions` enumeration shape and the "only Pass
   is legal" cases (partner just doubled / redoubled) that drive the
   engine's auto-pass shortcut.
 - :meth:`Auction.apply` (happy path + ``IllegalBidError`` on illegal
   bids — *no* silent downgrade to Pass).
 - :meth:`Auction.is_terminal` and :meth:`Auction.contract` covering
-  both end conditions from §5.4.
+  both end conditions.
 - The state-query properties: ``last_contract_bid``, ``has_double``,
   ``has_redouble``, ``consecutive_passes``, and ``partner_bid``.
+
+Every auction sequence in this module respects the engine's
+anticlockwise speaking cycle ``N → W → S → E`` (each player speaks at
+their turn, starting from any of the four seats). When the rule under
+test would otherwise put a player out of turn, the sequence is
+extended with the appropriate intervening :class:`PassBid`\\ s, or the
+"checked" player is reassigned to the next legitimate speaker — the
+rule oracle is pure but the histories we feed it must be reachable
+from real play.
+
+Fixture parameters are listed in cycle order starting from N
+(``north, west, south, east`` for any subset, in that order), with
+``four_players`` appended when team identity is needed (Double /
+Redouble legality, ``partner_bid``).
 """
 
 import pytest
@@ -47,6 +61,11 @@ def north():
 
 
 @pytest.fixture
+def west():
+    return BasePlayer("West", "West")
+
+
+@pytest.fixture
 def south():
     return BasePlayer("South", "South")
 
@@ -54,11 +73,6 @@ def south():
 @pytest.fixture
 def east():
     return BasePlayer("East", "East")
-
-
-@pytest.fixture
-def west():
-    return BasePlayer("West", "West")
 
 
 @pytest.fixture
@@ -78,9 +92,14 @@ def team_ew(east, west):
 
 
 @pytest.fixture
-def four_players(team_ns, team_ew, north, south, east, west):
-    """Force all four-team fixtures so every player has a team assigned."""
-    return north, east, south, west
+def four_players(team_ns, team_ew, north, west, south, east):
+    """Force all four-team fixtures so every player has a team assigned.
+
+    The return value is rarely unpacked — most tests pull the seat
+    fixtures they need directly and depend on ``four_players`` only
+    for the side effect of wiring teams onto every ``BasePlayer``.
+    """
+    return north, west, south, east
 
 
 # ---------------------------------------------------------------------------
@@ -100,13 +119,13 @@ class TestConstruction:
     def test_empty_classmethod(self):
         assert Auction.empty() == Auction()
 
-    def test_is_frozen(self, north, four_players):
+    def test_is_frozen(self, north):
         auction = Auction((PassBid(north),))
         # Frozen dataclass forbids attribute reassignment.
         with pytest.raises(Exception):
             auction.bids = ()
 
-    def test_equality_by_bids(self, north, four_players):
+    def test_equality_by_bids(self, north):
         a = Auction((PassBid(north),))
         b = Auction((PassBid(north),))
         assert a == b
@@ -125,38 +144,45 @@ class TestPassLegality:
     def test_pass_legal_on_empty(self, north):
         assert Auction().is_legal(PassBid(north)) is True
 
-    def test_pass_legal_after_contract(self, north, east, four_players):
+    def test_pass_legal_after_contract(self, north, east):
+        # East starts; the cycle N→W→S→E puts N next after E.
         auction = Auction((ContractBid(east, 90, Suit.HEARTS),))
         assert auction.is_legal(PassBid(north)) is True
 
-    def test_pass_legal_after_double(self, north, east, south, four_players):
+    def test_pass_legal_after_double(self, north, west, south, east):
+        # East starts with a contract, N (next in cycle) doubles, W passes;
+        # S is the natural next speaker.
         auction = Auction(
-            (ContractBid(east, 100, Suit.HEARTS), DoubleBid(north)),
+            (
+                ContractBid(east, 100, Suit.HEARTS),
+                DoubleBid(north),
+                PassBid(west),
+            ),
         )
         assert auction.is_legal(PassBid(south)) is True
 
-    def test_pass_legal_at_terminal(self, north, east, south, west, four_players):
+    def test_pass_legal_at_terminal(self, north, west, south, east):
         # Three passes after a non-pass — auction is terminal, but the
         # legality oracle still answers True for Pass (terminality is
-        # a separate concern).
+        # a separate concern). N starts, W/S/E pass; N is up again.
         auction = Auction(
             (
                 ContractBid(north, 80, Suit.SPADES),
-                PassBid(east),
-                PassBid(south),
                 PassBid(west),
+                PassBid(south),
+                PassBid(east),
             ),
         )
         assert auction.is_legal(PassBid(north)) is True
 
 
 # ---------------------------------------------------------------------------
-# ContractBid precedence (contree-domain.md §5.2 + §5.3)
+# ContractBid precedence
 # ---------------------------------------------------------------------------
 
 
 class TestContractBidPrecedence:
-    """Precedence + auction-freeze rules from contree-domain.md."""
+    """Precedence + auction-freeze rules."""
 
     def test_first_contract_always_legal(self, north):
         assert Auction().is_legal(ContractBid(north, 80, Suit.SPADES)) is True
@@ -173,19 +199,29 @@ class TestContractBidPrecedence:
         auction = Auction((ContractBid(east, 100, Suit.HEARTS),))
         assert auction.is_legal(ContractBid(north, 100, Suit.SPADES)) is False
 
-    def test_slam_over_any_numeric_legal(self, north, east):
+    def test_slam_over_any_numeric_legal(self, north, west, east):
         for value in (80, 90, 100, 130, 160):
-            auction = Auction((ContractBid(east, value, Suit.HEARTS),))
+            auction = Auction(
+                (ContractBid(east, value, Suit.HEARTS), PassBid(north)),
+            )
             assert (
-                auction.is_legal(ContractBid(north, "Slam", Suit.SPADES))
+                auction.is_legal(ContractBid(west, "Slam", Suit.SPADES))
                 is True
             )
 
-    def test_solo_slam_over_any_numeric_legal(self, north, east):
+    def test_solo_slam_over_any_numeric_legal(
+        self, north, west, south, east
+    ):
         for value in (80, 90, 100, 130, 160):
-            auction = Auction((ContractBid(east, value, Suit.HEARTS),))
+            auction = Auction(
+                (
+                    ContractBid(east, value, Suit.HEARTS),
+                    PassBid(north),
+                    PassBid(west),
+                ),
+            )
             assert (
-                auction.is_legal(ContractBid(north, "SoloSlam", Suit.SPADES))
+                auction.is_legal(ContractBid(south, "SoloSlam", Suit.SPADES))
                 is True
             )
 
@@ -226,39 +262,48 @@ class TestContractBidPrecedence:
             is False
         )
 
-    def test_passes_do_not_change_precedence(self, north, east, south):
+    def test_passes_do_not_change_precedence(self, north, west, east):
+        # E starts with 100; N passes — W is the natural next speaker.
+        auction = Auction(
+            (ContractBid(east, 100, Suit.HEARTS), PassBid(north)),
+        )
+        assert auction.is_legal(ContractBid(west, 110, Suit.HEARTS)) is True
+        assert auction.is_legal(ContractBid(west, 100, Suit.HEARTS)) is False
+
+    def test_double_freezes_auction(
+        self, north, west, south, east, four_players
+    ):
+        # E starts, intervening passes from N and W, then S doubles —
+        # E is the natural next speaker after the double.
         auction = Auction(
             (
                 ContractBid(east, 100, Suit.HEARTS),
-                PassBid(south),
                 PassBid(north),
+                PassBid(west),
+                DoubleBid(south),
             ),
         )
-        assert auction.is_legal(ContractBid(east, 110, Suit.HEARTS)) is True
-        assert auction.is_legal(ContractBid(east, 100, Suit.HEARTS)) is False
-
-    def test_double_freezes_auction(self, north, east, south, four_players):
-        auction = Auction(
-            (ContractBid(east, 100, Suit.HEARTS), DoubleBid(south)),
-        )
         # No new numeric bid can reopen a frozen auction.
-        assert auction.is_legal(ContractBid(north, 110, Suit.HEARTS)) is False
+        assert auction.is_legal(ContractBid(east, 110, Suit.HEARTS)) is False
         # Even Slam / SoloSlam can't.
         assert (
-            auction.is_legal(ContractBid(north, "Slam", Suit.SPADES))
+            auction.is_legal(ContractBid(east, "Slam", Suit.SPADES))
             is False
         )
         assert (
-            auction.is_legal(ContractBid(north, "SoloSlam", Suit.SPADES))
+            auction.is_legal(ContractBid(east, "SoloSlam", Suit.SPADES))
             is False
         )
 
     def test_redouble_also_freezes_auction(
-        self, north, east, south, four_players
+        self, north, west, south, east, four_players
     ):
+        # E contracts, N/W pass, S doubles, E redoubles — N is next.
         auction = Auction(
             (
                 ContractBid(east, 100, Suit.HEARTS),
+                PassBid(north),
+                PassBid(west),
                 DoubleBid(south),
                 RedoubleBid(east),
             ),
@@ -266,13 +311,17 @@ class TestContractBidPrecedence:
         assert auction.is_legal(ContractBid(north, 130, Suit.SPADES)) is False
 
     def test_passes_after_double_still_freeze_auction(
-        self, north, east, south, west, four_players
+        self, north, west, south, east, four_players
     ):
+        # After E contracts, N/W pass, S doubles, then E passes — N is
+        # the next speaker and the auction is still frozen.
         auction = Auction(
             (
                 ContractBid(east, 100, Suit.HEARTS),
-                DoubleBid(south),
+                PassBid(north),
                 PassBid(west),
+                DoubleBid(south),
+                PassBid(east),
             ),
         )
         assert auction.is_legal(ContractBid(north, 110, Suit.HEARTS)) is False
@@ -317,10 +366,15 @@ class TestContractLegalitySuitIndependence:
             )
 
     def test_value_legal_false_when_frozen_by_double(
-        self, north, east, south, four_players
+        self, north, west, south, east, four_players
     ):
         auction = Auction(
-            (ContractBid(east, 100, Suit.HEARTS), DoubleBid(south)),
+            (
+                ContractBid(east, 100, Suit.HEARTS),
+                PassBid(north),
+                PassBid(west),
+                DoubleBid(south),
+            ),
         )
         # Freeze blocks every value, including the Slam family.
         for value in ContractBid.VALID_VALUES:
@@ -354,7 +408,7 @@ class TestLegalActionsMonotonicity:
 
     @pytest.fixture
     def histories(
-        self, north, east, south, west, four_players,
+        self, north, west, south, east, four_players,
     ) -> list[Auction]:
         """Auction histories covering every shape the rule helper sees:
         empty, after a low numeric, after the numeric ceiling, after a
@@ -369,7 +423,9 @@ class TestLegalActionsMonotonicity:
             Auction((cb_ceiling,)),
             Auction((cb_slam,)),
             Auction((cb_solo,)),
-            Auction((cb_low, DoubleBid(south))),
+            Auction(
+                (cb_low, PassBid(north), PassBid(west), DoubleBid(south)),
+            ),
         ]
 
     def test_value_legality_is_monotonic_in_iteration_order(self, histories):
@@ -388,7 +444,7 @@ class TestLegalActionsMonotonicity:
                     seen_legal = True
 
     def test_short_circuit_matches_per_value_probe(
-        self, north, east, south, four_players,
+        self, north, west, south, east, four_players,
     ):
         """The short-circuited :meth:`Auction.legal_actions` produces the
         same set of :class:`ContractBid` actions as a full per-value probe
@@ -401,7 +457,12 @@ class TestLegalActionsMonotonicity:
             Auction((ContractBid(east, "Slam", Suit.HEARTS),)),
             Auction((ContractBid(east, "SoloSlam", Suit.HEARTS),)),
             Auction(
-                (ContractBid(east, 100, Suit.HEARTS), DoubleBid(south)),
+                (
+                    ContractBid(east, 100, Suit.HEARTS),
+                    PassBid(north),
+                    PassBid(west),
+                    DoubleBid(south),
+                ),
             ),
         ]
         for auction in scenarios:
@@ -427,75 +488,85 @@ class TestLegalActionsMonotonicity:
 
 
 class TestDoubleLegality:
-    def test_illegal_on_empty(self, east):
+    def test_illegal_on_empty(self, east, four_players):
         assert Auction().is_legal(DoubleBid(east)) is False
 
     def test_legal_against_opponent_contract(self, north, east, four_players):
-        auction = Auction((ContractBid(north, 100, Suit.SPADES),))
-        assert auction.is_legal(DoubleBid(east)) is True
+        # E starts; N (next in cycle, opposing team) may immediately
+        # double the contract.
+        auction = Auction((ContractBid(east, 100, Suit.SPADES),))
+        assert auction.is_legal(DoubleBid(north)) is True
 
-    def test_illegal_against_own_contract(self, north, south, four_players):
-        auction = Auction((ContractBid(north, 100, Suit.SPADES),))
-        # South is North's partner — can't double their own contract.
+    def test_illegal_against_own_contract(
+        self, north, west, south, four_players
+    ):
+        # N contracts, W passes; S (N's partner) cannot double their
+        # own team's contract.
+        auction = Auction(
+            (ContractBid(north, 100, Suit.SPADES), PassBid(west)),
+        )
         assert auction.is_legal(DoubleBid(south)) is False
 
-    def test_illegal_if_already_doubled(self, north, east, four_players):
-        auction = Auction(
-            (ContractBid(north, 100, Suit.SPADES), DoubleBid(east)),
-        )
-        assert auction.is_legal(DoubleBid(east)) is False
-
-    def test_illegal_after_redouble(self, north, east, four_players):
+    def test_illegal_if_already_doubled(
+        self, north, west, south, east, four_players
+    ):
+        # N contracts, W (opposing) doubles, S passes — E is up but
+        # cannot re-double an already-doubled contract.
         auction = Auction(
             (
                 ContractBid(north, 100, Suit.SPADES),
+                DoubleBid(west),
+                PassBid(south),
+            ),
+        )
+        assert auction.is_legal(DoubleBid(east)) is False
+
+    def test_illegal_after_redouble(
+        self, north, west, south, east, four_players
+    ):
+        # N contracts, W/S pass, E doubles, N redoubles — W is next
+        # and cannot re-double after a redouble.
+        auction = Auction(
+            (
+                ContractBid(north, 100, Suit.SPADES),
+                PassBid(west),
+                PassBid(south),
                 DoubleBid(east),
                 RedoubleBid(north),
             ),
         )
-        assert auction.is_legal(DoubleBid(east)) is False
+        assert auction.is_legal(DoubleBid(west)) is False
 
-    def test_legal_after_pass_since_contract(
-        self, north, east, four_players
+    def test_legal_after_passes_since_contract(
+        self, north, west, south, east, four_players
     ):
-        """A pass between the contract bid and the Coinche does not
-        close the window — opposing players may still come back and
-        Double until the auction terminates on 3 consecutive passes.
-        See ``contree-domain.md §5.3``.
+        """Passes between the contract bid and the Coinche do not close
+        the window — opposing players may still come back and Double
+        until the auction terminates on 3 consecutive passes.
         """
-        auction = Auction(
-            (ContractBid(north, 100, Suit.SPADES), PassBid(east)),
-        )
-        # South is on the opposing team (NS contracted, so this needs
-        # the opposing player). North contracted (NS team), East passed
-        # (EW), so EW are the opponents — East may still Double.
-        assert auction.is_legal(DoubleBid(east)) is True
-
-    def test_legal_after_two_passes_since_contract(
-        self, north, east, south, west, four_players
-    ):
-        """Two intervening passes still don't close the window —
-        only the auction's 3-consecutive-passes terminator does."""
+        # N contracts; W and S pass; E (opposing team) may still
+        # double from the next legitimate seat.
         auction = Auction(
             (
                 ContractBid(north, 100, Suit.SPADES),
-                PassBid(east),
+                PassBid(west),
                 PassBid(south),
             ),
         )
-        assert auction.is_legal(DoubleBid(west)) is True
+        assert auction.is_legal(DoubleBid(east)) is True
 
-    def test_legal_against_opponent_slam(self, north, east, four_players):
+    def test_legal_against_opponent_slam(self, north, west, four_players):
         """Slam closes the auction to numeric / Slam-family bids but
         coinche must remain available — opponents can still Double."""
+        # N announces Slam; W (next in cycle, opposing team) doubles.
         auction = Auction((ContractBid(north, "Slam", Suit.SPADES),))
-        assert auction.is_legal(DoubleBid(east)) is True
+        assert auction.is_legal(DoubleBid(west)) is True
 
     def test_legal_against_opponent_solo_slam(
-        self, north, east, four_players
+        self, north, west, four_players
     ):
         auction = Auction((ContractBid(north, "SoloSlam", Suit.SPADES),))
-        assert auction.is_legal(DoubleBid(east)) is True
+        assert auction.is_legal(DoubleBid(west)) is True
 
 
 # ---------------------------------------------------------------------------
@@ -504,55 +575,87 @@ class TestDoubleLegality:
 
 
 class TestRedoubleLegality:
-    def test_illegal_on_empty(self, north):
+    def test_illegal_on_empty(self, north, four_players):
         assert Auction().is_legal(RedoubleBid(north)) is False
 
-    def test_illegal_without_prior_double(self, north, four_players):
+    def test_illegal_without_prior_double(self, north, west, four_players):
+        # N contracts; W is next. Without a prior Double, nobody may
+        # redouble — including W (opposing team).
         auction = Auction((ContractBid(north, 100, Suit.SPADES),))
-        assert auction.is_legal(RedoubleBid(north)) is False
-
-    def test_legal_for_contracting_team(self, north, south, east, four_players):
-        auction = Auction(
-            (ContractBid(north, 100, Suit.SPADES), DoubleBid(east)),
-        )
-        # Either member of the contracting team may redouble.
-        assert auction.is_legal(RedoubleBid(north)) is True
-        assert auction.is_legal(RedoubleBid(south)) is True
-
-    def test_illegal_for_opposing_team(self, north, east, west, four_players):
-        auction = Auction(
-            (ContractBid(north, 100, Suit.SPADES), DoubleBid(east)),
-        )
-        # The doubling side cannot then redouble.
         assert auction.is_legal(RedoubleBid(west)) is False
 
-    def test_illegal_if_already_redoubled(self, north, east, four_players):
+    def test_legal_for_contracting_team(
+        self, north, west, south, east, four_players
+    ):
+        # N contracts; W/S pass; E doubles. N is the natural next
+        # speaker and may redouble; partner S may too (rule oracle is
+        # pure, so we exercise both contracting-team seats).
         auction = Auction(
             (
                 ContractBid(north, 100, Suit.SPADES),
+                PassBid(west),
+                PassBid(south),
+                DoubleBid(east),
+            ),
+        )
+        assert auction.is_legal(RedoubleBid(north)) is True
+        assert auction.is_legal(RedoubleBid(south)) is True
+
+    def test_illegal_for_opposing_team(
+        self, north, west, south, east, four_players
+    ):
+        # Same shape — but W (doubling team) cannot redouble.
+        auction = Auction(
+            (
+                ContractBid(north, 100, Suit.SPADES),
+                PassBid(west),
+                PassBid(south),
+                DoubleBid(east),
+            ),
+        )
+        assert auction.is_legal(RedoubleBid(west)) is False
+
+    def test_illegal_if_already_redoubled(
+        self, north, west, south, east, four_players
+    ):
+        # N contracts, W/S pass, E doubles, N redoubles. Both the
+        # contracting seat (S, via rule oracle) and the natural next
+        # speaker (W, opposing team) are blocked from redoubling
+        # again, but the "already redoubled" rule is the clean test
+        # against the contracting partner.
+        auction = Auction(
+            (
+                ContractBid(north, 100, Suit.SPADES),
+                PassBid(west),
+                PassBid(south),
                 DoubleBid(east),
                 RedoubleBid(north),
             ),
         )
-        assert auction.is_legal(RedoubleBid(north)) is False
+        assert auction.is_legal(RedoubleBid(south)) is False
 
-    def test_legal_after_pass_since_double(
-        self, north, east, south, four_players
+    def test_legal_after_passes_since_double(
+        self, north, west, south, east, four_players
     ):
-        """Symmetric with the Double window: an intervening pass after
-        the Coinche does not close the Surcoinche window. The
-        contracting team may still come back and Redouble until the
-        auction's 3-consecutive-passes terminator fires.
-        See ``contree-domain.md §5.3``.
+        """Symmetric with the Double window: intervening passes after
+        the Coinche do not close the Surcoinche window. The contracting
+        team may still come back and Redouble until the auction's
+        3-consecutive-passes terminator fires.
         """
+        # N contracts, W/S pass, E doubles, N passes, W passes — S
+        # (contracting team) is the next legitimate speaker and may
+        # still redouble.
         auction = Auction(
             (
                 ContractBid(north, 100, Suit.SPADES),
-                DoubleBid(east),
+                PassBid(west),
                 PassBid(south),
+                DoubleBid(east),
+                PassBid(north),
+                PassBid(west),
             ),
         )
-        assert auction.is_legal(RedoubleBid(north)) is True
+        assert auction.is_legal(RedoubleBid(south)) is True
 
 
 # ---------------------------------------------------------------------------
@@ -575,12 +678,19 @@ class TestLegalActions:
         assert not any(isinstance(a, RedoubleBid) for a in actions)
 
     def test_includes_double_after_opponent_contract(
-        self, north, east, four_players
+        self, north, west, south, east, four_players
     ):
-        auction = Auction((ContractBid(north, 100, Suit.SPADES),))
+        # N contracts; W/S pass; E (opposing team) is next and gets
+        # both Double and the legal numeric raises in its action set.
+        auction = Auction(
+            (
+                ContractBid(north, 100, Suit.SPADES),
+                PassBid(west),
+                PassBid(south),
+            ),
+        )
         actions = auction.legal_actions(east)
         assert any(isinstance(a, DoubleBid) for a in actions)
-        # And opponents of the contractor *also* get the legal numeric raises.
         contract_raises = [
             a for a in actions
             if isinstance(a, ContractBid)
@@ -590,40 +700,51 @@ class TestLegalActions:
         assert contract_raises  # at least one higher-value contract exists
 
     def test_includes_redouble_after_being_doubled(
-        self, north, east, four_players
+        self, north, west, south, east, four_players
     ):
+        # N contracts, W/S pass, E doubles — N is next and gets
+        # Redouble in its actions; partner S does too (pure oracle).
         auction = Auction(
-            (ContractBid(north, 100, Suit.SPADES), DoubleBid(east)),
+            (
+                ContractBid(north, 100, Suit.SPADES),
+                PassBid(west),
+                PassBid(south),
+                DoubleBid(east),
+            ),
         )
         actions = auction.legal_actions(north)
         assert any(isinstance(a, RedoubleBid) for a in actions)
-        # Partner of the contractor — same team — also gets a redouble option.
-        south = north.team.players[1]
         partner_actions = auction.legal_actions(south)
         assert any(isinstance(a, RedoubleBid) for a in partner_actions)
 
     def test_only_pass_when_partner_doubled(
-        self, north, east, south, four_players
+        self, north, west, south, east, four_players
     ):
-        """E (opponent) contracts; N (S's partner) doubles. S's only
-        legal action is Pass — drives the engine's auto-pass shortcut."""
+        """E (opponent) contracts; N (S's partner) doubles; W passes;
+        S is the natural next speaker and the only legal action is
+        Pass — drives the engine's auto-pass shortcut."""
         auction = Auction(
-            (ContractBid(east, 100, Suit.HEARTS), DoubleBid(north)),
+            (
+                ContractBid(east, 100, Suit.HEARTS),
+                DoubleBid(north),
+                PassBid(west),
+            ),
         )
         actions = auction.legal_actions(south)
         assert len(actions) == 1
         assert isinstance(actions[0], PassBid)
 
     def test_only_pass_when_partner_redoubled(
-        self, north, south, west, four_players
+        self, north, west, south, east, four_players
     ):
-        """N contracts, W doubles, S (N's partner) redoubles. N is up
-        next and the only legal action is Pass."""
+        """N contracts, W doubles, S (N's partner) redoubles, E passes
+        — N is up next and the only legal action is Pass."""
         auction = Auction(
             (
                 ContractBid(north, 100, Suit.SPADES),
                 DoubleBid(west),
                 RedoubleBid(south),
+                PassBid(east),
             ),
         )
         actions = auction.legal_actions(north)
@@ -631,13 +752,14 @@ class TestLegalActions:
         assert isinstance(actions[0], PassBid)
 
     def test_only_pass_when_partner_doubled_even_after_pass(
-        self, north, east, south, west, four_players
+        self, north, west, south, east, four_players
     ):
         """The partner of a doubler still has only Pass available
         regardless of how many passes follow the Double: they cannot
         re-Double (their team already did), the auction is frozen so
         no contract is legal, and they're on the wrong team to
         Redouble."""
+        # E contracts, N doubles, W passes — S (N's partner) is next.
         auction = Auction(
             (
                 ContractBid(east, 100, Suit.HEARTS),
@@ -650,53 +772,67 @@ class TestLegalActions:
         assert isinstance(actions[0], PassBid)
 
     def test_redouble_still_available_after_intervening_pass(
-        self, north, east, west, four_players
+        self, north, west, south, east, four_players
     ):
         """The contracting team may come back and Redouble even after
         passes intervene since the Double — only the auction's three-
         consecutive-passes terminator closes the window.
-        See ``contree-domain.md §5.3``.
         """
+        # E contracts, N doubles, W passes, S passes — E (contracting
+        # team) is up after the two passes and Redouble must remain
+        # on the table.
         auction = Auction(
             (
                 ContractBid(east, 100, Suit.HEARTS),
                 DoubleBid(north),
                 PassBid(west),
+                PassBid(south),
             ),
         )
-        # East (contracting team) is up after this — Redouble must
-        # remain in their legal set.
         actions = auction.legal_actions(east)
         assert any(isinstance(a, RedoubleBid) for a in actions)
 
     def test_double_still_available_after_intervening_passes(
-        self, north, east, south, west, four_players,
+        self, north, west, south, east, four_players,
     ):
         """Symmetric to the Redouble case: opposing players may come
         back and Coinche after intervening passes since the contract
-        bid. See ``contree-domain.md §5.3``.
+        bid.
         """
+        # N contracts, W passes, S passes — E (opposing team) is up
+        # and Double must still be on the table.
         auction = Auction(
             (
                 ContractBid(north, 100, Suit.SPADES),
-                PassBid(east),
+                PassBid(west),
                 PassBid(south),
             ),
         )
-        # West (opposing team) is up after two passes — Double must
-        # still be on the table.
-        actions = auction.legal_actions(west)
+        actions = auction.legal_actions(east)
         assert any(isinstance(a, DoubleBid) for a in actions)
 
-    def test_no_auto_pass_when_opponent_doubles_own_partner(
-        self, north, east, south, four_players
+    def test_no_auto_pass_when_opponent_doubles_contracting_team(
+        self, north, west, south, east, four_players
     ):
-        """Partner (N) contracted, opponent (E) doubled. S (N's partner,
-        contracting team) has BOTH Pass and Redouble — must not auto-pass."""
+        """Opponent (E) doubled the contract. N (contractor, NS team)
+        is up next and must have BOTH Pass and Redouble — the engine
+        must not auto-pass when the contracting team has the option
+        to redouble.
+
+        (Tests the contractor seat; partner S sits at the same
+        contracting team and the pure rule oracle gives her the same
+        Redouble option, exercised in
+        :meth:`test_includes_redouble_after_being_doubled`.)
+        """
         auction = Auction(
-            (ContractBid(north, 100, Suit.HEARTS), DoubleBid(east)),
+            (
+                ContractBid(north, 100, Suit.HEARTS),
+                PassBid(west),
+                PassBid(south),
+                DoubleBid(east),
+            ),
         )
-        actions = auction.legal_actions(south)
+        actions = auction.legal_actions(north)
         assert len(actions) > 1
         assert any(isinstance(a, RedoubleBid) for a in actions)
 
@@ -714,7 +850,8 @@ class TestApply:
         assert auction.bids == ()
         assert new.bids == (PassBid(north),)
 
-    def test_apply_chains(self, north, east, four_players):
+    def test_apply_chains(self, north, east):
+        # E opens with a pass; N (next in cycle) contracts.
         auction = (
             Auction()
             .apply(PassBid(east))
@@ -723,7 +860,7 @@ class TestApply:
         assert len(auction.bids) == 2
         assert auction.last_contract_bid == ContractBid(north, 80, Suit.SPADES)
 
-    def test_apply_illegal_raises(self, north, east, four_players):
+    def test_apply_illegal_raises(self, north, east):
         auction = Auction((ContractBid(east, 100, Suit.HEARTS),))
         illegal = ContractBid(north, 90, Suit.SPADES)  # lower than 100
         with pytest.raises(IllegalBidError) as excinfo:
@@ -733,9 +870,13 @@ class TestApply:
         assert excinfo.value.bids == auction.bids
 
     def test_apply_double_against_own_team_raises(
-        self, north, south, four_players
+        self, north, west, south, four_players
     ):
-        auction = Auction((ContractBid(north, 100, Suit.SPADES),))
+        # N contracts, W passes — S (N's partner) cannot double their
+        # own team's contract.
+        auction = Auction(
+            (ContractBid(north, 100, Suit.SPADES), PassBid(west)),
+        )
         with pytest.raises(IllegalBidError):
             auction.apply(DoubleBid(south))
 
@@ -750,50 +891,50 @@ class TestIsTerminal:
         assert Auction().is_terminal() is False
 
     def test_three_passes_after_contract_terminal(
-        self, north, east, south, west, four_players
+        self, north, west, south, east
     ):
         auction = Auction(
             (
                 ContractBid(north, 80, Suit.SPADES),
-                PassBid(east),
-                PassBid(south),
                 PassBid(west),
+                PassBid(south),
+                PassBid(east),
             ),
         )
         assert auction.is_terminal() is True
 
     def test_two_passes_after_contract_not_terminal(
-        self, north, east, south, four_players
+        self, north, west, south
     ):
         auction = Auction(
             (
                 ContractBid(north, 80, Suit.SPADES),
-                PassBid(east),
+                PassBid(west),
                 PassBid(south),
             ),
         )
         assert auction.is_terminal() is False
 
     def test_four_passes_terminal_all_pass_wipe(
-        self, north, east, south, west
+        self, north, west, south, east
     ):
         auction = Auction(
             (
                 PassBid(north),
-                PassBid(east),
-                PassBid(south),
                 PassBid(west),
+                PassBid(south),
+                PassBid(east),
             ),
         )
         assert auction.is_terminal() is True
 
     def test_three_passes_no_contract_not_terminal(
-        self, north, east, south
+        self, north, west, south
     ):
         auction = Auction(
             (
                 PassBid(north),
-                PassBid(east),
+                PassBid(west),
                 PassBid(south),
             ),
         )
@@ -801,14 +942,16 @@ class TestIsTerminal:
         assert auction.is_terminal() is False
 
     def test_three_passes_after_double_terminal(
-        self, north, east, south, west, four_players
+        self, north, west, south, east, four_players
     ):
+        # N contracts, W doubles immediately (next in cycle, opposing
+        # team); then 3 consecutive passes from S, E, N terminate.
         auction = Auction(
             (
                 ContractBid(north, 100, Suit.SPADES),
-                DoubleBid(east),
+                DoubleBid(west),
                 PassBid(south),
-                PassBid(west),
+                PassBid(east),
                 PassBid(north),
             ),
         )
@@ -816,24 +959,26 @@ class TestIsTerminal:
 
 
 class TestContractMaterialisation:
-    def test_no_contract_when_all_pass(self, north, east, south, west):
+    def test_no_contract_when_all_pass(self, north, west, south, east):
         auction = Auction(
             (
                 PassBid(north),
-                PassBid(east),
-                PassBid(south),
                 PassBid(west),
+                PassBid(south),
+                PassBid(east),
             ),
         )
         assert auction.contract() is None
 
-    def test_simple_contract(self, north, east, south, west, four_players):
+    def test_simple_contract(
+        self, north, west, south, east, four_players
+    ):
         auction = Auction(
             (
                 ContractBid(north, 80, Suit.SPADES),
-                PassBid(east),
-                PassBid(south),
                 PassBid(west),
+                PassBid(south),
+                PassBid(east),
             ),
         )
         contract = auction.contract()
@@ -845,14 +990,16 @@ class TestContractMaterialisation:
         assert contract.redouble is False
 
     def test_doubled_contract(
-        self, north, east, south, west, four_players
+        self, north, west, south, east, four_players
     ):
+        # N contracts, W (next in cycle, opposing team) doubles; S/E/N
+        # pass to terminate.
         auction = Auction(
             (
                 ContractBid(north, 100, Suit.SPADES),
-                DoubleBid(east),
+                DoubleBid(west),
                 PassBid(south),
-                PassBid(west),
+                PassBid(east),
                 PassBid(north),
             ),
         )
@@ -861,16 +1008,18 @@ class TestContractMaterialisation:
         assert contract.redouble is False
 
     def test_redoubled_contract(
-        self, north, east, south, west, four_players
+        self, north, west, south, east, four_players
     ):
+        # N contracts, W doubles, S (N's partner) redoubles, E/N/W
+        # pass to terminate.
         auction = Auction(
             (
                 ContractBid(north, 100, Suit.SPADES),
-                DoubleBid(east),
+                DoubleBid(west),
                 RedoubleBid(south),
-                PassBid(west),
-                PassBid(north),
                 PassBid(east),
+                PassBid(north),
+                PassBid(west),
             ),
         )
         contract = auction.contract()
@@ -891,17 +1040,29 @@ class TestStateProperties:
         auction = Auction((PassBid(north),))
         assert auction.last_contract_bid is None
 
-    def test_last_contract_bid_returns_most_recent(self, north, east):
+    def test_last_contract_bid_returns_most_recent(
+        self, north, west, south, east
+    ):
+        # N opens at 80; W passes; S passes; E raises to 90 — the
+        # state query should return E's bid.
         first = ContractBid(north, 80, Suit.SPADES)
         second = ContractBid(east, 90, Suit.HEARTS)
-        auction = Auction((first, PassBid(east), second))
+        auction = Auction(
+            (first, PassBid(west), PassBid(south), second),
+        )
         assert auction.last_contract_bid is second
 
     def test_has_double_true_after_double(
-        self, north, east, four_players
+        self, north, west, south, east, four_players
     ):
+        # N contracts, W/S pass, E (opposing) doubles.
         auction = Auction(
-            (ContractBid(north, 100, Suit.SPADES), DoubleBid(east)),
+            (
+                ContractBid(north, 100, Suit.SPADES),
+                PassBid(west),
+                PassBid(south),
+                DoubleBid(east),
+            ),
         )
         assert auction.has_double is True
 
@@ -910,11 +1071,14 @@ class TestStateProperties:
         assert auction.has_double is False
 
     def test_has_redouble_true_after_redouble(
-        self, north, east, four_players
+        self, north, west, south, east, four_players
     ):
+        # N contracts, W/S pass, E doubles, N redoubles.
         auction = Auction(
             (
                 ContractBid(north, 100, Suit.SPADES),
+                PassBid(west),
+                PassBid(south),
                 DoubleBid(east),
                 RedoubleBid(north),
             ),
@@ -922,50 +1086,60 @@ class TestStateProperties:
         assert auction.has_redouble is True
 
     def test_has_redouble_false_when_only_double(
-        self, north, east, four_players
+        self, north, west, south, east, four_players
     ):
         auction = Auction(
-            (ContractBid(north, 100, Suit.SPADES), DoubleBid(east)),
+            (
+                ContractBid(north, 100, Suit.SPADES),
+                PassBid(west),
+                PassBid(south),
+                DoubleBid(east),
+            ),
         )
         assert auction.has_redouble is False
 
     def test_consecutive_passes_counts_from_tail(
-        self, north, east, south, four_players
+        self, north, west, south
     ):
+        # N starts at 100; subsequent passes come from W, then S
+        # (cycle order). Trailing non-pass resets the counter.
         cb = ContractBid(north, 100, Suit.SPADES)
         assert Auction().consecutive_passes == 0
         assert Auction((cb,)).consecutive_passes == 0
-        assert Auction((cb, PassBid(east))).consecutive_passes == 1
-        assert (
-            Auction((cb, PassBid(east), PassBid(south))).consecutive_passes
-            == 2
-        )
-        # Trailing non-pass resets.
+        assert Auction((cb, PassBid(west))).consecutive_passes == 1
         assert (
             Auction(
-                (cb, PassBid(east), ContractBid(south, 110, Suit.HEARTS)),
+                (cb, PassBid(west), PassBid(south)),
+            ).consecutive_passes
+            == 2
+        )
+        # Trailing non-pass resets — S raises after W's pass.
+        assert (
+            Auction(
+                (cb, PassBid(west), ContractBid(south, 110, Suit.HEARTS)),
             ).consecutive_passes
             == 0
         )
 
     def test_partner_bid_returns_partner_last_non_pass(
-        self, north, east, south, four_players
+        self, north, west, south, east, four_players
     ):
+        # E opens at 80; N raises to 90; W passes; S passes — S looks
+        # up the partner's last non-pass, which is N's 90 ♥.
         auction = Auction(
             (
                 ContractBid(east, 80, Suit.SPADES),
                 ContractBid(north, 90, Suit.HEARTS),
-                PassBid(east),
+                PassBid(west),
                 PassBid(south),
             ),
         )
-        # South's partner is North; partner's last non-pass is 90 ♥.
         assert auction.partner_bid(south) == ContractBid(
             north, 90, Suit.HEARTS
         )
 
     def test_partner_bid_none_when_only_passes(
-        self, north, east, south, four_players
+        self, north, south, four_players
     ):
         auction = Auction((PassBid(north),))
         assert auction.partner_bid(south) is None
