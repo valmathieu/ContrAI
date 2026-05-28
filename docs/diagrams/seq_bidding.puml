@@ -62,12 +62,18 @@ loop **while not auction.is_terminal()**
         R -> R : bid = legal[0]  ' PassBid
         note right of R
           Partner has just doubled or
-          redoubled (or a pass has
-          already closed the redouble
-          window). Pass is the only
+          redoubled. Pass is the only
           meaningful action — skip both
           the AI prompt and the human
           view prompt entirely.
+
+          Intervening passes do NOT
+          collapse the action set: the
+          Coinche / Surcoinche window
+          stays open until the auction
+          terminates on three consecutive
+          passes (contree-domain.md
+          §5.3 / §5.4).
         end note
     else normal turn
         R -> R : bid = _gather_bid(\n  player, auction, view\n)

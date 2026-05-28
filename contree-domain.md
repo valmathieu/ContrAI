@@ -149,6 +149,11 @@ proceeds anticlockwise.
   on the bidding team may do this.
 - *Contre* can only be called on the most recent numeric bid (it cannot be
   used to reopen a finished auction).
+- **Intervening passes do not close the Coinche / Surcoinche window.** Both
+  *contre* (by an opposing player) and *surcontre* (by the bidding team)
+  remain legal up until the auction terminates on three consecutive passes
+  per §5.4 — players who passed earlier may re-enter and call *contre* or
+  *surcontre*, consistent with the general re-entry rule in §5.2.
 
 ### 5.4. End of bidding
 

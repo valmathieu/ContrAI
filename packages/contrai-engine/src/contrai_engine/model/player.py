@@ -97,7 +97,7 @@ class Player(BasePlayer, ABC):
         Args:
             auction: The current :class:`Auction`. Use
                 ``auction.legal_actions(self)`` to enumerate legal
-                bids, or query ``auction.last_contract`` /
+                bids, or query ``auction.last_contract_bid`` /
                 ``auction.partner_bid(self)`` for the strategy
                 helpers.
 

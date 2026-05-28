@@ -98,11 +98,14 @@ The files in `mockups/` are **design references created in HTML/SVG** — they s
 **Differences from state 1**:
 
 - **Round panel border becomes yellow** `#e5c07b` (trump active). Title in yellow. Title suffix `★` in gold `#f0b54a`.
+  
   - `Contract: 100 by E-W` — "100" bold default, "by" dim, "E-W" orange bold. **Do not repeat the trump suit here** — it lives in the Trump row.
   - `Trump:    ♥ Hearts ★` — heart glyph red, "Hearts" bold default, ★ gold
   - `Trick:    4 of 8`
   - `Round pts: N-S 38 · E-W 52` — N-S in blue, E-W in orange
+
 - **Last trick panel**: Now uses the **dim/echo** treatment. Border `#444`, title "Last trick 3" in dim. Width compressed to 22 cols (half the width of current trick). Diamond rendered with muted colors — this is intentional secondary information. South's ♠A is the winner, shown with gold pill `★`. Status line: `Won: South` in gold.
+
 - **Current trick panel**: Width 46 cols (the focal point). Title `Current trick`, suffix `trick 4` in dim. Diamond layout:
   
   ```
@@ -110,6 +113,7 @@ The files in `mockups/` are **design references created in HTML/SVG** — they s
    W ♣K (led)        [E ♣A ★]    ← E is currently winning the trick
               S  ?              ← S to play, yellow "?"
   ```
+  
   - **N at top center, E at right (anchored to inner right edge), S at bottom center, W at left (anchored to inner left)**
   - Faint `╱╲` diamond outline in `#3d3d40` between positions
   - Each player rendered as `LABEL CARD`. Label in blue (N/S) or orange (E/W).
@@ -117,10 +121,13 @@ The files in `mockups/` are **design references created in HTML/SVG** — they s
   - **South's slot** shows `?` in yellow bold (pending).
   - **`(led)` annotation** in dim gray follows the leader's card.
   - Status line at bottom of panel: `→ Your turn` in yellow.
+
 - **Hand panel**: 5 cards (sorted trump-first): `♥J ♥A | ♠A | ♦Q ♦10`. Cell width 10 (more breathing room with fewer cards).
+  
   - The two playable cards (`♥J`, `♥A`) get a **green background** `#2e5a2a` spanning the cell, foreground `#cfeac0`, number in white bold.
   - The three non-playable cards (`♠A`, `♦Q`, `♦10`) are dimmed: text in `#6a6a6a`, red suits in `#7a3a3f`.
   - Hint line under the row: `↑ playable (must trump — partner E led ♣A)` in green `#cfeac0`, centered.
+
 - **Prompt panel**: First line `Your turn. Must trump. Choose card [1-5]:` in **yellow bold** (mandatory action).
 
 ### 3. In-Game — Trick Won, Transition (`mockups/03-trick-won.svg`)

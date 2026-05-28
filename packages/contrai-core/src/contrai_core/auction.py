@@ -60,7 +60,7 @@ class Auction:
     # ------------------------------------------------------------------
 
     @classmethod
-    def empty(cls) -> "Auction":
+    def empty(cls) -> Auction:
         """Return a fresh auction with no bids yet."""
 
         return cls()
@@ -92,7 +92,7 @@ class Auction:
             return self._is_redouble_legal(bid)
         return False
 
-    def legal_actions(self, player: "BasePlayer") -> tuple[Bid, ...]:
+    def legal_actions(self, player: BasePlayer) -> tuple[Bid, ...]:
         """Enumerate every legal bid ``player`` could make right now.
 
         Suitable for handing to an MCTS / RL action enumerator or for
@@ -111,19 +111,10 @@ class Auction:
 
         actions: list[Bid] = [PassBid(player)]
 
-        # Contract legality depends only on the *value* — never on the
-        # suit (see ``_is_contract_value_legal``) — and the rule is
-        # monotonic in :attr:`ContractBid.VALID_VALUES` iteration order:
-        # once some value clears (precedence rule + freeze rule say
-        # "yes"), every subsequent value in the list also clears,
-        # because the list is ordered from weakest numeric step up to
-        # the Slam-family sentinels (which sit above every numeric).
-        # The Slam-blocks-everything-including-SoloSlam case fits this
-        # too — it makes the probe return ``False`` for every value
-        # uniformly, so the short-circuit simply never triggers.
-        # That lets us stop probing the moment we find the first legal
-        # value and fan the remainder of the list out over every suit.
-        # See ``TestLegalActionsMonotonicity`` for the pinned invariant.
+        # Contract legality is suit-agnostic and monotonic in
+        # :attr:`ContractBid.VALID_VALUES` order: once a value clears,
+        # every later one does too. Probe until the first hit, then fan
+        # the rest over every suit. See ``TestLegalActionsMonotonicity``.
         found_legal = False
         for value in ContractBid.VALID_VALUES:
             if not found_legal:
@@ -147,7 +138,7 @@ class Auction:
     # Apply
     # ------------------------------------------------------------------
 
-    def apply(self, bid: Bid) -> "Auction":
+    def apply(self, bid: Bid) -> Auction:
         """Return a new auction with ``bid`` appended.
 
         Args:
@@ -175,9 +166,7 @@ class Auction:
         The auction ends on either of:
 
         1. Four consecutive passes from the very first bid — the
-           first-round all-pass wipe (``contree-domain.md §5.4``,
-           "If everyone passes without anyone bidding, the round is
-           annulled").
+           first-round all-pass wipe.
         2. Three consecutive passes after at least one non-pass bid.
            The winning contract is the last non-pass numeric bid.
         """
@@ -199,7 +188,7 @@ class Auction:
             ``None`` if the auction concluded without any numeric bid.
         """
 
-        cb = self.last_contract
+        cb = self.last_contract_bid
         if cb is None:
             return None
         return Contract(cb, double=self.has_double, redouble=self.has_redouble)
@@ -209,7 +198,7 @@ class Auction:
     # ------------------------------------------------------------------
 
     @property
-    def last_contract(self) -> Optional[ContractBid]:
+    def last_contract_bid(self) -> Optional[ContractBid]:
         """The most recent :class:`ContractBid` in the history, or ``None``."""
 
         for bid in reversed(self.bids):
@@ -259,7 +248,7 @@ class Auction:
                 break
         return count
 
-    def partner_bid(self, player: "BasePlayer") -> Optional[Bid]:
+    def partner_bid(self, player: BasePlayer) -> Optional[Bid]:
         """The most recent non-pass bid made by ``player``'s partner.
 
         Useful for AI strategies that condition on a partner's last
@@ -274,8 +263,6 @@ class Auction:
             or the partner has only passed.
         """
 
-        if player.team is None:
-            return None
         for bid in reversed(self.bids):
             if isinstance(bid, PassBid):
                 continue
@@ -284,7 +271,7 @@ class Auction:
         return None
 
     # ------------------------------------------------------------------
-    # Rule helpers (private — see contree-domain.md §5.2 and §5.3)
+    # Rule helpers (private)
     # ------------------------------------------------------------------
 
     def _is_contract_legal(self, bid: ContractBid) -> bool:
@@ -292,9 +279,8 @@ class Auction:
         numeric contract, and the auction must not be frozen by a
         :class:`DoubleBid` or :class:`RedoubleBid`.
 
-        Per ``contree-domain.md §5.3`` a *contre* freezes the auction
-        at the current contract — no more numeric bids are legal until
-        the auction completes.
+        A *double* freezes the auction at the current contract — no 
+        more numeric bids are legal until the auction completes.
 
         Contract legality is a function of the bid's *value* alone —
         the suit never matters to precedence or to the freeze rule.
@@ -326,60 +312,63 @@ class Auction:
             suit) would be a legal next action, ``False`` otherwise.
         """
 
-        last_contract = None
+        last_contract_bid = None
         for prev in reversed(self.bids):
             if isinstance(prev, ContractBid):
-                last_contract = prev
+                last_contract_bid = prev
                 break
             if isinstance(prev, (DoubleBid, RedoubleBid)):
                 # Auction is frozen; new numeric bids cannot reopen it.
                 return False
-        if last_contract is None:
+        if last_contract_bid is None:
             return True
         # Once a Slam or SoloSlam has been announced, no further contract
         # bid is legal. This is asymmetric for the Slam → SoloSlam
         # progression: Slam (500) blocks SoloSlam (1000) even though the
         # latter outranks it numerically, per the user-confirmed rule.
-        if last_contract.value in ("Slam", "SoloSlam"):
+        if last_contract_bid.value in ("Slam", "SoloSlam"):
             return False
         # Slam and SoloSlam outrank every numeric contract (80–180).
         if value in ("Slam", "SoloSlam"):
             return True
-        return value > last_contract.value
+        return value > last_contract_bid.value
 
     def _is_double_legal(self, bid: DoubleBid) -> bool:
         """A :class:`DoubleBid` requires a live :class:`ContractBid`
-        by the opposing team, no intervening pass since that bid, and
-        no prior :class:`DoubleBid` / :class:`RedoubleBid`.
+        by the opposing team and no prior :class:`DoubleBid` /
+        :class:`RedoubleBid`.
+
+        Intervening passes since the contract bid do **not** close the
+        Coinche window — opposing players may come back and Coinche at
+        any point before the auction ends. The auction's natural
+        terminator (three consecutive passes after a non-pass bid)
+        closes the window on its own. See ``contree-domain.md §5.3``.
         """
 
         if not self.bids:
             return False
-        last_contract = None
-        has_double = False
-        passes_since_contract = 0
+        last_contract_bid = None
         for prev in reversed(self.bids):
             if isinstance(prev, ContractBid):
-                last_contract = prev
+                last_contract_bid = prev
                 break
-            elif isinstance(prev, DoubleBid):
-                has_double = True
-            elif isinstance(prev, RedoubleBid):
+            elif isinstance(prev, (DoubleBid, RedoubleBid)):
                 return False
-            elif isinstance(prev, PassBid):
-                passes_since_contract += 1
-        if last_contract is None or has_double:
+        if last_contract_bid is None:
             return False
-        if last_contract.player.team is bid.player.team:
-            return False
-        if passes_since_contract > 0:
+        if last_contract_bid.player.team is bid.player.team:
             return False
         return True
 
     def _is_redouble_legal(self, bid: RedoubleBid) -> bool:
         """A :class:`RedoubleBid` requires a live :class:`DoubleBid`
-        against the bidder's team, no intervening pass since that
-        Double, and no prior :class:`RedoubleBid`.
+        against the bidder's team and no prior :class:`RedoubleBid`.
+
+        Symmetrically with :meth:`_is_double_legal`, intervening passes
+        between the Double and the Redouble do **not** close the
+        Surcoinche window — the contracting team may come back and
+        Surcoinche at any point before the auction's three-consecutive-
+        passes terminator fires. See ``contree-domain.md §5.3``.
         """
 
         if not self.bids:
@@ -387,28 +376,17 @@ class Auction:
         contract_player = None
         has_double = False
         has_redouble = False
-        passes_since_double = 0
         for prev in reversed(self.bids):
             if isinstance(prev, RedoubleBid):
                 has_redouble = True
                 break
             elif isinstance(prev, DoubleBid):
-                # Found the DoubleBid we'd be redoubling; keep scanning
-                # backwards for the underlying ContractBid.
                 has_double = True
-            elif isinstance(prev, PassBid):
-                # Only passes that appear after the double (chronologically)
-                # close the redouble window. In reversed iteration those
-                # are encountered *before* we see the DoubleBid.
-                if not has_double:
-                    passes_since_double += 1
             elif isinstance(prev, ContractBid):
                 contract_player = prev.player
                 break
         if not has_double or has_redouble or contract_player is None:
             return False
         if contract_player.team is not bid.player.team:
-            return False
-        if passes_since_double > 0:
             return False
         return True
