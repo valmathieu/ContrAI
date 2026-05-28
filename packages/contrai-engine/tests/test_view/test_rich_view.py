@@ -24,6 +24,7 @@ from contrai_core.team import Team
 from contrai_core.bid import ContractBid, DoubleBid, PassBid
 from contrai_engine.view.rich_view import (
     RichView,
+    RoundSummary,
     _bid_to_legacy,
     _current_winner,
     _explain_constraint,
@@ -62,7 +63,7 @@ def four_players():
 class TestParseBidInput:
     """Bid-string parser. Returns engine-shaped bid or ``None`` on error."""
 
-    @pytest.mark.parametrize("raw", ["pass", "PASS", "Pass", "p", "passe", " pass "])
+    @pytest.mark.parametrize("raw", ["pass", "PASS", "Pass", "p", " pass "])
     def test_pass_variants(self, raw):
         assert _parse_bid_input(raw) == "Pass"
 
@@ -81,12 +82,13 @@ class TestParseBidInput:
     @pytest.mark.parametrize(
         "raw",
         ["coinche", "surcoinche", "contrée", "contree",
-         "surcontrée", "surcontree"],
+         "surcontrée", "surcontree", "passe"],
     )
     def test_rejects_french_aliases(self, raw):
         """The CLI uses the English vocabulary exclusively. The parser
         used to accept the French aliases ``coinche`` / ``surcoinche`` /
-        ``contrée`` / ``surcontrée``; those have been retired."""
+        ``contrée`` / ``surcontrée`` / ``passe``; those have been
+        retired."""
         assert _parse_bid_input(raw) is None
 
     @pytest.mark.parametrize(
@@ -103,7 +105,6 @@ class TestParseBidInput:
             ("150 clubs", 150, Suit.CLUBS),
             ("160 nt", 160, Suit.NO_TRUMP),
             ("160 notrump", 160, Suit.NO_TRUMP),
-            ("160 sa", 160, Suit.NO_TRUMP),  # French sans-atout
             ("80 ♥", 80, Suit.HEARTS),
             ("80 ♠", 80, Suit.SPADES),
         ],
@@ -169,6 +170,7 @@ class TestParseBidInput:
             "abc h",     # non-numeric value
             "80 h s",    # too many tokens
             "capot s",   # legacy name no longer accepted
+            "160 sa",    # French sans-atout alias no longer accepted
         ],
     )
     def test_rejects_garbage(self, raw):
@@ -862,7 +864,7 @@ class TestRoundRecapPanel:
             round_, {"North-South": 110, "East-West": 0}
         )
         text = panel.renderable.plain
-        assert "Dix de der" in text
+        assert "Last trick" in text
         assert "+10" in text
 
     def test_recap_contract_row_shows_contract_value_when_made_normal(
@@ -1717,3 +1719,54 @@ class TestRenderInGameHandSlot:
         )
         combined = "\n".join(captured)
         assert "Your hand" not in combined
+
+
+# ======================================================================
+# _format_summary_contract — end-game round-by-round table cell
+# ======================================================================
+
+
+class TestFormatSummaryContract:
+    """The end-game summary contract cell must use English vocabulary
+    exclusively — no French ``coinché`` / ``surcoinché`` leakage."""
+
+    class _StubContract:
+        def __init__(self, value, suit, *, double=False, redouble=False):
+            self.value = value
+            self.suit = suit
+            self.double = double
+            self.redouble = redouble
+
+    @staticmethod
+    def _row(contract, team_name="North-South"):
+        return RoundSummary(
+            round_number=1,
+            contract=contract,
+            contract_team_name=team_name,
+            contract_made=True,
+            ns_pts=100,
+            ew_pts=0,
+            running_ns=100,
+            running_ew=0,
+        )
+
+    def test_doubled_contract_reads_english(self):
+        view = RichView()
+        row = self._row(self._StubContract(100, Suit.HEARTS, double=True))
+        text = view._format_summary_contract(row).plain
+        assert "doubled" in text
+        assert "coinché" not in text
+
+    def test_redoubled_contract_reads_english(self):
+        view = RichView()
+        row = self._row(self._StubContract(100, Suit.HEARTS, redouble=True))
+        text = view._format_summary_contract(row).plain
+        assert "redoubled" in text
+        assert "surcoinché" not in text
+
+    def test_plain_contract_has_no_double_marker(self):
+        view = RichView()
+        row = self._row(self._StubContract(100, Suit.HEARTS))
+        text = view._format_summary_contract(row).plain
+        assert "doubled" not in text
+        assert "redoubled" not in text

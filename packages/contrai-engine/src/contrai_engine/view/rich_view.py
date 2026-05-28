@@ -92,7 +92,7 @@ POSITION_SHORT = {"North": "N", "East": "E", "South": "S", "West": "W"}
 TEAM_ABBR = {"North-South": "N-S", "East-West": "E-W"}
 
 # Bid keyword aliases for parsing.
-PASS_WORDS = {"pass", "p", "passe"}
+PASS_WORDS = {"pass", "p"}
 DOUBLE_WORDS = {"double", "d"}
 REDOUBLE_WORDS = {"redouble", "r"}
 SUIT_ALIASES = {
@@ -101,7 +101,6 @@ SUIT_ALIASES = {
     "d": Suit.DIAMONDS, "diamonds": Suit.DIAMONDS, "diamond": Suit.DIAMONDS, "♦": Suit.DIAMONDS,
     "c": Suit.CLUBS, "clubs": Suit.CLUBS, "club": Suit.CLUBS, "♣": Suit.CLUBS,
     "nt": Suit.NO_TRUMP, "notrump": Suit.NO_TRUMP, "no-trump": Suit.NO_TRUMP,
-    "sa": Suit.NO_TRUMP,  # French "Sans Atout"
 }
 # Derived from ``ContractBid.VALID_VALUES`` so the human-input parser
 # stays in lockstep with the auction's canonical value ladder. Sentinel
@@ -282,7 +281,7 @@ def _parse_bid_input(raw: str) -> Optional[str | tuple[int | str, Suit]]:
     """Parse a human bid string. Returns engine bid representation or None.
 
     Accepted forms:
-        pass / p / passe       -> 'Pass'
+        pass / p               -> 'Pass'
         double / d             -> 'Double'
         redouble / r           -> 'Redouble'
         "80 h" / "100 hearts" / "150nt"   -> (value, Suit)
@@ -1868,7 +1867,7 @@ class RichView:
         """Render the per-team breakdown table inside the recap panel.
 
         Rows: Contract (the bonus a team earns from the contract being
-        made or failed), Tricks won (cards), Dix de der, Belote, then
+        made or failed), Tricks won (cards), Last trick, Belote, then
         a divider and the engine-computed Round score. The four
         component rows always sum to the Round score — when the engine
         substitutes a flat formula (doubled-made attacker, failed
@@ -1942,9 +1941,9 @@ class RichView:
         row_cards.append(f"   ({ns_tricks}/{ew_tricks} tricks)", style=DIM)
         row_cards.append("\n")
 
-        # Dix-de-der.
+        # Last-trick bonus (10 points to the team that wins trick 8).
         row_dxd = Text()
-        row_dxd.append(f"  Dix de der            ", style=FG)
+        row_dxd.append(f"  {'Last trick (10)':<22}", style=FG)
         row_dxd.append_text(_component_cell(ns, "dix_de_der", "dix_count"))
         row_dxd.append("  ")
         row_dxd.append_text(_component_cell(ew, "dix_de_der", "dix_count"))
@@ -2207,9 +2206,9 @@ class RichView:
         t.append(_suit_glyph(row.contract.suit),
                  style=_suit_color(row.contract.suit))
         if row.contract.redouble:
-            t.append(" surcoinché", style=GOLD)
+            t.append(" redoubled", style=GOLD)
         elif row.contract.double:
-            t.append(" coinché", style=GOLD)
+            t.append(" doubled", style=GOLD)
         return t
 
 
