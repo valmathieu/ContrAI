@@ -77,21 +77,22 @@ class ContractBid(Bid):
     Two string sentinels represent the all-tricks contracts:
 
     - ``"Slam"`` — the contracting team must win all 8 tricks. Outranks
-      every numeric bid (80–160).
+      every numeric bid (80–180).
     - ``"SoloSlam"`` — the contracting **player personally** must win
       all 8 tricks (their partner may not win any). Outranks Slam in
       raw numeric value, but is asymmetrically blocked once a Slam has
       been announced (see :class:`contrai_core.Auction`).
 
     Attributes:
-        value: A numeric step (80, 90, 100, …, 160), or one of the
+        value: A numeric step (80, 90, 100, …, 180), or one of the
             literal strings ``"Slam"`` / ``"SoloSlam"``.
         suit: The trump suit — any :class:`Suit`, including
             ``Suit.NO_TRUMP``.
     """
 
     VALID_VALUES: ClassVar[list] = [
-        80, 90, 100, 110, 120, 130, 140, 150, 160, "Slam", "SoloSlam",
+        80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180,
+        "Slam", "SoloSlam",
     ]
     VALID_SUITS: ClassVar[list] = list(Suit)
 
@@ -124,7 +125,7 @@ class ContractBid(Bid):
         the bidder commits to, used both for auction precedence and as
         one of the two halves of the Slam-family scoring formula.
         ``"Slam"`` → 250, ``"SoloSlam"`` → 500. (Both still outrank the
-        numeric ceiling of 160.)
+        numeric ceiling of 180.)
 
         The final at-risk amount on a Slam-family round is
         ``(base + substitute) × multiplier`` where ``substitute``

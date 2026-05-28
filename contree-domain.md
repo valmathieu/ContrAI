@@ -114,8 +114,14 @@ proceeds anticlockwise.
   the number of points your team commits to taking with that suit as trump.
   - Minimum opening bid: **80**.
   - Increments: **10 points**.
-  - Maximum numeric bid: **160**.
+  - Maximum numeric bid: **180**.
   - Each new bid must be strictly higher than the current one.
+
+  > The 170 and 180 steps are only feasible with **Belote** in hand (K + Q of
+  > trump add 20 points), since the cards alone cap at 162 + 10 *dix de der* =
+  > 172. The auction does **not** enforce that constraint at bid time —
+  > announcing 170 / 180 without Belote is legal but commits the bidder to a
+  > contract they cannot make on cards alone, which will *chuter* at scoring.
 - **Bid Slam** (*Capot*). A special bid declaring your team will take **all 8
   tricks**. Contract base value **250** points. Slam outranks any numeric
   bid: once declared, no further contract bid is legal (numeric, Slam, or
@@ -235,12 +241,12 @@ The total across both teams (excluding Belote) is always **162**.
 
 Let:
 
-- `C` = numeric contract value (one of 80, 90, …, 160)
+- `C` = numeric contract value (one of 80, 90, …, 180)
 - `P_attack` = points realized by the declaring team (cards + der + Belote if
   applicable)
 - `M` = multiplier: 1 (no contre), 2 (contre), 4 (surcontre)
 
-#### Numeric contracts (80–160)
+#### Numeric contracts (80–180)
 
 **Contract made** (`P_attack ≥ C`):
 
@@ -388,6 +394,11 @@ The table tells you, given your hand, what is the highest opening contract you
 can reasonably announce. Read each row as: *"If your hand contains at least
 the listed pieces, you can open at this level."*
 
+> The auction itself allows numeric bids up to **180** (see §5.2), but this
+> opening-bid convention conservatively caps at 160 — 170 and 180 are
+> Belote-only steps and the table here doesn't try to characterise hands
+> strong enough to open there.
+
 | Opening | Required trumps | Min trumps | Aces | Non-bare tens | Min tricks | Belote |
 | ------- | --------------- | ---------- | ---- | ------------- | ---------- | ------ |
 | 80      | J ⊕ 9 (one of)  | 3          | 1    |               | 4          |        |
@@ -443,7 +454,7 @@ threshold; details live alongside the AI implementation.*
 [Deal]      → 8 cards each, 3-2-3 anticlockwise
    ↓
 [Bidding]   → starting right of dealer
-              actions: bid (80–160, slam, or solo slam), contre, surcontre, pass
+              actions: bid (80–180, slam, or solo slam), contre, surcontre, pass
               ends: 3 consecutive passes after the last bid
    ↓
 [Card play] → 8 tricks, anticlockwise, lead = right of dealer

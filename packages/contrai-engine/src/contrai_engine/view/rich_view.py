@@ -103,7 +103,11 @@ SUIT_ALIASES = {
     "nt": Suit.NO_TRUMP, "notrump": Suit.NO_TRUMP, "no-trump": Suit.NO_TRUMP,
     "sa": Suit.NO_TRUMP,  # French "Sans Atout"
 }
-VALID_BID_VALUES = {80, 90, 100, 110, 120, 130, 140, 150, 160}
+# Derived from ``ContractBid.VALID_VALUES`` so the human-input parser
+# stays in lockstep with the auction's canonical value ladder. Sentinel
+# strings (``"Slam"`` / ``"SoloSlam"``) are handled by a separate parsing
+# branch above, so only the numeric subset is needed here.
+VALID_BID_VALUES = {v for v in ContractBid.VALID_VALUES if isinstance(v, int)}
 
 
 # ---------------------------------------------------------------------------

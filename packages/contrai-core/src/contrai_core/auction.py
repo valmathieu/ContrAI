@@ -316,7 +316,7 @@ class Auction:
         Double/Redouble freeze state, never on the suit announced.
 
         Args:
-            value: A numeric step (80, 90, …, 160) or the ``"Slam"`` /
+            value: A numeric step (80, 90, …, 180) or the ``"Slam"`` /
                 ``"SoloSlam"`` sentinels. No validation is performed
                 here — ``ContractBid.__post_init__`` enforces the
                 domain of valid values.
@@ -342,7 +342,7 @@ class Auction:
         # latter outranks it numerically, per the user-confirmed rule.
         if last_contract.value in ("Slam", "SoloSlam"):
             return False
-        # Slam and SoloSlam outrank every numeric contract (80–160).
+        # Slam and SoloSlam outrank every numeric contract (80–180).
         if value in ("Slam", "SoloSlam"):
             return True
         return value > last_contract.value

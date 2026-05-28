@@ -94,7 +94,8 @@ class TestContractBidConstruction:
     """Frozen dataclass validates value + suit in __post_init__."""
 
     @pytest.mark.parametrize(
-        "value", [80, 90, 100, 110, 120, 130, 140, 150, 160, "Slam", "SoloSlam"]
+        "value",
+        [80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, "Slam", "SoloSlam"],
     )
     def test_valid_values(self, north, value):
         bid = ContractBid(north, value, Suit.SPADES)
@@ -109,7 +110,7 @@ class TestContractBidConstruction:
 
     @pytest.mark.parametrize(
         "bad_value",
-        [70, 85, 170, 0, -10, "slam", "SLAM", "Capot", "solo", "Solo Slam", "80"],
+        [70, 85, 190, 0, -10, "slam", "SLAM", "Capot", "solo", "Solo Slam", "80"],
     )
     def test_invalid_value_raises(self, north, bad_value):
         with pytest.raises(ValueError, match="Invalid contract value"):

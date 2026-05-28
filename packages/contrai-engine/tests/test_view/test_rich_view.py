@@ -163,9 +163,9 @@ class TestParseBidInput:
             "80",        # value but no suit
             "h",         # suit but no value
             "80 q",      # invalid suit letter
-            "70 h",      # value below the 80-160 floor
+            "70 h",      # value below the 80 floor
             "85 h",      # value not on the 10-step ladder
-            "170 h",     # value above 160
+            "190 h",     # value above the 180 ceiling
             "abc h",     # non-numeric value
             "80 h s",    # too many tokens
             "capot s",   # legacy name no longer accepted

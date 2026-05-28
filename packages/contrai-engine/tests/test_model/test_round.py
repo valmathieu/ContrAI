@@ -786,7 +786,7 @@ class TestSlamFamilyBeloteLayering:
 
 
 class TestNumericContractScoringRegression:
-    """Confirms numeric (80–160) contracts are *not* affected by the
+    """Confirms numeric (80–180) contracts are *not* affected by the
     Slam-family branch added during this refactor."""
 
     @staticmethod

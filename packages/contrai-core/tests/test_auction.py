@@ -539,9 +539,9 @@ class TestLegalActions:
         actions = Auction().legal_actions(north)
         # Always starts with the Pass action.
         assert isinstance(actions[0], PassBid)
-        # 11 values × 6 suits = 66 ContractBids legal at start, plus the Pass.
+        # 13 values × 6 suits = 78 ContractBids legal at start, plus the Pass.
         contracts = [a for a in actions if isinstance(a, ContractBid)]
-        assert len(contracts) == 11 * 6
+        assert len(contracts) == 13 * 6
         # No Double / Redouble before there's a contract to challenge.
         assert not any(isinstance(a, DoubleBid) for a in actions)
         assert not any(isinstance(a, RedoubleBid) for a in actions)

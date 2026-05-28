@@ -333,7 +333,7 @@ class Round:
 
         Two scoring paths coexist:
 
-        - **Numeric contracts (80–160)** use the historical formula
+        - **Numeric contracts (80–180)** use the historical formula
           ``base + card_points`` (made) and ``(160 + base) * multiplier``
           (failed). Card points include the *dix de der* (10 pts for
           the last trick) and the belote bonus (+20 for the team
@@ -441,7 +441,7 @@ class Round:
             self.round_scores = team_scores
             return team_scores
 
-        # ----- Numeric contract scoring path (80-160) -----
+        # ----- Numeric contract scoring path (80-180) -----
         contract_team_points = team_card_points[contract_team_name]
         contract_made = contract_team_points >= contract_value
 

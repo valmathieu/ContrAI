@@ -162,7 +162,7 @@ class Contract:
         points on a Slam-family round.
 
         For Slam the substitute is 250; for Solo Slam it is 500.
-        For numeric (80-160) contracts there is no substitute —
+        For numeric (80-180) contracts there is no substitute —
         teams actually count the cards they took — and this method
         returns 0.
 
