@@ -111,13 +111,25 @@ class Auction:
 
         actions: list[Bid] = [PassBid(player)]
 
-        # Contract legality depends only on the *value* (precedence vs
-        # the prior contract + the freeze rule), never on the suit. We
-        # therefore probe each value once and, if legal, fan out across
-        # every suit. See ``_is_contract_value_legal``.
+        # Contract legality depends only on the *value* — never on the
+        # suit (see ``_is_contract_value_legal``) — and the rule is
+        # monotonic in :attr:`ContractBid.VALID_VALUES` iteration order:
+        # once some value clears (precedence rule + freeze rule say
+        # "yes"), every subsequent value in the list also clears,
+        # because the list is ordered from weakest numeric step up to
+        # the Slam-family sentinels (which sit above every numeric).
+        # The Slam-blocks-everything-including-SoloSlam case fits this
+        # too — it makes the probe return ``False`` for every value
+        # uniformly, so the short-circuit simply never triggers.
+        # That lets us stop probing the moment we find the first legal
+        # value and fan the remainder of the list out over every suit.
+        # See ``TestLegalActionsMonotonicity`` for the pinned invariant.
+        found_legal = False
         for value in ContractBid.VALID_VALUES:
-            if not self._is_contract_value_legal(value):
-                continue
+            if not found_legal:
+                if not self._is_contract_value_legal(value):
+                    continue
+                found_legal = True
             for suit in ContractBid.VALID_SUITS:
                 actions.append(ContractBid(player, value, suit))
 

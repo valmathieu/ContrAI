@@ -334,6 +334,94 @@ class TestContractLegalitySuitIndependence:
 
 
 # ---------------------------------------------------------------------------
+# Monotonicity invariant — load-bearing for legal_actions's short-circuit
+# ---------------------------------------------------------------------------
+
+
+class TestLegalActionsMonotonicity:
+    """``Auction._is_contract_value_legal`` is monotonic in
+    :attr:`ContractBid.VALID_VALUES` iteration order.
+
+    Concretely: once some value in the list clears as legal, every
+    subsequent value in the list must also clear. This is what lets
+    :meth:`Auction.legal_actions` stop probing the moment it finds the
+    first legal value and fan the remainder of the list out across
+    every suit without further checks. If a future rule ever blocks a
+    *specific* high value (a hypothetical "you cannot bid 170 after a
+    160-doubled contract", etc.), this invariant breaks and the
+    short-circuit must be re-thought.
+    """
+
+    @pytest.fixture
+    def histories(
+        self, north, east, south, west, four_players,
+    ) -> list[Auction]:
+        """Auction histories covering every shape the rule helper sees:
+        empty, after a low numeric, after the numeric ceiling, after a
+        Slam, after a SoloSlam, and after a freeze by Double."""
+        cb_low = ContractBid(east, 100, Suit.HEARTS)
+        cb_ceiling = ContractBid(east, 160, Suit.HEARTS)
+        cb_slam = ContractBid(east, "Slam", Suit.HEARTS)
+        cb_solo = ContractBid(east, "SoloSlam", Suit.HEARTS)
+        return [
+            Auction(),
+            Auction((cb_low,)),
+            Auction((cb_ceiling,)),
+            Auction((cb_slam,)),
+            Auction((cb_solo,)),
+            Auction((cb_low, DoubleBid(south))),
+        ]
+
+    def test_value_legality_is_monotonic_in_iteration_order(self, histories):
+        for auction in histories:
+            seen_legal = False
+            for value in ContractBid.VALID_VALUES:
+                is_legal = auction._is_contract_value_legal(value)
+                if seen_legal:
+                    assert is_legal, (
+                        f"Monotonicity broken for {auction.bids!r}: "
+                        f"value={value!r} is illegal after an earlier "
+                        f"value in VALID_VALUES was legal. "
+                        f"legal_actions's short-circuit assumes monotonicity."
+                    )
+                elif is_legal:
+                    seen_legal = True
+
+    def test_short_circuit_matches_per_value_probe(
+        self, north, east, south, four_players,
+    ):
+        """The short-circuited :meth:`Auction.legal_actions` produces the
+        same set of :class:`ContractBid` actions as a full per-value probe
+        would. Drives the equivalence the optimisation relies on across
+        every history shape exercised by :attr:`histories`."""
+        scenarios = [
+            Auction(),
+            Auction((ContractBid(east, 100, Suit.HEARTS),)),
+            Auction((ContractBid(east, 160, Suit.HEARTS),)),
+            Auction((ContractBid(east, "Slam", Suit.HEARTS),)),
+            Auction((ContractBid(east, "SoloSlam", Suit.HEARTS),)),
+            Auction(
+                (ContractBid(east, 100, Suit.HEARTS), DoubleBid(south)),
+            ),
+        ]
+        for auction in scenarios:
+            from_short_circuit = {
+                a for a in auction.legal_actions(north)
+                if isinstance(a, ContractBid)
+            }
+            from_full_probe = {
+                ContractBid(north, value, suit)
+                for value in ContractBid.VALID_VALUES
+                for suit in ContractBid.VALID_SUITS
+                if auction._is_contract_value_legal(value)
+            }
+            assert from_short_circuit == from_full_probe, (
+                f"Short-circuit diverged from per-value probe for "
+                f"{auction.bids!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
 # DoubleBid legality
 # ---------------------------------------------------------------------------
 
