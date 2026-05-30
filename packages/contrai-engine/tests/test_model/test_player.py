@@ -9,6 +9,7 @@ from contrai_core import (
     DoubleBid,
     Hand,
     PassBid,
+    RedoubleBid,
 )
 from contrai_core.card import Card
 from contrai_core.team import Team
@@ -294,6 +295,119 @@ class TestAiPlayerBidding:
         ])
         bid = ai_player.choose_bid(auction)
 
+        assert isinstance(bid, PassBid)
+
+    # --- Bidding under a standing Coinche / Surcoinche --------------------
+    # Regression coverage for the crash where the expert table, blind to a
+    # Double freezing the auction, returned an illegal numeric raise (even
+    # over its *own* partner) and ``Auction.apply`` aborted the game with
+    # ``IllegalBidError``. A standing Double permits only Pass, or a
+    # Surcoinche (Redouble) from the contracting team.
+
+    def test_choose_bid_strong_hand_overbids_partner_without_double(
+        self, ai_player, ai_opponent_player, sample_cards_strong_spades
+    ):
+        """Control case: with no Double, the strong AI *does* raise partner.
+
+        Establishes that the Pass in
+        :meth:`test_choose_bid_passes_when_opponent_doubled_partner` is
+        caused by the freeze, not by the hand being too weak to raise.
+        """
+        ai_player.hand = sample_cards_strong_spades  # max contract 130
+        partner = ai_player.team.players[1]
+        auction = _auction([(partner, (80, Suit.SPADES))])
+        bid = ai_player.choose_bid(auction)
+        assert isinstance(bid, ContractBid)
+        assert bid.value == 130
+        assert bid.suit == Suit.SPADES
+
+    def test_choose_bid_passes_when_opponent_doubled_partner(
+        self, ai_player, ai_opponent_player, sample_cards_strong_spades
+    ):
+        """AI must Pass — not raise — when an opponent Coinched partner.
+
+        The exact reproduction of the reported crash: partner holds the
+        contract, an opponent Doubles, and the AI's hand is strong enough
+        that the open-auction path would raise to 130. The Double freezes
+        the auction, so the only non-redouble action is Pass.
+        """
+        ai_player.hand = sample_cards_strong_spades
+        partner = ai_player.team.players[1]
+        auction = _auction([
+            (partner, (80, Suit.SPADES)),
+            (ai_opponent_player, 'Double'),
+        ])
+        bid = ai_player.choose_bid(auction)
+        assert isinstance(bid, PassBid)
+
+    def test_choose_bid_passes_when_own_team_doubled_opponent(
+        self, ai_player, ai_opponent_player, sample_cards_strong_spades
+    ):
+        """AI on the *doubling* side may only Pass (no raise, no redouble).
+
+        Here the opponents hold the contract and the AI's partner has
+        already Coinched it. The contracting team is the opponents, so a
+        Surcoinche is illegal for this seat and the strong hand must not
+        tempt a numeric raise either.
+        """
+        ai_player.hand = sample_cards_strong_spades
+        partner = ai_player.team.players[1]
+        auction = _auction([
+            (ai_opponent_player, (120, Suit.HEARTS)),
+            (partner, 'Double'),
+        ])
+        bid = ai_player.choose_bid(auction)
+        assert isinstance(bid, PassBid)
+
+    def test_choose_bid_passes_after_redouble(
+        self, ai_player, ai_opponent_player, sample_cards_strong_spades
+    ):
+        """Once the auction is Surcoinched, only Pass remains."""
+        ai_player.hand = sample_cards_strong_spades
+        partner = ai_player.team.players[1]
+        auction = _auction([
+            (partner, (110, Suit.SPADES)),
+            (ai_opponent_player, 'Double'),
+            (partner, 'Redouble'),
+        ])
+        bid = ai_player.choose_bid(auction)
+        assert isinstance(bid, PassBid)
+
+    def test_choose_bid_surcoinches_when_strategy_approves(
+        self, ai_player, ai_opponent_player, sample_cards_weak
+    ):
+        """Contracting team may Redouble when the strategy says so.
+
+        ``_should_redouble`` is a stub returning ``False`` today, so we
+        force it ``True`` to exercise the (legal) Surcoinche path and
+        confirm the resulting :class:`RedoubleBid` is what the Auction
+        would accept.
+        """
+        ai_player.hand = sample_cards_weak
+        partner = ai_player.team.players[1]
+        auction = _auction([
+            (partner, (100, Suit.SPADES)),
+            (ai_opponent_player, 'Double'),
+        ])
+        ai_player._should_redouble = lambda: True  # type: ignore[method-assign]
+        bid = ai_player.choose_bid(auction)
+        assert isinstance(bid, RedoubleBid)
+        assert auction.is_legal(bid)
+
+    def test_choose_bid_guard_converts_illegal_table_bid_to_pass(
+        self, ai_player, ai_opponent_player, sample_cards_weak
+    ):
+        """The is_legal safety net turns an illegal expert-table bid into Pass.
+
+        Independently of the freeze handling, ``choose_bid`` must never
+        hand ``Auction.apply`` a bid it would reject. We force the expert
+        table to emit an under-cutting raise (90 over a live 140) and
+        assert the guard downgrades it to the always-legal Pass.
+        """
+        ai_player.hand = sample_cards_weak
+        auction = _auction([(ai_opponent_player, (140, Suit.SPADES))])
+        ai_player._choose_wire = lambda current_bids: (90, Suit.SPADES)  # type: ignore[method-assign]
+        bid = ai_player.choose_bid(auction)
         assert isinstance(bid, PassBid)
 
     # --- Slam / Solo Slam bidding -----------------------------------------

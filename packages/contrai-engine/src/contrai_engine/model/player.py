@@ -193,9 +193,58 @@ class AiPlayer(Player):
             A :class:`Bid` instance the engine will validate.
         """
 
+        # A standing Coinche (Double) freezes the auction: no further
+        # numeric contract bids are legal — only Pass, or a Surcoinche
+        # (Redouble) from the team that owns the contract (see
+        # ``Auction._is_contract_value_legal`` / ``contree-domain.md
+        # §5.3``). The expert bidding table below has no model of this
+        # freeze and would happily try to raise — including raising its
+        # *own* partner's contract — producing an illegal ContractBid.
+        # Resolve the frozen states here before delegating.
+        if auction.has_redouble:
+            # Already surcoinched; nothing legal remains but to pass.
+            return PassBid(self)
+        if auction.has_double:
+            return self._choose_under_double(auction)
+
         current_bids = [(b.player, bid_to_wire(b)) for b in auction.bids]
         wire_choice = self._choose_wire(current_bids)
-        return wire_to_bid(self, wire_choice)
+        bid = wire_to_bid(self, wire_choice)
+
+        # Safety net honouring the Auction design contract: callers must
+        # only propose legal bids, there is no silent force-a-Pass in
+        # ``Auction.apply`` (it raises ``IllegalBidError``). If the
+        # expert table still produced an illegal bid in some unmodeled
+        # edge case, fall back to the always-legal Pass rather than
+        # crash the whole game mid-auction.
+        if not auction.is_legal(bid):
+            return PassBid(self)
+        return bid
+
+    def _choose_under_double(self, auction: Auction) -> Bid:
+        """Pick a bid when a Coinche (Double) has frozen the auction.
+
+        With a Double standing, the only legal actions are :class:`PassBid`
+        and — for the side that owns the contract — a :class:`RedoubleBid`
+        (Surcoinche). Numeric raises are illegal, so the expert bidding
+        table must not run. We offer a Surcoinche only when we are on the
+        contracting team and :meth:`_should_redouble` approves; otherwise
+        we pass.
+
+        Args:
+            auction: The current (doubled) :class:`Auction` state.
+
+        Returns:
+            A :class:`RedoubleBid` when surcoinching is both legal and
+            strategically chosen, else a :class:`PassBid`.
+        """
+
+        contract_bid = auction.last_contract_bid
+        if contract_bid is not None and contract_bid.player.team is self.team:
+            redouble = RedoubleBid(self)
+            if auction.is_legal(redouble) and self._should_redouble():
+                return redouble
+        return PassBid(self)
 
     def _choose_wire(self, current_bids):
         """Strategy core: pick a wire-format bid for ``current_bids``.
