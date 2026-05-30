@@ -244,8 +244,29 @@ def _explain_constraint(
     return hint
 
 
+def _seat_letter(player: Optional[BasePlayer]) -> Optional[Text]:
+    """Single-letter seat label colored by the player's team, or ``None``.
+
+    Used to name the players behind a contract: the taker whose bid set
+    it, and the Coinche / Surcoinche caller. Each letter keeps the
+    seat's team color (blue for N-S, orange for E-W).
+    """
+    if player is None or getattr(player, "position", None) is None:
+        return None
+    return Text(
+        _position_short(player.position),
+        style=f"bold {_position_color(player.position)}",
+    )
+
+
 def _format_contract_short(contract: Contract) -> Text:
-    """Short label: ``"100 by E-W"`` with team in team color."""
+    """Short label: ``"100 by E  ×2 by S"``.
+
+    Names the players, not just the team: the contract-setter follows
+    ``by`` as a single team-colored seat letter, and any Coinche /
+    Surcoinche shows its multiplier with the caller's seat
+    (``×2 by S`` / ``×4 by N``).
+    """
     t = Text()
     if contract.value == "Slam":
         value_str = "Slam"
@@ -255,12 +276,26 @@ def _format_contract_short(contract: Contract) -> Text:
         value_str = str(contract.value)
     t.append(value_str, style="bold")
     t.append(" by ", style=DIM)
-    team_abbr = _team_abbr(contract.team.name)
-    t.append(team_abbr, style=f"bold {_team_color(contract.team.name)}")
+    taker = _seat_letter(getattr(contract, "player", None))
+    if taker is not None:
+        t.append_text(taker)
+    else:
+        # Defensive fallback: name the team if the player is missing.
+        t.append(_team_abbr(contract.team.name),
+                 style=f"bold {_team_color(contract.team.name)}")
+    # Coinche / Surcoinche: multiplier plus the player who called it.
     if contract.redouble:
-        t.append(" (×4)", style=GOLD)
+        caller = _seat_letter(getattr(contract, "redouble_player", None))
+        t.append("  ×4", style=GOLD)
+        if caller is not None:
+            t.append(" by ", style=DIM)
+            t.append_text(caller)
     elif contract.double:
-        t.append(" (×2)", style=GOLD)
+        caller = _seat_letter(getattr(contract, "double_player", None))
+        t.append("  ×2", style=GOLD)
+        if caller is not None:
+            t.append(" by ", style=DIM)
+            t.append_text(caller)
     return t
 
 

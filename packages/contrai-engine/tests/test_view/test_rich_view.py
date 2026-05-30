@@ -22,12 +22,14 @@ from contrai_core import Card, Rank, Suit, Trick
 from contrai_engine.model.player import AiPlayer
 from contrai_core.team import Team
 from contrai_core.bid import ContractBid, DoubleBid, PassBid
+from contrai_core.contract import Contract
 from contrai_engine.view.rich_view import (
     RichView,
     RoundSummary,
     _bid_to_legacy,
     _current_winner,
     _explain_constraint,
+    _format_contract_short,
     _parse_bid_input,
     _parse_card_input,
     _redouble_available_to,
@@ -373,6 +375,68 @@ class TestBidToLegacy:
         assert _bid_to_legacy(bid) == (100, Suit.HEARTS)
 
 
+class TestFormatContractShort:
+    """The shared contract label: value + taker seat + Coinche caller.
+
+    Used by the in-game round panel, the after-round recap, and the
+    event-log 'Contract set' line — all three render through this.
+    """
+
+    def test_plain_contract_names_taker_seat(self, four_players):
+        _north, east, *_ = four_players
+        contract = Contract(ContractBid(east, 100, Suit.HEARTS))
+        text = _format_contract_short(contract).plain
+        assert "100 by E" in text
+        # No multiplier marker on an un-doubled contract.
+        assert "×2" not in text and "×4" not in text
+
+    def test_doubled_contract_names_coincheur(self, four_players):
+        north, east, _south, west = four_players
+        contract = Contract(
+            ContractBid(north, 110, Suit.SPADES),
+            double=True,
+            double_player=east,
+        )
+        text = _format_contract_short(contract).plain
+        assert "110 by N" in text
+        assert "×2 by E" in text
+
+    def test_redoubled_contract_names_surcoincheur(self, four_players):
+        north, east, _south, west = four_players
+        contract = Contract(
+            ContractBid(north, 120, Suit.CLUBS),
+            double=True,
+            redouble=True,
+            double_player=east,
+            redouble_player=north,
+        )
+        text = _format_contract_short(contract).plain
+        assert "120 by N" in text
+        # Redouble takes precedence over the double marker.
+        assert "×4 by N" in text
+        assert "×2" not in text
+
+    def test_double_without_known_player_still_shows_multiplier(
+        self, four_players
+    ):
+        north, *_ = four_players
+        contract = Contract(
+            ContractBid(north, 90, Suit.DIAMONDS),
+            double=True,
+            double_player=None,
+        )
+        text = _format_contract_short(contract).plain
+        assert "×2" in text
+        # No 'by …' tail when the caller is unknown.
+        assert "×2 by" not in text
+
+    def test_slam_value_label(self, four_players):
+        _north, east, *_ = four_players
+        contract = Contract(ContractBid(east, "Slam", Suit.HEARTS))
+        text = _format_contract_short(contract).plain
+        assert "Slam by E" in text
+
+
 class TestOnBidMadePacing:
     """on_bid_made renders + sleeps for AI players, skips humans."""
 
@@ -539,8 +603,10 @@ class TestEventLog:
             suit = Suit.HEARTS
             double = False
             redouble = False
-            class _T: name = "North-South"
-            team = _T()
+            double_player = None
+            redouble_player = None
+            player = north
+            team = north.team
 
         class _StubRound:
             contract = _StubContract()
@@ -548,28 +614,35 @@ class TestEventLog:
         view.on_contract_established(_StubRound())
         line = view.event_log[-1].plain
         assert "Contract set:" in line
-        # The contract short label embeds value + team.
+        # The contract short label embeds value + the taker's seat letter.
         assert "100" in line
-        assert "N-S" in line
+        assert "by N" in line
 
     def test_on_contract_established_includes_double_multiplier(
         self, monkeypatch, four_players
     ):
         view = self._make_view(monkeypatch)
+        _north, east, _south, west = four_players
 
         class _StubContract:
             value = 120
             suit = Suit.SPADES
             double = True
             redouble = False
-            class _T: name = "East-West"
-            team = _T()
+            double_player = west
+            redouble_player = None
+            player = east
+            team = east.team
 
         class _StubRound:
             contract = _StubContract()
 
         view.on_contract_established(_StubRound())
-        assert "×2" in view.event_log[-1].plain
+        line = view.event_log[-1].plain
+        # Multiplier plus the coincheur's seat letter.
+        assert "×2 by W" in line
+        # Taker is still named.
+        assert "by E" in line
 
     def test_on_contract_established_no_op_when_no_contract(
         self, monkeypatch
