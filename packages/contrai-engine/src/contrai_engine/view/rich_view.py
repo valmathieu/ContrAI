@@ -1585,28 +1585,39 @@ class RichView:
         return t
 
     def _panel_bidding_history(self, bids: list) -> Panel:
-        """One-line history of bids so far. Useful for the human deciding.
+        """One-line-per-round history of bids so far.
 
-        Inserts a ` - ` separator between successive 4-bid blocks so the
-        bidding rounds are visually distinct:
-            S Pass  E Pass  N 80 ♥  W Pass - S 100 ♥  E Pass  N 130 ♥  W ×2
+        Each line starts with the bidding-round number (``#1``, ``#2``,
+        …) and lays the four seats out in fixed-width columns so bids
+        line up vertically across rounds:
+            #1  S Pass     E Pass     N 80 ♥     W Pass
+            #2  S 100 ♥    E Pass     N 130 ♥    W ×2
         """
+        # Fixed column widths so cells stack in vertical lanes. The bid
+        # cell holds at most "S 180 ♥" (7 cells); pad to leave a gap.
+        round_w = 4
+        cell_w = 11
         body = Text()
         if not bids:
             body.append("(no bids yet)", style=DIM)
         else:
             for i, (player, bid) in enumerate(bids):
-                if i > 0:
-                    # Two-space gap between bids; bump to a dashed
-                    # separator at every 4-bid (bidding-round) boundary.
-                    if i % 4 == 0:
-                        body.append(" - ", style=DIM)
-                    else:
-                        body.append("  ", style=DIM)
-                body.append(_position_short(player.position),
+                if i % 4 == 0:
+                    # New bidding round: break the line (except the very
+                    # first) and emit the round-number gutter.
+                    if i > 0:
+                        body.append("\n")
+                    label = f"#{i // 4 + 1}"
+                    body.append(label, style=f"bold {DIM}")
+                    body.append(" " * max(1, round_w - len(label)), style=FG)
+                cell = Text()
+                cell.append(_position_short(player.position),
                             style=f"bold {_position_color(player.position)}")
-                body.append(" ", style=FG)
-                body.append_text(_bid_legacy_label(bid))
+                cell.append(" ", style=FG)
+                cell.append_text(_bid_legacy_label(bid))
+                # Right-pad the cell to keep the seats in vertical lanes.
+                body.append_text(cell)
+                body.append(" " * max(1, cell_w - cell.cell_len), style=FG)
         return Panel(
             body,
             title=Text("Bidding so far", style=f"bold {TITLE}"),

@@ -279,9 +279,9 @@ class TestBiddingPromptHint:
 
 
 class TestPanelBiddingHistorySeparator:
-    """Bidding rounds are visually separated by ' - '."""
+    """Bidding rounds break onto separate lines."""
 
-    def test_no_separator_within_first_round(self, four_players):
+    def test_single_line_within_first_round(self, four_players):
         view = RichView()
         north, east, south, west = four_players
         bids = [
@@ -291,9 +291,9 @@ class TestPanelBiddingHistorySeparator:
             (west, "Pass"),
         ]
         text = view._panel_bidding_history(bids).renderable.plain
-        assert " - " not in text
+        assert "\n" not in text
 
-    def test_separator_between_rounds(self, four_players):
+    def test_newline_between_rounds(self, four_players):
         view = RichView()
         north, east, south, west = four_players
         bids = [
@@ -308,13 +308,36 @@ class TestPanelBiddingHistorySeparator:
             (west, "Double"),
         ]
         text = view._panel_bidding_history(bids).renderable.plain
-        # Exactly one separator between round 1 and round 2.
-        assert text.count(" - ") == 1
-        # Separator appears after the 4th bid (W Pass) and before the 5th
-        # (S 100 ♥).
-        before, after = text.split(" - ", 1)
-        assert before.endswith("W Pass")
-        assert after.startswith("S 100")
+        # Exactly one line break between round 1 and round 2.
+        assert text.count("\n") == 1
+        # Each line opens with its round-number gutter.
+        before, after = text.split("\n", 1)
+        assert before.startswith("#1")
+        assert after.startswith("#2")
+        # Round 1 holds the first four bids; round 2 the next four.
+        assert "W Pass" in before
+        assert "S 100" in after
+
+    def test_seats_align_vertically_across_rounds(self, four_players):
+        """Each seat sits in the same column on every round's line."""
+        view = RichView()
+        north, east, south, west = four_players
+        bids = [
+            (south, "Pass"),
+            (east, "Pass"),
+            (north, (80, Suit.HEARTS)),
+            (west, "Pass"),
+            (south, (100, Suit.HEARTS)),
+            (east, "Pass"),
+            (north, (130, Suit.HEARTS)),
+            (west, "Double"),
+        ]
+        text = view._panel_bidding_history(bids).renderable.plain
+        line1, line2 = text.split("\n", 1)
+        # The seat letters start at identical offsets on both lines, so
+        # the bids stack in vertical lanes despite differing bid widths.
+        for letter in ("S", "E", "N", "W"):
+            assert line1.index(f"{letter} ") == line2.index(f"{letter} ")
 
 
 class TestResolveDelay:
