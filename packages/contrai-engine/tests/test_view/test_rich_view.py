@@ -696,6 +696,91 @@ class TestBeloteAnnouncement:
         assert "Rebelote" not in diamond.plain
 
 
+class TestBiddingDiamond:
+    """The auction reuses the table diamond: each seat shows its latest bid."""
+
+    class _StubRound:
+        def __init__(self):
+            self.round_number = 1
+            self.contract = None
+            self.dealer = None
+            self.tricks = []
+            self.team_tricks = {}
+            self.belote_state = {}
+
+    def test_each_seat_shows_its_latest_bid(self, four_players):
+        view = RichView()
+        north, east, south, west = four_players
+        history = [
+            (south, "Pass"),
+            (west, (80, Suit.HEARTS)),
+            (north, "Pass"),
+        ]
+        diamond = view._render_bidding_diamond(
+            history, pending_position=None, width=42
+        )
+        text = diamond.plain
+        # West's bid renders as "80 ♥"; South and North passed.
+        assert "80 ♥" in text
+        assert "Pass" in text
+
+    def test_pending_seat_marked_with_question(self, four_players):
+        view = RichView()
+        north, east, south, west = four_players
+        diamond = view._render_bidding_diamond(
+            [(west, (80, Suit.HEARTS))],
+            pending_position="North",
+            width=42,
+        )
+        # North is on the move → "N ?"; West shows its standing bid.
+        assert "N ?" in diamond.plain
+        assert "80 ♥" in diamond.plain
+
+    def test_seat_without_bid_shows_dot(self, four_players):
+        view = RichView()
+        diamond = view._render_bidding_diamond(
+            [], pending_position=None, width=42
+        )
+        # Empty auction: every seat is a placeholder dot, no "?".
+        assert "·" in diamond.plain
+        assert "?" not in diamond.plain
+
+    def test_latest_bid_overwrites_earlier(self, four_players):
+        """A second bid by the same seat replaces the first in the diamond."""
+        view = RichView()
+        north, east, south, west = four_players
+        history = [
+            (west, (80, Suit.HEARTS)),
+            (north, (90, Suit.SPADES)),
+            (east, "Pass"),
+            (south, "Pass"),
+            (west, (100, Suit.HEARTS)),
+        ]
+        text = view._render_bidding_diamond(
+            history, pending_position=None, width=42
+        ).plain
+        assert "100 ♥" in text
+        assert "80 ♥" not in text
+
+    def test_panel_current_trick_bidding_renders_diamond(self, four_players):
+        """During bidding the Current-trick slot becomes the auction diamond."""
+        view = RichView()
+        north, east, south, west = four_players
+        panel = view._panel_current_trick(
+            self._StubRound(),
+            trick=None,
+            phase="bidding",
+            current_player=south,
+            trick_winner=None,
+            bidding_history=[(west, (80, Suit.HEARTS))],
+        )
+        assert panel.title.plain == "Bidding"
+        body = panel.renderable.plain
+        assert "80 ♥" in body
+        # South is the human about to bid → seat marked, prompt line shown.
+        assert "S ?" in body
+
+
 class TestRoundRecapPanel:
     """Between-rounds recap: contract, made/failed, totals, belote."""
 

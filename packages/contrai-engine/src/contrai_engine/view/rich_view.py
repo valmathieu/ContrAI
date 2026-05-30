@@ -879,7 +879,8 @@ class RichView:
         # Middle row: last trick + current trick
         mid_left = self._panel_last_trick(round_)
         mid_right = self._panel_current_trick(
-            round_, current_trick, phase, current_player, trick_winner
+            round_, current_trick, phase, current_player, trick_winner,
+            bidding_history=bidding_history,
         )
         self.console.print(_two_column(mid_left, mid_right, left_width=24))
         # Hand panel — always rendered when a human is seated, so the
@@ -1182,6 +1183,7 @@ class RichView:
         phase: str,
         current_player: Optional[BasePlayer],
         trick_winner: Optional[BasePlayer],
+        bidding_history: Optional[list] = None,
     ) -> Panel:
         title_suffix = ""
         if round_ and phase in ("playing", "trick_won"):
@@ -1189,9 +1191,35 @@ class RichView:
             trick_idx = min(max(1, trick_idx), 8)
             title_suffix = f" (#{trick_idx})"
 
-        if phase == "bidding" or trick is None:
-            body = Text("(bidding…)" if phase == "bidding" else "(none)",
-                        style=DIM, justify="center")
+        if phase == "bidding":
+            # Reuse the table slot for the auction: each seat shows the
+            # player's latest bid so the human can read announces off
+            # the diamond the same way they read cards during play.
+            body = self._render_bidding_diamond(
+                bidding_history or [],
+                pending_position=(
+                    current_player.position
+                    if current_player is not None
+                    else None
+                ),
+                width=42,
+            )
+            body.append("\n")
+            if current_player is not None and current_player.is_human:
+                body.append("→ Your bid", style=f"bold {YELLOW}")
+            elif current_player is not None:
+                body.append(f"→ {current_player.position} to bid", style=DIM)
+            return Panel(
+                body,
+                title=Text("Bidding", style=f"bold {TITLE}"),
+                border_style=BORDER,
+                box=ROUNDED,
+                width=46,
+                height=8,
+            )
+
+        if trick is None:
+            body = Text("(none)", style=DIM, justify="center")
             body = Align.center(body, vertical="middle")
             return Panel(
                 body,
@@ -1377,6 +1405,68 @@ class RichView:
             pad = max(0, (width - s_badge.cell_len) // 2)
             out.append(" " * pad)
             out.append_text(s_badge)
+        return out
+
+    def _render_bidding_diamond(
+        self,
+        bidding_history: list,
+        *,
+        pending_position: Optional[str],
+        width: int,
+    ) -> Text:
+        """Render the 4-seat diamond with each player's latest bid.
+
+        Mirrors :meth:`_render_diamond` (N top, E right, S bottom, W
+        left) but for the auction: each seat shows that player's most
+        recent bid, so announces map onto the table spatially the same
+        way cards do during play. The seat about to bid is marked
+        ``?``; seats that have not bid yet show ``·``.
+
+        ``bidding_history`` is the legacy ``(player, wire_bid)`` list the
+        rest of the bidding renderer already consumes, where ``wire_bid``
+        is one of ``"Pass"`` / ``"Double"`` / ``"Redouble"`` / a
+        ``(value, suit)`` tuple.
+        """
+        # Collapse the history to the latest bid standing at each seat;
+        # a later bid by the same player overwrites the earlier one.
+        latest_by_pos: dict[str, str | tuple] = {}
+        for player, bid in bidding_history:
+            latest_by_pos[player.position] = bid
+
+        def slot(pos: str) -> Text:
+            t = Text()
+            label = _position_short(pos)
+            pcolor = _position_color(pos)
+            t.append(f"{label} ", style=f"bold {pcolor}")
+            if pos == pending_position:
+                t.append("?", style=f"bold {YELLOW}")
+            elif pos in latest_by_pos:
+                t.append_text(_bid_legacy_label(latest_by_pos[pos]))
+            else:
+                t.append("·", style=DIM)
+            return t
+
+        # Same skeleton as _render_diamond (blank row, N, W/E, S), minus
+        # the belote badges — those belong to the play phase.
+        out = Text()
+        out.append("\n")
+        n = slot("North")
+        pad_left = max(0, (width - n.cell_len) // 2)
+        out.append(" " * pad_left)
+        out.append_text(n)
+        out.append("\n")
+        w = slot("West")
+        e = slot("East")
+        used = w.cell_len + e.cell_len
+        gap = max(2, width - used)
+        out.append_text(w)
+        out.append(" " * gap)
+        out.append_text(e)
+        out.append("\n")
+        s = slot("South")
+        pad_left = max(0, (width - s.cell_len) // 2)
+        out.append(" " * pad_left)
+        out.append_text(s)
         return out
 
     def _panel_hand(
