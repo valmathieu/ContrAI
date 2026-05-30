@@ -1006,6 +1006,9 @@ class TestContractMaterialisation:
         contract = auction.contract()
         assert contract.double is True
         assert contract.redouble is False
+        # The materialised contract carries the coincheur for the UI.
+        assert contract.double_player is west
+        assert contract.redouble_player is None
 
     def test_redoubled_contract(
         self, north, west, south, east, four_players
@@ -1025,6 +1028,8 @@ class TestContractMaterialisation:
         contract = auction.contract()
         assert contract.double is True
         assert contract.redouble is True
+        assert contract.double_player is west
+        assert contract.redouble_player is south
 
 
 # ---------------------------------------------------------------------------
@@ -1097,6 +1102,54 @@ class TestStateProperties:
             ),
         )
         assert auction.has_redouble is False
+
+    def test_double_player_is_the_doubler(
+        self, north, west, south, east, four_players
+    ):
+        # N contracts, W/S pass, E (opposing) doubles → E is the doubler.
+        auction = Auction(
+            (
+                ContractBid(north, 100, Suit.SPADES),
+                PassBid(west),
+                PassBid(south),
+                DoubleBid(east),
+            ),
+        )
+        assert auction.double_player is east
+
+    def test_double_player_none_when_no_double(self, north, four_players):
+        auction = Auction((ContractBid(north, 100, Suit.SPADES),))
+        assert auction.double_player is None
+
+    def test_redouble_player_is_the_redoubler(
+        self, north, west, south, east, four_players
+    ):
+        # N contracts, E doubles, N redoubles → N is the redoubler while
+        # E remains the doubler.
+        auction = Auction(
+            (
+                ContractBid(north, 100, Suit.SPADES),
+                PassBid(west),
+                PassBid(south),
+                DoubleBid(east),
+                RedoubleBid(north),
+            ),
+        )
+        assert auction.redouble_player is north
+        assert auction.double_player is east
+
+    def test_redouble_player_none_when_only_double(
+        self, north, west, south, east, four_players
+    ):
+        auction = Auction(
+            (
+                ContractBid(north, 100, Suit.SPADES),
+                PassBid(west),
+                PassBid(south),
+                DoubleBid(east),
+            ),
+        )
+        assert auction.redouble_player is None
 
     def test_consecutive_passes_counts_from_tail(
         self, north, west, south

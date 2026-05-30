@@ -17,7 +17,9 @@ class Contract:
     and handles double/redouble states with score calculations.
     """
 
-    def __init__(self, contract_bid: ContractBid, double: bool = False, redouble: bool = False):
+    def __init__(self, contract_bid: ContractBid, double: bool = False, redouble: bool = False,
+                 double_player: 'Optional[Player]' = None,
+                 redouble_player: 'Optional[Player]' = None):
         """
         Initialize a contract from a ContractBid.
 
@@ -25,6 +27,9 @@ class Contract:
             contract_bid: The winning ContractBid that established this contract
             double: Whether contract has been doubled
             redouble: Whether contract has been redoubled
+            double_player: The player who doubled (Coinche), if any. Kept so
+                the UI can name the coincheur, not just flag the multiplier.
+            redouble_player: The player who redoubled (Surcoinche), if any.
         """
         self.contract_bid = contract_bid
         self.player = contract_bid.player
@@ -33,6 +38,8 @@ class Contract:
         self.suit = contract_bid.suit
         self.double = double
         self.redouble = redouble
+        self.double_player = double_player
+        self.redouble_player = redouble_player
 
     @classmethod
     def from_legacy(cls, player: 'Player', value: int or str, suit: str,

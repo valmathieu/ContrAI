@@ -195,6 +195,8 @@ package "auction.py" as p_auction {
         + last_contract_bid : ContractBid? <<property>>
         + has_double : bool             <<property>>
         + has_redouble : bool           <<property>>
+        + double_player : BasePlayer?   <<property>>
+        + redouble_player : BasePlayer? <<property>>
         + consecutive_passes : int      <<property>>
         + partner_bid(player) : Bid?
     }
@@ -230,8 +232,10 @@ package "contract.py / trick.py" as p_contract {
         + suit : Suit
         + double : bool
         + redouble : bool
+        + double_player : BasePlayer?     ' who called Coinche
+        + redouble_player : BasePlayer?   ' who called Surcoinche
         --
-        + __init__(contract_bid, double=False, redouble=False)
+        + __init__(contract_bid, double=False, redouble=False, double_player=None, redouble_player=None)
         + {static} from_legacy(player, value, suit, ...) : Contract
         + get_multiplier() : int           ' 1, 2, or 4
         + is_made(team_points: int) : bool

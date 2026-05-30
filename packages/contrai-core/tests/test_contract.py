@@ -85,6 +85,24 @@ class TestContractConstruction:
         assert contract.double is True
         assert contract.redouble is True
 
+    def test_double_redouble_players_default_to_none(self, north, team_ns):
+        contract = Contract(ContractBid(north, 80, Suit.CLUBS))
+        assert contract.double_player is None
+        assert contract.redouble_player is None
+
+    def test_construction_records_double_and_redouble_players(
+        self, north, south, team_ns
+    ):
+        contract = Contract(
+            ContractBid(north, 100, Suit.HEARTS),
+            double=True,
+            redouble=True,
+            double_player=south,
+            redouble_player=north,
+        )
+        assert contract.double_player is south
+        assert contract.redouble_player is north
+
     def test_from_legacy_matches_direct_construction(self, north, team_ns):
         direct = Contract(ContractBid(north, 90, Suit.HEARTS))
         legacy = Contract.from_legacy(north, 90, Suit.HEARTS)

@@ -191,7 +191,13 @@ class Auction:
         cb = self.last_contract_bid
         if cb is None:
             return None
-        return Contract(cb, double=self.has_double, redouble=self.has_redouble)
+        return Contract(
+            cb,
+            double=self.has_double,
+            redouble=self.has_redouble,
+            double_player=self.double_player,
+            redouble_player=self.redouble_player,
+        )
 
     # ------------------------------------------------------------------
     # State queries
@@ -235,6 +241,38 @@ class Auction:
             if isinstance(bid, RedoubleBid):
                 return True
         return False
+
+    @property
+    def double_player(self) -> Optional[BasePlayer]:
+        """The player whose standing :class:`DoubleBid` doubled the contract.
+
+        Mirrors :attr:`has_double`: walking backwards, this is the
+        :class:`DoubleBid`'s player iff that Double appears before any
+        :class:`ContractBid`. ``None`` when no Double currently stands.
+        """
+
+        for bid in reversed(self.bids):
+            if isinstance(bid, ContractBid):
+                return None
+            if isinstance(bid, DoubleBid):
+                return bid.player
+        return None
+
+    @property
+    def redouble_player(self) -> Optional[BasePlayer]:
+        """The player whose standing :class:`RedoubleBid` redoubled.
+
+        Mirrors :attr:`has_redouble`: the :class:`RedoubleBid`'s player
+        iff a Redouble was played after the most recent
+        :class:`DoubleBid`. ``None`` when no Redouble currently stands.
+        """
+
+        for bid in reversed(self.bids):
+            if isinstance(bid, DoubleBid):
+                return None
+            if isinstance(bid, RedoubleBid):
+                return bid.player
+        return None
 
     @property
     def consecutive_passes(self) -> int:
