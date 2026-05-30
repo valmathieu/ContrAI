@@ -1660,9 +1660,9 @@ class TestPanelHandPersistence:
         assert view._find_human_player() is None
 
     def test_panel_hand_empty_hand_renders_placeholder(self):
-        """After the 8th trick the hand is empty — show an explicit
-        empty-state line so the slot stays in the layout rather than
-        disappearing."""
+        """After the 8th trick the hand is empty — the cards row shows a
+        single '(no cards left)' line so the slot stays in the layout
+        rather than disappearing. No redundant second empty-state line."""
         view, human = self._build_view_with_human()
         human.hand.clear()
         panel = view._panel_hand(
@@ -1671,7 +1671,7 @@ class TestPanelHandPersistence:
         )
         text = panel.renderable.plain
         assert "(no cards left)" in text
-        assert "(hand empty)" in text
+        assert "(hand empty)" not in text
 
     def test_panel_hand_non_interactive_omits_constraint_hint(self):
         """During AI/trick-won frames the hand renders neutrally — no

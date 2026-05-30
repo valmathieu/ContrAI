@@ -1525,7 +1525,9 @@ class RichView:
         body.append("\n")
 
         if not sorted_hand:
-            hint = Text("(hand empty)", style=DIM, justify="center")
+            # The cards row already reads "(no cards left)"; a second
+            # "(hand empty)" line would just be redundant.
+            hint = Text("", justify="center")
         elif phase == "bidding":
             hint = Text(
                 "(no card-play obligation yet — bidding phase)",
