@@ -259,14 +259,24 @@ def _seat_letter(player: Optional[BasePlayer]) -> Optional[Text]:
     )
 
 
-def _format_contract_short(contract: Contract) -> Text:
+def _format_contract_short(contract: Contract, *, verbose: bool = False) -> Text:
     """Short label: ``"100 by E  ×2 by S"``.
 
     Names the players, not just the team: the contract-setter follows
     ``by`` as a single team-colored seat letter, and any Coinche /
     Surcoinche shows its multiplier with the caller's seat
     (``×2 by S`` / ``×4 by N``).
+
+    Args:
+        contract: The materialized contract to render.
+        verbose: When ``True``, spell the Coinche / Surcoinche markers
+            out as ``doubled`` / ``redoubled`` instead of the compact
+            ``×2`` / ``×4`` glyphs. The recap panel uses this so the
+            after-round summary reads in full prose; the in-game panel
+            and event log keep the compact form.
     """
+    double_label = "redoubled" if verbose else "×4"
+    single_label = "doubled" if verbose else "×2"
     t = Text()
     if contract.value == "Slam":
         value_str = "Slam"
@@ -286,13 +296,13 @@ def _format_contract_short(contract: Contract) -> Text:
     # Coinche / Surcoinche: multiplier plus the player who called it.
     if contract.redouble:
         caller = _seat_letter(getattr(contract, "redouble_player", None))
-        t.append("  ×4", style=GOLD)
+        t.append(f"  {double_label}", style=GOLD)
         if caller is not None:
             t.append(" by ", style=DIM)
             t.append_text(caller)
     elif contract.double:
         caller = _seat_letter(getattr(contract, "double_player", None))
-        t.append("  ×2", style=GOLD)
+        t.append(f"  {single_label}", style=GOLD)
         if caller is not None:
             t.append(" by ", style=DIM)
             t.append_text(caller)
@@ -1966,7 +1976,12 @@ class RichView:
             body.append("All passed — no contract", style=f"bold {YELLOW}")
             body.append("\n\n")
         else:
-            body.append_text(_format_contract_short(contract))
+            body.append_text(_format_contract_short(contract, verbose=True))
+            body.append("\n")
+            # Trump recall — the contract label omits the suit, so spell
+            # it out here the same way the in-game Round panel does.
+            body.append("  Trump:     ", style=DIM)
+            body.append_text(_format_trump_label(contract.suit))
             body.append("\n")
             # Made/failed badge
             contract_team = contract.team.name

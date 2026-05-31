@@ -711,6 +711,34 @@ class TestFormatContractShort:
         text = _format_contract_short(contract).plain
         assert "Slam by E" in text
 
+    def test_verbose_spells_out_doubled(self, four_players):
+        """verbose=True replaces the ×2 glyph with the word 'doubled'."""
+        north, east, *_ = four_players
+        contract = Contract(
+            ContractBid(north, 110, Suit.SPADES),
+            double=True,
+            double_player=east,
+        )
+        text = _format_contract_short(contract, verbose=True).plain
+        assert "doubled by E" in text
+        assert "×2" not in text
+
+    def test_verbose_spells_out_redoubled(self, four_players):
+        """verbose=True replaces the ×4 glyph with the word 'redoubled'."""
+        north, east, _south, _west = four_players
+        contract = Contract(
+            ContractBid(north, 120, Suit.CLUBS),
+            double=True,
+            redouble=True,
+            double_player=east,
+            redouble_player=north,
+        )
+        text = _format_contract_short(contract, verbose=True).plain
+        assert "redoubled by N" in text
+        assert "×4" not in text
+        # Redouble takes precedence: only one marker, not two.
+        assert text.count("doubled") == 1
+
 
 class TestOnBidMadePacing:
     """on_bid_made renders + sleeps for AI players, skips humans."""
@@ -1218,6 +1246,20 @@ class TestRoundRecapPanel:
         assert "+162" in text
         assert "500" in text  # running NS total
 
+    def test_recap_shows_trump_recall_line(self):
+        """The recap spells out the contract trump on its own line."""
+        view = RichView()
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        round_ = self._StubRound(
+            round_number=3,
+            contract=contract,
+            round_scores={"North-South": 162, "East-West": 0},
+        )
+        panel = view._panel_round_recap(round_, {"North-South": 500, "East-West": 0})
+        text = panel.renderable.plain
+        assert "Trump:" in text
+        assert "♥ Hearts" in text
+
     def test_recap_failed_contract_shows_cross(self):
         view = RichView()
         contract = self._StubContract(120, Suit.SPADES, "East-West")
@@ -1229,6 +1271,22 @@ class TestRoundRecapPanel:
         panel = view._panel_round_recap(round_, {"North-South": 280, "East-West": 0})
         text = panel.renderable.plain
         assert "Contract failed" in text
+
+    def test_recap_uses_verbose_doubled_marker(self):
+        """The recap spells out 'doubled' rather than the ×2 glyph."""
+        view = RichView()
+        contract = self._StubContract(
+            110, Suit.SPADES, "North-South", double=True
+        )
+        round_ = self._StubRound(
+            round_number=3,
+            contract=contract,
+            round_scores={"North-South": 0, "East-West": 320},
+        )
+        panel = view._panel_round_recap(round_, {"North-South": 0, "East-West": 320})
+        text = panel.renderable.plain
+        assert "doubled" in text
+        assert "×2" not in text
 
     def test_recap_all_passed(self):
         view = RichView()
