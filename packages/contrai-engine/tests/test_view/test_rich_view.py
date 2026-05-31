@@ -18,18 +18,20 @@ from __future__ import annotations
 import pytest
 from rich.text import Text
 
-from contrai_core import Card, Rank, Suit, Trick
+from contrai_core import Auction, Card, Rank, Suit, Trick
 from contrai_engine.model.player import AiPlayer
 from contrai_core.team import Team
-from contrai_core.bid import ContractBid, DoubleBid, PassBid
+from contrai_core.bid import ContractBid, DoubleBid, PassBid, RedoubleBid
 from contrai_core.contract import Contract
 from contrai_engine.view.rich_view import (
     RichView,
     RoundSummary,
     _bid_to_legacy,
     _current_winner,
+    _double_available_to,
     _explain_constraint,
     _format_contract_short,
+    _illegal_bid_reason,
     _parse_bid_input,
     _parse_card_input,
     _redouble_available_to,
@@ -253,12 +255,15 @@ class TestBiddingPromptHint:
         view = RichView()
         return view._bidding_prompt_text(history, next_player).plain
 
-    def test_default_hint_when_no_double(self, four_players):
+    def test_no_double_hint_before_any_contract(self, four_players):
+        """With nothing but a Pass on the table there's no contract to
+        double, so the hint offers only bidding and passing."""
         north, _east, _south, _west = four_players
         history = [(north, "Pass")]
         text = self._prompt(history, north)
-        assert "double" in text
+        assert "double" not in text
         assert "redouble" not in text
+        assert "80 H" in text and "pass" in text
 
     def test_redouble_hint_when_contractor_was_doubled(
         self, four_players
@@ -273,6 +278,166 @@ class TestBiddingPromptHint:
         # The default '80 H' example shouldn't appear in the redouble
         # variant since the only meaningful play is pass/redouble.
         assert "80 H" not in text
+
+    def test_no_double_hint_when_own_partner_holds_contract(
+        self, four_players
+    ):
+        """The reported bug: N (South's partner) holds the contract, so
+        the hint must NOT advertise 'double' to South."""
+        north, east, _south, west = four_players
+        history = [
+            (east, "Pass"),
+            (north, (90, Suit.SPADES)),
+            (west, "Pass"),
+        ]
+        # South is North's partner — doubling own side is illegal.
+        _, _, south, _ = four_players
+        text = self._prompt(history, south)
+        assert "double" not in text
+        # Bidding higher and passing are still on the table.
+        assert "80 H" in text and "pass" in text
+
+    def test_double_hint_when_opponent_holds_contract(self, four_players):
+        """East (an opponent of South) holds the contract → offer double."""
+        _north, east, south, _west = four_players
+        history = [(east, (90, Suit.SPADES))]
+        text = self._prompt(history, south)
+        assert "double" in text
+
+
+class TestDoubleAvailability:
+    """Validates the helper that gates the 'double' hint."""
+
+    def test_empty_history_no_double(self, four_players):
+        north, *_ = four_players
+        assert _double_available_to([], north) is False
+
+    def test_only_passes_no_double(self, four_players):
+        north, east, south, _west = four_players
+        history = [(east, "Pass"), (south, "Pass")]
+        assert _double_available_to(history, north) is False
+
+    def test_opponent_contract_is_doublable(self, four_players):
+        """South may double East's standing contract."""
+        _north, east, south, _west = four_players
+        history = [(east, (90, Suit.SPADES))]
+        assert _double_available_to(history, south) is True
+
+    def test_own_side_contract_not_doublable(self, four_players):
+        """South may NOT double North's (partner's) contract."""
+        north, _east, south, _west = four_players
+        history = [(north, (90, Suit.SPADES))]
+        assert _double_available_to(history, south) is False
+
+    def test_passes_do_not_close_double_window(self, four_players):
+        """Intervening passes keep the Coinche window open."""
+        _north, east, south, west = four_players
+        history = [(east, (90, Suit.SPADES)), (west, "Pass")]
+        assert _double_available_to(history, south) is True
+
+    def test_already_doubled_not_doublable_again(self, four_players):
+        north, east, south, _west = four_players
+        history = [(east, (90, Suit.SPADES)), (south, "Double")]
+        # North is on the contracting side's opponents... but a Double
+        # already stands, so no further Double is legal regardless.
+        assert _double_available_to(history, north) is False
+
+
+class TestIllegalBidReason:
+    """The specific nudge shown when a human types an illegal bid."""
+
+    def _auction(self, bids):
+        auction = Auction.empty()
+        for bid in bids:
+            auction = auction.apply(bid)
+        return auction
+
+    def test_double_own_partner(self, four_players):
+        north, east, south, west = four_players
+        auction = self._auction(
+            [PassBid(east), ContractBid(north, 90, Suit.SPADES), PassBid(west)]
+        )
+        reason = _illegal_bid_reason(DoubleBid(south), auction)
+        assert "own side" in reason
+
+    def test_double_with_no_contract(self, four_players):
+        north, east, _south, _west = four_players
+        auction = self._auction([PassBid(east)])
+        reason = _illegal_bid_reason(DoubleBid(north), auction)
+        assert "no contract" in reason.lower()
+
+    def test_double_already_doubled(self, four_players):
+        north, east, south, _west = four_players
+        auction = self._auction(
+            [ContractBid(east, 90, Suit.SPADES), DoubleBid(south)]
+        )
+        reason = _illegal_bid_reason(DoubleBid(north), auction)
+        assert "already" in reason.lower()
+
+    def test_contract_must_outrank(self, four_players):
+        _north, east, south, _west = four_players
+        auction = self._auction([ContractBid(east, 100, Suit.SPADES)])
+        reason = _illegal_bid_reason(
+            ContractBid(south, 80, Suit.HEARTS), auction
+        )
+        assert "outrank" in reason and "100" in reason
+
+
+class TestRequestBidActionLegality:
+    """Regression: an illegal human bid must re-prompt, never crash.
+
+    Reproduces the reported traceback — South types 'double' against
+    their partner North's 90♠ contract. Before the fix this escaped to
+    ``Auction.apply`` and raised ``IllegalBidError``; now the view
+    rejects it inline and loops for fresh input.
+    """
+
+    def _drive(self, four_players, raws):
+        """Run request_bid_action feeding *raws* as successive inputs.
+
+        Returns ``(bid, printed_lines)``. Rendering and console I/O are
+        stubbed so the loop runs headless.
+        """
+        view = RichView()
+        inputs = iter(raws)
+        printed: list[str] = []
+        view._render_in_game = lambda **kwargs: None
+        view.console.input = lambda *a, **k: next(inputs)
+        view.console.print = lambda renderable=None, *a, **k: printed.append(
+            getattr(renderable, "plain", str(renderable))
+        )
+        return view, printed, inputs
+
+    def test_double_own_partner_reprompts_then_passes(self, four_players):
+        north, east, south, west = four_players
+        auction = Auction.empty()
+        for bid in (
+            PassBid(east),
+            ContractBid(north, 90, Suit.SPADES),
+            PassBid(west),
+        ):
+            auction = auction.apply(bid)
+
+        view, printed, _ = self._drive(four_players, ["double", "pass"])
+        result = view.request_bid_action(south, auction)
+
+        # The illegal Double was rejected inline (no exception), and the
+        # loop accepted the follow-up Pass.
+        assert isinstance(result, PassBid)
+        assert any("own side" in line for line in printed)
+        # And whatever it returns is genuinely legal — the property the
+        # crash violated.
+        assert auction.is_legal(result)
+
+    def test_legal_double_against_opponent_is_accepted(self, four_players):
+        _north, east, south, _west = four_players
+        auction = Auction.empty().apply(ContractBid(east, 90, Suit.SPADES))
+
+        view, printed, _ = self._drive(four_players, ["double"])
+        result = view.request_bid_action(south, auction)
+
+        assert isinstance(result, DoubleBid)
+        assert printed == []  # accepted on first try, no rejection notice
 
 
 # ======================================================================

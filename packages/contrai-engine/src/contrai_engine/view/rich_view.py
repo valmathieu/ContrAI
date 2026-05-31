@@ -476,6 +476,71 @@ def _redouble_available_to(history: list, player: BasePlayer) -> bool:
     return contract_team == player.team
 
 
+def _double_available_to(history: list, player: BasePlayer) -> bool:
+    """True if *player* may currently double — narrows the prompt hint.
+
+    Mirrors :meth:`contrai_core.auction.Auction._is_double_legal` for
+    the legacy-format history this view receives. The rule: there is a
+    live :class:`ContractBid`, it was made by the *opposing* team, and
+    no Double/Redouble already stands against it. Intervening passes do
+    **not** close the Coinche window, so they're skipped over.
+
+    This is messaging only — the authoritative verdict comes from
+    :meth:`contrai_core.auction.Auction.is_legal`. It exists so the hint
+    stops offering ``double`` when it would be rejected (e.g. doubling
+    one's own partner's contract).
+    """
+    if not history or player is None or getattr(player, "team", None) is None:
+        return False
+
+    # Walk backwards: the first non-pass bid decides. A Double/Redouble
+    # means the contract is already (re)doubled; a ContractBid is the
+    # live contract whose team we compare against.
+    for bid_player, bid in reversed(history):
+        if bid in ("Double", "Redouble"):
+            return False
+        if isinstance(bid, tuple):
+            contract_team = getattr(bid_player, "team", None)
+            if contract_team is None:
+                return False
+            return contract_team != player.team
+    return False
+
+
+def _illegal_bid_reason(bid: Bid, auction: Auction) -> str:
+    """Return a human-readable reason ``bid`` is illegal in ``auction``.
+
+    Used by the bid prompt loop to give the player a specific nudge
+    instead of a generic rejection. Pure string builder that mirrors the
+    rule checks in :class:`contrai_core.auction.Auction` for messaging
+    only — the authoritative legality verdict is
+    :meth:`Auction.is_legal`. Callers should only invoke this once the
+    bid is already known to be illegal.
+    """
+    if isinstance(bid, DoubleBid):
+        if auction.last_contract_bid is None:
+            return "There's no contract to double yet."
+        if auction.has_double or auction.has_redouble:
+            return "This contract has already been doubled."
+        return (
+            "You can only double the opposing team's contract, "
+            "not your own side's."
+        )
+    if isinstance(bid, RedoubleBid):
+        return (
+            "Redouble is only legal right after the opposing team "
+            "doubles your team's contract."
+        )
+    if isinstance(bid, ContractBid):
+        last = auction.last_contract_bid
+        if last is not None and last.value in ("Slam", "SoloSlam"):
+            return f"Nothing outranks a {last.value} bid — you can only pass."
+        if last is not None:
+            return f"Your bid must outrank the current contract ({last.value})."
+        return "That contract bid isn't legal here."
+    return "That bid isn't legal right now."
+
+
 def _bid_legacy_label(bid: str | tuple) -> Text:
     """Legacy bid label for the bidding-history line."""
     if bid == "Pass":
@@ -576,8 +641,10 @@ class RichView:
                 renderer, which still consumes that format.
 
         Returns:
-            The parsed :class:`Bid`. Round validates legality via
-            :meth:`Auction.apply` and raises if the bid is illegal.
+            A :class:`Bid` that is guaranteed legal in ``auction`` —
+            the loop re-prompts on both unparseable input and bids the
+            auction rules reject, so :meth:`Auction.apply` downstream
+            never sees an illegal human bid.
         """
         legacy_bids = [
             (bid.player, _bid_to_legacy(bid)) for bid in auction.bids
@@ -603,7 +670,22 @@ class RichView:
                     )
                 )
                 continue
-            return wire_to_bid(player, parsed)
+            bid = wire_to_bid(player, parsed)
+            # Syntactic parsing only checks the *shape* of the input;
+            # the auction owns the rules (precedence, the Double freeze,
+            # can't-double-your-own-side, …). Validate here so an
+            # illegal-but-parseable bid re-prompts instead of escaping to
+            # Auction.apply, where it would raise IllegalBidError and
+            # crash the CLI.
+            if not auction.is_legal(bid):
+                self.console.print(
+                    Text(
+                        f"  ✗ {_illegal_bid_reason(bid, auction)}",
+                        style=RED,
+                    )
+                )
+                continue
+            return bid
 
     def request_card_action(
         self,
@@ -1707,13 +1789,18 @@ class RichView:
                 t.append(_suit_glyph(suit), style=_suit_color(suit))
                 t.append(". ", style=FG)
         t.append("Your bid? ", style=FG)
-        # Adaptive example. When the last non-pass bid was Double AND
-        # the next bidder is on the contracting team, redouble is the
-        # only meaningful active option — surface it explicitly.
+        # Adaptive example — only advertise actions that are actually
+        # legal for the next bidder, so the hint never invites a move
+        # the auction will reject (e.g. doubling one's own partner).
         if next_player is not None and _redouble_available_to(history, next_player):
+            # Contractor just got doubled: redouble is the only
+            # meaningful active option besides passing.
             t.append("(pass / redouble)", style=DIM)
         else:
-            t.append("(e.g. '80 H' / 'pass' / 'double')", style=DIM)
+            options = ["'80 H'", "'pass'"]
+            if next_player is not None and _double_available_to(history, next_player):
+                options.append("'double'")
+            t.append(f"(e.g. {' / '.join(options)})", style=DIM)
         return t
 
     def _card_prompt_text(
