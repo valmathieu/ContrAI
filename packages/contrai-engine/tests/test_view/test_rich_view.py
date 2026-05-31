@@ -1225,11 +1225,19 @@ class TestRoundRecapPanel:
 
     class _StubRound:
         def __init__(self, *, round_number, contract, round_scores,
-                     team_tricks=None):
+                     team_tricks=None, belote_holder=None,
+                     contract_made=None):
             self.round_number = round_number
             self.contract = contract
             self.round_scores = round_scores
             self.team_tricks = team_tricks or {}
+            # Belote holder (player object exposing ``.team.name``) and
+            # the engine's canonical made/failed flag. ``contract_made``
+            # left None lets ``RichView._contract_made`` fall back to the
+            # score heuristic, matching pre-flag behaviour for the simple
+            # cases these stubs cover.
+            self.belote_holder = belote_holder
+            self.contract_made = contract_made
 
     def test_recap_made_contract_shows_check(self):
         view = RichView()
@@ -1302,22 +1310,20 @@ class TestRoundRecapPanel:
         assert "made" not in text
         assert "failed" not in text
 
-    def test_recap_includes_belote_when_kq_of_trump_taken_together(
+    def test_recap_includes_belote_when_holder_holds_kq_of_trump(
         self, four_players
     ):
         view = RichView()
         north, *_ = four_players
         contract = self._StubContract(100, Suit.HEARTS, "North-South")
-        # Build a fake trick where N took both K♥ and Q♥.
-        trick1 = Trick()
-        trick1.add_play(north, Card(Suit.HEARTS, Rank.KING))
-        trick2 = Trick()
-        trick2.add_play(north, Card(Suit.HEARTS, Rank.QUEEN))
+        # Belote follows the *holder* of K+Q of trump, not who captures
+        # them in a trick — so the recap reads ``belote_holder``.
         round_ = self._StubRound(
             round_number=2,
             contract=contract,
             round_scores={"North-South": 200, "East-West": 0},
-            team_tricks={"North-South": [trick1, trick2], "East-West": []},
+            team_tricks={"North-South": [], "East-West": []},
+            belote_holder=north,
         )
         panel = view._panel_round_recap(round_, {"North-South": 200, "East-West": 0})
         text = panel.renderable.plain
@@ -1553,10 +1559,11 @@ class TestRoundRecapPanel:
         # also don't contribute (round_score is 0).
         assert breakdown["North-South"]["cards_count"] is False
 
-    def test_recap_contract_row_failed_doubled_quadruples_bonus(
+    def test_recap_contract_row_failed_doubled_winner_takes_160_plus_cm(
         self, four_players
     ):
-        """Failed 100 ♥ ×2 by N-S → E-W gets (160+100)*2 = 520."""
+        """Failed 100 ♥ ×2 by N-S → E-W wins 160 + 100*2 = 360 (same
+        stake as a doubled made declarer — winner-takes-all)."""
         view = RichView()
         contract = self._StubContract(
             100, Suit.HEARTS, "North-South", double=True
@@ -1564,11 +1571,62 @@ class TestRoundRecapPanel:
         round_ = self._StubRound(
             round_number=4,
             contract=contract,
-            round_scores={"North-South": 0, "East-West": 520},
+            round_scores={"North-South": 0, "East-West": 360},
             team_tricks={"North-South": [], "East-West": []},
         )
         breakdown = view._recap_breakdown(round_)
-        assert breakdown["East-West"]["contract"] == 520
+        assert breakdown["East-West"]["contract"] == 360
+        # Loser scores nothing (no belote here).
+        assert breakdown["North-South"]["contract"] == 0
+        assert breakdown["North-South"]["cards_count"] is False
+
+    def test_recap_doubled_made_defender_scores_zero(self, four_players):
+        """Doubled contract made → the losing defender's breakdown is all
+        zeros (winner-takes-all). Mirrors the engine's Problem-2 fix."""
+        view = RichView()
+        contract = self._StubContract(
+            100, Suit.HEARTS, "North-South", double=True
+        )
+        round_ = self._StubRound(
+            round_number=4,
+            contract=contract,
+            round_scores={"North-South": 360, "East-West": 0},
+            team_tricks={"North-South": [], "East-West": []},
+        )
+        breakdown = view._recap_breakdown(round_)
+        ew = breakdown["East-West"]
+        assert ew["contract"] == 0
+        assert ew["cards_count"] is False
+        assert ew["card_points"] == 0
+        assert ew["dix_de_der"] == 0
+        assert ew["belote"] == 0
+
+    def test_recap_loser_keeps_belote_when_doubled(self, four_players):
+        """The one thing a losing side keeps is its belote — the recap
+        shows +20 for the holder even when it lost a doubled round."""
+        view = RichView()
+        _north, east, _south, _west = four_players
+        contract = self._StubContract(
+            100, Suit.HEARTS, "North-South", double=True
+        )
+        round_ = self._StubRound(
+            round_number=4,
+            contract=contract,
+            round_scores={"North-South": 360, "East-West": 20},
+            team_tricks={"North-South": [], "East-West": []},
+            belote_holder=east,  # losing defender holds the pair
+        )
+        breakdown = view._recap_breakdown(round_)
+        ew = breakdown["East-West"]
+        assert ew["belote_count"] is True
+        assert ew["belote"] == 20
+        assert ew["contract"] == 0
+        assert ew["cards_count"] is False
+        # The four components still sum to the engine's round score.
+        assert (
+            ew["contract"] + ew["card_points"] + ew["dix_de_der"] + ew["belote"]
+            == 20
+        )
 
     def test_recap_panel_renders_contract_row(self, four_players):
         """End-to-end: the rendered panel contains a 'Contract' row."""

@@ -943,7 +943,7 @@ class RichView:
             contract_team_name = None
         else:
             contract_team_name = contract.team.name
-            made = round_.round_scores.get(contract_team_name, 0) > 0
+            made = self._contract_made(round_)
         self.history.append(
             RoundSummary(
                 round_number=round_.round_number,
@@ -1984,8 +1984,7 @@ class RichView:
             body.append_text(_format_trump_label(contract.suit))
             body.append("\n")
             # Made/failed badge
-            contract_team = contract.team.name
-            made = round_.round_scores.get(contract_team, 0) > 0
+            made = self._contract_made(round_)
             body.append("  Result:    ", style=DIM)
             if made:
                 body.append("✓ Contract made", style=f"bold {GREEN_CHECK}")
@@ -2025,11 +2024,11 @@ class RichView:
 
         Returns a dict keyed by team name with:
             contract:     contract-related bonus credited to this team
-                          (attacker base on numeric normal-made,
-                          160+base*mult on numeric doubled/redoubled
-                          made, (160+base)*mult on numeric failed for
-                          the defender; base*mult on Slam family for
-                          the side winning the contract; 0 otherwise).
+                          (attacker base on numeric un-doubled made,
+                          160+C*mult to the winning side on numeric
+                          failed *and* on numeric doubled/redoubled made
+                          — winner-takes-all; base*mult on Slam family
+                          for the side winning the contract; 0 otherwise).
             card_points:  sum of card.get_points(trump) across the
                           team's tricks (trump-aware) for numeric
                           contracts, *or* the flat substitute
@@ -2043,18 +2042,19 @@ class RichView:
                           Drives the row label ("Tricks won (cards)" vs
                           "Tricks won (subst.)").
             dix_de_der:   10 if the team took the last trick, else 0.
-            belote:       20 if the team holds both K and Q of trump
-                          in its tricks, else 0.
+            belote:       20 if the team *holds* both K and Q of trump
+                          (``belote_holder``), else 0.
             trick_count:  number of tricks won.
             cards_count:  True when ``card_points`` contributes to the
                           team's round score (and should render as a
                           number). False → em-dash.
             dix_count:    True when ``dix_de_der`` contributes; False →
-                          em-dash. (Always False for Slam family — the
-                          flat substitute already covers the 162.)
-            belote_count: True when ``belote`` contributes; False →
-                          em-dash. (True for Slam family regardless of
-                          contract outcome — belote always applies.)
+                          em-dash. (Always False for Slam family and for
+                          any doubled/failed numeric round — the flat
+                          winner-takes-all bonus already covers the pile.)
+            belote_count: True when ``belote`` contributes — i.e. iff
+                          this team holds the pair. Belote is always
+                          preserved, win or lose, in every scoring shape.
 
         Each component is the *contribution to round_score* — so
         contract + card_points + dix_de_der + belote always equals
@@ -2069,15 +2069,11 @@ class RichView:
             last_trick_team = last_trick_winner.team.name
 
         belote_team = self._belote_team_in_round(round_)
-        round_scores = getattr(round_, "round_scores", {}) or {}
 
         attacking_team = (
             contract.team.name if contract is not None else None
         )
-        contract_made = (
-            attacking_team is not None
-            and round_scores.get(attacking_team, 0) > 0
-        )
+        contract_made = contract is not None and self._contract_made(round_)
         if contract is not None:
             base = contract.get_base_points()
             mult = contract.get_multiplier()
@@ -2101,18 +2097,21 @@ class RichView:
             raw_belote = 20 if team_name == belote_team else 0
 
             is_attacker = (team_name == attacking_team)
+            is_winner = (is_attacker == contract_made)
             contract_row = 0
             card_points_value = raw_card_pts
             card_points_substituted = False
             cards_count = True
             dix_count = True
-            belote_count = True
+            # Belote (+20) is always preserved for the team holding the
+            # pair, win or lose — so it counts iff this team is the
+            # holder, in every scoring shape.
+            belote_count = (team_name == belote_team)
 
             if contract is None:
                 # All passed — nothing scores.
                 cards_count = False
                 dix_count = False
-                belote_count = False
             elif is_slam_family:
                 # Slam family: the 162 of trick-card points is replaced
                 # by a flat substitute equal to the contract base. The
@@ -2123,44 +2122,35 @@ class RichView:
                 # substitute already covers the 162.
                 card_points_substituted = True
                 dix_count = False
-                belote_count = True
-                contract_half = base * mult
-                substitute_half = slam_substitute * mult
-                wins = (is_attacker and contract_made) or (
-                    not is_attacker and not contract_made
-                )
-                if wins:
-                    contract_row = contract_half
-                    card_points_value = substitute_half
+                if is_winner:
+                    contract_row = base * mult
+                    card_points_value = slam_substitute * mult
                     cards_count = True
                 else:
-                    contract_row = 0
                     card_points_value = 0
                     cards_count = False
-            elif is_attacker:
+            elif mult == 1:
+                # Numeric, un-doubled: the two sides share the pile.
                 if contract_made:
-                    if mult > 1:
-                        # Doubled or redoubled made → flat bonus,
-                        # the engine ignores the attacker's cards.
-                        contract_row = 160 + base * mult
-                        cards_count = False
-                        dix_count = False
-                        belote_count = False
-                    else:
+                    # Made → declarer adds the contract value on top of
+                    # its card pile; both sides keep cards/der/belote.
+                    if is_attacker:
                         contract_row = base
                 else:
-                    # Failed → attacker gets 0; cards don't add.
-                    contract_row = 0
+                    # Failed → defender takes the whole pile + contract;
+                    # the declarer keeps only its belote.
                     cards_count = False
                     dix_count = False
-                    belote_count = False
+                    if not is_attacker:
+                        contract_row = 160 + base
             else:
-                # Defender.
-                if not contract_made:
-                    contract_row = (160 + base) * mult
-                    cards_count = False
-                    dix_count = False
-                    belote_count = False
+                # Numeric, doubled / redoubled: winner-takes-all. The
+                # flat 160 + C×M replaces the cards/der pile for both
+                # sides; the loser scores only its belote.
+                cards_count = False
+                dix_count = False
+                if is_winner:
+                    contract_row = 160 + base * mult
 
             out[team_name] = {
                 "contract": contract_row,
@@ -2188,9 +2178,10 @@ class RichView:
         made or failed), Tricks won (cards), Last trick, Belote, then
         a divider and the engine-computed Round score. The four
         component rows always sum to the Round score — when the engine
-        substitutes a flat formula (doubled-made attacker, failed
-        defender), the cards / dix / belote rows display em-dashes so
-        the addition stays honest.
+        substitutes a flat winner-takes-all formula (any failed or
+        doubled numeric round), the cards / dix rows display em-dashes
+        so the addition stays honest. The Belote row still shows +20 for
+        whichever team holds the pair, since belote is always preserved.
         """
         ns = breakdown.get("North-South", {})
         ew = breakdown.get("East-West", {})
@@ -2310,23 +2301,36 @@ class RichView:
 
     @staticmethod
     def _belote_team_in_round(round_) -> Optional[str]:
-        """Return the team name that took both K and Q of trump this round."""
-        contract = getattr(round_, "contract", None)
-        if contract is None or contract.suit == Suit.NO_TRUMP:
+        """Return the team *holding* both K and Q of trump this round.
+
+        Belote belongs to whoever holds the pair (``belote_holder``),
+        not to whichever team captures those cards in a trick — see
+        contree-domain.md §6.5 and the matching rule in
+        :meth:`contrai_engine.model.round.Round.calculate_round_scores`.
+        """
+        holder = getattr(round_, "belote_holder", None)
+        if holder is None or getattr(holder, "team", None) is None:
             return None
-        trump = contract.suit
-        for team_name, tricks in getattr(round_, "team_tricks", {}).items():
-            has_king = False
-            has_queen = False
-            for trick in tricks:
-                for _, card in trick.get_plays():
-                    if card.suit == trump and card.rank == Rank.KING:
-                        has_king = True
-                    if card.suit == trump and card.rank == Rank.QUEEN:
-                        has_queen = True
-            if has_king and has_queen:
-                return team_name
-        return None
+        return holder.team.name
+
+    @staticmethod
+    def _contract_made(round_) -> bool:
+        """Canonical made/failed verdict for ``round_``.
+
+        Reads the engine's :attr:`Round.contract_made` flag — the single
+        source of truth. "round_score > 0" is *not* a safe proxy: a
+        failed declarer can still score a non-zero Belote bonus. Falls
+        back to the score heuristic only for legacy/stub rounds that
+        predate the flag.
+        """
+        made = getattr(round_, "contract_made", None)
+        if made is not None:
+            return bool(made)
+        contract = getattr(round_, "contract", None)
+        if contract is None:
+            return False
+        scores = getattr(round_, "round_scores", {}) or {}
+        return scores.get(contract.team.name, 0) > 0
 
     def _panel_event_log(self) -> Panel:
         """Bottom panel showing the last ``LOG_MAX`` events."""
