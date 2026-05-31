@@ -1957,10 +1957,14 @@ class RichView:
     ) -> Panel:
         """Between-rounds recap panel — what just happened, in one read.
 
-        Lays out the round's points as a two-column table so the user
-        can trace how the round total was built: trump-aware card
-        points per team, then dix-de-der and belote bonuses, then the
-        final round score the contract bonus / penalty produced.
+        Two stacked sub-tables share the N-S / E-W columns. The
+        **Outcome** table reports the factual play tally — tricks won
+        and round points (trump-aware pile + last-trick 10 + belote 20)
+        each side captured. The **Scoring** table then traces how the
+        contract converts that into the engine's round score: contract
+        bonus / penalty, card points, last trick, belote, then the
+        round-score subtotal. A final Running line carries the
+        game-level totals and the target.
         """
         body = Text()
         body.append("\n")
@@ -1992,18 +1996,28 @@ class RichView:
                 body.append("✗ Contract failed", style=f"bold {RED}")
             body.append("\n\n")
 
-        # Per-team breakdown table. Card points (trump-aware) from
-        # the tricks each team won, plus dix-de-der and belote
-        # bonuses, then the actual round score from the engine.
+        # Two stacked sub-tables sharing the same N-S / E-W columns.
+        # "Outcome" first — the factual play tally (tricks + round
+        # points each side captured). "Scoring" next — how the contract
+        # converts that into the engine's round score.
         breakdown = self._recap_breakdown(round_)
         trump = contract.suit if contract is not None else None
+
+        body.append_text(self._section_rule("Outcome"))
+        body.append("\n")
+        body.append_text(self._format_outcome_table(breakdown))
+        body.append("\n")
+
+        body.append_text(self._section_rule("Scoring"))
+        body.append("\n")
         body.append_text(
             self._format_recap_table(breakdown, ns_round, ew_round, trump)
         )
         body.append("\n")
 
-        # Running totals + target.
-        body.append("  Running    ", style=DIM)
+        # Running game totals + target. Label padded to the shared
+        # 24-char column gutter so the numbers line up under N-S / E-W.
+        body.append(f"  {'Running':<22}", style=DIM)
         body.append(f"{running_ns:>6}", style=f"bold {BLUE}")
         body.append(f"  {running_ew:>6}", style=f"bold {ORANGE}")
         body.append(f"     target {self.target_score}", style=DIM)
@@ -2041,6 +2055,11 @@ class RichView:
                           substitute instead of the actual trick pile.
                           Drives the row label ("Tricks won (cards)" vs
                           "Tricks won (subst.)").
+            round_points: honest play tally — the real trump-aware pile
+                          captured plus last-trick (10) and belote (20).
+                          Always the true captured total, independent of
+                          how the contract converts it into score; the
+                          Outcome sub-table renders it verbatim.
             dix_de_der:   10 if the team took the last trick, else 0.
             belote:       20 if the team *holds* both K and Q of trump
                           (``belote_holder``), else 0.
@@ -2156,6 +2175,13 @@ class RichView:
                 "contract": contract_row,
                 "card_points": card_points_value if cards_count else 0,
                 "card_points_substituted": card_points_substituted,
+                # Honest play tally for the Outcome sub-table: the real
+                # trump-aware pile this team captured plus the last-trick
+                # (10) and belote (20) it earned in play. Independent of
+                # how the contract converts these into score — so it still
+                # reflects real captured points in a winner-takes-all round
+                # where the Scoring rows are dashed out.
+                "round_points": raw_card_pts + raw_dix + raw_belote,
                 "dix_de_der": raw_dix if dix_count else 0,
                 "belote": raw_belote if belote_count else 0,
                 "trick_count": len(tricks),
@@ -2163,6 +2189,67 @@ class RichView:
                 "dix_count": dix_count,
                 "belote_count": belote_count,
             }
+        return out
+
+    @staticmethod
+    def _section_rule(label: str, width: int = 44) -> Text:
+        """A dim horizontal rule with a centered section label.
+
+        Renders e.g. ``──────── Outcome ────────`` to split the recap
+        panel into its Outcome / Scoring sub-tables. ``width`` is the
+        dash-field length (excluding the 2-space left gutter).
+        """
+        tag = f" {label} "
+        fill = max(0, width - len(tag))
+        left = fill // 2
+        right = fill - left
+        rule = Text("  ")
+        rule.append("─" * left, style=DIM)
+        rule.append(tag, style=f"bold {FG}")
+        rule.append("─" * right, style=DIM)
+        return rule
+
+    def _format_outcome_table(self, breakdown: dict) -> Text:
+        """Render the per-team play tally (tricks won + round points).
+
+        These are factual results of the actual play — the trick count
+        and the round-points total (trump-aware pile + last-trick 10 +
+        belote 20) each side captured — shown independently of how the
+        contract converts them into score. In a winner-takes-all round
+        the Scoring table dashes a losing side's card/der rows, but the
+        points it genuinely took still surface here.
+        """
+        ns = breakdown.get("North-South", {})
+        ew = breakdown.get("East-West", {})
+
+        def _count_cell(value: int) -> Text:
+            return Text(f"{value:>6}", style="bold")
+
+        # Header row: "                          N-S     E-W"
+        header = Text()
+        header.append(f"  {'':<22}", style=DIM)
+        header.append(f"{'N-S':>6}", style=f"bold {BLUE}")
+        header.append(f"  {'E-W':>6}", style=f"bold {ORANGE}")
+        header.append("\n")
+
+        row_tricks = Text()
+        row_tricks.append(f"  {'Tricks won':<22}", style=FG)
+        row_tricks.append_text(_count_cell(ns.get("trick_count", 0)))
+        row_tricks.append("  ")
+        row_tricks.append_text(_count_cell(ew.get("trick_count", 0)))
+        row_tricks.append("\n")
+
+        row_points = Text()
+        row_points.append(f"  {'Round points':<22}", style=FG)
+        row_points.append_text(_count_cell(ns.get("round_points", 0)))
+        row_points.append("  ")
+        row_points.append_text(_count_cell(ew.get("round_points", 0)))
+        row_points.append("\n")
+
+        out = Text()
+        out.append_text(header)
+        out.append_text(row_tricks)
+        out.append_text(row_points)
         return out
 
     def _format_recap_table(
@@ -2175,8 +2262,10 @@ class RichView:
         """Render the per-team breakdown table inside the recap panel.
 
         Rows: Contract (the bonus a team earns from the contract being
-        made or failed), Tricks won (cards), Last trick, Belote, then
-        a divider and the engine-computed Round score. The four
+        made or failed), Tricks (trump-aware card pile), Last trick,
+        Belote, then a divider and the engine-computed Round score. The
+        factual trick count and total captured points live in the
+        separate Outcome sub-table. The four
         component rows always sum to the Round score — when the engine
         substitutes a flat winner-takes-all formula (any failed or
         doubled numeric round), the cards / dix rows display em-dashes
@@ -2232,27 +2321,26 @@ class RichView:
         # Slam-family substitute scaled by the multiplier). Trick count
         # is shown either way — it's an honest fact independent of the
         # score formula.
-        ns_tricks = ns.get("trick_count", 0)
-        ew_tricks = ew.get("trick_count", 0)
         # Slam family rounds replace the 162-card pile with a flat
         # substitute; the row label flips so the user sees that the
-        # number isn't a literal card count.
+        # number isn't a literal card count. The factual trick count now
+        # lives in the Outcome sub-table, so this row carries no count
+        # annotation.
         card_pts_substituted = (
             ns.get("card_points_substituted", False)
             or ew.get("card_points_substituted", False)
         )
-        card_label = "Tricks won (subst.)" if card_pts_substituted else "Tricks won (cards)"
+        card_label = "Tricks won" if card_pts_substituted else "Tricks"
         row_cards = Text()
         row_cards.append(f"  {card_label:<22}", style=FG)
         row_cards.append_text(_component_cell(ns, "card_points", "cards_count"))
         row_cards.append("  ")
         row_cards.append_text(_component_cell(ew, "card_points", "cards_count"))
-        row_cards.append(f"   ({ns_tricks}/{ew_tricks} tricks)", style=DIM)
         row_cards.append("\n")
 
         # Last-trick bonus (10 points to the team that wins trick 8).
         row_dxd = Text()
-        row_dxd.append(f"  {'Last trick (10)':<22}", style=FG)
+        row_dxd.append(f"  {'Last trick':<22}", style=FG)
         row_dxd.append_text(_component_cell(ns, "dix_de_der", "dix_count"))
         row_dxd.append("  ")
         row_dxd.append_text(_component_cell(ew, "dix_de_der", "dix_count"))

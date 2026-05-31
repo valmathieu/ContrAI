@@ -1362,10 +1362,66 @@ class TestRoundRecapPanel:
         # Trump-aware card points:
         #   ns_trick1: J♥(20) + 7♥(0)  = 20
         #   ns_trick2: A♠(11) + 9♥(14) = 25
-        # N-S total = 45.
+        # N-S total = 45 — shown in the Scoring "Tricks" row.
         assert "45" in text
-        # Trick count line — N-S 2 tricks, E-W 1 trick.
-        assert "(2/1 tricks)" in text
+        # The scoring row is now plain "Tricks" (no card-count suffix);
+        # the factual trick count moved to the Outcome sub-table.
+        assert "(2/1 tricks)" not in text
+        assert "Outcome" in text
+        assert "Tricks won" in text
+        assert "Round points" in text
+
+    def test_recap_round_points_sum_pile_last_trick_and_belote(
+        self, four_players
+    ):
+        """Outcome ``round_points`` = trump-aware pile + last trick (10)
+        + belote (20), the honest play tally per team."""
+        view = RichView()
+        north, east, *_ = four_players
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        # N-S takes one trick worth A♥ (trump ace = 11).
+        ns_trick = Trick()
+        ns_trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
+        ns_trick.add_play(east, Card(Suit.CLUBS, Rank.SEVEN))
+        round_ = self._StubRound(
+            round_number=2,
+            contract=contract,
+            round_scores={"North-South": 141, "East-West": 0},
+            team_tricks={"North-South": [ns_trick], "East-West": []},
+            belote_holder=north,
+        )
+        round_.last_trick_winner = north
+        breakdown = view._recap_breakdown(round_)
+        # 11 (A♥) + 10 (last trick) + 20 (belote) = 41.
+        assert breakdown["North-South"]["round_points"] == 41
+        assert breakdown["East-West"]["round_points"] == 0
+
+    def test_recap_round_points_survive_winner_takes_all_round(
+        self, four_players
+    ):
+        """In a doubled/failed round the Scoring card row is dashed, but
+        ``round_points`` still reports the real pile each side captured."""
+        view = RichView()
+        north, east, *_ = four_players
+        # Doubled contract by N-S that fails — E-W scores winner-takes-all.
+        contract = self._StubContract(
+            100, Suit.HEARTS, "North-South", double=True
+        )
+        ew_trick = Trick()
+        ew_trick.add_play(east, Card(Suit.HEARTS, Rank.JACK))  # trump J = 20
+        round_ = self._StubRound(
+            round_number=2,
+            contract=contract,
+            round_scores={"North-South": 0, "East-West": 320},
+            team_tricks={"North-South": [], "East-West": [ew_trick]},
+            contract_made=False,
+        )
+        breakdown = view._recap_breakdown(round_)
+        ew = breakdown["East-West"]
+        # Scoring zeroes the card row (winner-takes-all formula)...
+        assert ew["cards_count"] is False
+        # ...but the real captured pile still shows in round_points.
+        assert ew["round_points"] == 20
 
     def test_recap_shows_dix_de_der_for_last_trick_winner(self, four_players):
         view = RichView()
