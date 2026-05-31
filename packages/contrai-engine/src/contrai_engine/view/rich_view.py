@@ -507,6 +507,51 @@ def _double_available_to(history: list, player: BasePlayer) -> bool:
     return False
 
 
+def _min_legal_contract_value(history: list) -> Optional[int]:
+    """Lowest contract value a fresh numeric bid could legally announce.
+
+    The prompt's worked example ("e.g. '100 H'") should track the live
+    auction rather than always parroting the ``80`` floor: a new contract
+    must strictly outrank the standing one, so once someone has bid 90 the
+    cheapest legal raise is 100, not 80. Mirrors
+    :meth:`contrai_core.auction.Auction._is_contract_value_legal` for the
+    legacy-format history this view receives, without re-deriving
+    :class:`~contrai_core.auction.Auction` state.
+
+    Args:
+        history: The legacy ``(player, wire_bid)`` history. Contract bids
+            appear as ``(value, suit)`` tuples; passes/doubles as strings.
+
+    Returns:
+        The lowest legal numeric value (80–180) for a new contract bid, or
+        ``None`` when no numeric bid is legal anymore — either a standing
+        contract of 180 (where only Slam/SoloSlam outrank it) or a
+        ``Slam``/``SoloSlam`` that nothing outranks. Callers drop the
+        contract example from the hint in that case.
+    """
+    # Contracts climb monotonically, so the most recent contract bid is
+    # also the highest. The first tuple seen walking backwards is it.
+    last_value: int | str | None = None
+    for _bid_player, bid in reversed(history):
+        if isinstance(bid, tuple):
+            last_value = bid[0]
+            break
+
+    values = ContractBid.VALID_VALUES
+    if last_value is None:
+        # No contract on the table — the ladder opens at its floor (80).
+        return values[0]
+    if last_value in ("Slam", "SoloSlam"):
+        # Nothing outranks a Slam; no numeric raise is legal.
+        return None
+    # First numeric step strictly above the standing contract. Past 180
+    # only the Slam sentinels remain, so the example is dropped instead.
+    for value in values[values.index(last_value) + 1 :]:
+        if isinstance(value, int):
+            return value
+    return None
+
+
 def _illegal_bid_reason(bid: Bid, auction: Auction) -> str:
     """Return a human-readable reason ``bid`` is illegal in ``auction``.
 
@@ -1797,7 +1842,15 @@ class RichView:
             # meaningful active option besides passing.
             t.append("(pass / redouble)", style=DIM)
         else:
-            options = ["'80 H'", "'pass'"]
+            # The worked contract example tracks the auction: show the
+            # cheapest *legal* raise (100 once 90 stands), never the bare
+            # 80 floor, so the hint can't suggest a bid the auction would
+            # reject. Dropped entirely past 180, where only Slam remains.
+            options: list[str] = []
+            min_value = _min_legal_contract_value(history)
+            if min_value is not None:
+                options.append(f"'{min_value} H'")
+            options.append("'pass'")
             if next_player is not None and _double_available_to(history, next_player):
                 options.append("'double'")
             t.append(f"(e.g. {' / '.join(options)})", style=DIM)

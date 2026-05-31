@@ -32,6 +32,7 @@ from contrai_engine.view.rich_view import (
     _explain_constraint,
     _format_contract_short,
     _illegal_bid_reason,
+    _min_legal_contract_value,
     _parse_bid_input,
     _parse_card_input,
     _redouble_available_to,
@@ -294,8 +295,10 @@ class TestBiddingPromptHint:
         _, _, south, _ = four_players
         text = self._prompt(history, south)
         assert "double" not in text
-        # Bidding higher and passing are still on the table.
-        assert "80 H" in text and "pass" in text
+        # Bidding higher and passing are still on the table — and the
+        # example tracks the 90♠ contract, so it offers 100, not 80.
+        assert "100 H" in text and "pass" in text
+        assert "80 H" not in text
 
     def test_double_hint_when_opponent_holds_contract(self, four_players):
         """East (an opponent of South) holds the contract → offer double."""
@@ -303,6 +306,28 @@ class TestBiddingPromptHint:
         history = [(east, (90, Suit.SPADES))]
         text = self._prompt(history, south)
         assert "double" in text
+
+    def test_example_tracks_highest_contract(self, four_players):
+        """The reported request: with 90♦ standing, the worked example
+        must propose at least 100, never the bare 80 floor."""
+        north, east, south, _west = four_players
+        history = [
+            (east, (80, Suit.HEARTS)),
+            (south, (90, Suit.DIAMONDS)),
+        ]
+        text = self._prompt(history, north)
+        assert "100 H" in text
+        assert "80 H" not in text and "90 H" not in text
+
+    def test_example_dropped_when_only_slam_outranks(self, four_players):
+        """At 180 only Slam/SoloSlam are legal raises, so the numeric
+        example is dropped rather than suggesting an illegal bid."""
+        north, east, _south, _west = four_players
+        history = [(east, (180, Suit.HEARTS))]
+        text = self._prompt(history, north)
+        # No numeric contract example, but passing/doubling remain.
+        assert "180 H" not in text
+        assert "pass" in text and "double" in text
 
 
 class TestDoubleAvailability:
@@ -341,6 +366,55 @@ class TestDoubleAvailability:
         # North is on the contracting side's opponents... but a Double
         # already stands, so no further Double is legal regardless.
         assert _double_available_to(history, north) is False
+
+
+class TestMinLegalContractValue:
+    """The dynamic floor that drives the prompt's worked example."""
+
+    def test_empty_history_opens_at_floor(self, four_players):
+        """Nothing bid yet → the ladder opens at 80."""
+        assert _min_legal_contract_value([]) == 80
+
+    def test_only_passes_still_floor(self, four_players):
+        """Passes don't raise the floor — still 80."""
+        north, east, _south, _west = four_players
+        history = [(north, "Pass"), (east, "Pass")]
+        assert _min_legal_contract_value(history) == 80
+
+    def test_next_step_above_standing_contract(self, four_players):
+        """90 standing → cheapest legal raise is 100."""
+        north, _east, _south, _west = four_players
+        history = [(north, (90, Suit.DIAMONDS))]
+        assert _min_legal_contract_value(history) == 100
+
+    def test_uses_highest_not_latest_shape(self, four_players):
+        """The most recent contract is the highest (monotonic), so the
+        floor sits one step above it."""
+        north, east, _south, _west = four_players
+        history = [
+            (east, (80, Suit.HEARTS)),
+            (north, (120, Suit.CLUBS)),
+        ]
+        assert _min_legal_contract_value(history) == 130
+
+    def test_double_does_not_reset_floor(self, four_players):
+        """A trailing Double leaves the standing contract intact, so the
+        floor is still computed from the last numeric bid."""
+        north, east, _south, _west = four_players
+        history = [(north, (110, Suit.SPADES)), (east, "Double")]
+        assert _min_legal_contract_value(history) == 120
+
+    def test_180_leaves_no_numeric_raise(self, four_players):
+        """Past 180 only the Slam sentinels remain → None."""
+        north, _east, _south, _west = four_players
+        history = [(north, (180, Suit.HEARTS))]
+        assert _min_legal_contract_value(history) is None
+
+    def test_slam_outranked_by_nothing(self, four_players):
+        """A standing Slam blocks every further contract bid → None."""
+        north, _east, _south, _west = four_players
+        history = [(north, ("Slam", Suit.HEARTS))]
+        assert _min_legal_contract_value(history) is None
 
 
 class TestIllegalBidReason:
