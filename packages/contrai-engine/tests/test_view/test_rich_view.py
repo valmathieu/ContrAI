@@ -24,6 +24,7 @@ from contrai_core.team import Team
 from contrai_core.bid import ContractBid, DoubleBid, PassBid, RedoubleBid
 from contrai_core.contract import Contract
 from contrai_engine.view.rich_view import (
+    RED,
     RichView,
     RoundSummary,
     _bid_to_legacy,
@@ -469,18 +470,24 @@ class TestRequestBidActionLegality:
     def _drive(self, four_players, raws):
         """Run request_bid_action feeding *raws* as successive inputs.
 
-        Returns ``(bid, printed_lines)``. Rendering and console I/O are
-        stubbed so the loop runs headless.
+        Returns ``(view, notices, inputs)``. Rendering and console I/O
+        are stubbed so the loop runs headless. ``notices`` collects the
+        ``notice`` Text handed to each ``_render_in_game`` frame — the
+        rejection now rides inside the frame rather than a standalone
+        ``console.print`` (which a re-render's ``console.clear()`` would
+        bury in scrollback).
         """
         view = RichView()
         inputs = iter(raws)
-        printed: list[str] = []
-        view._render_in_game = lambda **kwargs: None
+        notices: list[str] = []
+
+        def fake_render(**kwargs):
+            note = kwargs.get("notice")
+            notices.append(getattr(note, "plain", None) if note else None)
+
+        view._render_in_game = fake_render
         view.console.input = lambda *a, **k: next(inputs)
-        view.console.print = lambda renderable=None, *a, **k: printed.append(
-            getattr(renderable, "plain", str(renderable))
-        )
-        return view, printed, inputs
+        return view, notices, inputs
 
     def test_double_own_partner_reprompts_then_passes(self, four_players):
         north, east, south, west = four_players
@@ -492,13 +499,17 @@ class TestRequestBidActionLegality:
         ):
             auction = auction.apply(bid)
 
-        view, printed, _ = self._drive(four_players, ["double", "pass"])
+        view, notices, _ = self._drive(four_players, ["double", "pass"])
         result = view.request_bid_action(south, auction)
 
         # The illegal Double was rejected inline (no exception), and the
         # loop accepted the follow-up Pass.
         assert isinstance(result, PassBid)
-        assert any("own side" in line for line in printed)
+        # The rejection rode inside the re-prompt frame (notice arg), not
+        # a standalone print: the first frame had no notice, the retry
+        # frame carried the "own side" reason.
+        assert notices[0] is None
+        assert any(n and "own side" in n for n in notices)
         # And whatever it returns is genuinely legal — the property the
         # crash violated.
         assert auction.is_legal(result)
@@ -507,11 +518,36 @@ class TestRequestBidActionLegality:
         _north, east, south, _west = four_players
         auction = Auction.empty().apply(ContractBid(east, 90, Suit.SPADES))
 
-        view, printed, _ = self._drive(four_players, ["double"])
+        view, notices, _ = self._drive(four_players, ["double"])
         result = view.request_bid_action(south, auction)
 
         assert isinstance(result, DoubleBid)
-        assert printed == []  # accepted on first try, no rejection notice
+        # Accepted on the first frame — no rejection notice was ever set.
+        assert notices == [None]
+
+
+class TestPanelPromptNotice:
+    """The rejection line is rendered inside the Prompt panel itself."""
+
+    def test_notice_appears_above_question(self):
+        view = RichView()
+        notice = Text("✗ doubling your own side", style=RED)
+        panel = view._panel_prompt(Text("Your bid?"), False, notice=notice)
+        text = panel.renderable.plain
+        # Both the reason and the question share the one panel, reason
+        # first — so the player never has to scroll to see why input
+        # bounced.
+        assert "own side" in text
+        assert "Your bid?" in text
+        assert text.index("own side") < text.index("Your bid?")
+        # Grows a row to fit the extra line.
+        assert panel.height == 5
+
+    def test_no_notice_keeps_compact_height(self):
+        view = RichView()
+        panel = view._panel_prompt(Text("Your bid?"), False)
+        assert "own side" not in panel.renderable.plain
+        assert panel.height == 4
 
 
 # ======================================================================

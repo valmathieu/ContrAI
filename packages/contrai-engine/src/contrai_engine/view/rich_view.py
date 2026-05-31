@@ -694,6 +694,12 @@ class RichView:
         legacy_bids = [
             (bid.player, _bid_to_legacy(bid)) for bid in auction.bids
         ]
+        # A rejection from the previous iteration. Rendered *inside* the
+        # next frame's Prompt panel rather than ``console.print``ed after
+        # the input — otherwise the loop's ``console.clear()`` pushes the
+        # standalone message up into scrollback, where it's invisible
+        # until the player scrolls back.
+        notice: Optional[Text] = None
         while True:
             self._render_in_game(
                 phase="bidding",
@@ -701,18 +707,17 @@ class RichView:
                 bidding_history=legacy_bids,
                 prompt_question=self._bidding_prompt_text(legacy_bids, player),
                 mandatory=False,
+                notice=notice,
             )
             raw = self.console.input(
                 Text("> ", style=f"bold {GREEN_FG}").markup
             )
             parsed = _parse_bid_input(raw)
             if parsed is None:
-                self.console.print(
-                    Text(
-                        "  ✗ Unrecognized bid. Try '80 h', 'pass', "
-                        "'double', 'redouble'.",
-                        style=RED,
-                    )
+                notice = Text(
+                    "✗ Unrecognized bid. Try '80 h', 'pass', "
+                    "'double', 'redouble'.",
+                    style=RED,
                 )
                 continue
             bid = wire_to_bid(player, parsed)
@@ -723,11 +728,9 @@ class RichView:
             # Auction.apply, where it would raise IllegalBidError and
             # crash the CLI.
             if not auction.is_legal(bid):
-                self.console.print(
-                    Text(
-                        f"  ✗ {_illegal_bid_reason(bid, auction)}",
-                        style=RED,
-                    )
+                notice = Text(
+                    f"✗ {_illegal_bid_reason(bid, auction)}",
+                    style=RED,
                 )
                 continue
             return bid
@@ -741,6 +744,10 @@ class RichView:
     ) -> Card:
         """Prompt the human for a card. Loops until input parses."""
         trump_suit = contract.suit if contract else None
+        # See ``request_bid_action``: the rejection rides inside the next
+        # frame's Prompt panel so the ``console.clear()`` on re-render
+        # can't bury it in scrollback.
+        notice: Optional[Text] = None
         while True:
             sorted_hand = _sort_hand_for_display(list(player.hand), trump_suit)
             self._render_in_game(
@@ -752,18 +759,17 @@ class RichView:
                     playable_cards, len(sorted_hand)
                 ),
                 mandatory=True,
+                notice=notice,
             )
             raw = self.console.input(
                 Text("> ", style=f"bold {YELLOW}").markup
             )
             card = _parse_card_input(raw, sorted_hand, playable_cards)
             if card is None:
-                self.console.print(
-                    Text(
-                        f"  ✗ Pick a number between 1 and {len(sorted_hand)} "
-                        "matching a green-highlighted card.",
-                        style=RED,
-                    )
+                notice = Text(
+                    f"✗ Pick a number between 1 and {len(sorted_hand)} "
+                    "matching a green-highlighted card.",
+                    style=RED,
                 )
                 continue
             return card
@@ -1030,8 +1036,14 @@ class RichView:
         trick_winner: Optional[BasePlayer] = None,
         prompt_question: Text = Text(""),
         mandatory: bool = False,
+        notice: Optional[Text] = None,
     ) -> None:
-        """Clear the screen and print all in-game panels stacked."""
+        """Clear the screen and print all in-game panels stacked.
+
+        ``notice`` is an optional rejection/error line (e.g. an illegal
+        bid or out-of-range card index) rendered inside the Prompt panel
+        so it survives the ``console.clear()`` that opens every frame.
+        """
         self.console.clear()
         round_ = self.game.current_round if self.game else None
         # Top row: game score + round info
@@ -1069,7 +1081,9 @@ class RichView:
             self.console.print(hand_panel)
         # Event log: a rolling narrative of the last few engine events.
         self.console.print(self._panel_event_log())
-        self.console.print(self._panel_prompt(prompt_question, mandatory))
+        self.console.print(
+            self._panel_prompt(prompt_question, mandatory, notice=notice)
+        )
 
     # ------------------------------------------------------------------
     # Landing screen pieces
@@ -1790,8 +1804,19 @@ class RichView:
             width=70,
         )
 
-    def _panel_prompt(self, question: Text, mandatory: bool) -> Panel:
+    def _panel_prompt(
+        self,
+        question: Text,
+        mandatory: bool,
+        notice: Optional[Text] = None,
+    ) -> Panel:
         body = Text()
+        # A rejection from the previous input sits above the question, in
+        # red, so the player reads *why* the last entry bounced without it
+        # ever leaving the frame. The panel grows one row to fit it.
+        if notice is not None:
+            body.append_text(notice)
+            body.append("\n")
         if mandatory:
             q = question.copy()
             q.stylize(f"bold {YELLOW}")
@@ -1805,7 +1830,7 @@ class RichView:
             border_style=BORDER,
             box=ROUNDED,
             width=70,
-            height=4,
+            height=5 if notice is not None else 4,
         )
 
     # ------------------------------------------------------------------
