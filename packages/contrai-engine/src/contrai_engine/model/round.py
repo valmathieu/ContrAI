@@ -45,6 +45,13 @@ class Round:
         self.last_trick_winner: Optional['Player'] = None
         self.team_tricks: Dict[str, List[Trick]] = {}
         self.round_scores: Dict[str, int] = {}
+        # Single source of truth for the contract outcome, set by
+        # ``calculate_round_scores``. ``None`` until scored (or when the
+        # round was all-passed). The view reads this rather than
+        # re-deriving "made" from the scores — a failed declarer can
+        # still score a non-zero Belote bonus, so "round_score > 0" is
+        # not a reliable made/failed signal.
+        self.contract_made: Optional[bool] = None
 
         # Belote / rebelote announcement state. ``belote_holder`` is the
         # unique player holding both the K and the Q of trump at deal time
@@ -331,22 +338,33 @@ class Round:
         """
         Calculate scores for this round.
 
-        Two scoring paths coexist:
+        Three scoring shapes, all sharing the same Belote rule (see
+        contree-domain.md §6.5, §7):
 
-        - **Numeric contracts (80–180)** use the historical formula
-          ``base + card_points`` (made) and ``(160 + base) * multiplier``
-          (failed). Card points include the *dix de der* (10 pts for
-          the last trick) and the belote bonus (+20 for the team
-          capturing both K and Q of trump).
-        - **Slam / Solo Slam** use a symmetric grid that *replaces*
-          ``base + card_points`` entirely: the winning side (attacker
-          if made, defender if failed) scores ``base * multiplier``
-          (500 / 1000 / 2000 for Slam; 1000 / 2000 / 4000 for Solo
-          Slam). The belote bonus (+20) still applies and is layered
-          on top of the grid. Solo Slam additionally requires that
-          the *contracting player personally* win every trick — if
-          their partner takes any trick the contract fails even when
-          the team wins all 8 collectively.
+        - **Numeric, un-doubled (M = 1).** Made → declarer scores
+          ``C + P_attack`` and the defense keeps its own card points;
+          failed → the defense scores ``160 + C`` and the declarer
+          scores nothing. ``P_attack`` is the declarer's card points
+          (which already include the *dix de der*) plus the Belote
+          bonus when the declarer holds it.
+        - **Numeric, doubled / redoubled (M > 1).** Winner-takes-all:
+          the side that wins the round takes the whole pile, the loser
+          scores 0. The winner scores ``160 + C × M`` whether it is the
+          declarer (made) or the defense (failed). See
+          contree-domain.md §7.2.
+        - **Slam / Solo Slam.** A symmetric grid that replaces the
+          162-point pile with a flat substitute equal to the base: the
+          winning side scores ``(base + substitute) × M`` (500 / 1000 /
+          2000 for Slam; 1000 / 2000 / 4000 for Solo Slam). Solo Slam
+          additionally requires the *contracting player personally* to
+          win every trick.
+
+        Across every shape the **Belote bonus (+20)** is credited to the
+        team *holding* both K and Q of trump (``belote_holder`` — not
+        whoever captures the cards in a trick) and is always preserved,
+        even for the side that loses the round.
+
+        Sets :attr:`contract_made` as the canonical made/failed signal.
 
         Returns:
             Dict: Team scores for this round
@@ -355,53 +373,47 @@ class Round:
             # No contract established, return zero scores
             teams = set(player.team for player in self.players_order)
             self.round_scores = {team.name: 0 for team in teams}
+            self.contract_made = None
             return self.round_scores
 
         contract_team = self.contract.player.team
         contract_value = self.contract.value
         trump_suit = self.contract.suit
-        is_doubled = self.contract.double
-        is_redoubled = self.contract.redouble
 
         team_card_points = {team_name: 0 for team_name in self.team_tricks.keys()}
         team_scores = {team_name: 0 for team_name in self.team_tricks.keys()}
 
-        # Count card points for each team and check for belote (King + Queen of trump)
-        belote_teams = set()  # Teams that have belote
+        # Card points per team (trump-aware). Belote is deliberately NOT
+        # folded in here — it is a *held-cards* bonus credited below to
+        # the holder's team, independent of who captured the K/Q.
         for team_name, tricks in self.team_tricks.items():
             points = 0
-            trump_cards_played = []
-
             for trick in tricks:
-                # Handle Trick objects
                 if hasattr(trick, 'get_plays'):
-                    plays = trick.get_plays()
-                    for player, card in plays:
+                    for _player, card in trick.get_plays():
                         points += card.get_points(trump_suit)
-                        # Track trump cards played by this team
-                        if trump_suit and card.suit == trump_suit:
-                            trump_cards_played.append(card.rank)
-
-            # Check for belote (King and Queen of trump suit in same round)
-            if trump_suit and Rank.KING in trump_cards_played and Rank.QUEEN in trump_cards_played:
-                points += 20  # Belote bonus
-                belote_teams.add(team_name)
-
             team_card_points[team_name] = points
 
-        # Add "dix de der" (10 points for last trick)
+        # Add "dix de der" (10 points for last trick).
         if self.last_trick_winner and self.last_trick_winner.team:
-            last_trick_team = self.last_trick_winner.team.name
-            team_card_points[last_trick_team] += 10
+            team_card_points[self.last_trick_winner.team.name] += 10
+
+        # Belote (+20) belongs to the team *holding* K + Q of trump
+        # (contree-domain.md §6.5), not to whoever wins the trick those
+        # cards land in. ``belote_holder`` is the single player holding
+        # both at deal time (None when split, or at No-Trump).
+        belote_team: Optional[str] = None
+        if self.belote_holder is not None and self.belote_holder.team is not None:
+            belote_team = self.belote_holder.team.name
+
+        def belote_bonus(team_name: str) -> int:
+            """Belote (+20) for ``team_name`` when it holds the pair."""
+            return 20 if team_name == belote_team else 0
 
         contract_team_name = contract_team.name
 
-        # Calculate multiplier for double/redouble (shared by both paths).
-        multiplier = 1
-        if is_redoubled:
-            multiplier = 4
-        elif is_doubled:
-            multiplier = 2
+        # Multiplier for double/redouble (shared by both paths).
+        multiplier = self.contract.get_multiplier()
 
         # ----- Slam / Solo Slam scoring path -----
         # The 162 of trick-card points is replaced by a flat substitute
@@ -435,42 +447,57 @@ class Round:
                         team_scores[team_name] = at_risk
 
             # Belote (+20) layered on top — independent of who won the contract.
-            for team_name in belote_teams:
-                team_scores[team_name] += 20
+            if belote_team is not None:
+                team_scores[belote_team] += 20
 
+            self.contract_made = contract_made
             self.round_scores = team_scores
             return team_scores
 
         # ----- Numeric contract scoring path (80-180) -----
-        contract_team_points = team_card_points[contract_team_name]
-        contract_made = contract_team_points >= contract_value
+        defender_names = [t for t in team_scores if t != contract_team_name]
 
-        # Calculate final scores
-        if contract_made:
-            # Contract successful
-            if is_doubled or is_redoubled:
-                # When contract is made with double/redouble, attacking team gets
-                # the same points that defending team would have gotten if contract failed
-                team_scores[contract_team_name] = 160 + contract_value * multiplier
+        # The declarer's *realized* points decide made/failed: card
+        # points (already including the dix de der) plus the Belote
+        # bonus when the declarer holds it (contree-domain.md §7.1-§7.2).
+        attacker_realized = (
+            team_card_points[contract_team_name] + belote_bonus(contract_team_name)
+        )
+        contract_made = attacker_realized >= contract_value
+        self.contract_made = contract_made
 
-                # Defending team gets their actual points (no multiplier)
-                for team_name, points in team_card_points.items():
-                    if team_name != contract_team_name:
-                        team_scores[team_name] = points
+        if multiplier == 1:
+            # Un-doubled: the two sides share the pile.
+            if contract_made:
+                team_scores[contract_team_name] = (
+                    contract_value
+                    + team_card_points[contract_team_name]
+                    + belote_bonus(contract_team_name)
+                )
+                for name in defender_names:
+                    team_scores[name] = team_card_points[name] + belote_bonus(name)
             else:
-                # Normal contract made without double/redouble
-                team_scores[contract_team_name] = contract_value + contract_team_points
-                # Opposing team gets their points
-                for team_name, points in team_card_points.items():
-                    if team_name != contract_team_name:
-                        team_scores[team_name] = points
+                # Failed (chuté): the defense takes the whole pile plus
+                # the contract; the declarer keeps only its Belote bonus.
+                team_scores[contract_team_name] = belote_bonus(contract_team_name)
+                for name in defender_names:
+                    team_scores[name] = (160 + contract_value) + belote_bonus(name)
         else:
-            # Contract failed
-            team_scores[contract_team_name] = 0  # Contract team gets 0
-            # Opposing team gets all points + contract value
-            for team_name in team_scores:
-                if team_name != contract_team_name:
-                    team_scores[team_name] = (160 + contract_value) * multiplier
+            # Doubled / redoubled: winner-takes-all. The losing side
+            # scores nothing but its Belote bonus (always preserved).
+            if contract_made:
+                team_scores[contract_team_name] = (
+                    160 + contract_value * multiplier
+                    + belote_bonus(contract_team_name)
+                )
+                for name in defender_names:
+                    team_scores[name] = belote_bonus(name)
+            else:
+                team_scores[contract_team_name] = belote_bonus(contract_team_name)
+                for name in defender_names:
+                    team_scores[name] = (
+                        160 + contract_value * multiplier + belote_bonus(name)
+                    )
 
         self.round_scores = team_scores
         return team_scores

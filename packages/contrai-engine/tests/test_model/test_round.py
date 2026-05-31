@@ -722,20 +722,7 @@ class TestSoloSlamScoring:
 
 class TestSlamFamilyBeloteLayering:
     """Belote (+20) applies on top of the Slam grid for whichever team
-    holds it, independent of who wins the contract."""
-
-    @staticmethod
-    def _trick_with_kq_of_trump(holder, trump):
-        """One trick where ``holder`` plays both K and Q of trump.
-
-        Used so the belote-detection scan in ``calculate_round_scores``
-        finds both ranks of trump in the holder team's captured tricks
-        and awards the +20 bonus.
-        """
-        trick = Trick()
-        trick.add_play(holder, Card(trump, Rank.KING))
-        trick.add_play(holder, Card(trump, Rank.QUEEN))
-        return trick
+    *holds* the K + Q of trump, independent of who wins the contract."""
 
     def test_slam_made_belote_to_attacker(self, players):
         """Slam made, attacker holds belote → 500 + 20 to attacker."""
@@ -743,11 +730,7 @@ class TestSlamFamilyBeloteLayering:
         round_ = _slam_round(
             players, contract=contract, trick_winners=["N"] * 8
         )
-        # Splice K+Q of trump into one of N's captured tricks so the
-        # belote-detection scan flips North-South's belote flag.
-        kq_trick = self._trick_with_kq_of_trump(players["N"], Suit.SPADES)
-        round_.tricks[0] = kq_trick
-        round_.team_tricks["North-South"][0] = kq_trick
+        round_.belote_holder = players["N"]  # N-S holds K+Q of trump
         scores = round_.calculate_round_scores()
         assert scores["North-South"] == 520  # 500 + 20
         assert scores["East-West"] == 0
@@ -757,10 +740,7 @@ class TestSlamFamilyBeloteLayering:
         contract = _contract(players["N"], "Slam", Suit.SPADES)
         winners = ["N"] * 7 + ["W"]
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
-        # Splice K+Q of trump into W's captured trick.
-        kq_trick = self._trick_with_kq_of_trump(players["W"], Suit.SPADES)
-        round_.tricks[-1] = kq_trick
-        round_.team_tricks["East-West"][0] = kq_trick
+        round_.belote_holder = players["W"]  # E-W holds K+Q of trump
         scores = round_.calculate_round_scores()
         assert scores["North-South"] == 0
         assert scores["East-West"] == 520  # 500 + 20
@@ -774,11 +754,7 @@ class TestSlamFamilyBeloteLayering:
         contract = _contract(players["N"], "Slam", Suit.SPADES)
         winners = ["N"] * 7 + ["W"]
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
-        # Splice K+Q of trump into N's captured trick (attacker holds belote
-        # even though they failed the contract).
-        kq_trick = self._trick_with_kq_of_trump(players["N"], Suit.SPADES)
-        round_.tricks[0] = kq_trick
-        round_.team_tricks["North-South"][0] = kq_trick
+        round_.belote_holder = players["N"]  # attacker holds belote
         scores = round_.calculate_round_scores()
         # Attacker still gets +20 from belote even though the contract failed.
         assert scores["North-South"] == 20
@@ -833,3 +809,242 @@ class TestNumericContractScoringRegression:
         scores = round_.calculate_round_scores()
         assert scores["North-South"] == 0
         assert scores["East-West"] == 240
+
+
+# ---------------------------------------------------------------------------
+# Numeric scoring — belote attribution & doubled (winner-takes-all)
+# ---------------------------------------------------------------------------
+#
+# These build a Round directly and stuff ``team_tricks`` with synthesised
+# tricks. Scoring only sums ``card.get_points(trump)`` over each team's
+# tricks, so the trick *shape* (how many cards, who else played) is
+# irrelevant — we can pack all of a team's point-carrying cards into a
+# single Trick. Trump = hearts throughout, where the trump-aware values
+# are J=20, 9=14, A=11, 10=10, K=4, Q=3, 8=7=0.
+
+
+def _numeric_round(
+    players_dict,
+    *,
+    contract,
+    team_cards,
+    last_trick_winner=None,
+    belote_holder=None,
+):
+    """Build a numeric-contract Round with synthesised tricks.
+
+    Args:
+        players_dict: the ``players`` fixture (seat → Player).
+        contract: a numeric Contract bound to one of the players.
+        team_cards: mapping team-name → list of ``(seat, Card)`` plays.
+            Each team's cards are packed into Tricks of up to four cards
+            (the Trick capacity), all credited to that team.
+        last_trick_winner: seat letter credited with the dix de der, or
+            None.
+        belote_holder: seat letter holding K + Q of trump, or None.
+
+    Returns:
+        Round with ``contract``, ``tricks``, ``team_tricks``,
+        ``last_trick_winner`` and ``belote_holder`` populated.
+    """
+    order = [players_dict[s] for s in ("N", "E", "S", "W")]
+    round_ = Round(order, dealer=players_dict["N"], deck=None, round_number=1)
+    round_.contract = contract
+    for team_name, plays in team_cards.items():
+        # Trick holds at most four cards — chunk the team's plays so the
+        # synthesised pile spans as many tricks as needed.
+        for start in range(0, len(plays), 4):
+            trick = Trick()
+            for seat, card in plays[start:start + 4]:
+                trick.add_play(players_dict[seat], card)
+            round_.tricks.append(trick)
+            round_.team_tricks[team_name].append(trick)
+    if last_trick_winner is not None:
+        round_.last_trick_winner = players_dict[last_trick_winner]
+    if belote_holder is not None:
+        round_.belote_holder = players_dict[belote_holder]
+    return round_
+
+
+class TestNumericBeloteByHolder:
+    """Belote follows the *holder* of K + Q of trump, never the team that
+    merely captures those cards in a trick. This is the Problem-1
+    regression: a phantom capture-based +20 used to flip a failed
+    contract into a spurious "made"."""
+
+    # All eight hearts = 62 trump-aware points, including both K and Q.
+    _HEART_RANKS = (
+        Rank.JACK, Rank.NINE, Rank.ACE, Rank.TEN,
+        Rank.KING, Rank.QUEEN, Rank.EIGHT, Rank.SEVEN,
+    )
+
+    def _all_hearts_for(self, seat):
+        return [(seat, Card(Suit.HEARTS, r)) for r in self._HEART_RANKS]
+
+    def test_captured_kq_without_holder_does_not_make_contract(self, players):
+        """E-W capture all hearts (incl. K+Q, 62 pts) but no single
+        player *holds* the pair → no belote. Bare 62 < 80 → the contract
+        FAILS. Under the old capture-based rule the phantom +20 would
+        have lifted 62→82 and "made" the 80 contract — the bug behind
+        the impossible recap."""
+        contract = _contract(players["E"], 80, Suit.HEARTS)
+        round_ = _numeric_round(
+            players,
+            contract=contract,
+            team_cards={
+                "East-West": self._all_hearts_for("E"),
+                "North-South": [],
+            },
+            last_trick_winner="N",  # der to N-S, not the declarer
+            belote_holder=None,     # pair is split — nobody holds it
+        )
+        scores = round_.calculate_round_scores()
+        assert round_.contract_made is False
+        assert scores["East-West"] == 0
+        assert scores["North-South"] == 240  # 160 + 80
+
+    def test_belote_credited_to_holder_even_if_opponent_captures(self, players):
+        """E-W capture the K+Q in their tricks, but S (N-S) *held* the
+        pair → the +20 belote is credited to N-S, the holder, not E-W."""
+        contract = _contract(players["E"], 80, Suit.HEARTS)
+        round_ = _numeric_round(
+            players,
+            contract=contract,
+            team_cards={
+                "East-West": self._all_hearts_for("E"),
+                "North-South": [],
+            },
+            last_trick_winner="N",
+            belote_holder="S",  # N-S holds the pair
+        )
+        scores = round_.calculate_round_scores()
+        # Declarer E-W realized 62 < 80 → failed → 0.
+        assert scores["East-West"] == 0
+        # Defender N-S: 160 + 80 (winner-takes-all, M=1) + 20 belote.
+        assert scores["North-South"] == 260
+
+    def test_failed_declarer_keeps_only_its_belote(self, players):
+        """A failed declarer keeps its belote bonus (always preserved)
+        and nothing else."""
+        contract = _contract(players["E"], 80, Suit.HEARTS)
+        round_ = _numeric_round(
+            players,
+            contract=contract,
+            team_cards={
+                "East-West": [
+                    ("E", Card(Suit.HEARTS, Rank.KING)),
+                    ("E", Card(Suit.HEARTS, Rank.QUEEN)),
+                ],
+                "North-South": [],
+            },
+            last_trick_winner="N",
+            belote_holder="E",  # declarer holds the pair
+        )
+        scores = round_.calculate_round_scores()
+        # E-W realized = 7 cards + 20 belote = 27 < 80 → failed.
+        assert round_.contract_made is False
+        assert scores["East-West"] == 20    # belote only
+        assert scores["North-South"] == 240  # 160 + 80
+
+
+class TestNumericDoubledScoring:
+    """Doubled / redoubled numeric contracts: winner-takes-all, the loser
+    scores 0 except its belote. The winner amount is 160 + C×M whether it
+    is the made declarer or the winning defense."""
+
+    @staticmethod
+    def _ns_big_pile():
+        """76 trump-aware points for N-S — clears an 80 contract once the
+        dix de der is added."""
+        return [
+            ("N", Card(Suit.HEARTS, Rank.JACK)),  # 20
+            ("N", Card(Suit.HEARTS, Rank.NINE)),  # 14
+            ("N", Card(Suit.HEARTS, Rank.ACE)),   # 11
+            ("N", Card(Suit.HEARTS, Rank.TEN)),   # 10
+            ("S", Card(Suit.SPADES, Rank.ACE)),   # 11
+            ("S", Card(Suit.SPADES, Rank.TEN)),   # 10
+        ]
+
+    def test_doubled_made_defender_scores_zero(self, players):
+        """Doubled contract made: the defending side scores 0 even though
+        it captured point-carrying cards (Problem 2)."""
+        contract = Contract(
+            ContractBid(players["N"], 80, Suit.HEARTS), double=True
+        )
+        round_ = _numeric_round(
+            players,
+            contract=contract,
+            team_cards={
+                "North-South": self._ns_big_pile(),
+                # E-W win a fat trick — under the old rule they'd keep
+                # these 14 points; winner-takes-all zeroes them.
+                "East-West": [
+                    ("E", Card(Suit.DIAMONDS, Rank.TEN)),  # 10
+                    ("E", Card(Suit.CLUBS, Rank.KING)),    # 4
+                ],
+            },
+            last_trick_winner="N",  # +10 der → N-S realized 86 ≥ 80
+        )
+        scores = round_.calculate_round_scores()
+        assert round_.contract_made is True
+        assert scores["North-South"] == 320  # 160 + 80*2
+        assert scores["East-West"] == 0
+
+    def test_doubled_made_defender_keeps_only_belote(self, players):
+        """The lone exception: the losing defender keeps its belote."""
+        contract = Contract(
+            ContractBid(players["N"], 80, Suit.HEARTS), double=True
+        )
+        round_ = _numeric_round(
+            players,
+            contract=contract,
+            team_cards={
+                "North-South": self._ns_big_pile(),
+                "East-West": [("E", Card(Suit.CLUBS, Rank.KING))],
+            },
+            last_trick_winner="N",
+            belote_holder="E",  # E-W (defender) holds the pair
+        )
+        scores = round_.calculate_round_scores()
+        assert scores["North-South"] == 320  # 160 + 80*2
+        assert scores["East-West"] == 20     # belote only
+
+    def test_doubled_failed_winner_takes_160_plus_cm(self, players):
+        """Doubled contract failed: the defense takes 160 + C×M, declarer 0."""
+        contract = Contract(
+            ContractBid(players["N"], 100, Suit.HEARTS), double=True
+        )
+        round_ = _numeric_round(
+            players,
+            contract=contract,
+            team_cards={
+                "North-South": [("N", Card(Suit.DIAMONDS, Rank.TEN))],  # 10 < 100
+                "East-West": [("E", Card(Suit.HEARTS, Rank.JACK))],
+            },
+            last_trick_winner="E",
+        )
+        scores = round_.calculate_round_scores()
+        assert round_.contract_made is False
+        assert scores["North-South"] == 0
+        assert scores["East-West"] == 360  # 160 + 100*2
+
+    def test_redoubled_failed_winner_takes_160_plus_c_times_four(self, players):
+        """Redoubled failed: the defense takes 160 + C×4 — the same shape
+        as a made redoubled declarer (symmetric stake)."""
+        contract = Contract(
+            ContractBid(players["N"], 100, Suit.HEARTS),
+            double=True,
+            redouble=True,
+        )
+        round_ = _numeric_round(
+            players,
+            contract=contract,
+            team_cards={
+                "North-South": [("N", Card(Suit.DIAMONDS, Rank.TEN))],
+                "East-West": [("E", Card(Suit.HEARTS, Rank.JACK))],
+            },
+            last_trick_winner="E",
+        )
+        scores = round_.calculate_round_scores()
+        assert scores["North-South"] == 0
+        assert scores["East-West"] == 560  # 160 + 100*4

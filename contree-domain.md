@@ -253,21 +253,33 @@ Let:
 
 #### Numeric contracts (80–180)
 
-**Contract made** (`P_attack ≥ C`):
+**Un-doubled** (`M = 1`) — the two sides *share* the pile:
 
-- **Declarer** scores `(C + P_attack) × M`.
-- **Defense** scores their own card points (no multiplier on defense's score
-  in the standard ruleset).
+- **Made** (`P_attack ≥ C`): **declarer** scores `C + P_attack`; **defense**
+  scores its own card points (its share of the 162 + the *dix de der* if it
+  took the last trick).
+  Worked example: contract `90 ♥`, declarer realizes 102 → declarer 192,
+  defense 60.
+- **Failed** (`P_attack < C`, *chuté*): **declarer** scores 0; **defense**
+  scores `160 + C`.
+  Worked example: contract `100 ♠`, failed → defense 260, declarer 0.
 
-Worked example: contract `90 ♥`, declarer realizes 102 → declarer 192,
-defense 60.
+**Doubled / redoubled** (`M > 1`) — **winner-takes-all**, exactly like the
+Slam grid below:
 
-**Contract failed** (`P_attack < C`), also called *chuté*:
+- The **winning side** (declarer if the contract is made, defense if it is
+  failed) scores `160 + C × M`. The stake is the *same* whichever side wins.
+- The **losing side scores 0** — the defense never keeps its own card points
+  once it has doubled.
+  Worked example: contract `100 ♥ ×2` made → declarer 360, defense 0; the same
+  contract failed → defense 360, declarer 0.
 
-- **Declarer** scores 0 (except for a Belote bonus, which is always preserved).
-- **Defense** scores `(162 + C) × M`.
+> The 162-point pile is treated as a flat **160** in the winner-takes-all and
+> *chuté* formulas — the engine's rounding convention.
 
-Worked example: contract `100 ♠`, failed → defense 262, declarer 0.
+**Belote (+20)** is the standing exception to "the loser scores 0": it is
+always credited to the team **holding** K + Q of trump (not whoever captures
+those cards in a trick — see §6.5), on top of everything else, win or lose.
 
 #### Slam and Solo Slam
 
