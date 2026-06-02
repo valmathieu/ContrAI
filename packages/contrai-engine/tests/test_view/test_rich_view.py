@@ -1309,6 +1309,12 @@ class TestRoundRecapPanel:
         # No made/failed line for an all-passed round.
         assert "made" not in text
         assert "failed" not in text
+        # Outcome table harmonizes with Scoring: em-dashes, not zeros, on
+        # both the Tricks won and Round points rows when nothing was played.
+        for line in text.splitlines():
+            if "Tricks won" in line or "Round points" in line:
+                assert "0" not in line
+                assert "—" in line
 
     def test_recap_includes_belote_when_holder_holds_kq_of_trump(
         self, four_players

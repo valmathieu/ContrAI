@@ -2005,7 +2005,9 @@ class RichView:
 
         body.append_text(self._section_rule("Outcome"))
         body.append("\n")
-        body.append_text(self._format_outcome_table(breakdown))
+        body.append_text(
+            self._format_outcome_table(breakdown, all_passed=contract is None)
+        )
         body.append("\n")
 
         body.append_text(self._section_rule("Scoring"))
@@ -2209,7 +2211,9 @@ class RichView:
         rule.append("─" * right, style=DIM)
         return rule
 
-    def _format_outcome_table(self, breakdown: dict) -> Text:
+    def _format_outcome_table(
+        self, breakdown: dict, *, all_passed: bool = False
+    ) -> Text:
         """Render the per-team play tally (tricks won + round points).
 
         These are factual results of the actual play — the trick count
@@ -2218,11 +2222,17 @@ class RichView:
         contract converts them into score. In a winner-takes-all round
         the Scoring table dashes a losing side's card/der rows, but the
         points it genuinely took still surface here.
+
+        When ``all_passed`` is set (no contract was struck, so no cards
+        were played) every cell renders as an em-dash, matching the
+        Scoring table so the whole panel reads consistently.
         """
         ns = breakdown.get("North-South", {})
         ew = breakdown.get("East-West", {})
 
         def _count_cell(value: int) -> Text:
+            if all_passed:
+                return Text(f"{'—':>6}", style=DIM)
             return Text(f"{value:>6}", style="bold")
 
         # Header row: "                          N-S     E-W"
