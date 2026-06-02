@@ -1,9 +1,12 @@
 # Trick class for the "contree" card game.
 # This class represents a single trick in the game.
 
-from typing import List, Tuple, Optional
-from .card import Card
-from .player import BasePlayer as Player
+from __future__ import annotations
+from typing import List, Tuple, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .card import Card
+    from .player import BasePlayer as Player
 
 class Trick:
     """

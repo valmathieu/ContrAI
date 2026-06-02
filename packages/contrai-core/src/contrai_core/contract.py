@@ -1,6 +1,7 @@
 # Contract class for the "contree" card game.
 # This class represents a contract established during bidding.
 
+from __future__ import annotations
 from typing import Optional, TYPE_CHECKING
 
 from .bid import ContractBid
@@ -18,8 +19,8 @@ class Contract:
     """
 
     def __init__(self, contract_bid: ContractBid, double: bool = False, redouble: bool = False,
-                 double_player: 'Optional[Player]' = None,
-                 redouble_player: 'Optional[Player]' = None):
+                 double_player: Optional[Player] = None,
+                 redouble_player: Optional[Player] = None):
         """
         Initialize a contract from a ContractBid.
 
@@ -42,7 +43,7 @@ class Contract:
         self.redouble_player = redouble_player
 
     @classmethod
-    def from_legacy(cls, player: 'Player', value: int or str, suit: str,
+    def from_legacy(cls, player: Player, value: int | str, suit: str,
                    double: bool = False, redouble: bool = False):
         """
         Create a Contract from legacy parameters (for backwards compatibility).
@@ -93,7 +94,7 @@ class Contract:
         else:
             return team_points >= self.value
 
-    def get_attacking_team(self) -> 'Team':
+    def get_attacking_team(self) -> Team:
         """
         Get the team that must make the contract.
 
@@ -102,7 +103,7 @@ class Contract:
         """
         return self.team
 
-    def get_defending_team(self) -> 'Team':
+    def get_defending_team(self) -> Team:
         """
         Get the team defending against the contract.
 
