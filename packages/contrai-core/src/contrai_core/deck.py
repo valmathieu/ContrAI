@@ -1,4 +1,4 @@
-# Deck class for managing a deck of cards in the "contree" game.
+# Deck class for managing a deck of cards in the contrée game.
 
 import random
 

@@ -1,7 +1,7 @@
 """Auction: immutable bidding-phase state and rule oracle.
 
 The :class:`Auction` owns the chronological :class:`Bid` history and
-knows the rules of Contrée bidding. It exposes the questions callers
+knows the rules of contrée bidding. It exposes the questions callers
 actually need to answer:
 
 - :meth:`Auction.is_legal` / :meth:`Auction.legal_actions` so callers

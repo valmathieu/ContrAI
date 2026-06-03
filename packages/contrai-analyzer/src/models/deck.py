@@ -1,5 +1,5 @@
 """
-Deck and Card representations for La Contrée.
+Deck and Card representations for contrée.
 
 This module defines the basic Object-Oriented representations of cards,
 suit slots (abstract — suit identity is irrelevant for probability analysis),
@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 class SuitSlot(Enum):
     """
-    Abstract suit slots for La Contrée.
+    Abstract suit slots for contrée.
 
     Suit identity (Hearts vs Clubs) does not affect probability calculations —
     only whether a slot is trump or non-trump matters.  The three non-trump
@@ -44,7 +44,7 @@ class SuitSlot(Enum):
 
 
 class Rank(Enum):
-    """Enumeration of the 8 card ranks in a Contrée deck."""
+    """Enumeration of the 8 card ranks in a contrée deck."""
 
     SEVEN = "7"
     EIGHT = "8"
@@ -57,9 +57,9 @@ class Rank(Enum):
 
     def point_value(self, is_trump: bool) -> int:
         """
-        Return the Contrée point value for this rank.
+        Return the contrée point value for this rank.
 
-        In Contrée the Jack and Nine of trump are worth far more than in other
+        In contrée the Jack and Nine of trump are worth far more than in other
         suits — they are the two highest trumps.  All other suits share the
         standard Belote scale.
 
@@ -116,12 +116,12 @@ class Card:
 
     @property
     def point_value(self) -> int:
-        """Contrée point value of this card given its slot."""
+        """The contrée point value of this card given its slot."""
         return self.rank.point_value(is_trump=self.suit == SuitSlot.TRUMP)
 
 
 class Deck:
-    """Represents a standard 32-card deck for La Contrée."""
+    """Represents a standard 32-card deck for contrée."""
 
     def __init__(self) -> None:
         """Initialize the deck with all 32 cards (8 ranks × 4 suit slots)."""

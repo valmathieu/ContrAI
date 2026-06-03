@@ -1,11 +1,11 @@
 """
-Main entry point for the La Contrée Probability Dashboard.
+Main entry point for the contrée Probability Dashboard.
 
 Tabbed Streamlit application providing suit-agnostic hand analysis:
   Tab 1 — Hand Input + Bidding suggestion
   Tab 2 — Partner support probabilities
   Tab 3 — Opponent threat analysis
-  Tab 4 — Contrée point distribution chart
+  Tab 4 — contrée point distribution chart
 """
 
 import streamlit as st
@@ -60,7 +60,7 @@ def _slot_header(slot: SuitSlot) -> str:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    """Initialize and render the Contrée dashboard."""
+    """Initialize and render the contrée dashboard."""
 
     st.set_page_config(
         page_title="La Contrée · Dashboard",

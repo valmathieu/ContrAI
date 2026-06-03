@@ -1,2 +1,2 @@
-# Main package for the Contrée game
+# Main package for the contrée game
 

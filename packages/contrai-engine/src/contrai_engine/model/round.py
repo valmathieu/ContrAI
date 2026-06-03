@@ -1,4 +1,4 @@
-# Round class for the "contree" card game.
+# Round class for the contrée card game.
 # This class represents a complete round of the card game from dealing to scoring.
 
 import itertools

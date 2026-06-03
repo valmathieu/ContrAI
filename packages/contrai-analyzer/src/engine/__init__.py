@@ -1,1 +1,1 @@
-"""Probability engine initialization for La Contrée."""
+"""Probability engine initialization for contrée."""

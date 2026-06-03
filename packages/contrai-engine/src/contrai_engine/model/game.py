@@ -1,4 +1,4 @@
-# Game class for the "contree" card game.
+# Game class for the contrée card game.
 # This class manages the game state, players, teams, deck, and game logic.
 
 from contrai_core.deck import Deck
@@ -12,7 +12,7 @@ import random
 
 class Game:
     """
-    Represents a full game of "contree".
+    Represents a full game of contrée.
 
     Attributes:
         teams (list[Team]): The two teams playing the game.

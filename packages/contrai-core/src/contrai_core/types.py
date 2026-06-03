@@ -10,7 +10,7 @@ from enum import Enum
 
 
 class Suit(Enum):
-    """Card suits in Contree.
+    """Card suits in contrée.
 
     ``NO_TRUMP`` is a contract trump option only — no physical card has it.
     Use :data:`CARD_SUITS` (or compare against ``Suit.NO_TRUMP``) when
@@ -30,7 +30,7 @@ CARD_SUITS = (Suit.SPADES, Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS)
 
 
 class Rank(Enum):
-    """The eight card ranks in a Contree deck (32-card subset: 7..Ace)."""
+    """The eight card ranks in a contrée deck (32-card subset: 7..Ace)."""
 
     SEVEN = "7"
     EIGHT = "8"

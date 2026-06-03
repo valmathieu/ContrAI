@@ -1,4 +1,4 @@
-"""Rich-based terminal UI for the Contrée game.
+"""Rich-based terminal UI for the contrée game.
 
 Implements the five-screen design from
 ``ContrAI CLI/design_handoff_contrai_tui/`` (landing, bidding,

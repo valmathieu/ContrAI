@@ -1,4 +1,4 @@
-# Custom exceptions for the Contrée game.
+# Custom exceptions for the contrée game.
 
 class InvalidPlayerCountError(ValueError):
     """

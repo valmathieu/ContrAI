@@ -7,7 +7,7 @@ from .types import Suit, Rank
 
 class Card:
     """
-    Represents a playing card for the game of Contree.
+    Represents a playing card for the game of contrée.
 
     Each card has a suit and a rank, and provides methods to get its point value and order,
     depending on whether it is a trump card or not.

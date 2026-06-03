@@ -1,4 +1,4 @@
-# Contract class for the "contree" card game.
+# Contract class for the contrée card game.
 # This class represents a contract established during bidding.
 
 from __future__ import annotations

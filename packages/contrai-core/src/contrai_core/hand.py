@@ -163,7 +163,7 @@ class Hand:
     def is_complete(self) -> bool:
         """Return ``True`` iff the hand contains exactly 8 unique cards.
 
-        A full Contree hand. Not enforced anywhere by the class itself;
+        A full contrée hand. Not enforced anywhere by the class itself;
         this is a convenience for tests and downstream invariant checks.
         Uniqueness is judged by ``(suit, rank)`` pairs.
         """

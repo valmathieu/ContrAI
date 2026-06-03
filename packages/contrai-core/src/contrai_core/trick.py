@@ -1,4 +1,4 @@
-# Trick class for the "contree" card game.
+# Trick class for the contrée card game.
 # This class represents a single trick in the game.
 
 from __future__ import annotations
