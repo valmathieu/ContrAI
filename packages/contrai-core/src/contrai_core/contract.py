@@ -8,7 +8,6 @@ from .bid import ContractBid
 
 if TYPE_CHECKING:
     from .player import BasePlayer as Player
-    from .team import Team
 
 class Contract:
     """
@@ -28,9 +27,9 @@ class Contract:
             contract_bid: The winning ContractBid that established this contract
             double: Whether contract has been doubled
             redouble: Whether contract has been redoubled
-            double_player: The player who doubled (Coinche), if any. Kept so
+            double_player: The player who doubled, if any. Kept so
                 the UI can name the coincheur, not just flag the multiplier.
-            redouble_player: The player who redoubled (Surcoinche), if any.
+            redouble_player: The player who redoubled, if any.
         """
         self.contract_bid = contract_bid
         self.player = contract_bid.player
@@ -41,22 +40,6 @@ class Contract:
         self.redouble = redouble
         self.double_player = double_player
         self.redouble_player = redouble_player
-
-    @classmethod
-    def from_legacy(cls, player: Player, value: int | str, suit: str,
-                   double: bool = False, redouble: bool = False):
-        """
-        Create a Contract from legacy parameters (for backwards compatibility).
-
-        Args:
-            player: Player who made the winning bid
-            value: Contract value (points to make)
-            suit: Trump suit for the contract
-            double: Whether contract has been doubled
-            redouble: Whether contract has been redoubled
-        """
-        contract_bid = ContractBid(player, value, suit)
-        return cls(contract_bid, double, redouble)
 
     def get_multiplier(self) -> int:
         """
@@ -93,26 +76,6 @@ class Contract:
             return team_points >= 162
         else:
             return team_points >= self.value
-
-    def get_attacking_team(self) -> Team:
-        """
-        Get the team that must make the contract.
-
-        Returns:
-            The contracting team
-        """
-        return self.team
-
-    def get_defending_team(self) -> Team:
-        """
-        Get the team defending against the contract.
-
-        Returns:
-            The opposing team
-        """
-        # This requires access to game teams, but we can get it from player's game context
-        # For now, return None - this should be handled at game level
-        return None
 
     def is_slam(self) -> bool:
         """

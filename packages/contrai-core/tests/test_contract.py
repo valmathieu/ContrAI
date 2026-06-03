@@ -103,18 +103,6 @@ class TestContractConstruction:
         assert contract.double_player is south
         assert contract.redouble_player is north
 
-    def test_from_legacy_matches_direct_construction(self, north, team_ns):
-        direct = Contract(ContractBid(north, 90, Suit.HEARTS))
-        legacy = Contract.from_legacy(north, 90, Suit.HEARTS)
-        assert direct == legacy
-
-    def test_from_legacy_propagates_flags(self, north, team_ns):
-        legacy = Contract.from_legacy(
-            north, 100, Suit.SPADES, double=True, redouble=True
-        )
-        assert legacy.double is True
-        assert legacy.redouble is True
-
 
 # ---------------------------------------------------------------------------
 # Multiplier
@@ -262,16 +250,6 @@ class TestContractSlamHelpers:
             + contract.get_slam_card_substitute()
         ) * contract.get_multiplier()
         assert amount == 2000
-
-
-class TestContractTeamAccessors:
-    def test_get_attacking_team(self, numeric_contract, team_ns):
-        assert numeric_contract.get_attacking_team() is team_ns
-
-    def test_get_defending_team_returns_none_today(self, numeric_contract):
-        # Documented placeholder in contract.py — defending team is computed
-        # at game level today, not on the Contract itself.
-        assert numeric_contract.get_defending_team() is None
 
 
 # ---------------------------------------------------------------------------
