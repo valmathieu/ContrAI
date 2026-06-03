@@ -184,8 +184,9 @@ class Auction:
 
         Returns:
             A :class:`Contract` built from the last :class:`ContractBid`
-            with appropriate ``double`` / ``redouble`` flags, or
-            ``None`` if the auction concluded without any numeric bid.
+            with the doubling / redoubling players recorded (which is what
+            marks it doubled / redoubled), or ``None`` if the auction
+            concluded without any numeric bid.
         """
 
         cb = self.last_contract_bid
@@ -193,8 +194,6 @@ class Auction:
             return None
         return Contract(
             cb,
-            double=self.has_double,
-            redouble=self.has_redouble,
             double_player=self.double_player,
             redouble_player=self.redouble_player,
         )

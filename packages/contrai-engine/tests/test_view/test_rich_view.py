@@ -669,7 +669,6 @@ class TestFormatContractShort:
         north, east, _south, west = four_players
         contract = Contract(
             ContractBid(north, 110, Suit.SPADES),
-            double=True,
             double_player=east,
         )
         text = _format_contract_short(contract).plain
@@ -680,8 +679,6 @@ class TestFormatContractShort:
         north, east, _south, west = four_players
         contract = Contract(
             ContractBid(north, 120, Suit.CLUBS),
-            double=True,
-            redouble=True,
             double_player=east,
             redouble_player=north,
         )
@@ -690,20 +687,6 @@ class TestFormatContractShort:
         # Redouble takes precedence over the double marker.
         assert "×4 by N" in text
         assert "×2" not in text
-
-    def test_double_without_known_player_still_shows_multiplier(
-        self, four_players
-    ):
-        north, *_ = four_players
-        contract = Contract(
-            ContractBid(north, 90, Suit.DIAMONDS),
-            double=True,
-            double_player=None,
-        )
-        text = _format_contract_short(contract).plain
-        assert "×2" in text
-        # No 'by …' tail when the caller is unknown.
-        assert "×2 by" not in text
 
     def test_slam_value_label(self, four_players):
         _north, east, *_ = four_players
@@ -716,7 +699,6 @@ class TestFormatContractShort:
         north, east, *_ = four_players
         contract = Contract(
             ContractBid(north, 110, Suit.SPADES),
-            double=True,
             double_player=east,
         )
         text = _format_contract_short(contract, verbose=True).plain
@@ -728,8 +710,6 @@ class TestFormatContractShort:
         north, east, _south, _west = four_players
         contract = Contract(
             ContractBid(north, 120, Suit.CLUBS),
-            double=True,
-            redouble=True,
             double_player=east,
             redouble_player=north,
         )

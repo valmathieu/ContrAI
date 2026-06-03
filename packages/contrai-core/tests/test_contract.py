@@ -40,17 +40,17 @@ def team_ns(north, south):
 
 
 @pytest.fixture
-def numeric_contract(north, team_ns):
+def numeric_contract(north):
     return Contract(ContractBid(north, 100, Suit.SPADES))
 
 
 @pytest.fixture
-def slam_contract(north, team_ns):
+def slam_contract(north):
     return Contract(ContractBid(north, "Slam", Suit.HEARTS))
 
 
 @pytest.fixture
-def solo_slam_contract(north, team_ns):
+def solo_slam_contract(north):
     return Contract(ContractBid(north, "SoloSlam", Suit.HEARTS))
 
 
@@ -71,35 +71,46 @@ class TestContractConstruction:
         assert contract.double is False
         assert contract.redouble is False
 
-    def test_construction_with_double(self, north, team_ns):
-        contract = Contract(ContractBid(north, 80, Suit.CLUBS), double=True)
+    def test_construction_with_double(self, north, south):
+        # The doubled state is derived from the recorded doubler.
+        contract = Contract(
+            ContractBid(north, 80, Suit.CLUBS), double_player=south
+        )
         assert contract.double is True
         assert contract.redouble is False
 
-    def test_construction_with_redouble(self, north, team_ns):
+    def test_construction_with_redouble(self, north, south):
         contract = Contract(
-            ContractBid(north, 80, Suit.CLUBS), double=True, redouble=True
+            ContractBid(north, 80, Suit.CLUBS),
+            double_player=south,
+            redouble_player=north,
         )
         assert contract.double is True
         assert contract.redouble is True
 
-    def test_double_redouble_players_default_to_none(self, north, team_ns):
+    def test_double_redouble_players_default_to_none(self, north):
         contract = Contract(ContractBid(north, 80, Suit.CLUBS))
         assert contract.double_player is None
         assert contract.redouble_player is None
 
     def test_construction_records_double_and_redouble_players(
-        self, north, south, team_ns
+        self, north, south
     ):
         contract = Contract(
             ContractBid(north, 100, Suit.HEARTS),
-            double=True,
-            redouble=True,
             double_player=south,
             redouble_player=north,
         )
         assert contract.double_player is south
         assert contract.redouble_player is north
+
+    def test_redouble_without_double_is_rejected(self, north, south):
+        # A surcoinche can only stand on top of a coinche, so the
+        # constructor refuses a redoubler with no doubler underneath it.
+        with pytest.raises(ValueError):
+            Contract(
+                ContractBid(north, 80, Suit.CLUBS), redouble_player=south
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -108,24 +119,21 @@ class TestContractConstruction:
 
 
 class TestContractMultiplier:
-    def test_normal_multiplier(self, north, team_ns):
+    def test_normal_multiplier(self, north):
         contract = Contract(ContractBid(north, 80, Suit.SPADES))
         assert contract.get_multiplier() == 1
 
-    def test_double_multiplier(self, north, team_ns):
-        contract = Contract(ContractBid(north, 80, Suit.SPADES), double=True)
+    def test_double_multiplier(self, north, south):
+        contract = Contract(
+            ContractBid(north, 80, Suit.SPADES), double_player=south
+        )
         assert contract.get_multiplier() == 2
 
-    def test_redouble_multiplier(self, north, team_ns):
+    def test_redouble_multiplier(self, north, south):
         contract = Contract(
-            ContractBid(north, 80, Suit.SPADES), double=True, redouble=True
-        )
-        assert contract.get_multiplier() == 4
-
-    def test_redouble_dominates_double_flag(self, north, team_ns):
-        # Current behaviour: redouble flag wins regardless of double flag state.
-        contract = Contract(
-            ContractBid(north, 80, Suit.SPADES), double=False, redouble=True
+            ContractBid(north, 80, Suit.SPADES),
+            double_player=south,
+            redouble_player=north,
         )
         assert contract.get_multiplier() == 4
 
@@ -198,10 +206,10 @@ class TestContractSlamHelpers:
         ) * slam_contract.get_multiplier()
         assert amount == 500
 
-    def test_at_risk_total_solo_slam_doubled(self, north, team_ns):
+    def test_at_risk_total_solo_slam_doubled(self, north, south):
         # Solo Slam doubled: (500 + 500) × 2 = 2000.
         contract = Contract(
-            ContractBid(north, "SoloSlam", Suit.HEARTS), double=True
+            ContractBid(north, "SoloSlam", Suit.HEARTS), double_player=south
         )
         amount = (
             contract.get_base_points()
@@ -216,7 +224,7 @@ class TestContractSlamHelpers:
 
 
 class TestContractDunders:
-    def test_str_normal(self, north, team_ns):
+    def test_str_normal(self, north):
         contract = Contract(ContractBid(north, 100, Suit.SPADES))
         assert "100" in str(contract)
         assert str(Suit.SPADES) in str(contract)
@@ -224,24 +232,28 @@ class TestContractDunders:
         assert "Doubled" not in str(contract)
         assert "Redoubled" not in str(contract)
 
-    def test_str_doubled(self, north, team_ns):
-        contract = Contract(ContractBid(north, 100, Suit.SPADES), double=True)
+    def test_str_doubled(self, north, south):
+        contract = Contract(
+            ContractBid(north, 100, Suit.SPADES), double_player=south
+        )
         assert "Doubled" in str(contract)
 
-    def test_str_redoubled(self, north, team_ns):
+    def test_str_redoubled(self, north, south):
         contract = Contract(
-            ContractBid(north, 100, Suit.SPADES), double=True, redouble=True
+            ContractBid(north, 100, Suit.SPADES),
+            double_player=south,
+            redouble_player=north,
         )
         assert "Redoubled" in str(contract)
 
-    def test_equality_same_bid_and_flags(self, north, team_ns):
+    def test_equality_same_bid_and_flags(self, north):
         a = Contract(ContractBid(north, 100, Suit.SPADES))
         b = Contract(ContractBid(north, 100, Suit.SPADES))
         assert a == b
 
-    def test_inequality_different_flags(self, north, team_ns):
+    def test_inequality_different_flags(self, north, south):
         a = Contract(ContractBid(north, 100, Suit.SPADES))
-        b = Contract(ContractBid(north, 100, Suit.SPADES), double=True)
+        b = Contract(ContractBid(north, 100, Suit.SPADES), double_player=south)
         assert a != b
 
     def test_inequality_against_non_contract(self, numeric_contract, north):

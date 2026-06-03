@@ -17,29 +17,59 @@ class Contract:
     and handles double/redouble states with score calculations.
     """
 
-    def __init__(self, contract_bid: ContractBid, double: bool = False, redouble: bool = False,
+    def __init__(self, contract_bid: ContractBid,
                  double_player: Optional[Player] = None,
                  redouble_player: Optional[Player] = None):
         """
         Initialize a contract from a ContractBid.
 
+        The doubled / redoubled state is *derived* from whether a caller
+        is recorded (see :attr:`double` / :attr:`redouble`) — there is no
+        separate boolean flag to keep in sync, so an "anonymous double"
+        (doubled with no known doubler) is unrepresentable by design.
+
         Args:
             contract_bid: The winning ContractBid that established this contract
-            double: Whether contract has been doubled
-            redouble: Whether contract has been redoubled
-            double_player: The player who doubled, if any. Kept so
-                the UI can name the coincheur, not just flag the multiplier.
-            redouble_player: The player who redoubled, if any.
+            double_player: The player who doubled (coincheur), if any.
+                Its presence is what marks the contract as doubled.
+            redouble_player: The player who redoubled (surcoincheur), if any.
+                Its presence is what marks the contract as redoubled.
+
+        Raises:
+            ValueError: If a ``redouble_player`` is given without a
+                ``double_player`` — a surcoinche can only stand on top of
+                a coinche.
         """
+        if redouble_player is not None and double_player is None:
+            raise ValueError(
+                "A contract cannot be redoubled without first being "
+                "doubled: redouble_player was given but double_player is None."
+            )
         self.contract_bid = contract_bid
         self.player = contract_bid.player
         self.team = contract_bid.player.team
         self.value = contract_bid.value
         self.suit = contract_bid.suit
-        self.double = double
-        self.redouble = redouble
         self.double_player = double_player
         self.redouble_player = redouble_player
+
+    @property
+    def double(self) -> bool:
+        """Whether the contract has been doubled (coinche).
+
+        Derived from :attr:`double_player`: a contract is doubled iff a
+        doubling player is recorded.
+        """
+        return self.double_player is not None
+
+    @property
+    def redouble(self) -> bool:
+        """Whether the contract has been redoubled (surcoinche).
+
+        Derived from :attr:`redouble_player`. The constructor guarantees
+        a redouble can only exist on top of a double.
+        """
+        return self.redouble_player is not None
 
     def get_multiplier(self) -> int:
         """

@@ -594,7 +594,8 @@ class TestSlamScoring:
 
     def test_slam_made_doubled_attacker_scores_1000(self, players):
         contract = Contract(
-            ContractBid(players["N"], "Slam", Suit.SPADES), double=True
+            ContractBid(players["N"], "Slam", Suit.SPADES),
+            double_player=players["E"],
         )
         round_ = _slam_round(
             players, contract=contract, trick_winners=["N"] * 8
@@ -605,7 +606,8 @@ class TestSlamScoring:
 
     def test_slam_failed_doubled_defender_scores_1000(self, players):
         contract = Contract(
-            ContractBid(players["N"], "Slam", Suit.SPADES), double=True
+            ContractBid(players["N"], "Slam", Suit.SPADES),
+            double_player=players["E"],
         )
         winners = ["N"] * 6 + ["E", "W"]
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
@@ -616,8 +618,8 @@ class TestSlamScoring:
     def test_slam_made_redoubled_attacker_scores_2000(self, players):
         contract = Contract(
             ContractBid(players["N"], "Slam", Suit.SPADES),
-            double=True,
-            redouble=True,
+            double_player=players["E"],
+            redouble_player=players["N"],
         )
         round_ = _slam_round(
             players, contract=contract, trick_winners=["N"] * 8
@@ -629,8 +631,8 @@ class TestSlamScoring:
     def test_slam_failed_redoubled_defender_scores_2000(self, players):
         contract = Contract(
             ContractBid(players["N"], "Slam", Suit.SPADES),
-            double=True,
-            redouble=True,
+            double_player=players["E"],
+            redouble_player=players["N"],
         )
         winners = ["N"] * 7 + ["W"]
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
@@ -685,7 +687,8 @@ class TestSoloSlamScoring:
 
     def test_solo_slam_made_doubled_scores_2000(self, players):
         contract = Contract(
-            ContractBid(players["N"], "SoloSlam", Suit.SPADES), double=True
+            ContractBid(players["N"], "SoloSlam", Suit.SPADES),
+            double_player=players["E"],
         )
         round_ = _slam_round(
             players, contract=contract, trick_winners=["N"] * 8
@@ -697,8 +700,8 @@ class TestSoloSlamScoring:
     def test_solo_slam_made_redoubled_scores_4000(self, players):
         contract = Contract(
             ContractBid(players["N"], "SoloSlam", Suit.SPADES),
-            double=True,
-            redouble=True,
+            double_player=players["E"],
+            redouble_player=players["N"],
         )
         round_ = _slam_round(
             players, contract=contract, trick_winners=["N"] * 8
@@ -710,8 +713,8 @@ class TestSoloSlamScoring:
     def test_solo_slam_failed_redoubled_defender_scores_4000(self, players):
         contract = Contract(
             ContractBid(players["N"], "SoloSlam", Suit.SPADES),
-            double=True,
-            redouble=True,
+            double_player=players["E"],
+            redouble_player=players["N"],
         )
         winners = ["N"] * 7 + ["S"]  # partner steals one → Solo Slam fails
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
@@ -969,7 +972,8 @@ class TestNumericDoubledScoring:
         """Doubled contract made: the defending side scores 0 even though
         it captured point-carrying cards (Problem 2)."""
         contract = Contract(
-            ContractBid(players["N"], 80, Suit.HEARTS), double=True
+            ContractBid(players["N"], 80, Suit.HEARTS),
+            double_player=players["E"],
         )
         round_ = _numeric_round(
             players,
@@ -993,7 +997,8 @@ class TestNumericDoubledScoring:
     def test_doubled_made_defender_keeps_only_belote(self, players):
         """The lone exception: the losing defender keeps its belote."""
         contract = Contract(
-            ContractBid(players["N"], 80, Suit.HEARTS), double=True
+            ContractBid(players["N"], 80, Suit.HEARTS),
+            double_player=players["E"],
         )
         round_ = _numeric_round(
             players,
@@ -1012,7 +1017,8 @@ class TestNumericDoubledScoring:
     def test_doubled_failed_winner_takes_160_plus_cm(self, players):
         """Doubled contract failed: the defense takes 160 + C×M, declarer 0."""
         contract = Contract(
-            ContractBid(players["N"], 100, Suit.HEARTS), double=True
+            ContractBid(players["N"], 100, Suit.HEARTS),
+            double_player=players["E"],
         )
         round_ = _numeric_round(
             players,
@@ -1033,8 +1039,8 @@ class TestNumericDoubledScoring:
         as a made redoubled declarer (symmetric stake)."""
         contract = Contract(
             ContractBid(players["N"], 100, Suit.HEARTS),
-            double=True,
-            redouble=True,
+            double_player=players["E"],
+            redouble_player=players["N"],
         )
         round_ = _numeric_round(
             players,
