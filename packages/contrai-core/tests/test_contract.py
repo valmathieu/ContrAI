@@ -1,14 +1,12 @@
 """Tests for the Contract class.
 
 Covers contract construction (direct + legacy), multiplier semantics,
-Slam / Solo Slam vs numeric ``is_made`` / base-points logic, and
-equality.
+Slam / Solo Slam vs numeric base-points logic, and equality.
 
-Note: ``is_made`` approximates Slam-family success as
-``team_points >= 162`` (see ``Contract.is_made`` /
-``Round.calculate_round_scores``). The strict per-player "bidder won
-all 8 tricks personally" predicate for Solo Slam lives in ``Round``
-(it requires per-player trick counts that ``Contract`` does not see).
+Note: whether a contract was *made* is decided in
+``Round.calculate_round_scores`` — it requires trick counts (and, for
+Solo Slam, per-player trick counts) that ``Contract`` does not see, so
+``Contract`` deliberately exposes no ``is_made`` predicate.
 """
 
 import pytest
@@ -130,46 +128,6 @@ class TestContractMultiplier:
             ContractBid(north, 80, Suit.SPADES), double=False, redouble=True
         )
         assert contract.get_multiplier() == 4
-
-
-# ---------------------------------------------------------------------------
-# is_made (incl. Slam-family edge case — see module docstring)
-# ---------------------------------------------------------------------------
-
-
-class TestContractIsMade:
-    @pytest.mark.parametrize(
-        "team_points,expected",
-        [(79, False), (80, True), (81, True), (162, True)],
-    )
-    def test_numeric_threshold(self, numeric_contract, team_points, expected):
-        # Override declared contract value (100) by re-fixturing locally.
-        contract = Contract(
-            ContractBid(numeric_contract.player, 80, Suit.SPADES)
-        )
-        assert contract.is_made(team_points) is expected
-
-    def test_numeric_made_at_exact_threshold(self, numeric_contract):
-        assert numeric_contract.is_made(100) is True
-        assert numeric_contract.is_made(99) is False
-
-    @pytest.mark.parametrize(
-        "team_points,expected",
-        [(0, False), (100, False), (161, False), (162, True), (200, True)],
-    )
-    def test_slam_threshold(self, slam_contract, team_points, expected):
-        assert slam_contract.is_made(team_points) is expected
-
-    @pytest.mark.parametrize(
-        "team_points,expected",
-        [(0, False), (100, False), (161, False), (162, True), (200, True)],
-    )
-    def test_solo_slam_threshold(
-        self, solo_slam_contract, team_points, expected
-    ):
-        # Contract.is_made only checks team points — the per-player
-        # "bidder won all 8 tricks personally" gate lives in Round.
-        assert solo_slam_contract.is_made(team_points) is expected
 
 
 # ---------------------------------------------------------------------------

@@ -237,7 +237,6 @@ package "contract.py / trick.py" as p_contract {
         --
         + __init__(contract_bid, double=False, redouble=False, double_player=None, redouble_player=None)
         + get_multiplier() : int           ' 1, 2, or 4
-        + is_made(team_points: int) : bool
         + is_slam() : bool
         + is_solo_slam() : bool
         + is_slam_family() : bool

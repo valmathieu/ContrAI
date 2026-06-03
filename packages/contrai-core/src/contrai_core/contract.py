@@ -54,29 +54,6 @@ class Contract:
             return 2
         return 1
 
-    def is_made(self, team_points: int) -> bool:
-        """
-        Check if the contract was successfully made.
-
-        Args:
-            team_points: Points scored by the contracting team
-
-        Returns:
-            True if contract was made, False otherwise
-
-        Note:
-            For Solo Slam the team-points check is necessary but not
-            sufficient — the contracting *player* must personally win
-            every trick. That predicate requires per-player trick
-            counts and lives in :class:`contrai_engine.Round`, not on
-            ``Contract`` (which only sees team aggregates).
-        """
-        if self.value in ('Slam', 'SoloSlam'):
-            # All-tricks contracts: team must win every trick (162 pts).
-            return team_points >= 162
-        else:
-            return team_points >= self.value
-
     def is_slam(self) -> bool:
         """
         Check if this is a Slam contract (team must win all 8 tricks).
