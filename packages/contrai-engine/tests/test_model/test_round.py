@@ -26,6 +26,7 @@ from contrai_core import Auction, Hand
 from contrai_core.bid import ContractBid, DoubleBid, PassBid, RedoubleBid
 from contrai_core.card import Card
 from contrai_core.contract import Contract
+from contrai_core.exceptions import IllegalPlayError, PlayRuleViolation
 from contrai_core.team import Team
 from contrai_core.trick import Trick
 from contrai_core.types import Rank, Suit
@@ -303,6 +304,124 @@ class TestFollowSuitWhenNonTrumpLed:
         )
         legal = round_._get_playable_cards(players["S"])
         assert _ids(legal) == {(Suit.HEARTS, Rank.ACE)}
+
+
+# ---------------------------------------------------------------------------
+# Illegal-play classifier — _classify_play_violation
+# ---------------------------------------------------------------------------
+#
+# These mirror the legality scenarios above, but feed the classifier an
+# *illegal* in-hand card and assert the PlayRuleViolation it returns. The
+# classifier's branch order must stay in sync with _get_playable_cards.
+
+
+class TestClassifyPlayViolation:
+    def test_off_suit_while_holding_lead_is_follow_violation(self, players):
+        """N leads ♥K. S holds hearts but tries the ♠J (trump) → must
+        follow suit."""
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        illegal = Card(Suit.SPADES, Rank.JACK)
+        hand = [
+            Card(Suit.HEARTS, Rank.SEVEN),
+            Card(Suit.HEARTS, Rank.ACE),
+            illegal,  # trump but lead is hearts
+        ]
+        round_ = _make_round(
+            players,
+            {"N": [], "E": [], "S": hand, "W": []},
+            contract,
+            [("N", Card(Suit.HEARTS, Rank.KING))],
+        )
+        assert (
+            round_._classify_play_violation(players["S"], illegal)
+            == PlayRuleViolation.MUST_FOLLOW_SUIT
+        )
+
+    def test_too_low_trump_when_trump_led_is_overtrump_violation(self, players):
+        """N leads ♠7 (trump), E plays ♠A. S holds ♠J (master) and ♠8;
+        playing the ♠8 → must over-trump."""
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        illegal = Card(Suit.SPADES, Rank.EIGHT)
+        hand = [Card(Suit.SPADES, Rank.JACK), illegal]
+        round_ = _make_round(
+            players,
+            {"N": [], "E": [], "S": hand, "W": []},
+            contract,
+            [("N", Card(Suit.SPADES, Rank.SEVEN)),
+             ("E", Card(Suit.SPADES, Rank.ACE))],
+        )
+        assert (
+            round_._classify_play_violation(players["S"], illegal)
+            == PlayRuleViolation.MUST_OVERTRUMP
+        )
+
+    def test_discard_while_void_and_holding_trump_is_trump_violation(self, players):
+        """E (opponent) leads ♥A — no trump on the table yet. S is void in
+        hearts, holds ♠J (trump) but discards ♦A → must trump."""
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        illegal = Card(Suit.DIAMONDS, Rank.ACE)
+        hand = [Card(Suit.SPADES, Rank.JACK), illegal]
+        round_ = _make_round(
+            players,
+            {"N": [], "E": [], "S": hand, "W": []},
+            contract,
+            [("E", Card(Suit.HEARTS, Rank.ACE))],
+        )
+        assert (
+            round_._classify_play_violation(players["S"], illegal)
+            == PlayRuleViolation.MUST_TRUMP
+        )
+
+    def test_under_trump_over_opponent_ruff_is_overtrump_violation(self, players):
+        """Three-card partial: N♥A, E♠7, S♠A. W (opponent of master S) is
+        void in hearts, holds ♠9 (beats ♠A) and ♠8 (below it); playing the
+        ♠8 → must over-trump."""
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        illegal = Card(Suit.SPADES, Rank.EIGHT)
+        hand_w = [Card(Suit.SPADES, Rank.NINE), illegal, Card(Suit.DIAMONDS, Rank.SEVEN)]
+        round_ = _make_round(
+            players,
+            {"N": [], "E": [], "S": [], "W": hand_w},
+            contract,
+            [("N", Card(Suit.HEARTS, Rank.ACE)),
+             ("E", Card(Suit.SPADES, Rank.SEVEN)),
+             ("S", Card(Suit.SPADES, Rank.ACE))],
+        )
+        assert (
+            round_._classify_play_violation(players["W"], illegal)
+            == PlayRuleViolation.MUST_OVERTRUMP
+        )
+
+
+class TestPlayTrickRejectsIllegalCard:
+    """play_trick raises IllegalPlayError instead of silently correcting
+    an illegal card returned by choose_card."""
+
+    def test_illegal_card_raises_illegal_play_error(self, players):
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        n_card = Card(Suit.HEARTS, Rank.KING)
+        e_follow = Card(Suit.HEARTS, Rank.ACE)
+        e_illegal = Card(Suit.SPADES, Rank.JACK)  # trump, but E holds a heart
+        round_ = _make_round(
+            players,
+            {"N": [n_card], "E": [e_illegal, e_follow], "S": [], "W": []},
+            contract,
+            [],  # play_trick starts a fresh trick itself
+        )
+        # Scripted choices: N leads its only heart, E tries the illegal trump.
+        players["N"].choose_card = (
+            lambda trick, c, playable, _card=n_card: _card
+        )
+        players["E"].choose_card = (
+            lambda trick, c, playable, _card=e_illegal: _card
+        )
+
+        with pytest.raises(IllegalPlayError) as excinfo:
+            round_.play_trick()
+
+        assert excinfo.value.card is e_illegal
+        assert excinfo.value.reason == PlayRuleViolation.MUST_FOLLOW_SUIT
+        assert _ids(excinfo.value.legal_cards) == {(Suit.HEARTS, Rank.ACE)}
 
 
 # ---------------------------------------------------------------------------

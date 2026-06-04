@@ -7,6 +7,7 @@ from typing import Optional, Dict, List, TYPE_CHECKING
 from contrai_core.auction import Auction
 from contrai_core.bid import Bid
 from contrai_core.contract import Contract
+from contrai_core.exceptions import IllegalPlayError, PlayRuleViolation
 from contrai_core.trick import Trick
 from contrai_core.types import Rank, Suit
 
@@ -260,18 +261,25 @@ class Round:
             if view and hasattr(player, 'is_human') and player.is_human:
                 card = view.request_card_action(player, self.current_trick, self.contract, playable_cards)
 
-            # Validate that the chosen card is legal
+            # Validate that the chosen card is legal. An illegal card is
+            # surfaced as a loud failure (IllegalPlayError) rather than
+            # silently corrected to a legal one: choose_card /
+            # request_card_action are contracted to return a card from
+            # playable_cards, so a violation here is a wiring bug we want
+            # to see, not paper over.
             played_card = None
-            if card and card in playable_cards and card in player.hand:
+            if card and card in playable_cards:  # playable ⊆ hand, so in-hand is implied
                 player.hand.remove(card)
                 self.current_trick.add_play(player, card)
                 played_card = card
-            elif card and playable_cards:
-                # Card chosen is not legal - fallback to first playable card
-                fallback_card = playable_cards[0]
-                player.hand.remove(fallback_card)
-                self.current_trick.add_play(player, fallback_card)
-                played_card = fallback_card
+            elif card:  # truthy but illegal → loud failure
+                raise IllegalPlayError(
+                    card,
+                    self._classify_play_violation(player, card),
+                    playable_cards,
+                    context=f"{getattr(player, 'position', player)} card play",
+                )
+            # card falsy → unchanged (out of scope)
 
             # Notify the view that a card just landed on the table.
             # Lets interactive views render the AI action and pause.
@@ -637,6 +645,45 @@ class Round:
         if trump_cards:
             return trump_cards
         return player.hand.copy()
+
+    def _classify_play_violation(self, player: 'Player', card) -> PlayRuleViolation:
+        """Classify *why* an in-hand card is illegal for ``player`` to play.
+
+        Called only when ``card`` is genuinely illegal — held in hand but
+        absent from ``_get_playable_cards``'s legal set, with the current
+        trick already holding at least one play. The branch order mirrors
+        :meth:`_get_playable_cards` and **must stay in sync** with it
+        until the deferred ``Ruleset`` unifies the two (CLAUDE.md §10).
+
+        Args:
+            player: The player whose illegal play we are explaining.
+            card: The illegal card they attempted to play.
+
+        Returns:
+            The :class:`PlayRuleViolation` describing the broken
+            obligation.
+        """
+        trump_suit = self.contract.suit if self.contract else None
+        plays = self.current_trick.get_plays()
+        lead_suit = plays[0][1].suit
+        lead_suit_cards = [c for c in player.hand if c.suit == lead_suit]
+
+        # Rule 1/2 — held the led suit. Trump led + a too-low trump is an
+        # over-trump failure; anything else off-suit is a follow failure.
+        if lead_suit_cards:
+            if trump_suit and lead_suit == trump_suit and card.suit == trump_suit:
+                return PlayRuleViolation.MUST_OVERTRUMP
+            return PlayRuleViolation.MUST_FOLLOW_SUIT
+
+        # Void in the led suit (partner-master plays are legal, so never
+        # reach here). An opponent already trumped and we under-trumped →
+        # over-trump failure; otherwise we discarded instead of trumping.
+        highest_opponent_trump = self._highest_opponent_trump(
+            plays, player.team, trump_suit
+        )
+        if highest_opponent_trump is not None and card.suit == trump_suit:
+            return PlayRuleViolation.MUST_OVERTRUMP
+        return PlayRuleViolation.MUST_TRUMP
 
     @staticmethod
     def _higher_trumps_than_played(trumps_in_hand, plays, trump_suit):
