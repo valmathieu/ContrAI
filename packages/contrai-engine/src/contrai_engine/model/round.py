@@ -291,8 +291,13 @@ class Round:
                 ):
                     view.on_belote_announced(player, kind, self)
 
-        # Determine trick winner
-        winner = self._determine_trick_winner(self.current_trick)
+        # Determine trick winner. Who wins is a pure rule of the trick
+        # given trump, so we delegate to contrai-core rather than duplicate
+        # the comparison here. The contract carries the authoritative trump
+        # suit (None only defensively, before a contract is established).
+        winner = self.current_trick.get_current_winner(
+            self.contract.suit if self.contract else None
+        )
         self.last_trick_winner = winner
 
         # Add trick to the tricks list and to winner's team
@@ -665,48 +670,3 @@ class Round:
             if highest is None or card.get_order(trump_suit) > highest.get_order(trump_suit):
                 highest = card
         return highest
-
-    def _determine_trick_winner(self, trick: Trick) -> Optional['Player']:
-        """
-        Determines the winner of a trick based on the cards played.
-
-        Args:
-            trick: a Trick object containing the plays
-
-        Returns:
-            Player: The winner of the trick or None
-        """
-        trump_suit = self.contract.suit if self.contract else None
-        if not trick or not hasattr(trick, 'get_plays'):
-            return None
-
-        plays = trick.get_plays()
-        if not plays:
-            return None
-
-        lead_suit = plays[0][1].suit  # Suit of the first card played
-
-        best_player = plays[0][0]
-        best_card = plays[0][1]
-        best_is_trump = trump_suit and best_card.suit == trump_suit
-
-        for player, card in plays[1:]:
-            card_is_trump = trump_suit and card.suit == trump_suit
-
-            if card_is_trump and not best_is_trump:
-                # Trump beats non-trump
-                best_player = player
-                best_card = card
-                best_is_trump = True
-            elif card_is_trump and best_is_trump:
-                # Compare trump cards
-                if card.get_order(trump_suit) > best_card.get_order(trump_suit):
-                    best_player = player
-                    best_card = card
-            elif not card_is_trump and not best_is_trump and card.suit == lead_suit:
-                # Compare cards of the same suit (non-trump)
-                if card.get_order() > best_card.get_order():
-                    best_player = player
-                    best_card = card
-
-        return best_player
