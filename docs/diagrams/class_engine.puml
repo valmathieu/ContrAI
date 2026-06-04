@@ -168,7 +168,6 @@ package "model/round.py" as p_round {
         - _get_playable_cards(player) : list<Card>
         - _higher_trumps_than_played(trumps, plays, trump) : list<Card>
         - _highest_opponent_trump(plays, team, trump) : Card?
-        - _determine_trick_winner(trick: Trick) : Player?
         - _detect_belote_holder() : None
         - _is_belote_event(player, card) : bool
         - _transition_belote_state(player) : str?
@@ -187,9 +186,9 @@ package "model/round.py" as p_round {
       raises :class:`IllegalBidError` on an
       illegal bid — no silent force-Pass.
       ----
-      ``_determine_trick_winner`` duplicates
-      ``Trick.get_current_winner(trump_suit)`` from
-      contrai-core (open question: pick one).
+      Trick-winner determination delegates to
+      ``Trick.get_current_winner(contract.suit)``
+      in contrai-core — no engine-side duplicate.
       ----
       ``_get_playable_cards`` enforces:
       • follow suit if able,

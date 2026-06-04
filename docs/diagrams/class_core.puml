@@ -246,27 +246,27 @@ package "contract.py / trick.py" as p_contract {
 
     class Trick {
         + plays : list<(BasePlayer, Card)>
-        + trump_suit : Suit?
         --
-        + __init__(trump_suit: Suit? = None)
+        + __init__()
         + add_play(player: BasePlayer, card: Card) : None
         + get_cards() : list<Card>
         + get_led_suit() : Suit?
         + get_plays() : list<(BasePlayer, Card)>
-        + get_current_winner(trump_suit: Suit? = None) : BasePlayer?
+        + get_current_winner(trump_suit: Suit?) : BasePlayer?
         + is_complete() : bool
         + __len__() : int
     }
 
     note bottom of Trick
-      `get_current_winner(trump_suit)` takes
-      trump as an argument and works on
-      **partial** tricks — used by the
-      engine's partner-master legality check
-      and the view's live winner highlight.
-      `trump_suit` is set at construction but
-      the engine builds `Trick()` bare and
-      passes trump from the contract instead.
+      A dumb container of plays — it does **not**
+      store trump. `get_current_winner(trump_suit)`
+      takes trump as a **required** argument
+      (like `Card.get_order`/`get_points`) and
+      works on **partial** tricks. The engine
+      builds `Trick()` bare and passes the
+      contract's suit for trick-winner
+      determination, the partner-master legality
+      check, and the view's live winner highlight.
     end note
 }
 
@@ -341,10 +341,10 @@ Contract "1" o-- "1" BasePlayer  : player
 Contract "1" o-- "1" Team        : team
 Contract --> Suit                : suit
 
-' Trick composes (player, card) plays + references trump suit
+' Trick composes (player, card) plays; trump arrives via get_current_winner
 Trick "1" *-- "0..4" Card        : (via plays)
 Trick "1" o-- "0..4" BasePlayer  : (via plays)
-Trick --> Suit                   : trump_suit
+Trick ..> Suit                   : get_current_winner(trump_suit)
 
 ' Operations raising exceptions
 Team ..> InvalidPlayerCountError : <<raises>>
