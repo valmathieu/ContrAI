@@ -40,13 +40,14 @@ class TestTrickConstruction:
     def test_default_construction(self):
         trick = Trick()
         assert trick.plays == []
-        assert trick.trump_suit is None
         assert trick.is_complete() is False
         assert len(trick) == 0
 
-    def test_construction_with_trump_suit(self):
-        trick = Trick(trump_suit=Suit.SPADES)
-        assert trick.trump_suit is Suit.SPADES
+    def test_trick_does_not_own_trump(self):
+        # Trump is round-level state on the Contract, never stored on a
+        # Trick. It is passed to get_current_winner at call time instead.
+        trick = Trick()
+        assert not hasattr(trick, "trump_suit")
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +204,7 @@ class TestTrickCurrentWinner:
 
     def test_partial_trick_partner_still_master(self, north, east):
         """Two cards in: lead Ace still beats follow-suit seven."""
-        trick = Trick()  # no trump bound at construction
+        trick = Trick()
         trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
         trick.add_play(east, Card(Suit.HEARTS, Rank.SEVEN))
         assert trick.get_current_winner(Suit.SPADES) is north
@@ -219,15 +220,13 @@ class TestTrickCurrentWinner:
         trick.add_play(east, Card(Suit.SPADES, Rank.SEVEN))
         assert trick.get_current_winner(Suit.SPADES) is east
 
-    def test_uses_passed_trump_not_self_trump_suit(self, north, east):
-        """When ``trump_suit`` is passed, it overrides what was bound on
-        construction. Engine constructs Trick() without binding trump and
-        relies on the runtime call site."""
-        trick = Trick(trump_suit=Suit.HEARTS)  # would say HEARTS is trump
-        trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))  # would be trump
+    def test_winner_governed_entirely_by_passed_trump(self, north, east):
+        """Trump is decided solely by the call-time argument — the trick
+        stores none. SPADES passed in makes the seven of spades the only
+        trump, so it wins despite the hearts Ace outranking it absolutely."""
+        trick = Trick()
+        trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
         trick.add_play(east, Card(Suit.SPADES, Rank.SEVEN))
-        # Pass SPADES at call time — the seven of spades is now the only
-        # trump and wins.
         assert trick.get_current_winner(Suit.SPADES) is east
 
     def test_no_trump_argument_falls_back_to_lead_suit(self, north, east):
@@ -236,6 +235,15 @@ class TestTrickCurrentWinner:
         trick.add_play(east, Card(Suit.SPADES, Rank.SEVEN))
         # No trump: spade can't beat lead-suit ace.
         assert trick.get_current_winner(None) is north
+
+    def test_no_trump_enum_treated_as_non_trump(self, north, east):
+        """``Suit.NO_TRUMP`` is what the engine passes for a no-trump
+        contract; no card carries that suit, so play reduces to the
+        follow-suit rule exactly as passing ``None`` does."""
+        trick = Trick()
+        trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
+        trick.add_play(east, Card(Suit.SPADES, Rank.SEVEN))
+        assert trick.get_current_winner(Suit.NO_TRUMP) is north
 
     def test_higher_trump_takes_over(self, north, east, south):
         trick = Trick()

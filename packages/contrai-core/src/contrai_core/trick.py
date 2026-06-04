@@ -7,6 +7,7 @@ from typing import List, Tuple, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from .card import Card
     from .player import BasePlayer as Player
+    from .types import Suit
 
 class Trick:
     """
@@ -16,15 +17,16 @@ class Trick:
     with methods to determine the winner based on trump rules.
     """
 
-    def __init__(self, trump_suit: Optional[str] = None):
-        """
-        Initialize a new trick.
+    def __init__(self) -> None:
+        """Initialize a new, empty trick.
 
-        Args:
-            trump_suit: The trump suit for this trick, if any
+        A trick is a dumb container of plays; it does not own the trump
+        suit. Trump is round-level state living on the ``Contract`` and is
+        passed to :meth:`get_current_winner` at call time — mirroring how
+        :meth:`contrai_core.Card.get_order` / ``get_points`` take trump as
+        a parameter rather than storing it.
         """
         self.plays: List[Tuple[Player, Card]] = []
-        self.trump_suit = trump_suit
 
     def add_play(self, player: Player, card: Card) -> None:
         """
@@ -79,19 +81,22 @@ class Trick:
         """
         return len(self.plays) == 4
 
-    def get_current_winner(self, trump_suit: Optional[str] = None) -> Optional[Player]:
+    def get_current_winner(self, trump_suit: Optional[Suit]) -> Optional[Player]:
         """
         Return the player currently winning this (possibly partial) trick.
 
         Works on incomplete tricks — useful while a trick is being played
         for legality checks (e.g. *partner is currently master*) and view
-        rendering (live winner highlight). Pass ``trump_suit`` explicitly
-        when the trick was constructed without one.
+        rendering (live winner highlight).
 
         Args:
-            trump_suit: The trump suit to evaluate against. If ``None``, no
-                suit is trump (every trump-related branch reduces to the
-                follow-suit rule).
+            trump_suit: The trump suit to evaluate against, taken from the
+                round's contract. Pass ``None`` (or ``Suit.NO_TRUMP``) when
+                no suit is trump — every trump-related branch then reduces
+                to the follow-suit rule. The argument is required: there is
+                no construction-time trump to fall back to, so callers must
+                state trump explicitly rather than risk a silent no-trump
+                evaluation.
 
         Returns:
             Player who is currently winning, or None if no card has been
