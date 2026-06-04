@@ -79,31 +79,6 @@ class Trick:
         """
         return len(self.plays) == 4
 
-    def size(self) -> int:
-        """
-        Get number of cards played so far.
-
-        Returns:
-            Number of cards played (0-4)
-        """
-        return len(self.plays)
-
-    def get_winner(self) -> Optional[Player]:
-        """
-        Determine the winner of this trick using ``self.trump_suit``.
-
-        Convenience wrapper around :meth:`get_current_winner` for callers
-        that bound the trump suit at construction time. Both methods are
-        identical when ``self.trump_suit`` is set; pass a trump explicitly
-        when the trump is known at call time instead (the engine creates
-        ``Trick()`` without binding trump, and the contract carries the
-        authoritative trump suit).
-
-        Returns:
-            Player who won the trick, or None if trick is empty.
-        """
-        return self.get_current_winner(self.trump_suit)
-
     def get_current_winner(self, trump_suit: Optional[str] = None) -> Optional[Player]:
         """
         Return the player currently winning this (possibly partial) trick.
@@ -150,7 +125,3 @@ class Trick:
                     best_card = card
 
         return best_player
-
-    def is_empty(self) -> bool:
-        """Check if the trick is empty."""
-        return len(self.plays) == 0

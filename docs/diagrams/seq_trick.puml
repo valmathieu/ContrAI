@@ -43,7 +43,7 @@ note right of T
   Note: `Trick()` is built **without** a `trump_suit`.
   Round uses `self.contract.suit` directly via
   `_determine_trick_winner` below, bypassing
-  `Trick.get_winner()` from contrai-core.
+  `Trick.get_current_winner(trump_suit)` from contrai-core.
 end note
 
 == Leader determination ==
@@ -125,7 +125,7 @@ note right of R
   Reads `self.contract.suit` for trump.
   Trump beats non-trump; within same suit,
   highest `get_order()` wins. Duplicates the
-  logic that lives on `Trick.get_winner()`.
+  logic that lives on `Trick.get_current_winner(trump_suit)`.
 end note
 
 R -> R : last_trick_winner = winner

@@ -253,23 +253,20 @@ package "contract.py / trick.py" as p_contract {
         + get_cards() : list<Card>
         + get_led_suit() : Suit?
         + get_plays() : list<(BasePlayer, Card)>
-        + get_winner() : BasePlayer?
         + get_current_winner(trump_suit: Suit? = None) : BasePlayer?
         + is_complete() : bool
-        + is_empty() : bool
-        + size() : int
         + __len__() : int
     }
 
     note bottom of Trick
-      Two trick-winner methods:
-      • `get_winner()` uses `self.trump_suit`
-        (set at construction).
-      • `get_current_winner(trump_suit)` takes
-        trump as an argument and works on
-        **partial** tricks — used by the
-        engine's partner-master legality check
-        and the view's live winner highlight.
+      `get_current_winner(trump_suit)` takes
+      trump as an argument and works on
+      **partial** tricks — used by the
+      engine's partner-master legality check
+      and the view's live winner highlight.
+      `trump_suit` is set at construction but
+      the engine builds `Trick()` bare and
+      passes trump from the contract instead.
     end note
 }
 

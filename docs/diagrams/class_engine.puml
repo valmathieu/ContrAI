@@ -188,8 +188,8 @@ package "model/round.py" as p_round {
       illegal bid — no silent force-Pass.
       ----
       ``_determine_trick_winner`` duplicates
-      ``Trick.get_winner()`` from contrai-core
-      (open question: pick one).
+      ``Trick.get_current_winner(trump_suit)`` from
+      contrai-core (open question: pick one).
       ----
       ``_get_playable_cards`` enforces:
       • follow suit if able,
