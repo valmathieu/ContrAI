@@ -8,7 +8,7 @@ scenarios.
 
 import pytest
 
-from contrai_core import BasePlayer, Card, Rank, Suit, Trick
+from contrai_core import BasePlayer, Card, Rank, Suit, TrickStateError, Trick
 
 
 @pytest.fixture
@@ -84,7 +84,7 @@ class TestTrickAddPlay:
             (west, Rank.JACK),
         ]:
             trick.add_play(player, Card(Suit.SPADES, rank))
-        with pytest.raises(ValueError, match="complete trick"):
+        with pytest.raises(TrickStateError, match="complete trick"):
             trick.add_play(north, Card(Suit.HEARTS, Rank.SEVEN))
 
 

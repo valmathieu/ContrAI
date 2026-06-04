@@ -15,6 +15,7 @@ from contrai_core import (
     BasePlayer,
     Contract,
     ContractBid,
+    InvalidContractError,
     PassBid,
     Suit,
     Team,
@@ -107,7 +108,7 @@ class TestContractConstruction:
     def test_redouble_without_double_is_rejected(self, north, south):
         # A surcoinche can only stand on top of a coinche, so the
         # constructor refuses a redoubler with no doubler underneath it.
-        with pytest.raises(ValueError):
+        with pytest.raises(InvalidContractError):
             Contract(
                 ContractBid(north, 80, Suit.CLUBS), redouble_player=south
             )

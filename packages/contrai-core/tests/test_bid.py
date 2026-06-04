@@ -19,6 +19,7 @@ from contrai_core import (
     BasePlayer,
     ContractBid,
     DoubleBid,
+    InvalidContractError,
     PassBid,
     RedoubleBid,
     Suit,
@@ -113,11 +114,11 @@ class TestContractBidConstruction:
         [70, 85, 190, 0, -10, "slam", "SLAM", "Capot", "solo", "Solo Slam", "80"],
     )
     def test_invalid_value_raises(self, north, bad_value):
-        with pytest.raises(ValueError, match="Invalid contract value"):
+        with pytest.raises(InvalidContractError, match="Invalid contract value"):
             ContractBid(north, bad_value, Suit.SPADES)
 
     def test_invalid_suit_raises(self, north):
-        with pytest.raises(ValueError, match="Invalid trump suit"):
+        with pytest.raises(InvalidContractError, match="Invalid trump suit"):
             ContractBid(north, 80, "Spades")  # raw string is not a Suit enum
 
     def test_player_is_stored(self, north):

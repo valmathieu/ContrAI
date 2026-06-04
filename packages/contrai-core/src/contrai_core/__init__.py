@@ -15,9 +15,14 @@ from .auction import Auction
 from .contract import Contract
 from .trick import Trick
 from .exceptions import (
+    ContraiError,
     InvalidPlayerCountError,
     InvalidCardCountError,
     IllegalBidError,
+    PlayRuleViolation,
+    IllegalPlayError,
+    TrickStateError,
+    InvalidContractError,
 )
 
 __all__ = [
@@ -37,7 +42,12 @@ __all__ = [
     "Auction",
     "Contract",
     "Trick",
+    "ContraiError",
     "InvalidPlayerCountError",
     "InvalidCardCountError",
     "IllegalBidError",
+    "PlayRuleViolation",
+    "IllegalPlayError",
+    "TrickStateError",
+    "InvalidContractError",
 ]

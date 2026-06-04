@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional, TYPE_CHECKING
 
 from .bid import ContractBid
+from .exceptions import InvalidContractError
 
 if TYPE_CHECKING:
     from .player import BasePlayer as Player
@@ -36,12 +37,12 @@ class Contract:
                 Its presence is what marks the contract as redoubled.
 
         Raises:
-            ValueError: If a ``redouble_player`` is given without a
-                ``double_player`` — a surcoinche can only stand on top of
-                a coinche.
+            InvalidContractError: If a ``redouble_player`` is given
+                without a ``double_player`` — a surcoinche can only stand
+                on top of a coinche.
         """
         if redouble_player is not None and double_player is None:
-            raise ValueError(
+            raise InvalidContractError(
                 "A contract cannot be redoubled without first being "
                 "doubled: redouble_player was given but double_player is None."
             )

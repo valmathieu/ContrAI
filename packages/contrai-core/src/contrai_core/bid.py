@@ -28,6 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar
 
+from .exceptions import InvalidContractError
 from .types import Suit
 
 if TYPE_CHECKING:
@@ -103,17 +104,18 @@ class ContractBid(Bid):
         """Reject unknown values / suits at construction time.
 
         Raises:
-            ValueError: If ``value`` is not on :attr:`VALID_VALUES` or
-                ``suit`` is not a :class:`Suit` member.
+            InvalidContractError: If ``value`` is not on
+                :attr:`VALID_VALUES` or ``suit`` is not a :class:`Suit`
+                member.
         """
 
         if self.value not in self.VALID_VALUES:
-            raise ValueError(
+            raise InvalidContractError(
                 f"Invalid contract value: {self.value}. "
                 f"Must be one of {self.VALID_VALUES}"
             )
         if self.suit not in self.VALID_SUITS:
-            raise ValueError(
+            raise InvalidContractError(
                 f"Invalid trump suit: {self.suit}. "
                 f"Must be one of {self.VALID_SUITS}"
             )

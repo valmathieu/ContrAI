@@ -4,6 +4,8 @@
 from __future__ import annotations
 from typing import List, Tuple, Optional, TYPE_CHECKING
 
+from .exceptions import TrickStateError
+
 if TYPE_CHECKING:
     from .card import Card
     from .player import BasePlayer as Player
@@ -37,10 +39,10 @@ class Trick:
             card: The card being played
 
         Raises:
-            ValueError: If trick is already complete (4 cards)
+            TrickStateError: If trick is already complete (4 cards)
         """
         if self.is_complete():
-            raise ValueError("Cannot add card to complete trick")
+            raise TrickStateError("Cannot add a card to a complete trick")
 
         self.plays.append((player, card))
 
