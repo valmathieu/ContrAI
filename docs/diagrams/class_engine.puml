@@ -166,6 +166,7 @@ package "model/round.py" as p_round {
         --
         - _gather_bid(player, auction, view) : Bid
         - _get_playable_cards(player) : list<Card>
+        - _classify_play_violation(player, card) : PlayRuleViolation
         - _higher_trumps_than_played(trumps, plays, trump) : list<Card>
         - _highest_opponent_trump(plays, team, trump) : Card?
         - _detect_belote_holder() : None
@@ -198,6 +199,14 @@ package "model/round.py" as p_round {
       • over-trump opponents otherwise.
       The partner-master check delegates to
       ``Trick.get_current_winner(trump_suit)``.
+      ``play_trick`` plays only a card in
+      that legal set; a truthy-but-illegal
+      card raises :class:`IllegalPlayError`
+      (no silent fallback). The
+      ``PlayRuleViolation`` reason comes from
+      ``_classify_play_violation``, which
+      mirrors ``_get_playable_cards`` and
+      must stay in sync with it.
       ----
       During play Round fires (each ``hasattr``-guarded):
       • ``view.on_bid_made(player, bid, history)``

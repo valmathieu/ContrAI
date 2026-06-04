@@ -274,7 +274,16 @@ package "contract.py / trick.py" as p_contract {
 ' Exceptions (exceptions.py)
 ' =========================================================
 package "exceptions.py" as p_exc {
+    class "Exception" as Exception <<stdlib>> #DDDDDD
     class "ValueError" as ValueError <<stdlib>> #DDDDDD
+
+    class ContraiError <<base>>
+
+    enum PlayRuleViolation <<StrEnum>> {
+        MUST_FOLLOW_SUIT
+        MUST_TRUMP
+        MUST_OVERTRUMP
+    }
 
     class InvalidPlayerCountError {
         + expected_count : int
@@ -294,9 +303,37 @@ package "exceptions.py" as p_exc {
         + context : str
     }
 
+    class IllegalPlayError {
+        + card : Card
+        + reason : PlayRuleViolation
+        + legal_cards : tuple<Card>
+        + context : str
+    }
+
+    class TrickStateError {
+        + context : str
+    }
+
+    class InvalidContractError {
+        + context : str
+    }
+
+    ' Every domain error dual-inherits (ContraiError, ValueError);
+    ' ValueError stays in the MRO so legacy except-ValueError keeps working.
+    ContraiError            --|> Exception
+    InvalidPlayerCountError --|> ContraiError
     InvalidPlayerCountError --|> ValueError
+    InvalidCardCountError   --|> ContraiError
     InvalidCardCountError   --|> ValueError
+    IllegalBidError         --|> ContraiError
     IllegalBidError         --|> ValueError
+    IllegalPlayError        --|> ContraiError
+    IllegalPlayError        --|> ValueError
+    TrickStateError         --|> ContraiError
+    TrickStateError         --|> ValueError
+    InvalidContractError    --|> ContraiError
+    InvalidContractError    --|> ValueError
+    IllegalPlayError        --> PlayRuleViolation : reason
 }
 
 ' =========================================================
@@ -350,5 +387,8 @@ Trick ..> Suit                   : get_current_winner(trump_suit)
 Team ..> InvalidPlayerCountError : <<raises>>
 Deck ..> InvalidPlayerCountError : <<raises>>
 Deck ..> InvalidCardCountError   : <<raises>>
+ContractBid ..> InvalidContractError : <<raises (__post_init__)>>
+Contract ..> InvalidContractError    : <<raises (redouble w/o double)>>
+Trick ..> TrickStateError            : <<raises (add_play)>>
 
 @enduml
