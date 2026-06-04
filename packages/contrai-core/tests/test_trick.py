@@ -3,7 +3,7 @@
 Covers add_play (incl. completeness guard), get_plays copy semantics,
 get_led_suit, the __len__/is_complete invariants, and get_current_winner
 across the lead-suit, trump-beats-non-trump, and trump-over-trump
-scenarios from contree-domain.md §6.4.
+scenarios.
 """
 
 import pytest
@@ -123,7 +123,7 @@ class TestTrickAccessors:
 
 
 # ---------------------------------------------------------------------------
-# get_current_winner — full-trick scenarios from domain §6.4
+# get_current_winner — full-trick scenarios
 #
 # Trump is always passed explicitly at call time; the engine builds
 # ``Trick()`` without binding a trump and the contract carries the

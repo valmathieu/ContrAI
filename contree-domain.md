@@ -112,20 +112,23 @@ proceeds anticlockwise.
 
 - **Make a bid.** Announce a *value* and a *suit*, e.g. `90 ♥`. The value is
   the number of points your team commits to taking with that suit as trump.
+  
   - Minimum opening bid: **80**.
   - Increments: **10 points**.
   - Maximum numeric bid: **180**.
   - Each new bid must be strictly higher than the current one.
-
+  
   > The 170 and 180 steps are only feasible with **Belote** in hand (K + Q of
   > trump add 20 points), since the cards alone cap at 162 + 10 *dix de der* =
+  > 
   > 172. The auction does **not** enforce that constraint at bid time —
-  > announcing 170 / 180 without Belote is legal but commits the bidder to a
-  > contract they cannot make on cards alone, which will *chuter* at scoring.
+  >      announcing 170 / 180 without Belote is legal but commits the bidder to a contract they cannot make on cards alone, which will *chuter* at scoring.
+
 - **Bid Slam** (*Capot*). A special bid declaring your team will take **all 8
   tricks**. Contract base value **250** points. Slam outranks any numeric
   bid: once declared, no further contract bid is legal (numeric, Slam, or
   Solo Slam). *Contre* and *surcontre* remain available against a Slam.
+
 - **Bid Solo Slam** (*Capot général*). A stronger all-tricks bid declaring
   that the **bidder personally** will win every one of the 8 tricks — their
   partner may play normally but is forbidden from winning any trick. Contract
@@ -133,9 +136,12 @@ proceeds anticlockwise.
   **cannot be announced after a Slam** — once a Slam is on the table, the
   auction is closed to further contract bids (asymmetric block). *Contre*
   and *surcontre* remain available.
+
 - **Pass** (*passer*). A player who passes may re-enter the bidding later, as
   long as the auction has not yet ended.
+
 - **Contrer** (double) — see §5.3.
+
 - **Surcontrer** (redouble) — see §5.3.
 
 ### 5.3. Doubling
@@ -292,10 +298,10 @@ contract base. So the at-risk amount is:
 
 with `substitute = contract` for both Slam and Solo Slam.
 
-| Bid       | Contract (`C`) | Substitute (replaces 162) | At-risk per `M`        |
-| --------- | -------------- | ------------------------- | ---------------------- |
-| Slam      | 250            | 250                       | `(250 + 250) × M`      |
-| Solo Slam | 500            | 500                       | `(500 + 500) × M`      |
+| Bid       | Contract (`C`) | Substitute (replaces 162) | At-risk per `M`   |
+| --------- | -------------- | ------------------------- | ----------------- |
+| Slam      | 250            | 250                       | `(250 + 250) × M` |
+| Solo Slam | 500            | 500                       | `(500 + 500) × M` |
 
 Both halves are multiplied by `M` (1 for normal, 2 for *contre*, 4 for
 *surcontre*), giving:

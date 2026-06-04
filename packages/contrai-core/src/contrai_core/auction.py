@@ -379,7 +379,7 @@ class Auction:
         Coinche window — opposing players may come back and Coinche at
         any point before the auction ends. The auction's natural
         terminator (three consecutive passes after a non-pass bid)
-        closes the window on its own. See ``contree-domain.md §5.3``.
+        closes the window on its own.
         """
 
         if not self.bids:
@@ -405,7 +405,7 @@ class Auction:
         between the Double and the Redouble do **not** close the
         Surcoinche window — the contracting team may come back and
         Surcoinche at any point before the auction's three-consecutive-
-        passes terminator fires. See ``contree-domain.md §5.3``.
+        passes terminator fires.
         """
 
         if not self.bids:

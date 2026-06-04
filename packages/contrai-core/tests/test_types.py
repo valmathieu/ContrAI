@@ -44,7 +44,7 @@ class TestCardSuits:
         assert Suit.NO_TRUMP not in CARD_SUITS
 
     def test_order_matches_documented_preference(self):
-        # Spades > Hearts > Diamonds > Clubs (see contree-domain.md §11.1).
+        # Spades > Hearts > Diamonds > Clubs.
         assert CARD_SUITS == (Suit.SPADES, Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS)
 
     def test_length_is_four(self):
