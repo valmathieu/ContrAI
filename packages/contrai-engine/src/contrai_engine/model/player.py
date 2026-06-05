@@ -372,7 +372,7 @@ class AiPlayer(Player):
     def _evaluate_suit_as_trump(self, suit):
         """Evaluate a specific suit as potential trump."""
         
-        trump_cards = [card for card in self.hand if card.suit == suit]
+        trump_cards = self.hand.cards_of_suit(suit)
 
         if not trump_cards:
             return {'contract': 0, 'strength': 0, 'has_belote': False}
@@ -439,10 +439,10 @@ class AiPlayer(Player):
             if card.suit != trump_suit:
                 if card.rank == Rank.ACE:
                     tricks += 1
-                if card.rank == Rank.TEN and self._count_cards_in_suit(card.suit) > 1:
+                if card.rank == Rank.TEN and self.hand.count_suit(card.suit) > 1:
                     tricks += 1
-                if (card.rank == Rank.KING or card.rank == Rank.QUEEN) and self._suit_has_rank(card.suit, Rank.ACE)\
-                        and self._suit_has_rank(card.suit, Rank.TEN):
+                if (card.rank == Rank.KING or card.rank == Rank.QUEEN) and self.hand.has_card(card.suit, Rank.ACE)\
+                        and self.hand.has_card(card.suit, Rank.TEN):
                     tricks += 1
 
         return min(tricks, 8)  # Maximum 8 tricks in a round
@@ -506,7 +506,7 @@ class AiPlayer(Player):
                 contribution += 10
 
         # +10 if we have trump complement (Jack or 9)
-        trump_cards = [card for card in self.hand if card.suit == partner_suit]
+        trump_cards = self.hand.cards_of_suit(partner_suit)
         has_jack = any(card.rank == Rank.JACK for card in trump_cards)
         has_nine = any(card.rank == Rank.NINE for card in trump_cards)
 
@@ -566,7 +566,7 @@ class AiPlayer(Player):
     def _evaluate_trump_tricks(self, suit):
         """Evaluate potential tricks won with trump suit."""
 
-        trump_cards = [card for card in self.hand if card.suit == suit]
+        trump_cards = self.hand.cards_of_suit(suit)
         expected_won_tricks = 0
 
         has_jack = False
@@ -688,7 +688,7 @@ class AiPlayer(Player):
             aces = [c for c in playable_cards if c.rank == Rank.ACE]
             if aces:
                 # Play ace from the shortest suit
-                return min(aces, key=lambda c: self._count_cards_in_suit(c.suit))
+                return min(aces, key=lambda c: self.hand.count_suit(c.suit))
 
         # Default: play the lowest value card (excluding trump unless only trumps available)
         non_trump_cards = [c for c in playable_cards if c.suit != trump_suit] if trump_suit else playable_cards
@@ -722,12 +722,12 @@ class AiPlayer(Player):
         # No trump left with opponents - play ace from the longest suit
         aces = [c for c in playable_cards if c.rank == Rank.ACE]
         if aces:
-            return max(aces, key=lambda c: self._count_cards_in_suit(c.suit))
+            return max(aces, key=lambda c: self.hand.count_suit(c.suit))
 
         # Play master card from the longest suit
         master_cards = [c for c in playable_cards if self._is_master_card(c, trump_suit)]
         if master_cards:
-            return max(master_cards, key=lambda c: self._count_cards_in_suit(c.suit))
+            return max(master_cards, key=lambda c: self.hand.count_suit(c.suit))
 
         # Default: play the lowest value card (excluding trump unless only trumps available)
         non_trump_cards = [c for c in playable_cards if c.suit != trump_suit] if trump_suit else playable_cards
@@ -831,30 +831,11 @@ class AiPlayer(Player):
         non_master_cards = [c for c in playable_cards if not self._is_master_card(c, trump_suit)]
         if non_master_cards:
             return min(non_master_cards, key=lambda c: (
-                self._count_cards_in_suit(c.suit),
+                self.hand.count_suit(c.suit),
                 c.get_points(trump_suit)
             ))
 
         return playable_cards[0]
-
-    def _count_cards_in_suit(self, suit):
-        """Count how many cards we have in the given suit."""
-
-        return sum(1 for card in self.hand if card.suit == suit)
-
-    def _suit_has_rank(self, suit, rank):
-        """
-        Check if the player has a specific rank in a given suit.
-
-        Args:
-            suit: The suit to check (Suit.SPADES, Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS)
-            rank: The rank to look for (Rank.SEVEN, Rank.EIGHT, Rank.NINE, Rank.TEN, Rank.JACK, Rank.QUEEN, Rank.KING, Rank.ACE)
-
-        Returns:
-            bool: True if the player has the specified rank in the specified suit
-        """
-
-        return any(card.suit == suit and card.rank == rank for card in self.hand)
 
     def _opponents_might_have_trump(self, trump_suit):
         """Check if opponents might still have trump cards."""
@@ -862,7 +843,7 @@ class AiPlayer(Player):
         # TODO: upgrade to exclude partner if we can track their cards
         # Count trump cards we've seen fall
         trump_fallen = len(self._fallen_cards.get(trump_suit, set()))
-        trump_in_hand = sum(1 for card in self.hand if card.suit == trump_suit)
+        trump_in_hand = self.hand.count_suit(trump_suit)
 
         # Total trump cards is 8, if we've seen less than 8 - trump_in_hand, opponents might have some
         return trump_fallen < (8 - trump_in_hand)
