@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from .types import Suit, Rank
 
 
+@dataclass(frozen=True, slots=True, repr=False)
 class Card:
     """
     Represents a playing card for the game of contrée.
@@ -12,13 +15,17 @@ class Card:
     Each card has a suit and a rank, and provides methods to get its point value and order,
     depending on whether it is a trump card or not.
 
+    ``Card`` is an **immutable value object**: equality and hashing are by
+    ``(suit, rank)``, so two distinct instances of the same physical card
+    compare equal and hash alike, and cards can live in ``set``/``dict`` by
+    value (mirroring the :class:`~contrai_core.bid.Bid` precedent). There is
+    deliberately **no** ``__lt__`` — a card's *strength* is context-dependent
+    (it depends on the trump suit) and is obtained via :meth:`get_order`, not
+    by comparing cards directly.
+
     Attributes:
         suit (Suit): The suit of the card.
         rank (Rank): The rank of the card.
-        points_normal (int): The point value of the card in a non-trump suit.
-        points_trump (int): The point value of the card in the trump suit.
-        order_normal (int): The order of the card in a non-trump suit.
-        order_trump (int): The order of the card in the trump suit.
 
     Methods:
         __str__(): Returns a string representation of the card with suit symbol.
@@ -26,6 +33,9 @@ class Card:
         get_points(trump_suit=None): Returns the point value of the card, considering trump.
         get_order(trump_suit=None): Returns the order of the card, considering trump.
     """
+
+    suit: Suit
+    rank: Rank
 
     # Normal points (non-trump), keyed by Rank
     NORMAL_POINTS = {
@@ -78,14 +88,6 @@ class Card:
         Suit.CLUBS: "♣",
     }
 
-    def __init__(self, suit: Suit, rank: Rank):
-        self.suit = suit
-        self.rank = rank
-        self.points_normal = Card.NORMAL_POINTS[rank]
-        self.points_trump = Card.TRUMP_POINTS[rank]
-        self.order_normal = Card.NORMAL_ORDER[rank]
-        self.order_trump = Card.TRUMP_ORDER[rank]
-
     def __str__(self) -> str:
         return f"{self.rank.value} {Card.SUIT_SYMBOLS[self.suit]}"
 
@@ -94,10 +96,10 @@ class Card:
 
     def get_points(self, trump_suit: Suit | None = None) -> int:
         if trump_suit and self.suit == trump_suit:
-            return self.points_trump
-        return self.points_normal
+            return Card.TRUMP_POINTS[self.rank]
+        return Card.NORMAL_POINTS[self.rank]
 
     def get_order(self, trump_suit: Suit | None = None) -> int:
         if trump_suit and self.suit == trump_suit:
-            return self.order_trump
-        return self.order_normal
+            return Card.TRUMP_ORDER[self.rank]
+        return Card.NORMAL_ORDER[self.rank]

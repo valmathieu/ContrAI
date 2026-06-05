@@ -165,11 +165,12 @@ class Hand:
 
         A full contrée hand. Not enforced anywhere by the class itself;
         this is a convenience for tests and downstream invariant checks.
-        Uniqueness is judged by ``(suit, rank)`` pairs.
+        Uniqueness is plain :class:`Card` value-equality (cards compare by
+        ``(suit, rank)``), so a ``set`` dedupes duplicates directly.
         """
         if len(self.cards) != 8:
             return False
-        return len({(c.suit, c.rank) for c in self.cards}) == 8
+        return len(set(self.cards)) == 8
 
     def __repr__(self) -> str:
         """Return a debug representation listing every card."""
