@@ -1,4 +1,5 @@
 import copy
+from collections import Counter
 
 import pytest
 
@@ -34,13 +35,13 @@ def test_deck_has_all_card_combinations():
     """
     Test that the deck contains all expected card combinations.
 
-    Builds the expected set via ``str(Card(...))`` so this test tracks
-    ``Card.__str__`` automatically instead of duplicating its format.
+    ``Card`` is a value object (equality by ``(suit, rank)``), so the deck's
+    cards can be compared directly against the full 32-card set built from
+    the suit × rank product — no ``str()`` projection needed.
     """
     deck = Deck()
-    expected_cards = {str(Card(suit, rank)) for suit in CARD_SUITS for rank in Rank}
-    actual_cards = {str(card) for card in deck.cards}
-    assert actual_cards == expected_cards
+    expected_cards = {Card(suit, rank) for suit in CARD_SUITS for rank in Rank}
+    assert set(deck.cards) == expected_cards
 
 def test_shuffle_changes_order(deck):
     """
@@ -53,7 +54,7 @@ def test_shuffle_changes_order(deck):
     assert deck.cards != original_order
     # Ensure all cards are still present
     assert len(deck.cards) == 32
-    assert sorted(str(card) for card in deck.cards) == sorted(str(card) for card in original_order)
+    assert Counter(deck.cards) == Counter(original_order)
 
 def test_cut_changes_order(deck):
     """
@@ -64,7 +65,7 @@ def test_cut_changes_order(deck):
     # The order should be different after cut
     assert original_order != deck.cards
     # The deck should still have the same cards (no loss or duplication)
-    assert sorted(str(card) for card in original_order) == sorted(str(card) for card in deck.cards)
+    assert Counter(original_order) == Counter(deck.cards)
 
 def test_deal_gives_each_player_8_unique_cards(deck):
     """
@@ -79,8 +80,8 @@ def test_deal_gives_each_player_8_unique_cards(deck):
         assert len(player.hand) == 8
 
     # Ensure all cards are unique and no card is missing
-    all_dealt_cards = [str(card) for player in players for card in player.hand]
-    assert sorted(all_dealt_cards) == sorted([str(card) for card in deck_copy.cards])
+    all_dealt_cards = [card for player in players for card in player.hand]
+    assert Counter(all_dealt_cards) == Counter(deck_copy.cards)
 
     # Deck should be empty after dealing
     assert deck.is_empty()

@@ -86,16 +86,6 @@ def _contract(player, value, suit):
     return Contract(ContractBid(player, value, suit))
 
 
-def _ids(cards):
-    """Return (suit, rank) tuples for a list of Cards.
-
-    Cards don't override ``__eq__``/``__hash__`` (they compare by
-    identity), so we project onto the canonical pair when comparing
-    *which* cards are in a legal-play set.
-    """
-    return {(c.suit, c.rank) for c in cards}
-
-
 # ---------------------------------------------------------------------------
 # Over-trump rule when trump is led (commit 2 target)
 # ---------------------------------------------------------------------------
@@ -118,7 +108,7 @@ class TestOverTrumpWhenTrumpIsLed:
              ("E", Card(Suit.SPADES, Rank.ACE))],
         )
         legal = round_._get_playable_cards(players["S"])
-        assert _ids(legal) == {(Suit.SPADES, Rank.JACK)}
+        assert set(legal) == {Card(Suit.SPADES, Rank.JACK)}
 
     def test_only_lower_trumps_falls_back_to_all_trumps(self, players):
         """E plays the ♠ J (the absolute master). S holds only weaker
@@ -136,9 +126,9 @@ class TestOverTrumpWhenTrumpIsLed:
         # the over-trump branch then sees no higher trump and returns
         # the full follow-suit set.
         legal = round_._get_playable_cards(players["S"])
-        assert _ids(legal) == {
-            (Suit.SPADES, Rank.EIGHT),
-            (Suit.SPADES, Rank.SEVEN),
+        assert set(legal) == {
+            Card(Suit.SPADES, Rank.EIGHT),
+            Card(Suit.SPADES, Rank.SEVEN),
         }
 
     def test_multiple_higher_trumps_returns_all_higher(self, players):
@@ -157,9 +147,9 @@ class TestOverTrumpWhenTrumpIsLed:
              ("E", Card(Suit.SPADES, Rank.ACE))],
         )
         legal = round_._get_playable_cards(players["S"])
-        assert _ids(legal) == {
-            (Suit.SPADES, Rank.JACK),
-            (Suit.SPADES, Rank.NINE),
+        assert set(legal) == {
+            Card(Suit.SPADES, Rank.JACK),
+            Card(Suit.SPADES, Rank.NINE),
         }
 
     def test_no_trump_at_all_allows_free_discard(self, players):
@@ -175,7 +165,7 @@ class TestOverTrumpWhenTrumpIsLed:
              ("E", Card(Suit.SPADES, Rank.ACE))],
         )
         legal = round_._get_playable_cards(players["S"])
-        assert _ids(legal) == _ids(hand)
+        assert set(legal) == set(hand)
 
 
 # ---------------------------------------------------------------------------
@@ -199,9 +189,9 @@ class TestFollowSuitWhenNonTrumpLed:
             [("N", Card(Suit.HEARTS, Rank.KING))],
         )
         legal = round_._get_playable_cards(players["S"])
-        assert _ids(legal) == {
-            (Suit.HEARTS, Rank.SEVEN),
-            (Suit.HEARTS, Rank.ACE),
+        assert set(legal) == {
+            Card(Suit.HEARTS, Rank.SEVEN),
+            Card(Suit.HEARTS, Rank.ACE),
         }
 
     def test_partner_master_free_discard(self, players):
@@ -221,7 +211,7 @@ class TestFollowSuitWhenNonTrumpLed:
              ("E", Card(Suit.HEARTS, Rank.SEVEN))],
         )
         legal = round_._get_playable_cards(players["S"])
-        assert _ids(legal) == _ids(hand)
+        assert set(legal) == set(hand)
 
     def test_partner_overtrumped_must_trump(self, players):
         """N (partner) led ♥A. E (opponent) over-trumped with ♠7.
@@ -241,7 +231,7 @@ class TestFollowSuitWhenNonTrumpLed:
              ("E", Card(Suit.SPADES, Rank.SEVEN))],
         )
         legal = round_._get_playable_cards(players["S"])
-        assert _ids(legal) == {(Suit.SPADES, Rank.JACK)}
+        assert set(legal) == {Card(Suit.SPADES, Rank.JACK)}
 
     def test_partner_led_then_partner_overtaken_must_trump(self, players):
         """Symmetric scenario where S has no hearts AND no trump
@@ -261,7 +251,7 @@ class TestFollowSuitWhenNonTrumpLed:
         )
         legal = round_._get_playable_cards(players["S"])
         # Must trump even though we can't over-trump.
-        assert _ids(legal) == {(Suit.SPADES, Rank.SEVEN)}
+        assert set(legal) == {Card(Suit.SPADES, Rank.SEVEN)}
 
     def test_three_card_partial_opponent_master_forces_overtrump(self, players):
         """Three-card partial trick: N♥A, E♠7, S♠A. S is now master
@@ -284,7 +274,7 @@ class TestFollowSuitWhenNonTrumpLed:
              ("S", Card(Suit.SPADES, Rank.ACE))],
         )
         legal = round_._get_playable_cards(players["W"])
-        assert _ids(legal) == {(Suit.SPADES, Rank.NINE)}
+        assert set(legal) == {Card(Suit.SPADES, Rank.NINE)}
 
     def test_opponent_led_and_partner_followed_must_follow_suit(self, players):
         """E (opponent) led ♥K; N (partner) played ♥7 in follow. S has
@@ -303,7 +293,7 @@ class TestFollowSuitWhenNonTrumpLed:
              ("N", Card(Suit.HEARTS, Rank.SEVEN))],
         )
         legal = round_._get_playable_cards(players["S"])
-        assert _ids(legal) == {(Suit.HEARTS, Rank.ACE)}
+        assert set(legal) == {Card(Suit.HEARTS, Rank.ACE)}
 
 
 # ---------------------------------------------------------------------------
@@ -421,7 +411,7 @@ class TestPlayTrickRejectsIllegalCard:
 
         assert excinfo.value.card is e_illegal
         assert excinfo.value.reason == PlayRuleViolation.MUST_FOLLOW_SUIT
-        assert _ids(excinfo.value.legal_cards) == {(Suit.HEARTS, Rank.ACE)}
+        assert set(excinfo.value.legal_cards) == {Card(Suit.HEARTS, Rank.ACE)}
 
 
 # ---------------------------------------------------------------------------
