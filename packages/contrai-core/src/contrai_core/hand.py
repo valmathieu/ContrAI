@@ -134,8 +134,30 @@ class Hand:
         """
         return sum(1 for card in self.cards if card.rank == rank)
 
+    def has_suit(self, suit: Suit) -> bool:
+        """Return ``True`` iff the hand holds at least one card of ``suit``.
+
+        Short-circuits on the first match, so it is cheaper than
+        ``bool(cards_of_suit(suit))`` when only presence — not the cards
+        themselves — is needed (e.g. lead-suit detection).
+
+        Args:
+            suit: The suit to look for.
+
+        Returns:
+            ``True`` if any card in the hand has ``.suit == suit``,
+            ``False`` otherwise.
+        """
+        return any(card.suit == suit for card in self.cards)
+
     def has_card(self, suit: Suit, rank: Rank) -> bool:
         """Return ``True`` iff a specific card is in the hand.
+
+        Delegates to membership (``Card(suit, rank) in self``). Since
+        :class:`Card` is a frozen value object comparing by
+        ``(suit, rank)``, ``__contains__`` is the single source of truth
+        for "do I hold this card" — there is no parallel field-by-field
+        scan to drift out of sync.
 
         Args:
             suit: The suit to look up.
@@ -145,7 +167,7 @@ class Hand:
             ``True`` if a card matching both ``suit`` and ``rank`` is
             present, ``False`` otherwise.
         """
-        return any(c.suit == suit and c.rank == rank for c in self.cards)
+        return Card(suit, rank) in self
 
     def cards_of_suit(self, suit: Suit) -> list[Card]:
         """Return the cards of a given suit as a new list.

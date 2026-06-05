@@ -188,6 +188,23 @@ def test_has_card_hit_and_miss(sample_cards):
     assert h.has_card(Suit.SPADES, Rank.JACK) is False  # right suit, wrong rank
 
 
+def test_has_suit_present_and_absent(sample_cards):
+    h = Hand(sample_cards)
+    assert h.has_suit(Suit.SPADES) is True
+    assert h.has_suit(Suit.HEARTS) is True
+    assert h.has_suit(Suit.DIAMONDS) is False
+    assert h.has_suit(Suit.CLUBS) is False
+
+
+def test_has_card_delegates_to_membership(sample_cards):
+    """``has_card`` agrees with ``Card(...) in hand`` for a hit and a miss."""
+    h = Hand(sample_cards)
+    hit = Card(Suit.SPADES, Rank.ACE)
+    miss = Card(Suit.CLUBS, Rank.SEVEN)
+    assert h.has_card(hit.suit, hit.rank) == (hit in h) is True
+    assert h.has_card(miss.suit, miss.rank) == (miss in h) is False
+
+
 def test_cards_of_suit_returns_matching_cards_in_order(sample_cards):
     h = Hand(sample_cards)
     spades = h.cards_of_suit(Suit.SPADES)
