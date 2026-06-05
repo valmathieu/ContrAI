@@ -61,18 +61,22 @@ package "types.py" as p_types {
 ' Card & deck (card.py, deck.py)
 ' =========================================================
 package "card.py / deck.py" as p_card {
-    class Card {
+    class Card <<frozen dataclass>> {
         + suit : Suit
         + rank : Rank
-        + points_normal : int
-        + points_trump  : int
-        + order_normal  : int
-        + order_trump   : int
         --
-        + __init__(suit: Suit, rank: Rank)
         + get_points(trump_suit: Suit? = None) : int
         + get_order(trump_suit: Suit? = None)  : int
     }
+
+    note bottom of Card
+      Immutable value object: equality and
+      hashing are by ``(suit, rank)``, so
+      distinct instances of the same physical
+      card are equal and hashable. No ``__lt__`` —
+      strength is parametric via
+      ``get_order(trump_suit)``.
+    end note
 
     class Deck {
         + cards : list<Card>
