@@ -220,7 +220,7 @@ def _explain_constraint(
         return Text("your lead — anything goes", style=GREEN_FG)
 
     led_suit = plays[0][1].suit
-    has_led = any(c.suit == led_suit for c in player.hand)
+    has_led = player.hand.has_suit(led_suit)
 
     hint = Text("↑ playable ", style=GREEN_FG)
     if has_led:
