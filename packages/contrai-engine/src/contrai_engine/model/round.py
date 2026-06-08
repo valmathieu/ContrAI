@@ -212,14 +212,8 @@ class Round:
             return
         trump = self.contract.suit
         for player in self.players_order:
-            has_king = any(
-                card.suit == trump and card.rank == Rank.KING
-                for card in player.hand
-            )
-            has_queen = any(
-                card.suit == trump and card.rank == Rank.QUEEN
-                for card in player.hand
-            )
+            has_king = player.hand.has_card(trump, Rank.KING)
+            has_queen = player.hand.has_card(trump, Rank.QUEEN)
             if has_king and has_queen:
                 self.belote_holder = player
                 return
@@ -596,11 +590,9 @@ class Round:
             return player.hand.copy()
 
         lead_suit = plays[0][1].suit
-        lead_suit_cards = [card for card in player.hand if card.suit == lead_suit]
+        lead_suit_cards = player.hand.cards_of_suit(lead_suit)
         trump_cards = (
-            [card for card in player.hand if card.suit == trump_suit]
-            if trump_suit
-            else []
+            player.hand.cards_of_suit(trump_suit) if trump_suit else []
         )
 
         # Rule 1 — follow suit. Special-case rule 2 (over-trump when trump
@@ -666,7 +658,7 @@ class Round:
         trump_suit = self.contract.suit if self.contract else None
         plays = self.current_trick.get_plays()
         lead_suit = plays[0][1].suit
-        lead_suit_cards = [c for c in player.hand if c.suit == lead_suit]
+        lead_suit_cards = player.hand.cards_of_suit(lead_suit)
 
         # Rule 1/2 — held the led suit. Trump led + a too-low trump is an
         # over-trump failure; anything else off-suit is a follow failure.
