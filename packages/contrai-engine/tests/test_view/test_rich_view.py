@@ -32,6 +32,7 @@ from contrai_engine.view.rich_view import (
     _double_available_to,
     _explain_constraint,
     _format_contract_short,
+    _format_trump_label,
     _illegal_bid_reason,
     _min_legal_contract_value,
     _parse_bid_input,
@@ -1248,6 +1249,66 @@ class TestRoundRecapPanel:
         assert "Trump:" in text
         assert "♥ Hearts" in text
 
+    def test_recap_trump_line_omits_star(self):
+        """The recap's Trump line drops the ★ flourish (it stays plain).
+
+        The star is reserved for the in-game Round panel; nothing else in
+        the recap renders a ★, so its absence is asserted panel-wide.
+        """
+        view = RichView()
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        round_ = self._StubRound(
+            round_number=3,
+            contract=contract,
+            round_scores={"North-South": 162, "East-West": 0},
+        )
+        panel = view._panel_round_recap(round_, {"North-South": 500, "East-West": 0})
+        text = panel.renderable.plain
+        assert "♥ Hearts" in text
+        assert "★" not in text
+
+    def test_recap_outcome_holds_tally_scoring_holds_round_points(
+        self, four_players
+    ):
+        """Section placement after the refactor: the factual play tally
+        (Trick points / Last trick / Belote) sits under Outcome, while the
+        rolled-up Round points sits under Scoring. The Scoring Round points
+        equals trick points + last trick + belote per side."""
+        view = RichView()
+        north, east, *_ = four_players
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        # N-S takes one trick worth A♥ (trump ace = 11), wins the last
+        # trick (+10) and holds the belote pair (+20) → 41 round points.
+        ns_trick = Trick()
+        ns_trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
+        ns_trick.add_play(east, Card(Suit.CLUBS, Rank.SEVEN))
+        round_ = self._StubRound(
+            round_number=2,
+            contract=contract,
+            round_scores={"North-South": 141, "East-West": 0},
+            team_tricks={"North-South": [ns_trick], "East-West": []},
+            belote_holder=north,
+        )
+        round_.last_trick_winner = north
+        breakdown = view._recap_breakdown(round_)
+        ns = breakdown["North-South"]
+        # Round points is the sum of the three factual Outcome rows.
+        assert (
+            ns["round_points"]
+            == ns["trick_points"] + ns["last_trick"] + ns["belote"]
+            == 41
+        )
+        text = view._panel_round_recap(
+            round_, {"North-South": 141, "East-West": 0}
+        ).renderable.plain
+        outcome, scoring = text.split("Scoring")
+        # Tally rows live above the Scoring rule, Round points below it.
+        for row in ("Trick points", "Last trick", "Belote"):
+            assert row in outcome
+            assert row not in scoring
+        assert "Round points" in scoring
+        assert "Round points" not in outcome
+
     def test_recap_failed_contract_shows_cross(self):
         view = RichView()
         contract = self._StubContract(120, Suit.SPADES, "East-West")
@@ -1348,13 +1409,12 @@ class TestRoundRecapPanel:
         # Trump-aware card points:
         #   ns_trick1: J♥(20) + 7♥(0)  = 20
         #   ns_trick2: A♠(11) + 9♥(14) = 25
-        # N-S total = 45 — shown in the Scoring "Tricks" row.
+        # N-S total = 45 — shown in the Outcome "Trick points" row.
         assert "45" in text
-        # The scoring row is now plain "Tricks" (no card-count suffix);
-        # the factual trick count moved to the Outcome sub-table.
-        assert "(2/1 tricks)" not in text
         assert "Outcome" in text
         assert "Tricks won" in text
+        assert "Trick points" in text
+        # The rolled-up tally lives in the Scoring sub-table now.
         assert "Round points" in text
 
     def test_recap_round_points_sum_pile_last_trick_and_belote(
@@ -1807,6 +1867,28 @@ class TestRoundRecapPanel:
         )
         assert "final score" in output
         assert "deal the next round" not in output
+
+
+class TestFormatTrumpLabel:
+    """`_format_trump_label` glyph/label plus the optional ★ flourish."""
+
+    def test_default_includes_star(self):
+        text = _format_trump_label(Suit.HEARTS).plain
+        assert "♥ Hearts" in text
+        assert "★" in text
+
+    def test_star_false_omits_star(self):
+        text = _format_trump_label(Suit.HEARTS, star=False).plain
+        assert "♥ Hearts" in text
+        assert "★" not in text
+
+    def test_no_trump_label(self):
+        text = _format_trump_label(Suit.NO_TRUMP, star=False).plain
+        assert "No Trump" in text
+        assert "★" not in text
+
+    def test_none_suit_is_em_dash(self):
+        assert _format_trump_label(None).plain == "—"
 
 
 class TestPanelRoundTitle:

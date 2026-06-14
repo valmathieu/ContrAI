@@ -309,8 +309,15 @@ def _format_contract_short(contract: Contract, *, verbose: bool = False) -> Text
     return t
 
 
-def _format_trump_label(suit: Optional[Suit]) -> Text:
-    """``"♥ Hearts ★"`` with red glyph and gold star."""
+def _format_trump_label(suit: Optional[Suit], *, star: bool = True) -> Text:
+    """``"♥ Hearts ★"`` with red glyph and gold star.
+
+    Args:
+        suit: The trump suit to render, or ``None`` for an em-dash.
+        star: When ``True`` (default) append the gold ``★`` flourish.
+            The after-round recap passes ``star=False`` so its Trump
+            line reads plain; the in-game Round panel keeps the star.
+    """
     if suit is None:
         return Text("—", style=DIM)
     t = Text()
@@ -318,7 +325,8 @@ def _format_trump_label(suit: Optional[Suit]) -> Text:
     t.append(" ", style=FG)
     label = "No Trump" if suit == Suit.NO_TRUMP else suit.value
     t.append(label, style="bold")
-    t.append(" ★", style=GOLD)
+    if star:
+        t.append(" ★", style=GOLD)
     return t
 
 
@@ -1958,13 +1966,12 @@ class RichView:
         """Between-rounds recap panel — what just happened, in one read.
 
         Two stacked sub-tables share the N-S / E-W columns. The
-        **Outcome** table reports the factual play tally — tricks won
-        and round points (trump-aware pile + last-trick 10 + belote 20)
-        each side captured. The **Scoring** table then traces how the
-        contract converts that into the engine's round score: contract
-        bonus / penalty, card points, last trick, belote, then the
-        round-score subtotal. A final Running line carries the
-        game-level totals and the target.
+        **Outcome** table reports the factual play tally — tricks won,
+        trick points (trump-aware pile), last trick (10) and belote (20)
+        each side captured. The **Scoring** table then summarizes how
+        the round scored: contract bonus / penalty, round points (the
+        Outcome tally rolled up), then the round-score total. A final
+        Running line carries the game-level totals and the target.
         """
         body = Text()
         body.append("\n")
@@ -1983,9 +1990,10 @@ class RichView:
             body.append_text(_format_contract_short(contract, verbose=True))
             body.append("\n")
             # Trump recall — the contract label omits the suit, so spell
-            # it out here the same way the in-game Round panel does.
+            # it out here the same way the in-game Round panel does, but
+            # without the ★ flourish (the recap keeps this line plain).
             body.append("  Trump:     ", style=DIM)
-            body.append_text(_format_trump_label(contract.suit))
+            body.append_text(_format_trump_label(contract.suit, star=False))
             body.append("\n")
             # Made/failed badge
             made = self._contract_made(round_)
@@ -1997,23 +2005,28 @@ class RichView:
             body.append("\n\n")
 
         # Two stacked sub-tables sharing the same N-S / E-W columns.
-        # "Outcome" first — the factual play tally (tricks + round
-        # points each side captured). "Scoring" next — how the contract
-        # converts that into the engine's round score.
+        # "Outcome" first — the factual play tally (tricks won, trick
+        # points, last trick, belote each side captured). "Scoring" next
+        # — contract bonus, the rolled-up round points, and round score.
         breakdown = self._recap_breakdown(round_)
         trump = contract.suit if contract is not None else None
+        all_passed = contract is None
 
         body.append_text(self._section_rule("Outcome"))
         body.append("\n")
         body.append_text(
-            self._format_outcome_table(breakdown, all_passed=contract is None)
+            self._format_outcome_table(
+                breakdown, trump=trump, all_passed=all_passed
+            )
         )
         body.append("\n")
 
         body.append_text(self._section_rule("Scoring"))
         body.append("\n")
         body.append_text(
-            self._format_recap_table(breakdown, ns_round, ew_round, trump)
+            self._format_recap_table(
+                breakdown, ns_round, ew_round, all_passed=all_passed
+            )
         )
         body.append("\n")
 
@@ -2184,6 +2197,13 @@ class RichView:
                 # reflects real captured points in a winner-takes-all round
                 # where the Scoring rows are dashed out.
                 "round_points": raw_card_pts + raw_dix + raw_belote,
+                # Factual components the Outcome sub-table renders one per
+                # row. ``trick_points`` is the real pile and ``last_trick``
+                # the real der (10/0), both independent of the scoring
+                # formula; ``belote`` below is already factual (the holder
+                # keeps it in every shape).
+                "trick_points": raw_card_pts,
+                "last_trick": raw_dix,
                 "dix_de_der": raw_dix if dix_count else 0,
                 "belote": raw_belote if belote_count else 0,
                 "trick_count": len(tricks),
@@ -2212,20 +2232,25 @@ class RichView:
         return rule
 
     def _format_outcome_table(
-        self, breakdown: dict, *, all_passed: bool = False
+        self,
+        breakdown: dict,
+        *,
+        trump: Optional[Suit] = None,
+        all_passed: bool = False,
     ) -> Text:
-        """Render the per-team play tally (tricks won + round points).
+        """Render the per-team play tally — the factual results of play.
 
-        These are factual results of the actual play — the trick count
-        and the round-points total (trump-aware pile + last-trick 10 +
-        belote 20) each side captured — shown independently of how the
-        contract converts them into score. In a winner-takes-all round
-        the Scoring table dashes a losing side's card/der rows, but the
-        points it genuinely took still surface here.
+        Rows: Tricks won (count), Trick points (trump-aware pile), Last
+        trick (10 to whoever won trick 8) and Belote (20 to the side
+        holding K+Q of trump). Every value is the *real* amount each side
+        captured in play, independent of how the contract converts it into
+        score — so a winner-takes-all round still surfaces the points each
+        side genuinely took. Their sum is reported as "Round points" in
+        the Scoring sub-table.
 
         When ``all_passed`` is set (no contract was struck, so no cards
-        were played) every cell renders as an em-dash, matching the
-        Scoring table so the whole panel reads consistently.
+        were played) every cell renders as an em-dash, so the whole panel
+        reads consistently.
         """
         ns = breakdown.get("North-South", {})
         ew = breakdown.get("East-West", {})
@@ -2234,6 +2259,12 @@ class RichView:
             if all_passed:
                 return Text(f"{'—':>6}", style=DIM)
             return Text(f"{value:>6}", style="bold")
+
+        def _bonus_cell(value: int) -> Text:
+            # Last trick / belote: a "+N" when earned, em-dash otherwise.
+            if all_passed or value == 0:
+                return Text(f"{'—':>6}", style=DIM)
+            return Text(f"{('+' + str(value)):>6}", style="bold")
 
         # Header row: "                          N-S     E-W"
         header = Text()
@@ -2250,16 +2281,40 @@ class RichView:
         row_tricks.append("\n")
 
         row_points = Text()
-        row_points.append(f"  {'Round points':<22}", style=FG)
-        row_points.append_text(_count_cell(ns.get("round_points", 0)))
+        row_points.append(f"  {'Trick points':<22}", style=FG)
+        row_points.append_text(_count_cell(ns.get("trick_points", 0)))
         row_points.append("  ")
-        row_points.append_text(_count_cell(ew.get("round_points", 0)))
+        row_points.append_text(_count_cell(ew.get("trick_points", 0)))
         row_points.append("\n")
+
+        # Last-trick bonus (10 points to the team that wins trick 8).
+        row_last = Text()
+        row_last.append(f"  {'Last trick':<22}", style=FG)
+        row_last.append_text(_bonus_cell(ns.get("last_trick", 0)))
+        row_last.append("  ")
+        row_last.append_text(_bonus_cell(ew.get("last_trick", 0)))
+        row_last.append("\n")
+
+        # Belote (suit glyph reflects the actual trump suit). The label
+        # is hand-built so the trump glyph slots into the 24-char gutter.
+        row_bel = Text()
+        row_bel.append("  Belote (K + Q ", style=FG)
+        if trump is not None and trump != Suit.NO_TRUMP:
+            row_bel.append(_suit_glyph(trump), style=_suit_color(trump))
+        else:
+            row_bel.append("—", style=DIM)
+        row_bel.append(")      ", style=FG)
+        row_bel.append_text(_bonus_cell(ns.get("belote", 0)))
+        row_bel.append("  ")
+        row_bel.append_text(_bonus_cell(ew.get("belote", 0)))
+        row_bel.append("\n")
 
         out = Text()
         out.append_text(header)
         out.append_text(row_tricks)
         out.append_text(row_points)
+        out.append_text(row_last)
+        out.append_text(row_bel)
         return out
 
     def _format_recap_table(
@@ -2267,20 +2322,21 @@ class RichView:
         breakdown: dict,
         ns_round: int,
         ew_round: int,
-        trump: Optional[Suit] = None,
+        *,
+        all_passed: bool = False,
     ) -> Text:
-        """Render the per-team breakdown table inside the recap panel.
+        """Render the Scoring sub-table inside the recap panel.
 
         Rows: Contract (the bonus a team earns from the contract being
-        made or failed), Tricks (trump-aware card pile), Last trick,
-        Belote, then a divider and the engine-computed Round score. The
-        factual trick count and total captured points live in the
-        separate Outcome sub-table. The four
-        component rows always sum to the Round score — when the engine
-        substitutes a flat winner-takes-all formula (any failed or
-        doubled numeric round), the cards / dix rows display em-dashes
-        so the addition stays honest. The Belote row still shows +20 for
-        whichever team holds the pair, since belote is always preserved.
+        made or failed), Round points (the factual play tally — trick
+        points + last trick + belote — rolled up from the Outcome
+        sub-table), then a divider and the engine-computed Round score.
+
+        Round points is the *real* total each side captured in play. In a
+        winner-takes-all round (any failed or doubled numeric contract, or
+        a Slam) the engine substitutes a flat formula, so Contract + Round
+        points need not equal Round score — the divider anchors the final
+        Round score rather than asserting an exact column sum.
         """
         ns = breakdown.get("North-South", {})
         ew = breakdown.get("East-West", {})
@@ -2296,17 +2352,11 @@ class RichView:
                 t.append(f"{value:>6}", style="bold")
             return t
 
-        def _dash_cell() -> Text:
-            return Text(f"{'—':>6}", style=DIM)
-
-        def _component_cell(side: dict, key: str, count_flag: str) -> Text:
-            """Number cell that shows '—' when the engine ignores this
-            team's contribution for ``key``. ``count_flag`` selects
-            which boolean in ``side`` gates the display (one of
-            ``cards_count`` / ``dix_count`` / ``belote_count``)."""
-            if not side.get(count_flag, True):
-                return _dash_cell()
-            return _num_cell(side.get(key, 0), show_zero=False, sign=True)
+        def _round_points_cell(side: dict) -> Text:
+            # Factual play tally; an em-dash only when nothing was played.
+            if all_passed:
+                return Text(f"{'—':>6}", style=DIM)
+            return _num_cell(side.get("round_points", 0), sign=True)
 
         # Header row: "                          N-S     E-W"
         header = Text()
@@ -2317,7 +2367,7 @@ class RichView:
 
         # Contract row — the bonus each team gets from the contract.
         row_contract = Text()
-        row_contract.append(f"  Contract              ", style=FG)
+        row_contract.append(f"  {'Contract':<22}", style=FG)
         row_contract.append_text(
             _num_cell(ns.get("contract", 0), show_zero=False, sign=True)
         )
@@ -2327,52 +2377,18 @@ class RichView:
         )
         row_contract.append("\n")
 
-        # Card points row (sum across the team's tricks, *or* the flat
-        # Slam-family substitute scaled by the multiplier). Trick count
-        # is shown either way — it's an honest fact independent of the
-        # score formula.
-        # Slam family rounds replace the 162-card pile with a flat
-        # substitute; the row label flips so the user sees that the
-        # number isn't a literal card count. The factual trick count now
-        # lives in the Outcome sub-table, so this row carries no count
-        # annotation.
-        card_pts_substituted = (
-            ns.get("card_points_substituted", False)
-            or ew.get("card_points_substituted", False)
-        )
-        card_label = "Tricks won" if card_pts_substituted else "Tricks"
-        row_cards = Text()
-        row_cards.append(f"  {card_label:<22}", style=FG)
-        row_cards.append_text(_component_cell(ns, "card_points", "cards_count"))
-        row_cards.append("  ")
-        row_cards.append_text(_component_cell(ew, "card_points", "cards_count"))
-        row_cards.append("\n")
+        # Round points row — the Outcome tally (trick points + last trick
+        # + belote) rolled into a single number per side.
+        row_points = Text()
+        row_points.append(f"  {'Round points':<22}", style=FG)
+        row_points.append_text(_round_points_cell(ns))
+        row_points.append("  ")
+        row_points.append_text(_round_points_cell(ew))
+        row_points.append("\n")
 
-        # Last-trick bonus (10 points to the team that wins trick 8).
-        row_dxd = Text()
-        row_dxd.append(f"  {'Last trick':<22}", style=FG)
-        row_dxd.append_text(_component_cell(ns, "dix_de_der", "dix_count"))
-        row_dxd.append("  ")
-        row_dxd.append_text(_component_cell(ew, "dix_de_der", "dix_count"))
-        row_dxd.append("\n")
-
-        # Belote (suit glyph reflects the actual trump suit).
-        row_bel = Text()
-        row_bel.append(f"  Belote (K + Q ", style=FG)
-        if trump is not None and trump != Suit.NO_TRUMP:
-            row_bel.append(_suit_glyph(trump), style=_suit_color(trump))
-        else:
-            row_bel.append("—", style=DIM)
-        # Keep the column alignment stable: 2 cols for the glyph block.
-        row_bel.append(")      ", style=FG)
-        row_bel.append_text(_component_cell(ns, "belote", "belote_count"))
-        row_bel.append("  ")
-        row_bel.append_text(_component_cell(ew, "belote", "belote_count"))
-        row_bel.append("\n")
-
-        # Divider sits under the two numeric columns only, signalling
-        # "the next row is the round-score subtotal". Label area stays
-        # blank so the eye lands on the numbers.
+        # Divider sits under the two numeric columns only, anchoring the
+        # Round score line below. Label area stays blank so the eye lands
+        # on the numbers.
         divider = Text()
         divider.append(" " * 24, style=DIM)
         divider.append("─" * 6, style=DIM)
@@ -2381,7 +2397,7 @@ class RichView:
         divider.append("\n")
 
         row_total = Text()
-        row_total.append(f"  Round score           ", style=f"bold {GOLD}")
+        row_total.append(f"  {'Round score':<22}", style=f"bold {GOLD}")
         row_total.append_text(_num_cell(ns_round, sign=True))
         row_total.append("  ")
         row_total.append_text(_num_cell(ew_round, sign=True))
@@ -2390,9 +2406,7 @@ class RichView:
         out = Text()
         out.append_text(header)
         out.append_text(row_contract)
-        out.append_text(row_cards)
-        out.append_text(row_dxd)
-        out.append_text(row_bel)
+        out.append_text(row_points)
         out.append_text(divider)
         out.append_text(row_total)
         return out
