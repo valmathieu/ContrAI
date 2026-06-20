@@ -2380,6 +2380,9 @@ class RichView:
         out = Text()
         out.append_text(header)
         out.append_text(row_tricks)
+        # Blank line sets the trick *count* apart from the point rows that
+        # follow (a column rule here would wrongly read as a sub-total).
+        out.append("\n")
         out.append_text(row_points)
         out.append_text(row_last)
         out.append_text(row_bel)
