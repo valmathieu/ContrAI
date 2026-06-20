@@ -25,7 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
-from .bid import Bid, ContractBid, DoubleBid, PassBid, RedoubleBid
+from .bid import Bid, ContractBid, DoubleBid, PassBid, RedoubleBid, SlamLevel
 from .contract import Contract
 from .exceptions import IllegalBidError
 
@@ -329,7 +329,7 @@ class Auction:
 
         return self._is_contract_value_legal(bid.value)
 
-    def _is_contract_value_legal(self, value: int | str) -> bool:
+    def _is_contract_value_legal(self, value: int | SlamLevel) -> bool:
         """Whether a contract at ``value`` would be legal regardless of suit.
 
         Factored out of :meth:`_is_contract_legal` so :meth:`legal_actions`
@@ -339,8 +339,8 @@ class Auction:
         Double/Redouble freeze state, never on the suit announced.
 
         Args:
-            value: A numeric step (80, 90, …, 180) or the ``"Slam"`` /
-                ``"SoloSlam"`` sentinels. No validation is performed
+            value: A numeric step (80, 90, …, 180) or a
+                :class:`SlamLevel` member. No validation is performed
                 here — ``ContractBid.__post_init__`` enforces the
                 domain of valid values.
 
@@ -363,10 +363,10 @@ class Auction:
         # bid is legal. This is asymmetric for the Slam → SoloSlam
         # progression: Slam (500) blocks SoloSlam (1000) even though the
         # latter outranks it numerically, per the user-confirmed rule.
-        if last_contract_bid.value in ("Slam", "SoloSlam"):
+        if isinstance(last_contract_bid.value, SlamLevel):
             return False
         # Slam and SoloSlam outrank every numeric contract (80–180).
-        if value in ("Slam", "SoloSlam"):
+        if isinstance(value, SlamLevel):
             return True
         return value > last_contract_bid.value
 

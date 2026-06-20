@@ -17,6 +17,7 @@ from contrai_core import (
     ContractBid,
     InvalidContractError,
     PassBid,
+    SlamLevel,
     Suit,
     Team,
 )
@@ -47,12 +48,12 @@ def numeric_contract(north):
 
 @pytest.fixture
 def slam_contract(north):
-    return Contract(ContractBid(north, "Slam", Suit.HEARTS))
+    return Contract(ContractBid(north, SlamLevel.SLAM, Suit.HEARTS))
 
 
 @pytest.fixture
 def solo_slam_contract(north):
-    return Contract(ContractBid(north, "SoloSlam", Suit.HEARTS))
+    return Contract(ContractBid(north, SlamLevel.SOLO_SLAM, Suit.HEARTS))
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +211,7 @@ class TestContractSlamHelpers:
     def test_at_risk_total_solo_slam_doubled(self, north, south):
         # Solo Slam doubled: (500 + 500) × 2 = 2000.
         contract = Contract(
-            ContractBid(north, "SoloSlam", Suit.HEARTS), double_player=south
+            ContractBid(north, SlamLevel.SOLO_SLAM, Suit.HEARTS), double_player=south
         )
         amount = (
             contract.get_base_points()

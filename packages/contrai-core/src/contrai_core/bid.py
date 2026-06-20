@@ -26,6 +26,7 @@ bid-to-wire bridge, future MCTS / RL agents) actually want.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, ClassVar
 
 from .exceptions import InvalidContractError
@@ -33,6 +34,41 @@ from .types import Suit
 
 if TYPE_CHECKING:
     from .player import BasePlayer
+
+
+class SlamLevel(Enum):
+    """The two all-tricks contracts, ranked above every numeric bid.
+
+    A Slam-family contract's *identity* is the kind of declaration — not
+    the number of points it is worth. Each member therefore owns its
+    :attr:`base_value` as data: this is the single source of truth for
+    the 250 / 500 that used to be re-derived from string sentinels all
+    over the codebase. The base value drives auction precedence (both
+    members outrank the 180 numeric ceiling) and doubles as the
+    slam-family scoring substitute — see
+    :meth:`ContractBid.get_numeric_value`,
+    :meth:`contrai_core.Contract.get_base_points`, and
+    :meth:`contrai_core.Contract.get_slam_card_substitute`.
+
+    This is a plain :class:`~enum.Enum`, not an :class:`~enum.IntEnum`:
+    keeping the type distinct from ``int`` is the whole point — it stops
+    a Slam's value from being silently mistaken for card points in
+    scoring arithmetic.
+
+    Attributes:
+        base_value: Points the contract commits to (250 / 500).
+        label: Human-facing name used for display (``str(level)``).
+    """
+
+    SLAM = (250, "Slam")          # contracting team must win all 8 tricks
+    SOLO_SLAM = (500, "Solo Slam")  # bidder personally must win all 8
+
+    def __init__(self, base_value: int, label: str) -> None:
+        self.base_value = base_value
+        self.label = label
+
+    def __str__(self) -> str:
+        return self.label
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,29 +111,30 @@ class ContractBid(Bid):
     one of the table-defined steps and the suit must be a known
     :class:`Suit`.
 
-    Two string sentinels represent the all-tricks contracts:
+    The two all-tricks contracts are the :class:`SlamLevel` enum members:
 
-    - ``"Slam"`` — the contracting team must win all 8 tricks. Outranks
-      every numeric bid (80–180).
-    - ``"SoloSlam"`` — the contracting **player personally** must win
-      all 8 tricks (their partner may not win any). Outranks Slam in
-      raw numeric value, but is asymmetrically blocked once a Slam has
-      been announced (see :class:`contrai_core.Auction`).
+    - :attr:`SlamLevel.SLAM` — the contracting team must win all 8
+      tricks. Outranks every numeric bid (80–180).
+    - :attr:`SlamLevel.SOLO_SLAM` — the contracting **player
+      personally** must win all 8 tricks (their partner may not win
+      any). Outranks Slam in raw numeric value, but is asymmetrically
+      blocked once a Slam has been announced (see
+      :class:`contrai_core.Auction`).
 
     Attributes:
-        value: A numeric step (80, 90, 100, …, 180), or one of the
-            literal strings ``"Slam"`` / ``"SoloSlam"``.
+        value: A numeric step (80, 90, 100, …, 180), or a
+            :class:`SlamLevel` member for the all-tricks contracts.
         suit: The trump suit — any :class:`Suit`, including
             ``Suit.NO_TRUMP``.
     """
 
     VALID_VALUES: ClassVar[list] = [
         80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180,
-        "Slam", "SoloSlam",
+        SlamLevel.SLAM, SlamLevel.SOLO_SLAM,
     ]
     VALID_SUITS: ClassVar[list] = list(Suit)
 
-    value: int | str
+    value: int | SlamLevel
     suit: Suit
 
     def __post_init__(self) -> None:
@@ -123,11 +160,12 @@ class ContractBid(Bid):
     def get_numeric_value(self) -> int:
         """Numeric value for comparison purposes.
 
-        Sentinels map to the contract's *base value* — i.e. the amount
-        the bidder commits to, used both for auction precedence and as
-        one of the two halves of the Slam-family scoring formula.
-        ``"Slam"`` → 250, ``"SoloSlam"`` → 500. (Both still outrank the
-        numeric ceiling of 180.)
+        :class:`SlamLevel` members resolve to their
+        :attr:`~SlamLevel.base_value` — i.e. the amount the bidder
+        commits to, used both for auction precedence and as one of the
+        two halves of the Slam-family scoring formula.
+        ``SlamLevel.SLAM`` → 250, ``SlamLevel.SOLO_SLAM`` → 500. (Both
+        still outrank the numeric ceiling of 180.)
 
         The final at-risk amount on a Slam-family round is
         ``(base + substitute) × multiplier`` where ``substitute``
@@ -135,10 +173,8 @@ class ContractBid(Bid):
         and :meth:`contrai_core.Contract.get_slam_card_substitute`.
         """
 
-        if self.value == "Slam":
-            return 250
-        if self.value == "SoloSlam":
-            return 500
+        if isinstance(self.value, SlamLevel):
+            return self.value.base_value
         return self.value
 
     def __gt__(self, other) -> bool:

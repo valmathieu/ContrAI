@@ -43,6 +43,7 @@ from contrai_core import (
     IllegalBidError,
     PassBid,
     RedoubleBid,
+    SlamLevel,
     Suit,
     Team,
 )
@@ -205,7 +206,7 @@ class TestContractBidPrecedence:
                 (ContractBid(east, value, Suit.HEARTS), PassBid(north)),
             )
             assert (
-                auction.is_legal(ContractBid(west, "Slam", Suit.SPADES))
+                auction.is_legal(ContractBid(west, SlamLevel.SLAM, Suit.SPADES))
                 is True
             )
 
@@ -221,44 +222,44 @@ class TestContractBidPrecedence:
                 ),
             )
             assert (
-                auction.is_legal(ContractBid(south, "SoloSlam", Suit.SPADES))
+                auction.is_legal(ContractBid(south, SlamLevel.SOLO_SLAM, Suit.SPADES))
                 is True
             )
 
     def test_numeric_over_slam_illegal(self, north, east):
-        auction = Auction((ContractBid(east, "Slam", Suit.HEARTS),))
+        auction = Auction((ContractBid(east, SlamLevel.SLAM, Suit.HEARTS),))
         assert auction.is_legal(ContractBid(north, 160, Suit.SPADES)) is False
 
     def test_numeric_over_solo_slam_illegal(self, north, east):
-        auction = Auction((ContractBid(east, "SoloSlam", Suit.HEARTS),))
+        auction = Auction((ContractBid(east, SlamLevel.SOLO_SLAM, Suit.HEARTS),))
         assert auction.is_legal(ContractBid(north, 160, Suit.SPADES)) is False
 
     def test_slam_over_slam_illegal(self, north, east):
-        auction = Auction((ContractBid(east, "Slam", Suit.HEARTS),))
+        auction = Auction((ContractBid(east, SlamLevel.SLAM, Suit.HEARTS),))
         assert (
-            auction.is_legal(ContractBid(north, "Slam", Suit.SPADES)) is False
+            auction.is_legal(ContractBid(north, SlamLevel.SLAM, Suit.SPADES)) is False
         )
 
     def test_solo_slam_after_slam_illegal(self, north, east):
         """Asymmetric block: SoloSlam (1000) outranks Slam (500), but
         once a Slam is on the table the auction is closed to further
         contract bids — including the otherwise-higher SoloSlam."""
-        auction = Auction((ContractBid(east, "Slam", Suit.HEARTS),))
+        auction = Auction((ContractBid(east, SlamLevel.SLAM, Suit.HEARTS),))
         assert (
-            auction.is_legal(ContractBid(north, "SoloSlam", Suit.SPADES))
+            auction.is_legal(ContractBid(north, SlamLevel.SOLO_SLAM, Suit.SPADES))
             is False
         )
 
     def test_slam_after_solo_slam_illegal(self, north, east):
-        auction = Auction((ContractBid(east, "SoloSlam", Suit.HEARTS),))
+        auction = Auction((ContractBid(east, SlamLevel.SOLO_SLAM, Suit.HEARTS),))
         assert (
-            auction.is_legal(ContractBid(north, "Slam", Suit.SPADES)) is False
+            auction.is_legal(ContractBid(north, SlamLevel.SLAM, Suit.SPADES)) is False
         )
 
     def test_solo_slam_over_solo_slam_illegal(self, north, east):
-        auction = Auction((ContractBid(east, "SoloSlam", Suit.HEARTS),))
+        auction = Auction((ContractBid(east, SlamLevel.SOLO_SLAM, Suit.HEARTS),))
         assert (
-            auction.is_legal(ContractBid(north, "SoloSlam", Suit.SPADES))
+            auction.is_legal(ContractBid(north, SlamLevel.SOLO_SLAM, Suit.SPADES))
             is False
         )
 
@@ -287,11 +288,11 @@ class TestContractBidPrecedence:
         assert auction.is_legal(ContractBid(east, 110, Suit.HEARTS)) is False
         # Even Slam / SoloSlam can't.
         assert (
-            auction.is_legal(ContractBid(east, "Slam", Suit.SPADES))
+            auction.is_legal(ContractBid(east, SlamLevel.SLAM, Suit.SPADES))
             is False
         )
         assert (
-            auction.is_legal(ContractBid(east, "SoloSlam", Suit.SPADES))
+            auction.is_legal(ContractBid(east, SlamLevel.SOLO_SLAM, Suit.SPADES))
             is False
         )
 
@@ -381,7 +382,7 @@ class TestContractLegalitySuitIndependence:
             assert auction._is_contract_value_legal(value) is False
 
     def test_value_legal_false_when_slam_announced(self, east):
-        auction = Auction((ContractBid(east, "Slam", Suit.HEARTS),))
+        auction = Auction((ContractBid(east, SlamLevel.SLAM, Suit.HEARTS),))
         # Slam closes the auction to every contract value (including SoloSlam).
         for value in ContractBid.VALID_VALUES:
             assert auction._is_contract_value_legal(value) is False
@@ -415,8 +416,8 @@ class TestLegalActionsMonotonicity:
         Slam, after a SoloSlam, and after a freeze by Double."""
         cb_low = ContractBid(east, 100, Suit.HEARTS)
         cb_ceiling = ContractBid(east, 160, Suit.HEARTS)
-        cb_slam = ContractBid(east, "Slam", Suit.HEARTS)
-        cb_solo = ContractBid(east, "SoloSlam", Suit.HEARTS)
+        cb_slam = ContractBid(east, SlamLevel.SLAM, Suit.HEARTS)
+        cb_solo = ContractBid(east, SlamLevel.SOLO_SLAM, Suit.HEARTS)
         return [
             Auction(),
             Auction((cb_low,)),
@@ -454,8 +455,8 @@ class TestLegalActionsMonotonicity:
             Auction(),
             Auction((ContractBid(east, 100, Suit.HEARTS),)),
             Auction((ContractBid(east, 160, Suit.HEARTS),)),
-            Auction((ContractBid(east, "Slam", Suit.HEARTS),)),
-            Auction((ContractBid(east, "SoloSlam", Suit.HEARTS),)),
+            Auction((ContractBid(east, SlamLevel.SLAM, Suit.HEARTS),)),
+            Auction((ContractBid(east, SlamLevel.SOLO_SLAM, Suit.HEARTS),)),
             Auction(
                 (
                     ContractBid(east, 100, Suit.HEARTS),
@@ -559,13 +560,13 @@ class TestDoubleLegality:
         """Slam closes the auction to numeric / Slam-family bids but
         coinche must remain available — opponents can still Double."""
         # N announces Slam; W (next in cycle, opposing team) doubles.
-        auction = Auction((ContractBid(north, "Slam", Suit.SPADES),))
+        auction = Auction((ContractBid(north, SlamLevel.SLAM, Suit.SPADES),))
         assert auction.is_legal(DoubleBid(west)) is True
 
     def test_legal_against_opponent_solo_slam(
         self, north, west, four_players
     ):
-        auction = Auction((ContractBid(north, "SoloSlam", Suit.SPADES),))
+        auction = Auction((ContractBid(north, SlamLevel.SOLO_SLAM, Suit.SPADES),))
         assert auction.is_legal(DoubleBid(west)) is True
 
 
@@ -694,7 +695,7 @@ class TestLegalActions:
         contract_raises = [
             a for a in actions
             if isinstance(a, ContractBid)
-            and a.value not in ("Slam", "SoloSlam")
+            and not isinstance(a.value, SlamLevel)
             and a.value > 100
         ]
         assert contract_raises  # at least one higher-value contract exists

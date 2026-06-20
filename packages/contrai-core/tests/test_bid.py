@@ -22,6 +22,7 @@ from contrai_core import (
     InvalidContractError,
     PassBid,
     RedoubleBid,
+    SlamLevel,
     Suit,
     Team,
 )
@@ -96,7 +97,8 @@ class TestContractBidConstruction:
 
     @pytest.mark.parametrize(
         "value",
-        [80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, "Slam", "SoloSlam"],
+        [80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180,
+         SlamLevel.SLAM, SlamLevel.SOLO_SLAM],
     )
     def test_valid_values(self, north, value):
         bid = ContractBid(north, value, Suit.SPADES)
@@ -111,7 +113,10 @@ class TestContractBidConstruction:
 
     @pytest.mark.parametrize(
         "bad_value",
-        [70, 85, 190, 0, -10, "slam", "SLAM", "Capot", "solo", "Solo Slam", "80"],
+        # The old string sentinels "Slam" / "SoloSlam" are no longer
+        # valid — only the SlamLevel members are.
+        [70, 85, 190, 0, -10, "slam", "SLAM", "Capot", "solo", "Solo Slam",
+         "80", "Slam", "SoloSlam"],
     )
     def test_invalid_value_raises(self, north, bad_value):
         with pytest.raises(InvalidContractError, match="Invalid contract value"):
@@ -142,11 +147,17 @@ class TestContractBidComparison:
         # 250 = the contract base value (what the bidder commits to);
         # it is one half of the Slam at-risk amount, the other being
         # the flat card-pile substitute. Outranks the 160 numeric ceiling.
-        assert ContractBid(north, "Slam", Suit.SPADES).get_numeric_value() == 250
+        assert (
+            ContractBid(north, SlamLevel.SLAM, Suit.SPADES).get_numeric_value()
+            == 250
+        )
 
     def test_get_numeric_value_for_solo_slam(self, north):
         # 500 = the Solo Slam contract base value; outranks Slam (250).
-        assert ContractBid(north, "SoloSlam", Suit.SPADES).get_numeric_value() == 500
+        assert (
+            ContractBid(north, SlamLevel.SOLO_SLAM, Suit.SPADES).get_numeric_value()
+            == 500
+        )
 
     def test_gt_numeric(self, north):
         a = ContractBid(north, 100, Suit.SPADES)
@@ -155,14 +166,14 @@ class TestContractBidComparison:
         assert not (b > a)
 
     def test_gt_slam_over_max_numeric(self, north):
-        slam = ContractBid(north, "Slam", Suit.SPADES)
+        slam = ContractBid(north, SlamLevel.SLAM, Suit.SPADES)
         max_numeric = ContractBid(north, 160, Suit.HEARTS)
         assert slam > max_numeric
         assert not (max_numeric > slam)
 
     def test_gt_solo_slam_over_slam(self, north):
-        solo = ContractBid(north, "SoloSlam", Suit.SPADES)
-        slam = ContractBid(north, "Slam", Suit.HEARTS)
+        solo = ContractBid(north, SlamLevel.SOLO_SLAM, Suit.SPADES)
+        slam = ContractBid(north, SlamLevel.SLAM, Suit.HEARTS)
         assert solo > slam
         assert not (slam > solo)
 
@@ -181,12 +192,13 @@ class TestContractBidDunders:
         assert str(bid) == f"100 {Suit.SPADES}"
 
     def test_str_slam(self, north):
-        bid = ContractBid(north, "Slam", Suit.SPADES)
+        bid = ContractBid(north, SlamLevel.SLAM, Suit.SPADES)
         assert str(bid) == f"Slam {Suit.SPADES}"
 
     def test_str_solo_slam(self, north):
-        bid = ContractBid(north, "SoloSlam", Suit.SPADES)
-        assert str(bid) == f"SoloSlam {Suit.SPADES}"
+        # SlamLevel.__str__ uses the human label "Solo Slam" (spaced).
+        bid = ContractBid(north, SlamLevel.SOLO_SLAM, Suit.SPADES)
+        assert str(bid) == f"Solo Slam {Suit.SPADES}"
 
     def test_equality_ignores_player(self, north, south):
         # Player is excluded from comparison; two ContractBids with
@@ -256,3 +268,34 @@ class TestImmutability:
             bid.value = 100
         with pytest.raises(Exception):
             bid.suit = Suit.HEARTS
+
+
+# ---------------------------------------------------------------------------
+# SlamLevel — single source of truth for the all-tricks contracts
+# ---------------------------------------------------------------------------
+
+
+class TestSlamLevel:
+    """The enum owns the 250 / 500 base values and the display labels."""
+
+    def test_base_values(self):
+        assert SlamLevel.SLAM.base_value == 250
+        assert SlamLevel.SOLO_SLAM.base_value == 500
+
+    def test_labels_via_str(self):
+        assert str(SlamLevel.SLAM) == "Slam"
+        assert str(SlamLevel.SOLO_SLAM) == "Solo Slam"
+
+    def test_valid_values_ends_with_slam_members(self):
+        # The slam members live last so Auction.legal_actions' monotonic
+        # iteration (numeric ascending, then the all-tricks bids) holds.
+        assert ContractBid.VALID_VALUES[-2:] == [
+            SlamLevel.SLAM,
+            SlamLevel.SOLO_SLAM,
+        ]
+
+    def test_not_an_int(self):
+        # Plain Enum (not IntEnum): a Slam's value must never compare
+        # equal to its numeric points, so scoring can't confuse them.
+        assert SlamLevel.SLAM != 250
+        assert not isinstance(SlamLevel.SLAM, int)

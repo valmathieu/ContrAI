@@ -4,7 +4,7 @@
 from __future__ import annotations
 from typing import Optional, TYPE_CHECKING
 
-from .bid import ContractBid
+from .bid import ContractBid, SlamLevel
 from .exceptions import InvalidContractError
 
 if TYPE_CHECKING:
@@ -90,9 +90,9 @@ class Contract:
         Check if this is a Slam contract (team must win all 8 tricks).
 
         Returns:
-            True if contract value is 'Slam', False otherwise.
+            True if contract value is ``SlamLevel.SLAM``, False otherwise.
         """
-        return self.value == 'Slam'
+        return self.value is SlamLevel.SLAM
 
     def is_solo_slam(self) -> bool:
         """
@@ -102,13 +102,14 @@ class Contract:
         the 8 tricks — their partner is forbidden from winning any.
 
         Returns:
-            True if contract value is 'SoloSlam', False otherwise.
+            True if contract value is ``SlamLevel.SOLO_SLAM``, False
+            otherwise.
         """
-        return self.value == 'SoloSlam'
+        return self.value is SlamLevel.SOLO_SLAM
 
     def is_slam_family(self) -> bool:
         """Whether this contract is a Slam or Solo Slam."""
-        return self.value in ('Slam', 'SoloSlam')
+        return isinstance(self.value, SlamLevel)
 
     def get_base_points(self) -> int:
         """
@@ -129,11 +130,7 @@ class Contract:
             awarded to whichever side wins the contract (attacker
             if made, defender if failed).
         """
-        if self.value == 'Slam':
-            return 250
-        if self.value == 'SoloSlam':
-            return 500
-        return self.value
+        return self.contract_bid.get_numeric_value()
 
     def get_slam_card_substitute(self) -> int:
         """
@@ -153,10 +150,8 @@ class Contract:
         Returns:
             250 for Slam, 500 for Solo Slam, 0 otherwise.
         """
-        if self.value == 'Slam':
-            return 250
-        if self.value == 'SoloSlam':
-            return 500
+        if isinstance(self.value, SlamLevel):
+            return self.value.base_value
         return 0
 
     def __str__(self) -> str:
