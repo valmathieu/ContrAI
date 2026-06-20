@@ -1,6 +1,10 @@
 # Game class for the contrée card game.
 # This class manages the game state, players, teams, deck, and game logic.
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, TypedDict
+
 from contrai_core.deck import Deck
 from contrai_core.team import Team
 from .player import Player
@@ -9,6 +13,21 @@ from contrai_core.contract import Contract
 from .round import Round
 from contrai_core.exceptions import InvalidPlayerCountError
 import random
+
+if TYPE_CHECKING:
+    # Imported for type checking only — the Model must never import the View
+    # at runtime (MVC layering). ``from __future__ import annotations`` makes
+    # the annotation a lazy string, so this stays a static-analysis concern.
+    from contrai_engine.view.rich_view import RichView
+
+
+class RoundResult(TypedDict):
+    """Structured result of a single round managed by :meth:`Game.manage_round`."""
+
+    contract: Contract | None
+    scores: dict[str, int]
+    total_scores: dict[str, int]
+    message: str
 
 class Game:
     """
@@ -103,15 +122,16 @@ class Game:
         # Deal cards
         self.current_round.deal_cards()
 
-    def manage_round(self, view=None):
+    def manage_round(self, view: RichView | None = None) -> RoundResult:
         """
         Manages a complete round: bidding, trick-taking, and scoring using Round class.
 
         Args:
-            view: Optional view for human player interaction
+            view: Optional view for human player interaction.
 
         Returns:
-            dict: Round results with contract and scores
+            RoundResult: Round outcome with the contract, per-round scores,
+                cumulative total scores, and a human-readable message.
         """
         # Start new round (deal cards, set dealer, etc.)
         self.start_new_round()
