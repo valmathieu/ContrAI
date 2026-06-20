@@ -151,14 +151,23 @@ package "bid.py" as p_bid {
         + __str__() : str  ' "Pass"
     }
 
+    enum SlamLevel {
+        SLAM       ' (250, "Slam")
+        SOLO_SLAM  ' (500, "Solo Slam")
+        --
+        + base_value : int  ' single source of truth for 250 / 500
+        + label : str
+        + __str__() : str   ' the label
+    }
+
     class ContractBid <<frozen dataclass>> {
-        + {static} VALID_VALUES = [80..160, "Slam", "SoloSlam"]
+        + {static} VALID_VALUES = [80..180, SlamLevel.SLAM, SlamLevel.SOLO_SLAM]
         + {static} VALID_SUITS = list(Suit)
-        + value : int | str
+        + value : int | SlamLevel
         + suit : Suit
         --
         + __post_init__() : None  ' validates value + suit
-        + get_numeric_value() : int   ' Slam → 250, SoloSlam → 500
+        + get_numeric_value() : int   ' SlamLevel → base_value
         + __gt__(other) : bool         ' strict numeric ordering
         + __str__() : str
     }
@@ -232,7 +241,7 @@ package "contract.py / trick.py" as p_contract {
         + contract_bid : ContractBid
         + player : BasePlayer
         + team : Team
-        + value : int | str
+        + value : int | SlamLevel
         + suit : Suit
         + double : bool
         + redouble : bool
@@ -370,6 +379,7 @@ Team "1" o-- "2" BasePlayer : players
 ' Bid references BasePlayer
 Bid "1" o-- "1" BasePlayer : player
 ContractBid --> Suit : suit
+ContractBid ..> SlamLevel : value (all-tricks bids)
 
 ' Auction composes a tuple of Bids and materialises a Contract
 Auction "1" *-- "0..N" Bid       : bids
