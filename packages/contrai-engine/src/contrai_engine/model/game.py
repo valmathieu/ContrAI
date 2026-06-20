@@ -29,6 +29,15 @@ class RoundResult(TypedDict):
     total_scores: dict[str, int]
     message: str
 
+
+class GameOverStatus(TypedDict):
+    """Structured verdict returned by :meth:`Game.check_game_over`."""
+
+    game_over: bool
+    winner: str | None
+    tied_teams: list[str] | None
+    final_scores: dict[str, int]
+
 class Game:
     """
     Represents a full game of contrée.
@@ -175,15 +184,16 @@ class Game:
             'message': 'Round completed'
         }
 
-    def check_game_over(self, target_score=1500):
+    def check_game_over(self, target_score: int = 1500) -> GameOverStatus:
         """
         Checks if any team has reached the target score to end the game.
 
         Args:
-            target_score: Score required to win the game
+            target_score: Score required to win the game.
 
         Returns:
-            dict: Game over status and winner information
+            GameOverStatus: Whether the game is over, the sole winner (if any),
+                any tied teams, and a snapshot of the final scores.
         """
         max_score = max(self.scores.values())
 
