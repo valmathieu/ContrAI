@@ -257,6 +257,14 @@ git tag -a v0.1.0 -m "First playable CLI engine"
 git push --tags
 ```
 
+Keep `CHANGELOG.md` current: every user-facing change adds a bullet under
+`## [Unreleased]` in the **same commit** (`feat` → Added, `fix` → Fixed,
+`refactor`/`perf` → Changed; internal `test`/`chore`/`ci`/`style`/`docs` commits are
+skipped). Lead each bullet with the package scope, e.g. `- (engine) …`. Before tagging,
+close out the changelog: rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, add a
+fresh empty `## [Unreleased]`, bump the four packages' `version` fields, and update the
+link references at the bottom of the file.
+
 GitHub Releases (with notes) for the bigger milestones — these double as
 report material later. There's no fixed release cadence; tag when something
 worth tagging happens.
