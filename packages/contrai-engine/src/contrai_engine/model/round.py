@@ -2,6 +2,7 @@
 # This class represents a complete round of the card game from dealing to scoring.
 
 import itertools
+from enum import Enum
 from typing import Optional, Dict, List, TYPE_CHECKING
 
 from contrai_core.auction import Auction
@@ -15,6 +16,35 @@ if TYPE_CHECKING:
     from .player import Player
     from contrai_core.team import Team
     from contrai_core.deck import Deck
+
+
+class UnannouncedSlam(Enum):
+    """Outcome tag for an *undeclared* all-tricks sweep on a numeric contract.
+
+    Set by :meth:`Round.calculate_round_scores` after play, when the
+    declaring team takes all 8 tricks on an un-doubled numeric (80-180)
+    contract without having announced anything. The round still scores on
+    the numeric path — the bidder's contract value plus a flat 250
+    substitute for the trick pile — *not* the Slam at-risk grid.
+
+    This is deliberately distinct from :class:`contrai_core.SlamLevel`: that
+    enum is a *declared bid value*; this is a post-play classification, and
+    its ``GRAND_SLAM`` member is named for the undeclared sweep (it is not a
+    Solo Slam). Each member's value is its display label, so ``str(tag)``
+    yields the text the recap panel shows.
+
+    Members:
+        SLAM: The declaring *team* swept all 8 tricks (partner won at
+            least one).
+        GRAND_SLAM: The contracting *player personally* won all 8 tricks.
+    """
+
+    SLAM = "Slam"
+    GRAND_SLAM = "Grand Slam"
+
+    def __str__(self) -> str:
+        return self.value
+
 
 class Round:
     """
@@ -55,12 +85,13 @@ class Round:
         self.contract_made: Optional[bool] = None
         # Unannounced-capot marker, set by ``calculate_round_scores``.
         # ``None`` when the round was not an unannounced capot; otherwise
-        # ``"slam"`` (the declaring *team* swept all 8 tricks) or
-        # ``"grand slam"`` (the contracting *player personally* won them
-        # all). Only set for un-doubled numeric contracts — the path that
-        # swaps the 162-point pile for a flat 250 substitute. The view
-        # reads this to render the 250 and its explanatory tag.
-        self.unannounced_capot: Optional[str] = None
+        # the matching :class:`UnannouncedSlam` member — ``SLAM`` (the
+        # declaring *team* swept all 8 tricks) or ``GRAND_SLAM`` (the
+        # contracting *player personally* won them all). Only set for
+        # un-doubled numeric contracts — the path that swaps the
+        # 162-point pile for a flat 250 substitute. The view reads this to
+        # render the 250 and its explanatory tag.
+        self.unannounced_capot: Optional[UnannouncedSlam] = None
 
         # Belote / rebelote announcement state. ``belote_holder`` is the
         # unique player holding both the K and the Q of trump at deal time
@@ -368,9 +399,10 @@ class Round:
           replaced by a flat **250** substitute: the declarer scores
           ``C + 250`` (+ Belote), the defense scores nothing, and the
           contract is necessarily made. The personal-trick predicate
-          tags it ``"grand slam"`` when the *contracting player* won
-          all 8, else ``"slam"``. Only un-doubled — a doubled/redoubled
-          sweep keeps the winner-takes-all shape below.
+          tags it :attr:`UnannouncedSlam.GRAND_SLAM` when the
+          *contracting player* won all 8, else
+          :attr:`UnannouncedSlam.SLAM`. Only un-doubled — a
+          doubled/redoubled sweep keeps the winner-takes-all shape below.
         - **Numeric, doubled / redoubled (M > 1).** Winner-takes-all:
           the side that wins the round takes the whole pile, the loser
           scores 0. The winner scores ``160 + C × M`` whether it is the
@@ -486,8 +518,8 @@ class Round:
         # doubled/redoubled path keeps its winner-takes-all 160 + C×M
         # shape regardless. The trick pile (152 cards + 10 der) is
         # replaced by a flat 250 substitute and the contract is
-        # necessarily made. "grand slam" when the contracting player won
-        # all 8 personally (the Solo Slam predicate), else plain "slam".
+        # necessarily made. GRAND_SLAM when the contracting player won all
+        # 8 personally (the Solo Slam predicate), else plain SLAM.
         # The 250 substitute is the same flat amount a *declared* Slam is
         # worth, so it reads from the SlamLevel single source of truth.
         UNANNOUNCED_CAPOT_SUBSTITUTE = SlamLevel.SLAM.base_value
@@ -500,7 +532,9 @@ class Round:
                 self.contract.player
             )
             self.unannounced_capot = (
-                "grand slam" if bidder_personal_tricks == 8 else "slam"
+                UnannouncedSlam.GRAND_SLAM
+                if bidder_personal_tricks == 8
+                else UnannouncedSlam.SLAM
             )
 
         # The declarer's *realized* points decide made/failed: card

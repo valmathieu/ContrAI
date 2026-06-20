@@ -2115,9 +2115,9 @@ class RichView:
             contract.team.name if contract is not None else None
         )
         contract_made = contract is not None and self._contract_made(round_)
-        # Unannounced-capot marker set by the engine (None / "slam" /
-        # "grand slam"). When present, the declaring team's 162 pile is
-        # shown as the flat 250 substitute with the der folded in.
+        # Unannounced-capot marker set by the engine (None or an
+        # UnannouncedSlam member). When present, the declaring team's 162
+        # pile is shown as the flat 250 substitute with the der folded in.
         unannounced_capot = getattr(round_, "unannounced_capot", None)
         if contract is not None:
             base = contract.get_base_points()
@@ -2280,10 +2280,10 @@ class RichView:
         were played) every cell renders as an em-dash, so the whole panel
         reads consistently.
 
-        When ``capot_label`` is set ("slam" / "grand slam") the round was
-        an unannounced capot: the Trick points row already carries the
-        flat 250 substitute, and the label is appended to its right (e.g.
-        ``← Grand Slam``) to explain why.
+        When ``capot_label`` is set (an :class:`UnannouncedSlam` member)
+        the round was an unannounced capot: the Trick points row already
+        carries the flat 250 substitute, and the label is appended to its
+        right (e.g. ``← Grand Slam``) to explain why.
         """
         ns = breakdown.get("North-South", {})
         ew = breakdown.get("East-West", {})
@@ -2319,8 +2319,9 @@ class RichView:
         row_points.append("  ")
         row_points.append_text(_count_cell(ew.get("trick_points", 0)))
         if capot_label and not all_passed:
-            # Explain the flat 250 substitute sitting in this row.
-            row_points.append(f"   ← {capot_label.title()}", style=f"bold {GOLD}")
+            # Explain the flat 250 substitute sitting in this row. The
+            # UnannouncedSlam member stringifies to its display label.
+            row_points.append(f"   ← {capot_label}", style=f"bold {GOLD}")
         row_points.append("\n")
 
         # Last-trick bonus (10 points to the team that wins trick 8).

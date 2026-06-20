@@ -32,7 +32,7 @@ from contrai_core.trick import Trick
 from contrai_core.types import Rank, Suit
 
 from contrai_engine.model.player import AiPlayer, HumanPlayer, wire_to_bid
-from contrai_engine.model.round import Round
+from contrai_engine.model.round import Round, UnannouncedSlam
 
 
 # ---------------------------------------------------------------------------
@@ -1181,35 +1181,43 @@ class TestNumericDoubledScoring:
 # contract without having bid a Slam, the 162-point pile (152 cards + 10
 # dix de der) is replaced by a flat 250 substitute: the declarer scores
 # contract value + 250 (+ belote), the defence scores nothing, and the
-# contract is necessarily made. The round is flagged "grand slam" when the
-# contracting player personally won all 8 tricks, else "slam". A
-# doubled/redoubled sweep keeps the winner-takes-all 160 + C×M shape, and
-# a defence sweep is unaffected (declaring team only).
+# contract is necessarily made. The round is flagged UnannouncedSlam.GRAND_SLAM
+# when the contracting player personally won all 8 tricks, else
+# UnannouncedSlam.SLAM. A doubled/redoubled sweep keeps the winner-takes-all
+# 160 + C×M shape, and a defence sweep is unaffected (declaring team only).
 
 
-class TestUnannouncedCapotScoring:
+class TestUnannouncedSlamEnum:
+    """The UnannouncedSlam member value is its display label."""
+
+    def test_member_labels_via_str(self):
+        assert str(UnannouncedSlam.SLAM) == "Slam"
+        assert str(UnannouncedSlam.GRAND_SLAM) == "Grand Slam"
+
+
+class TestUnannouncedSlamScoring:
     """Un-doubled numeric sweep by the declaring team → contract + 250."""
 
     def test_team_sweep_scores_contract_plus_250(self, players):
         """N takes 5, partner S takes 3 → the *team* swept (but no single
-        player did) → plain "slam", scored 100 + 250."""
+        player did) → UnannouncedSlam.SLAM, scored 100 + 250."""
         contract = _contract(players["N"], 100, Suit.SPADES)
         winners = ["N"] * 5 + ["S"] * 3
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
         scores = round_.calculate_round_scores()
-        assert round_.unannounced_capot == "slam"
+        assert round_.unannounced_capot is UnannouncedSlam.SLAM
         assert round_.contract_made is True
         assert scores["North-South"] == 350  # 100 + 250
         assert scores["East-West"] == 0
 
     def test_bidder_personal_sweep_is_grand_slam(self, players):
-        """N wins all 8 personally → "grand slam" (same 250 substitute)."""
+        """N wins all 8 personally → UnannouncedSlam.GRAND_SLAM (same 250 substitute)."""
         contract = _contract(players["N"], 100, Suit.SPADES)
         round_ = _slam_round(
             players, contract=contract, trick_winners=["N"] * 8
         )
         scores = round_.calculate_round_scores()
-        assert round_.unannounced_capot == "grand slam"
+        assert round_.unannounced_capot is UnannouncedSlam.GRAND_SLAM
         assert scores["North-South"] == 350  # 100 + 250
         assert scores["East-West"] == 0
 

@@ -20,6 +20,7 @@ from rich.text import Text
 
 from contrai_core import Auction, Card, Rank, Suit, Trick
 from contrai_engine.model.player import AiPlayer
+from contrai_engine.model.round import UnannouncedSlam
 from contrai_core.team import Team
 from contrai_core.bid import ContractBid, DoubleBid, PassBid, RedoubleBid, SlamLevel
 from contrai_core.contract import Contract
@@ -1488,7 +1489,7 @@ class TestRoundRecapPanel:
             team_tricks={"North-South": ns_tricks, "East-West": []},
             contract_made=True,
         )
-        round_.unannounced_capot = "grand slam"  # north swept personally
+        round_.unannounced_capot = UnannouncedSlam.GRAND_SLAM  # north swept personally
         round_.last_trick_winner = north  # der would be +10 — must fold in
         breakdown = view._recap_breakdown(round_)
         ns = breakdown["North-South"]
@@ -1516,13 +1517,16 @@ class TestRoundRecapPanel:
 
     @pytest.mark.parametrize(
         "marker, expected_tag",
-        [("slam", "Slam"), ("grand slam", "Grand Slam")],
+        [
+            (UnannouncedSlam.SLAM, "Slam"),
+            (UnannouncedSlam.GRAND_SLAM, "Grand Slam"),
+        ],
     )
     def test_recap_capot_tags_the_trick_points_row(
         self, four_players, marker, expected_tag
     ):
-        """The unannounced-capot marker surfaces a title-cased tag on the
-        Trick points row to explain the 250 substitute."""
+        """The unannounced-capot marker surfaces its label on the Trick
+        points row to explain the 250 substitute."""
         view = RichView()
         north, *_ = four_players
         contract = self._StubContract(90, Suit.HEARTS, "North-South")
