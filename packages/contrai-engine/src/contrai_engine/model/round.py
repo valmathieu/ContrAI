@@ -5,7 +5,7 @@ import itertools
 from typing import Optional, Dict, List, TYPE_CHECKING
 
 from contrai_core.auction import Auction
-from contrai_core.bid import Bid
+from contrai_core.bid import Bid, SlamLevel
 from contrai_core.contract import Contract
 from contrai_core.exceptions import IllegalPlayError, PlayRuleViolation
 from contrai_core.trick import Trick
@@ -488,7 +488,9 @@ class Round:
         # replaced by a flat 250 substitute and the contract is
         # necessarily made. "grand slam" when the contracting player won
         # all 8 personally (the Solo Slam predicate), else plain "slam".
-        UNANNOUNCED_CAPOT_SUBSTITUTE = 250
+        # The 250 substitute is the same flat amount a *declared* Slam is
+        # worth, so it reads from the SlamLevel single source of truth.
+        UNANNOUNCED_CAPOT_SUBSTITUTE = SlamLevel.SLAM.base_value
         declarer_capot = (
             multiplier == 1
             and len(self.team_tricks[contract_team_name]) == 8

@@ -10,6 +10,7 @@ from contrai_core.bid import (
     DoubleBid,
     PassBid,
     RedoubleBid,
+    SlamLevel,
 )
 from contrai_core.card import Card
 from contrai_core.exceptions import InvalidContractError
@@ -140,18 +141,25 @@ class AiPlayer(Player):
     4. If multiple bid are possible : choose best suit based on strength, belote
     """
 
+    # Internal numeric values used in BIDDING_TABLE for the all-tricks
+    # bids. Sourced from the single source of truth on the core
+    # :class:`SlamLevel` enum so the AI's ladder arithmetic and the
+    # domain scoring never drift apart.
+    SLAM_NUMERIC = SlamLevel.SLAM.base_value
+    SOLO_SLAM_NUMERIC = SlamLevel.SOLO_SLAM.base_value
+
     # Bidding table. The ``contract`` column is stored numerically and
     # matches each contract's *base value* (what the bidder commits to,
-    # used for auction precedence). The two all-tricks sentinels live
-    # at the bottom of the table:
+    # used for auction precedence). The two all-tricks bids live at the
+    # bottom of the table:
     #   - ``SLAM_NUMERIC``      (250) — team must win all 8 tricks.
     #   - ``SOLO_SLAM_NUMERIC`` (500) — bidder personally must win all 8.
     # Both rows are gated purely by the trick estimator (``tricks_min=8``)
     # in this first pass. The numeric values match
     # ``ContractBid.get_numeric_value`` / ``Contract.get_base_points`` in
-    # ``contrai-core``; they're translated back to the wire strings
-    # ``'Slam'`` / ``'SoloSlam'`` at the bid-return boundary (see
-    # ``_make_initial_bid`` / ``_support_partner_bid``).
+    # ``contrai-core``; they're translated back to the ``SlamLevel``
+    # members at the bid-return boundary (see ``_make_initial_bid`` /
+    # ``_support_partner_bid``).
     BIDDING_TABLE = [
         # (contract, trump_expected, trump_min, aces, tricks_min, belote_required)
         (80, {'jack_or_nine': True, 'jack_and_nine': False}, 3, 1, 4, False),
@@ -163,16 +171,12 @@ class AiPlayer(Player):
         (140, {'jack_or_nine': True, 'jack_and_nine': False}, 4, 3, 6, True),
         (150, {'jack_or_nine': False, 'jack_and_nine': True}, 4, 3, 6, True),
         (160, {'jack_or_nine': False, 'jack_and_nine': True, 'ace_required': True}, 5, 3, 7, True),
-        (250, {}, 0, 0, 8, False),  # Slam — only the trick estimator gates it.
+        (SLAM_NUMERIC, {}, 0, 0, 8, False),  # Slam — only the trick estimator gates it.
         # TODO: tune SoloSlam gate — currently shares Slam's gate. A
         # stricter rule (e.g. holds the 8 top trumps in trump-led play,
         # or all aces + trump master) would make this conservative.
-        (500, {}, 0, 0, 8, False),  # Solo Slam — same gate as Slam for now.
+        (SOLO_SLAM_NUMERIC, {}, 0, 0, 8, False),  # Solo Slam — same gate as Slam for now.
     ]
-
-    # Internal numeric values used in BIDDING_TABLE for the all-tricks bids.
-    SLAM_NUMERIC = 250
-    SOLO_SLAM_NUMERIC = 500
 
     # Suit preference order (Spades, Hearts, Diamonds, Clubs)
     SUIT_PREFERENCE = SUITS
@@ -284,20 +288,18 @@ class AiPlayer(Player):
 
     @classmethod
     def _bid_value_numeric(cls, value):
-        """Coerce a contract value (numeric or string sentinel) to int.
+        """Coerce a contract value (numeric or :class:`SlamLevel`) to int.
 
         The wire format on ``current_bids`` carries the all-tricks bids
-        as the literal strings ``'Slam'`` / ``'SoloSlam'`` (see the
-        wire-format bridge in :mod:`contrai_engine.model.player`), so
-        comparisons anywhere upstream of the wire boundary must
-        normalise. Sentinel values map to their auction-precedence /
-        base-point numeric: ``'Slam'`` → 250, ``'SoloSlam'`` → 500.
+        as :class:`SlamLevel` members (see the wire-format bridge in
+        :mod:`contrai_engine.model.player`), so the AI's ladder
+        arithmetic must normalise them to their auction-precedence /
+        base-point numeric: ``SlamLevel.SLAM`` → 250,
+        ``SlamLevel.SOLO_SLAM`` → 500.
         """
 
-        if value == 'Slam':
-            return cls.SLAM_NUMERIC
-        if value == 'SoloSlam':
-            return cls.SOLO_SLAM_NUMERIC
+        if isinstance(value, SlamLevel):
+            return value.base_value
         return value
 
     @staticmethod
@@ -529,18 +531,19 @@ class AiPlayer(Player):
 
     @classmethod
     def _numeric_to_wire(cls, value):
-        """Translate the bidding-table numeric back to the wire format.
+        """Translate the bidding-table numeric back to the wire value.
 
         Numeric contracts (80–160) round-trip unchanged. The two
-        all-tricks sentinels become their string wire equivalents:
-        ``SLAM_NUMERIC`` → ``'Slam'``, ``SOLO_SLAM_NUMERIC`` →
-        ``'SoloSlam'``.
+        all-tricks numerics become their :class:`SlamLevel` members:
+        ``SLAM_NUMERIC`` → ``SlamLevel.SLAM``, ``SOLO_SLAM_NUMERIC`` →
+        ``SlamLevel.SOLO_SLAM`` — so the wire ``(value, suit)`` tuple
+        carries the same value a :class:`ContractBid` will hold.
         """
 
         if value == cls.SOLO_SLAM_NUMERIC:
-            return 'SoloSlam'
+            return SlamLevel.SOLO_SLAM
         if value == cls.SLAM_NUMERIC:
-            return 'Slam'
+            return SlamLevel.SLAM
         return value
 
     def _choose_best_suit(self, candidate_suits, suit_evaluations):

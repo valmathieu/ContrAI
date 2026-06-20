@@ -21,7 +21,7 @@ from rich.text import Text
 from contrai_core import Auction, Card, Rank, Suit, Trick
 from contrai_engine.model.player import AiPlayer
 from contrai_core.team import Team
-from contrai_core.bid import ContractBid, DoubleBid, PassBid, RedoubleBid
+from contrai_core.bid import ContractBid, DoubleBid, PassBid, RedoubleBid, SlamLevel
 from contrai_core.contract import Contract
 from contrai_engine.view.rich_view import (
     RED,
@@ -143,7 +143,7 @@ class TestParseBidInput:
         ],
     )
     def test_slam(self, raw, suit):
-        assert _parse_bid_input(raw) == ("Slam", suit)
+        assert _parse_bid_input(raw) == (SlamLevel.SLAM, suit)
 
     @pytest.mark.parametrize(
         "raw,suit",
@@ -157,7 +157,7 @@ class TestParseBidInput:
         ],
     )
     def test_solo_slam(self, raw, suit):
-        assert _parse_bid_input(raw) == ("SoloSlam", suit)
+        assert _parse_bid_input(raw) == (SlamLevel.SOLO_SLAM, suit)
 
     def test_capital_letters_in_value_suit(self):
         assert _parse_bid_input("100 H") == (100, Suit.HEARTS)
@@ -415,7 +415,7 @@ class TestMinLegalContractValue:
     def test_slam_outranked_by_nothing(self, four_players):
         """A standing Slam blocks every further contract bid → None."""
         north, _east, _south, _west = four_players
-        history = [(north, ("Slam", Suit.HEARTS))]
+        history = [(north, (SlamLevel.SLAM, Suit.HEARTS))]
         assert _min_legal_contract_value(history) is None
 
 
@@ -691,7 +691,7 @@ class TestFormatContractShort:
 
     def test_slam_value_label(self, four_players):
         _north, east, *_ = four_players
-        contract = Contract(ContractBid(east, "Slam", Suit.HEARTS))
+        contract = Contract(ContractBid(east, SlamLevel.SLAM, Suit.HEARTS))
         text = _format_contract_short(contract).plain
         assert "Slam by E" in text
 
@@ -1175,26 +1175,22 @@ class TestRoundRecapPanel:
             self.redouble = redouble
 
         def is_slam_family(self) -> bool:
-            return self.value in ("Slam", "SoloSlam")
+            return isinstance(self.value, SlamLevel)
 
         def is_slam(self) -> bool:
-            return self.value == "Slam"
+            return self.value is SlamLevel.SLAM
 
         def is_solo_slam(self) -> bool:
-            return self.value == "SoloSlam"
+            return self.value is SlamLevel.SOLO_SLAM
 
         def get_base_points(self) -> int:
-            if self.value == "Slam":
-                return 250
-            if self.value == "SoloSlam":
-                return 500
+            if isinstance(self.value, SlamLevel):
+                return self.value.base_value
             return self.value
 
         def get_slam_card_substitute(self) -> int:
-            if self.value == "Slam":
-                return 250
-            if self.value == "SoloSlam":
-                return 500
+            if isinstance(self.value, SlamLevel):
+                return self.value.base_value
             return 0
 
         def get_multiplier(self) -> int:
@@ -1596,7 +1592,7 @@ class TestRoundRecapPanel:
         summing to the engine's 500. Dix de der does not contribute;
         the row label flips to "(subst.)"."""
         view = RichView()
-        contract = self._StubContract("Slam", Suit.SPADES, "East-West")
+        contract = self._StubContract(SlamLevel.SLAM, Suit.SPADES, "East-West")
         round_ = self._StubRound(
             round_number=3,
             contract=contract,
@@ -1621,7 +1617,7 @@ class TestRoundRecapPanel:
         """Failed Slam: defender wins the at-risk amount split into
         contract (250) + substituted card points (250)."""
         view = RichView()
-        contract = self._StubContract("Slam", Suit.SPADES, "East-West")
+        contract = self._StubContract(SlamLevel.SLAM, Suit.SPADES, "East-West")
         round_ = self._StubRound(
             round_number=3,
             contract=contract,
@@ -1641,7 +1637,7 @@ class TestRoundRecapPanel:
         """Made Solo Slam normal: contract = 500, substitute = 500,
         sum = 1000."""
         view = RichView()
-        contract = self._StubContract("SoloSlam", Suit.SPADES, "East-West")
+        contract = self._StubContract(SlamLevel.SOLO_SLAM, Suit.SPADES, "East-West")
         round_ = self._StubRound(
             round_number=3,
             contract=contract,
@@ -1660,7 +1656,7 @@ class TestRoundRecapPanel:
         Contract = 500 * 2 = 1000; substitute = 500 * 2 = 1000; sum = 2000."""
         view = RichView()
         contract = self._StubContract(
-            "SoloSlam", Suit.SPADES, "East-West", double=True
+            SlamLevel.SOLO_SLAM, Suit.SPADES, "East-West", double=True
         )
         round_ = self._StubRound(
             round_number=3,

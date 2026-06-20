@@ -10,6 +10,7 @@ from contrai_core import (
     Hand,
     PassBid,
     RedoubleBid,
+    SlamLevel,
 )
 from contrai_core.card import Card
 from contrai_core.team import Team
@@ -484,34 +485,34 @@ class TestAiPlayerBidding:
     def test_choose_bid_solo_slam_strong_hand(
         self, ai_player, sample_cards_slam_spades
     ):
-        """choose_bid lifts the 'SoloSlam' wire choice to a ContractBid."""
+        """choose_bid lifts the Solo Slam wire choice to a ContractBid."""
         ai_player.hand = sample_cards_slam_spades
         bid = ai_player.choose_bid(_auction())
         assert isinstance(bid, ContractBid)
-        assert bid.value == 'SoloSlam'
+        assert bid.value is SlamLevel.SOLO_SLAM
         assert bid.suit == Suit.SPADES
 
     def test_can_overbid_partner_handles_slam_value(
         self, ai_player, sample_cards_weak
     ):
-        """Normalising 'Slam' → 500 in _can_overbid_partner avoids TypeError."""
+        """Normalising SlamLevel.SLAM → 500 in _can_overbid_partner avoids TypeError."""
         ai_player.hand = sample_cards_weak
         # Should not raise; nothing in our weak hand beats Slam.
         assert ai_player._can_overbid_partner(
-            ('Slam', Suit.SPADES), ai_player._evaluate_suits()
+            (SlamLevel.SLAM, Suit.SPADES), ai_player._evaluate_suits()
         ) is False
 
     def test_can_overbid_partner_handles_solo_slam_value(
         self, ai_player, sample_cards_weak
     ):
-        """Normalising 'SoloSlam' → 1000 in _can_overbid_partner avoids TypeError."""
+        """Normalising SlamLevel.SOLO_SLAM → 1000 in _can_overbid_partner avoids TypeError."""
         ai_player.hand = sample_cards_weak
         assert ai_player._can_overbid_partner(
-            ('SoloSlam', Suit.SPADES), ai_player._evaluate_suits()
+            (SlamLevel.SOLO_SLAM, Suit.SPADES), ai_player._evaluate_suits()
         ) is False
 
     def test_should_double_handles_slam_value(self, ai_player, sample_cards_weak):
-        """_should_double must not TypeError when value is 'Slam' / 'SoloSlam'.
+        """_should_double must not TypeError on a SlamLevel value.
 
         The heuristic itself (``strength > 162 - value``) is permissive
         against Slam-family bids because ``162 - 500`` (and -1000) is
@@ -519,9 +520,9 @@ class TestAiPlayerBidding:
         heuristic is a separate concern.
         """
         ai_player.hand = sample_cards_weak
-        result = ai_player._should_double(('Slam', Suit.SPADES))
+        result = ai_player._should_double((SlamLevel.SLAM, Suit.SPADES))
         assert isinstance(result, bool)
-        result = ai_player._should_double(('SoloSlam', Suit.SPADES))
+        result = ai_player._should_double((SlamLevel.SOLO_SLAM, Suit.SPADES))
         assert isinstance(result, bool)
 
     def test_choose_bid_passes_when_partner_announced_slam(
@@ -530,8 +531,8 @@ class TestAiPlayerBidding:
         """A strong-but-not-Slam AI passes cleanly when partner announces Slam."""
         ai_player.hand = sample_cards_strong_spades  # estimates 7 tricks, max 130
         partner = ai_player.team.players[1]
-        auction = _auction([(partner, ('Slam', Suit.SPADES))])
-        # Must not TypeError on the 130-vs-'Slam' comparison.
+        auction = _auction([(partner, (SlamLevel.SLAM, Suit.SPADES))])
+        # Must not TypeError on the 130-vs-Slam comparison.
         bid = ai_player.choose_bid(auction)
         assert isinstance(bid, PassBid)
 
@@ -541,7 +542,7 @@ class TestAiPlayerBidding:
         """A strong-but-not-Slam AI passes when partner announces Solo Slam."""
         ai_player.hand = sample_cards_strong_spades
         partner = ai_player.team.players[1]
-        auction = _auction([(partner, ('SoloSlam', Suit.SPADES))])
+        auction = _auction([(partner, (SlamLevel.SOLO_SLAM, Suit.SPADES))])
         bid = ai_player.choose_bid(auction)
         assert isinstance(bid, PassBid)
 

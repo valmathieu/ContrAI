@@ -23,7 +23,7 @@ from __future__ import annotations
 import pytest
 
 from contrai_core import Auction, Hand
-from contrai_core.bid import ContractBid, DoubleBid, PassBid, RedoubleBid
+from contrai_core.bid import ContractBid, DoubleBid, PassBid, RedoubleBid, SlamLevel
 from contrai_core.card import Card
 from contrai_core.contract import Contract
 from contrai_core.exceptions import IllegalPlayError, PlayRuleViolation
@@ -684,7 +684,7 @@ class TestSlamScoring:
     """Symmetric grid: 500 / 1000 / 2000 to the winning side."""
 
     def test_slam_made_normal_attacker_scores_500(self, players):
-        contract = _contract(players["N"], "Slam", Suit.SPADES)
+        contract = _contract(players["N"], SlamLevel.SLAM, Suit.SPADES)
         round_ = _slam_round(
             players, contract=contract, trick_winners=["N"] * 8
         )
@@ -694,7 +694,7 @@ class TestSlamScoring:
 
     def test_slam_failed_normal_defender_scores_500(self, players):
         # Attacker (N) takes only 7 tricks; W steals one → contract fails.
-        contract = _contract(players["N"], "Slam", Suit.SPADES)
+        contract = _contract(players["N"], SlamLevel.SLAM, Suit.SPADES)
         winners = ["N"] * 7 + ["W"]
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
         scores = round_.calculate_round_scores()
@@ -703,7 +703,7 @@ class TestSlamScoring:
 
     def test_slam_made_doubled_attacker_scores_1000(self, players):
         contract = Contract(
-            ContractBid(players["N"], "Slam", Suit.SPADES),
+            ContractBid(players["N"], SlamLevel.SLAM, Suit.SPADES),
             double_player=players["E"],
         )
         round_ = _slam_round(
@@ -715,7 +715,7 @@ class TestSlamScoring:
 
     def test_slam_failed_doubled_defender_scores_1000(self, players):
         contract = Contract(
-            ContractBid(players["N"], "Slam", Suit.SPADES),
+            ContractBid(players["N"], SlamLevel.SLAM, Suit.SPADES),
             double_player=players["E"],
         )
         winners = ["N"] * 6 + ["E", "W"]
@@ -726,7 +726,7 @@ class TestSlamScoring:
 
     def test_slam_made_redoubled_attacker_scores_2000(self, players):
         contract = Contract(
-            ContractBid(players["N"], "Slam", Suit.SPADES),
+            ContractBid(players["N"], SlamLevel.SLAM, Suit.SPADES),
             double_player=players["E"],
             redouble_player=players["N"],
         )
@@ -739,7 +739,7 @@ class TestSlamScoring:
 
     def test_slam_failed_redoubled_defender_scores_2000(self, players):
         contract = Contract(
-            ContractBid(players["N"], "Slam", Suit.SPADES),
+            ContractBid(players["N"], SlamLevel.SLAM, Suit.SPADES),
             double_player=players["E"],
             redouble_player=players["N"],
         )
@@ -753,7 +753,7 @@ class TestSlamScoring:
         """Plain Slam only cares about the TEAM winning all 8. The
         partner taking some tricks is fine — that's the Solo Slam
         rule, not Slam."""
-        contract = _contract(players["N"], "Slam", Suit.SPADES)
+        contract = _contract(players["N"], SlamLevel.SLAM, Suit.SPADES)
         # N takes 5, partner S takes 3 → team owns all 8 → contract made.
         winners = ["N"] * 5 + ["S"] * 3
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
@@ -766,7 +766,7 @@ class TestSoloSlamScoring:
     """Bidder-personally rule + 1000 / 2000 / 4000 symmetric grid."""
 
     def test_solo_slam_made_bidder_takes_all_8(self, players):
-        contract = _contract(players["N"], "SoloSlam", Suit.SPADES)
+        contract = _contract(players["N"], SlamLevel.SOLO_SLAM, Suit.SPADES)
         round_ = _slam_round(
             players, contract=contract, trick_winners=["N"] * 8
         )
@@ -777,7 +777,7 @@ class TestSoloSlamScoring:
     def test_solo_slam_failed_when_partner_takes_a_trick(self, players):
         """Key Solo Slam invariant: team owning all 8 tricks is NOT
         enough — the bidder personally must win them all."""
-        contract = _contract(players["N"], "SoloSlam", Suit.SPADES)
+        contract = _contract(players["N"], SlamLevel.SOLO_SLAM, Suit.SPADES)
         winners = ["N"] * 7 + ["S"]  # partner wins the last trick
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
         scores = round_.calculate_round_scores()
@@ -787,7 +787,7 @@ class TestSoloSlamScoring:
         assert scores["East-West"] == 1000
 
     def test_solo_slam_failed_when_opponent_takes_a_trick(self, players):
-        contract = _contract(players["N"], "SoloSlam", Suit.SPADES)
+        contract = _contract(players["N"], SlamLevel.SOLO_SLAM, Suit.SPADES)
         winners = ["N"] * 7 + ["W"]
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
         scores = round_.calculate_round_scores()
@@ -796,7 +796,7 @@ class TestSoloSlamScoring:
 
     def test_solo_slam_made_doubled_scores_2000(self, players):
         contract = Contract(
-            ContractBid(players["N"], "SoloSlam", Suit.SPADES),
+            ContractBid(players["N"], SlamLevel.SOLO_SLAM, Suit.SPADES),
             double_player=players["E"],
         )
         round_ = _slam_round(
@@ -808,7 +808,7 @@ class TestSoloSlamScoring:
 
     def test_solo_slam_made_redoubled_scores_4000(self, players):
         contract = Contract(
-            ContractBid(players["N"], "SoloSlam", Suit.SPADES),
+            ContractBid(players["N"], SlamLevel.SOLO_SLAM, Suit.SPADES),
             double_player=players["E"],
             redouble_player=players["N"],
         )
@@ -821,7 +821,7 @@ class TestSoloSlamScoring:
 
     def test_solo_slam_failed_redoubled_defender_scores_4000(self, players):
         contract = Contract(
-            ContractBid(players["N"], "SoloSlam", Suit.SPADES),
+            ContractBid(players["N"], SlamLevel.SOLO_SLAM, Suit.SPADES),
             double_player=players["E"],
             redouble_player=players["N"],
         )
@@ -838,7 +838,7 @@ class TestSlamFamilyBeloteLayering:
 
     def test_slam_made_belote_to_attacker(self, players):
         """Slam made, attacker holds belote → 500 + 20 to attacker."""
-        contract = _contract(players["N"], "Slam", Suit.SPADES)
+        contract = _contract(players["N"], SlamLevel.SLAM, Suit.SPADES)
         round_ = _slam_round(
             players, contract=contract, trick_winners=["N"] * 8
         )
@@ -849,7 +849,7 @@ class TestSlamFamilyBeloteLayering:
 
     def test_slam_failed_belote_to_defender(self, players):
         """Slam failed, defender holds belote → 500 + 20 to defender."""
-        contract = _contract(players["N"], "Slam", Suit.SPADES)
+        contract = _contract(players["N"], SlamLevel.SLAM, Suit.SPADES)
         winners = ["N"] * 7 + ["W"]
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
         round_.belote_holder = players["W"]  # E-W holds K+Q of trump
@@ -863,7 +863,7 @@ class TestSlamFamilyBeloteLayering:
         """Belote is independent of contract outcome: attacker can hold
         belote even when they lost the contract → defender scores 500,
         attacker still scores +20."""
-        contract = _contract(players["N"], "Slam", Suit.SPADES)
+        contract = _contract(players["N"], SlamLevel.SLAM, Suit.SPADES)
         winners = ["N"] * 7 + ["W"]
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
         round_.belote_holder = players["N"]  # attacker holds belote

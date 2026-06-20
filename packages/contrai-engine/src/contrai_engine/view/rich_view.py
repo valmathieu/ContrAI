@@ -21,7 +21,14 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
-from contrai_core.bid import Bid, ContractBid, DoubleBid, PassBid, RedoubleBid
+from contrai_core.bid import (
+    Bid,
+    ContractBid,
+    DoubleBid,
+    PassBid,
+    RedoubleBid,
+    SlamLevel,
+)
 
 from contrai_core import (
     Auction,
@@ -103,8 +110,8 @@ SUIT_ALIASES = {
     "nt": Suit.NO_TRUMP, "notrump": Suit.NO_TRUMP, "no-trump": Suit.NO_TRUMP,
 }
 # Derived from ``ContractBid.VALID_VALUES`` so the human-input parser
-# stays in lockstep with the auction's canonical value ladder. Sentinel
-# strings (``"Slam"`` / ``"SoloSlam"``) are handled by a separate parsing
+# stays in lockstep with the auction's canonical value ladder. The
+# all-tricks ``SlamLevel`` members are handled by a separate parsing
 # branch above, so only the numeric subset is needed here.
 VALID_BID_VALUES = {v for v in ContractBid.VALID_VALUES if isinstance(v, int)}
 
@@ -278,12 +285,9 @@ def _format_contract_short(contract: Contract, *, verbose: bool = False) -> Text
     double_label = "redoubled" if verbose else "×4"
     single_label = "doubled" if verbose else "×2"
     t = Text()
-    if contract.value == "Slam":
-        value_str = "Slam"
-    elif contract.value == "SoloSlam":
-        value_str = "Solo Slam"
-    else:
-        value_str = str(contract.value)
+    # SlamLevel.__str__ already yields "Slam" / "Solo Slam"; numerics
+    # stringify to "80" … "180".
+    value_str = str(contract.value)
     t.append(value_str, style="bold")
     t.append(" by ", style=DIM)
     taker = _seat_letter(getattr(contract, "player", None))
@@ -330,7 +334,7 @@ def _format_trump_label(suit: Optional[Suit], *, star: bool = True) -> Text:
     return t
 
 
-def _parse_bid_input(raw: str) -> Optional[str | tuple[int | str, Suit]]:
+def _parse_bid_input(raw: str) -> Optional[str | tuple[int | SlamLevel, Suit]]:
     """Parse a human bid string. Returns engine bid representation or None.
 
     Accepted forms:
@@ -338,8 +342,8 @@ def _parse_bid_input(raw: str) -> Optional[str | tuple[int | str, Suit]]:
         double / d             -> 'Double'
         redouble / r           -> 'Redouble'
         "80 h" / "100 hearts" / "150nt"   -> (value, Suit)
-        "slam s" / "slams"                -> ("Slam", Suit)
-        "solo slam h" / "soloslam h"      -> ("SoloSlam", Suit)
+        "slam s" / "slams"                -> (SlamLevel.SLAM, Suit)
+        "solo slam h" / "soloslam h"      -> (SlamLevel.SOLO_SLAM, Suit)
     """
     s = raw.strip().lower()
     if not s:
@@ -385,9 +389,9 @@ def _parse_bid_input(raw: str) -> Optional[str | tuple[int | str, Suit]]:
         return None
 
     if raw_value == "slam":
-        return ("Slam", suit)
+        return (SlamLevel.SLAM, suit)
     if raw_value == "soloslam":
-        return ("SoloSlam", suit)
+        return (SlamLevel.SOLO_SLAM, suit)
     try:
         value = int(raw_value)
     except ValueError:
@@ -559,7 +563,7 @@ def _min_legal_contract_value(history: list) -> Optional[int]:
     if last_value is None:
         # No contract on the table — the ladder opens at its floor (80).
         return values[0]
-    if last_value in ("Slam", "SoloSlam"):
+    if isinstance(last_value, SlamLevel):
         # Nothing outranks a Slam; no numeric raise is legal.
         return None
     # First numeric step strictly above the standing contract. Past 180
@@ -596,7 +600,7 @@ def _illegal_bid_reason(bid: Bid, auction: Auction) -> str:
         )
     if isinstance(bid, ContractBid):
         last = auction.last_contract_bid
-        if last is not None and last.value in ("Slam", "SoloSlam"):
+        if last is not None and isinstance(last.value, SlamLevel):
             return f"Nothing outranks a {last.value} bid — you can only pass."
         if last is not None:
             return f"Your bid must outrank the current contract ({last.value})."
@@ -2661,12 +2665,8 @@ class RichView:
         team_color = _team_color(row.contract_team_name or "")
         t.append(team_abbr, style=f"bold {team_color}")
         t.append(" ", style=FG)
-        if row.contract.value == "Slam":
-            value_str = "Slam"
-        elif row.contract.value == "SoloSlam":
-            value_str = "Solo Slam"
-        else:
-            value_str = str(row.contract.value)
+        # SlamLevel.__str__ yields "Slam" / "Solo Slam"; numerics "80"…"180".
+        value_str = str(row.contract.value)
         t.append(value_str, style="bold")
         t.append(" ", style=FG)
         t.append(_suit_glyph(row.contract.suit),
