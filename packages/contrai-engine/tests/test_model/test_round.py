@@ -884,31 +884,39 @@ class TestNumericContractScoringRegression:
         return trick
 
     def test_numeric_made_normal_uses_base_plus_card_points(self, players):
-        """80 made by N-S without double: attacker = 80 + card points,
-        defender = card points. Trump = clubs; bidder plays the trump
-        Jack alone in every trick (20 pts × 8 = 160), so card points
-        clear the 80 threshold and the formula path is exercised."""
+        """80 made by N-S without double, and *not* a capot: attacker =
+        80 + card points, defender = its own card points. Trump = clubs;
+        the bidder plays the trump Jack (20 pts) in seven tricks while
+        E-W steal one 0-point trick — so the plain made formula, not the
+        unannounced-capot substitute, is the path under test."""
         contract = _contract(players["N"], 80, Suit.CLUBS)
         order = [players[s] for s in ("N", "E", "S", "W")]
         round_ = Round(
             order, dealer=players["N"], deck=None, round_number=1
         )
         round_.contract = contract
-        # Eight tricks where N plays the trump Jack solo — 20 pts each.
+        # Seven tricks where N plays the trump Jack solo — 20 pts each.
         # (Card identity is fine — Card doesn't have unique-per-instance
         # invariants we care about for scoring.)
-        for _ in range(8):
+        for _ in range(7):
             trick = self._trick_with_card(
                 players["N"], Card(Suit.CLUBS, Rank.JACK)
             )
             round_.tricks.append(trick)
             round_.team_tricks["North-South"].append(trick)
+        # E-W steal a single 0-point trick so N-S did not sweep all 8.
+        ew_trick = self._trick_with_card(
+            players["E"], Card(Suit.HEARTS, Rank.SEVEN)
+        )
+        round_.tricks.append(ew_trick)
+        round_.team_tricks["East-West"].append(ew_trick)
         round_.last_trick_winner = players["N"]
         scores = round_.calculate_round_scores()
-        # Card points = 20*8 = 160; dix de der = +10 → 170 card pts.
-        # Contract made (170 >= 80) → attacker score = 80 + 170 = 250.
-        assert scores["North-South"] == 250
-        # E-W captured no tricks → 0 card points.
+        # Card points = 20*7 = 140; dix de der = +10 → 150 card pts.
+        # Contract made (150 >= 80) → attacker score = 80 + 150 = 230.
+        assert round_.unannounced_capot is None
+        assert scores["North-South"] == 230
+        # E-W captured a single 0-point trick → 0 card points.
         assert scores["East-West"] == 0
 
     def test_numeric_failed_normal_defender_gets_160_plus_base(self, players):
@@ -1163,3 +1171,105 @@ class TestNumericDoubledScoring:
         scores = round_.calculate_round_scores()
         assert scores["North-South"] == 0
         assert scores["East-West"] == 560  # 160 + 100*4
+
+
+# ---------------------------------------------------------------------------
+# Unannounced capot scoring (calculate_round_scores)
+# ---------------------------------------------------------------------------
+#
+# When the declaring team wins all 8 tricks on an *un-doubled* numeric
+# contract without having bid a Slam, the 162-point pile (152 cards + 10
+# dix de der) is replaced by a flat 250 substitute: the declarer scores
+# contract value + 250 (+ belote), the defence scores nothing, and the
+# contract is necessarily made. The round is flagged "grand slam" when the
+# contracting player personally won all 8 tricks, else "slam". A
+# doubled/redoubled sweep keeps the winner-takes-all 160 + C×M shape, and
+# a defence sweep is unaffected (declaring team only).
+
+
+class TestUnannouncedCapotScoring:
+    """Un-doubled numeric sweep by the declaring team → contract + 250."""
+
+    def test_team_sweep_scores_contract_plus_250(self, players):
+        """N takes 5, partner S takes 3 → the *team* swept (but no single
+        player did) → plain "slam", scored 100 + 250."""
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        winners = ["N"] * 5 + ["S"] * 3
+        round_ = _slam_round(players, contract=contract, trick_winners=winners)
+        scores = round_.calculate_round_scores()
+        assert round_.unannounced_capot == "slam"
+        assert round_.contract_made is True
+        assert scores["North-South"] == 350  # 100 + 250
+        assert scores["East-West"] == 0
+
+    def test_bidder_personal_sweep_is_grand_slam(self, players):
+        """N wins all 8 personally → "grand slam" (same 250 substitute)."""
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        round_ = _slam_round(
+            players, contract=contract, trick_winners=["N"] * 8
+        )
+        scores = round_.calculate_round_scores()
+        assert round_.unannounced_capot == "grand slam"
+        assert scores["North-South"] == 350  # 100 + 250
+        assert scores["East-West"] == 0
+
+    def test_capot_forces_made_below_threshold(self, players):
+        """The filler tricks carry 0 card points, so a 180 contract could
+        never clear its threshold on cards — but sweeping every trick
+        makes it outright → 180 + 250 = 430."""
+        contract = _contract(players["N"], 180, Suit.SPADES)
+        round_ = _slam_round(
+            players, contract=contract, trick_winners=["N"] * 8
+        )
+        scores = round_.calculate_round_scores()
+        assert round_.contract_made is True
+        assert scores["North-South"] == 430  # 180 + 250
+        assert scores["East-West"] == 0
+
+    def test_capot_layers_belote_on_top(self, players):
+        """Belote (+20) still credits the holder on top of contract + 250."""
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        winners = ["N"] * 5 + ["S"] * 3
+        round_ = _slam_round(players, contract=contract, trick_winners=winners)
+        round_.belote_holder = players["N"]  # N-S holds K+Q of trump
+        scores = round_.calculate_round_scores()
+        assert scores["North-South"] == 370  # 100 + 250 + 20
+        assert scores["East-West"] == 0
+
+    def test_doubled_sweep_keeps_winner_takes_all_and_is_unflagged(self, players):
+        """A doubled contract swept by the declarer keeps the
+        winner-takes-all 160 + C×M shape — no 250 substitute, no flag."""
+        contract = Contract(
+            ContractBid(players["N"], 100, Suit.SPADES),
+            double_player=players["E"],
+        )
+        order = [players[s] for s in ("N", "E", "S", "W")]
+        round_ = Round(order, dealer=players["N"], deck=None, round_number=1)
+        round_.contract = contract
+        # N sweeps all 8 with the trump Jack (20 pts each → 160 card
+        # points, clearing the 100 threshold). Card identity is
+        # irrelevant to scoring, so the same Card may recur.
+        for _ in range(8):
+            trick = Trick()
+            trick.add_play(players["N"], Card(Suit.SPADES, Rank.JACK))
+            round_.tricks.append(trick)
+            round_.team_tricks["North-South"].append(trick)
+        round_.last_trick_winner = players["N"]
+        scores = round_.calculate_round_scores()
+        assert round_.unannounced_capot is None
+        assert round_.contract_made is True
+        assert scores["North-South"] == 360  # 160 + 100*2
+        assert scores["East-West"] == 0
+
+    def test_defense_sweep_is_not_a_capot(self, players):
+        """Declaring team only: when the *defence* sweeps, the declarer
+        simply fails (160 + C to the defence) — no 250, not flagged."""
+        contract = _contract(players["E"], 100, Suit.SPADES)  # E-W declares
+        round_ = _slam_round(
+            players, contract=contract, trick_winners=["N"] * 8
+        )
+        scores = round_.calculate_round_scores()
+        assert round_.unannounced_capot is None
+        assert round_.contract_made is False
+        assert scores["East-West"] == 0
+        assert scores["North-South"] == 260  # 160 + 100 (normal failed)

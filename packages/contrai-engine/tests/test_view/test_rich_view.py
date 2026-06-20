@@ -1469,6 +1469,86 @@ class TestRoundRecapPanel:
         # ...but the real captured pile still shows in round_points.
         assert ew["round_points"] == 20
 
+    def test_recap_unannounced_capot_substitutes_250_and_folds_der(
+        self, four_players
+    ):
+        """Unannounced capot: the Outcome 'Trick points' row reads 250
+        (the flat substitute), 'Last trick' is folded in (0), and the
+        contract + substitute still sum to the round score."""
+        view = RichView()
+        north, *_ = four_players
+        contract = self._StubContract(100, Suit.SPADES, "North-South")
+        # N-S swept all 8 tricks. Filler cards — the engine's 250
+        # substitute, not the raw pile, is what the recap must show.
+        ns_tricks = []
+        for _ in range(8):
+            tr = Trick()
+            tr.add_play(north, Card(Suit.CLUBS, Rank.SEVEN))
+            ns_tricks.append(tr)
+        round_ = self._StubRound(
+            round_number=6,
+            contract=contract,
+            round_scores={"North-South": 350, "East-West": 0},
+            team_tricks={"North-South": ns_tricks, "East-West": []},
+            contract_made=True,
+        )
+        round_.unannounced_capot = "grand slam"  # north swept personally
+        round_.last_trick_winner = north  # der would be +10 — must fold in
+        breakdown = view._recap_breakdown(round_)
+        ns = breakdown["North-South"]
+        assert ns["trick_points"] == 250
+        assert ns["last_trick"] == 0
+        assert ns["card_points"] == 250
+        assert ns["card_points_substituted"] is True
+        assert ns["contract"] == 100
+        assert ns["round_points"] == 250
+        # Invariant preserved: contract + card_points + dix + belote == score.
+        assert (
+            ns["contract"] + ns["card_points"] + ns["dix_de_der"] + ns["belote"]
+            == 350
+        )
+        text = view._panel_round_recap(
+            round_, {"North-South": 350, "East-West": 0}
+        ).renderable.plain
+        assert "250" in text
+        # The der is folded into the substitute — no stray +10 in the row.
+        outcome = text.split("Scoring")[0]
+        last_trick_line = next(
+            line for line in outcome.splitlines() if "Last trick" in line
+        )
+        assert "+10" not in last_trick_line
+
+    @pytest.mark.parametrize(
+        "marker, expected_tag",
+        [("slam", "Slam"), ("grand slam", "Grand Slam")],
+    )
+    def test_recap_capot_tags_the_trick_points_row(
+        self, four_players, marker, expected_tag
+    ):
+        """The unannounced-capot marker surfaces a title-cased tag on the
+        Trick points row to explain the 250 substitute."""
+        view = RichView()
+        north, *_ = four_players
+        contract = self._StubContract(90, Suit.HEARTS, "North-South")
+        ns_tricks = []
+        for _ in range(8):
+            tr = Trick()
+            tr.add_play(north, Card(Suit.CLUBS, Rank.SEVEN))
+            ns_tricks.append(tr)
+        round_ = self._StubRound(
+            round_number=7,
+            contract=contract,
+            round_scores={"North-South": 340, "East-West": 0},
+            team_tricks={"North-South": ns_tricks, "East-West": []},
+            contract_made=True,
+        )
+        round_.unannounced_capot = marker
+        text = view._panel_round_recap(
+            round_, {"North-South": 340, "East-West": 0}
+        ).renderable.plain
+        assert expected_tag in text
+        assert "250" in text
+
     def test_recap_shows_dix_de_der_for_last_trick_winner(self, four_players):
         view = RichView()
         north, *_ = four_players

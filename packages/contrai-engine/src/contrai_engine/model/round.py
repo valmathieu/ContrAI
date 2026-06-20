@@ -53,6 +53,14 @@ class Round:
         # still score a non-zero Belote bonus, so "round_score > 0" is
         # not a reliable made/failed signal.
         self.contract_made: Optional[bool] = None
+        # Unannounced-capot marker, set by ``calculate_round_scores``.
+        # ``None`` when the round was not an unannounced capot; otherwise
+        # ``"slam"`` (the declaring *team* swept all 8 tricks) or
+        # ``"grand slam"`` (the contracting *player personally* won them
+        # all). Only set for un-doubled numeric contracts — the path that
+        # swaps the 162-point pile for a flat 250 substitute. The view
+        # reads this to render the 250 and its explanatory tag.
+        self.unannounced_capot: Optional[str] = None
 
         # Belote / rebelote announcement state. ``belote_holder`` is the
         # unique player holding both the K and the Q of trump at deal time
@@ -354,6 +362,15 @@ class Round:
           scores nothing. ``P_attack`` is the declarer's card points
           (which already include the *dix de der*) plus the Belote
           bonus when the declarer holds it.
+        - **Unannounced capot (M = 1).** When the declaring team wins
+          *all 8 tricks* on a numeric contract without having bid a
+          Slam, the trick pile (152 cards + 10 *dix de der* = 162) is
+          replaced by a flat **250** substitute: the declarer scores
+          ``C + 250`` (+ Belote), the defense scores nothing, and the
+          contract is necessarily made. The personal-trick predicate
+          tags it ``"grand slam"`` when the *contracting player* won
+          all 8, else ``"slam"``. Only un-doubled — a doubled/redoubled
+          sweep keeps the winner-takes-all shape below.
         - **Numeric, doubled / redoubled (M > 1).** Winner-takes-all:
           the side that wins the round takes the whole pile, the loser
           scores 0. The winner scores ``160 + C × M`` whether it is the
@@ -464,21 +481,50 @@ class Round:
         # ----- Numeric contract scoring path (80-180) -----
         defender_names = [t for t in team_scores if t != contract_team_name]
 
+        # Unannounced capot: the declaring team swept all 8 tricks on a
+        # numeric contract. Recognised only un-doubled — the
+        # doubled/redoubled path keeps its winner-takes-all 160 + C×M
+        # shape regardless. The trick pile (152 cards + 10 der) is
+        # replaced by a flat 250 substitute and the contract is
+        # necessarily made. "grand slam" when the contracting player won
+        # all 8 personally (the Solo Slam predicate), else plain "slam".
+        UNANNOUNCED_CAPOT_SUBSTITUTE = 250
+        declarer_capot = (
+            multiplier == 1
+            and len(self.team_tricks[contract_team_name]) == 8
+        )
+        if declarer_capot:
+            bidder_personal_tricks = self._count_player_tricks(
+                self.contract.player
+            )
+            self.unannounced_capot = (
+                "grand slam" if bidder_personal_tricks == 8 else "slam"
+            )
+
         # The declarer's *realized* points decide made/failed: card
         # points (already including the dix de der) plus the Belote
         # bonus when the declarer holds it (contree-domain.md §7.1-§7.2).
+        # A capot is made outright — sweeping every trick can never fail.
         attacker_realized = (
             team_card_points[contract_team_name] + belote_bonus(contract_team_name)
         )
-        contract_made = attacker_realized >= contract_value
+        contract_made = declarer_capot or attacker_realized >= contract_value
         self.contract_made = contract_made
 
         if multiplier == 1:
             # Un-doubled: the two sides share the pile.
             if contract_made:
+                # On an unannounced capot the 162 pile (der included) is
+                # swapped for the flat 250 substitute; otherwise the
+                # declarer adds its real captured card points.
+                attacker_pile = (
+                    UNANNOUNCED_CAPOT_SUBSTITUTE
+                    if declarer_capot
+                    else team_card_points[contract_team_name]
+                )
                 team_scores[contract_team_name] = (
                     contract_value
-                    + team_card_points[contract_team_name]
+                    + attacker_pile
                     + belote_bonus(contract_team_name)
                 )
                 for name in defender_names:

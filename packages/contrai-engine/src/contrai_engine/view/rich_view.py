@@ -2016,7 +2016,10 @@ class RichView:
         body.append("\n")
         body.append_text(
             self._format_outcome_table(
-                breakdown, trump=trump, all_passed=all_passed
+                breakdown,
+                trump=trump,
+                all_passed=all_passed,
+                capot_label=getattr(round_, "unannounced_capot", None),
             )
         )
         body.append("\n")
@@ -2108,6 +2111,10 @@ class RichView:
             contract.team.name if contract is not None else None
         )
         contract_made = contract is not None and self._contract_made(round_)
+        # Unannounced-capot marker set by the engine (None / "slam" /
+        # "grand slam"). When present, the declaring team's 162 pile is
+        # shown as the flat 250 substitute with the der folded in.
+        unannounced_capot = getattr(round_, "unannounced_capot", None)
         if contract is not None:
             base = contract.get_base_points()
             mult = contract.get_multiplier()
@@ -2137,6 +2144,11 @@ class RichView:
             card_points_substituted = False
             cards_count = True
             dix_count = True
+            # Outcome-row display values. Default to the real captured
+            # pile / der; the unannounced-capot branch swaps the pile for
+            # the flat 250 substitute and folds the der in (shows 0).
+            display_trick_points = raw_card_pts
+            display_last_trick = raw_dix
             # Belote (+20) is always preserved for the team holding the
             # pair, win or lose — so it counts iff this team is the
             # holder, in every scoring shape.
@@ -2170,6 +2182,15 @@ class RichView:
                     # its card pile; both sides keep cards/der/belote.
                     if is_attacker:
                         contract_row = base
+                    if is_attacker and unannounced_capot is not None:
+                        # Unannounced capot: the declarer's 162 pile
+                        # (der included) is replaced by the flat 250
+                        # substitute, mirroring the announced-Slam shape.
+                        card_points_value = 250
+                        card_points_substituted = True
+                        dix_count = False
+                        display_trick_points = 250
+                        display_last_trick = 0
                 else:
                     # Failed → defender takes the whole pile + contract;
                     # the declarer keeps only its belote.
@@ -2195,15 +2216,17 @@ class RichView:
                 # (10) and belote (20) it earned in play. Independent of
                 # how the contract converts these into score — so it still
                 # reflects real captured points in a winner-takes-all round
-                # where the Scoring rows are dashed out.
-                "round_points": raw_card_pts + raw_dix + raw_belote,
+                # where the Scoring rows are dashed out. The display values
+                # equal the raw ones except on an unannounced capot, where
+                # the pile reads 250 and the der is folded in (0).
+                "round_points": display_trick_points + display_last_trick + raw_belote,
                 # Factual components the Outcome sub-table renders one per
                 # row. ``trick_points`` is the real pile and ``last_trick``
                 # the real der (10/0), both independent of the scoring
                 # formula; ``belote`` below is already factual (the holder
                 # keeps it in every shape).
-                "trick_points": raw_card_pts,
-                "last_trick": raw_dix,
+                "trick_points": display_trick_points,
+                "last_trick": display_last_trick,
                 "dix_de_der": raw_dix if dix_count else 0,
                 "belote": raw_belote if belote_count else 0,
                 "trick_count": len(tricks),
@@ -2237,6 +2260,7 @@ class RichView:
         *,
         trump: Optional[Suit] = None,
         all_passed: bool = False,
+        capot_label: Optional[str] = None,
     ) -> Text:
         """Render the per-team play tally — the factual results of play.
 
@@ -2251,6 +2275,11 @@ class RichView:
         When ``all_passed`` is set (no contract was struck, so no cards
         were played) every cell renders as an em-dash, so the whole panel
         reads consistently.
+
+        When ``capot_label`` is set ("slam" / "grand slam") the round was
+        an unannounced capot: the Trick points row already carries the
+        flat 250 substitute, and the label is appended to its right (e.g.
+        ``← Grand Slam``) to explain why.
         """
         ns = breakdown.get("North-South", {})
         ew = breakdown.get("East-West", {})
@@ -2285,6 +2314,9 @@ class RichView:
         row_points.append_text(_count_cell(ns.get("trick_points", 0)))
         row_points.append("  ")
         row_points.append_text(_count_cell(ew.get("trick_points", 0)))
+        if capot_label and not all_passed:
+            # Explain the flat 250 substitute sitting in this row.
+            row_points.append(f"   ← {capot_label.title()}", style=f"bold {GOLD}")
         row_points.append("\n")
 
         # Last-trick bonus (10 points to the team that wins trick 8).
