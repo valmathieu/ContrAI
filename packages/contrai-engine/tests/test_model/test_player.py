@@ -40,6 +40,41 @@ def _auction(bids_with_players=()):
     return Auction(bids)
 
 
+class TestWireToBid:
+    """Test the legacy wire-format → :class:`Bid` bridge."""
+
+    @pytest.fixture
+    def player(self):
+        """A plain player to attach bids to."""
+        return AiPlayer("Bot", "South")
+
+    def test_keyword_wires_map_to_their_bid_types(self, player):
+        """``'Pass'`` / ``'Double'`` / ``'Redouble'`` lift to their classes."""
+        assert isinstance(wire_to_bid(player, "Pass"), PassBid)
+        assert isinstance(wire_to_bid(player, "Double"), DoubleBid)
+        assert isinstance(wire_to_bid(player, "Redouble"), RedoubleBid)
+
+    def test_valid_tuple_yields_contract_bid(self, player):
+        """A legal ``(value, suit)`` tuple builds a matching ContractBid."""
+        bid = wire_to_bid(player, (80, Suit.HEARTS))
+        assert isinstance(bid, ContractBid)
+        assert bid.value == 80
+        assert bid.suit == Suit.HEARTS
+
+    def test_invalid_contract_value_falls_back_to_pass(self, player):
+        """A bad contract value raises InvalidContractError, caught as a Pass.
+
+        85 is not on ``ContractBid.VALID_VALUES``, so construction raises
+        :class:`InvalidContractError`. The bridge must swallow that
+        specific domain error and fall back to a :class:`PassBid`.
+        """
+        assert isinstance(wire_to_bid(player, (85, Suit.HEARTS)), PassBid)
+
+    def test_unknown_payload_falls_back_to_pass(self, player):
+        """An unrecognised wire payload falls back to a Pass."""
+        assert isinstance(wire_to_bid(player, "garbage"), PassBid)
+
+
 class TestPlayer:
     """Test the abstract Player class"""
 

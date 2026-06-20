@@ -12,6 +12,7 @@ from contrai_core.bid import (
     RedoubleBid,
 )
 from contrai_core.card import Card
+from contrai_core.exceptions import InvalidContractError
 from contrai_core.player import BasePlayer
 from contrai_core.types import CARD_SUITS, Rank, Suit
 SUITS = CARD_SUITS
@@ -57,9 +58,10 @@ def wire_to_bid(player: BasePlayer, wire) -> Bid:
         value, suit = wire
         try:
             return ContractBid(player, value, suit)
-        except ValueError:
-            # Bad contract parameters — fall back to Pass. The Auction
-            # will reject this if it isn't actually legal.
+        except InvalidContractError:
+            # Bad contract value/suit — fall back to Pass. Catch the
+            # specific domain error rather than the ValueError umbrella
+            # so an unrelated ValueError from ContractBid still surfaces.
             return PassBid(player)
     return PassBid(player)
 
