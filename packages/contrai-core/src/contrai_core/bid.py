@@ -1,383 +1,208 @@
-# Bid classes for the "contree" card game.
-# This module contains the bid system with polymorphic bid types.
+"""Bid hierarchy — pure value carriers for the bidding phase.
 
-from abc import ABC, abstractmethod
-from typing import Optional, TYPE_CHECKING
+Each :class:`Bid` is a frozen dataclass attached to the player who made
+it. The four concrete variants are:
 
+- :class:`PassBid` — the player declines to act.
+- :class:`ContractBid` — a numeric contract or *Slam* / *Solo Slam*
+  announcement with an associated trump suit.
+- :class:`DoubleBid` — *contre*.
+- :class:`RedoubleBid` — *surcontre*.
+
+Knowledge about which bids are *legal at which auction state* used to
+live on ``Bid.is_valid_after`` and the ``BidValidator`` utility class.
+That logic now lives on :class:`contrai_core.Auction`, which owns the
+chronological history and the rules in one place. Bids themselves are
+intentionally dumb data carriers — they answer "what was announced",
+not "is it legal now".
+
+The variants are deliberately a sum type: any concrete ``Bid`` is one
+of the four classes above, every subclass adds at most a couple of
+payload fields, and there is no behaviour to override. This is the
+shape pattern-matching consumers (Auction's rule helpers, the engine's
+bid-to-wire bridge, future MCTS / RL agents) actually want.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import TYPE_CHECKING, ClassVar
+
+from .exceptions import InvalidContractError
 from .types import Suit
 
 if TYPE_CHECKING:
-    from .player import BasePlayer as Player
+    from .player import BasePlayer
 
-class Bid(ABC):
+
+class SlamLevel(Enum):
+    """The two all-tricks contracts, ranked above every numeric bid.
+
+    A Slam-family contract's *identity* is the kind of declaration — not
+    the number of points it is worth. Each member therefore owns its
+    :attr:`base_value` as data: this is the single source of truth for
+    the 250 / 500 that used to be re-derived from string sentinels all
+    over the codebase. The base value drives auction precedence (both
+    members outrank the 180 numeric ceiling) and doubles as the
+    slam-family scoring substitute — see
+    :meth:`ContractBid.get_numeric_value`,
+    :meth:`contrai_core.Contract.get_base_points`, and
+    :meth:`contrai_core.Contract.get_slam_card_substitute`.
+
+    This is a plain :class:`~enum.Enum`, not an :class:`~enum.IntEnum`:
+    keeping the type distinct from ``int`` is the whole point — it stops
+    a Slam's value from being silently mistaken for card points in
+    scoring arithmetic.
+
+    Attributes:
+        base_value: Points the contract commits to (250 / 500).
+        label: Human-facing name used for display (``str(level)``).
     """
-    Abstract base class for all bid types in contree.
 
-    Provides common interface for bid validation, comparison, and precedence rules.
-    """
+    SLAM = (250, "Slam")          # contracting team must win all 8 tricks
+    SOLO_SLAM = (500, "Solo Slam")  # bidder personally must win all 8
 
-    def __init__(self, player: 'Player'):
-        """
-        Initialize a bid with the player who made it.
+    def __init__(self, base_value: int, label: str) -> None:
+        self.base_value = base_value
+        self.label = label
 
-        Args:
-            player: The player making this bid
-        """
-        self.player = player
-
-    @abstractmethod
-    def is_valid_after(self, previous_bids: list) -> bool:
-        """
-        Check if this bid is valid given the previous bids.
-
-        Args:
-            previous_bids: List of previous Bid objects
-
-        Returns:
-            True if this bid is valid, False otherwise
-        """
-        pass
-
-    @abstractmethod
-    def can_be_doubled(self) -> bool:
-        """
-        Check if this bid can be doubled by opponents.
-
-        Returns:
-            True if this bid can be doubled, False otherwise
-        """
-        pass
-
-    @abstractmethod
     def __str__(self) -> str:
-        """String representation of the bid."""
-        pass
+        return self.label
 
-    @abstractmethod
-    def __eq__(self, other) -> bool:
-        """Equality comparison between bids."""
-        pass
 
+@dataclass(frozen=True, slots=True)
+class Bid:
+    """Common base class for all bid variants.
+
+    Holds the player who made the bid. Concrete subclasses add their
+    own payload fields (a numeric value + suit for :class:`ContractBid`,
+    nothing for the other three).
+
+    Equality on bids is *type + payload*, not player identity. Two
+    ``PassBid`` instances from different players still compare equal —
+    a bid identifies *what was announced*, not *who announced it*. The
+    ``player`` field is therefore excluded from the auto-generated
+    ``__eq__`` / ``__hash__`` via :func:`dataclasses.field`.
+
+    Attributes:
+        player: The player who made the bid.
+    """
+
+    player: "BasePlayer" = field(compare=False)
+
+
+@dataclass(frozen=True, slots=True)
 class PassBid(Bid):
-    """Represents a pass bid."""
+    """The player declines to bid this turn.
 
-    def is_valid_after(self, previous_bids: list) -> bool:
-        """Pass is always valid."""
-        return True
-
-    def can_be_doubled(self) -> bool:
-        """Pass cannot be doubled."""
-        return False
+    Always a legal action in any :class:`contrai_core.Auction` state.
+    """
 
     def __str__(self) -> str:
         return "Pass"
 
-    def __eq__(self, other) -> bool:
-        return isinstance(other, PassBid)
 
+@dataclass(frozen=True, slots=True)
 class ContractBid(Bid):
-    """Represents a contract bid with value and trump suit."""
+    """A numeric contract or *Slam* / *Solo Slam* announcement.
 
-    # Valid contract values in contree
-    VALID_VALUES = [80, 90, 100, 110, 120, 130, 140, 150, 160, 'Capot']
-    VALID_SUITS = list(Suit)
+    Validated at construction via ``__post_init__``: the value must be
+    one of the table-defined steps and the suit must be a known
+    :class:`Suit`.
 
-    def __init__(self, player: 'Player', value: int or str, suit: str):
-        """
-        Initialize a contract bid.
+    The two all-tricks contracts are the :class:`SlamLevel` enum members:
 
-        Args:
-            player: The player making this bid
-            value: Contract value (80-160 or 'Capot')
-            suit: Trump suit
+    - :attr:`SlamLevel.SLAM` — the contracting team must win all 8
+      tricks. Outranks every numeric bid (80–180).
+    - :attr:`SlamLevel.SOLO_SLAM` — the contracting **player
+      personally** must win all 8 tricks (their partner may not win
+      any). Outranks Slam in raw numeric value, but is asymmetrically
+      blocked once a Slam has been announced (see
+      :class:`contrai_core.Auction`).
+
+    Attributes:
+        value: A numeric step (80, 90, 100, …, 180), or a
+            :class:`SlamLevel` member for the all-tricks contracts.
+        suit: The trump suit — any :class:`Suit`, including
+            ``Suit.NO_TRUMP``.
+    """
+
+    VALID_VALUES: ClassVar[list] = [
+        80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180,
+        SlamLevel.SLAM, SlamLevel.SOLO_SLAM,
+    ]
+    VALID_SUITS: ClassVar[list] = list(Suit)
+
+    value: int | SlamLevel
+    suit: Suit
+
+    def __post_init__(self) -> None:
+        """Reject unknown values / suits at construction time.
 
         Raises:
-            ValueError: If value or suit is invalid
+            InvalidContractError: If ``value`` is not on
+                :attr:`VALID_VALUES` or ``suit`` is not a :class:`Suit`
+                member.
         """
-        super().__init__(player)
 
-        if value not in self.VALID_VALUES:
-            raise ValueError(f"Invalid contract value: {value}. Must be one of {self.VALID_VALUES}")
-
-        if suit not in self.VALID_SUITS:
-            raise ValueError(f"Invalid trump suit: {suit}. Must be one of {self.VALID_SUITS}")
-
-        self.value = value
-        self.suit = suit
-
-    def is_valid_after(self, previous_bids: list) -> bool:
-        """
-        Contract bid must be higher than the last contract bid.
-
-        Args:
-            previous_bids: List of previous Bid objects
-
-        Returns:
-            True if this bid is higher than previous contract bids
-        """
-        # Find the last contract bid
-        last_contract = None
-        for bid in reversed(previous_bids):
-            if isinstance(bid, ContractBid):
-                last_contract = bid
-                break
-
-        if last_contract is None:
-            return True  # First contract bid is always valid
-
-        # Nothing outranks a prior Capot — must be checked before the
-        # "self is Capot" shortcut, otherwise Capot-over-Capot would slip through.
-        if last_contract.value == 'Capot':
-            return False
-
-        # Capot outranks any numeric bid.
-        if self.value == 'Capot':
-            return True
-
-        # Compare numeric values
-        return self.value > last_contract.value
-
-    def can_be_doubled(self) -> bool:
-        """Contract bids can be doubled."""
-        return True
+        if self.value not in self.VALID_VALUES:
+            raise InvalidContractError(
+                f"Invalid contract value: {self.value}. "
+                f"Must be one of {self.VALID_VALUES}"
+            )
+        if self.suit not in self.VALID_SUITS:
+            raise InvalidContractError(
+                f"Invalid trump suit: {self.suit}. "
+                f"Must be one of {self.VALID_SUITS}"
+            )
 
     def get_numeric_value(self) -> int:
+        """Numeric value for comparison purposes.
+
+        :class:`SlamLevel` members resolve to their
+        :attr:`~SlamLevel.base_value` — i.e. the amount the bidder
+        commits to, used both for auction precedence and as one of the
+        two halves of the Slam-family scoring formula.
+        ``SlamLevel.SLAM`` → 250, ``SlamLevel.SOLO_SLAM`` → 500. (Both
+        still outrank the numeric ceiling of 180.)
+
+        The final at-risk amount on a Slam-family round is
+        ``(base + substitute) × multiplier`` where ``substitute``
+        equals the base — see :meth:`contrai_core.Contract.get_base_points`
+        and :meth:`contrai_core.Contract.get_slam_card_substitute`.
         """
-        Get the numeric value for comparison purposes.
 
-        Returns:
-            Numeric value (Capot = 250 for comparison)
-        """
-        return 250 if self.value == 'Capot' else self.value
-
-    def __str__(self) -> str:
-        return f"{self.value} {self.suit}"
-
-    def __eq__(self, other) -> bool:
-        return (isinstance(other, ContractBid) and
-                self.value == other.value and
-                self.suit == other.suit)
+        if isinstance(self.value, SlamLevel):
+            return self.value.base_value
+        return self.value
 
     def __gt__(self, other) -> bool:
-        """Greater than comparison for contract bids."""
+        """Strict numeric ordering against another :class:`ContractBid`.
+
+        Comparisons against any other type return ``False`` — the
+        bidding flow only orders contract bids against contract bids.
+        """
+
         if not isinstance(other, ContractBid):
             return False
         return self.get_numeric_value() > other.get_numeric_value()
 
+    def __str__(self) -> str:
+        return f"{self.value} {self.suit}"
+
+
+@dataclass(frozen=True, slots=True)
 class DoubleBid(Bid):
-    """Represents a double bid."""
-
-    def is_valid_after(self, previous_bids: list) -> bool:
-        """
-        Double is valid if:
-        1. There's a contract bid that hasn't been doubled yet
-        2. The doubling player is not from the contracting team
-        3. No passes have occurred since the last contract bid
-
-        Args:
-            previous_bids: List of previous Bid objects
-
-        Returns:
-            True if double is valid, False otherwise
-        """
-        if not previous_bids:
-            return False
-
-        # Find the last contract bid and check if there have been doubles/redoubles
-        last_contract = None
-        has_double = False
-        passes_since_contract = 0
-
-        for bid in reversed(previous_bids):
-            if isinstance(bid, ContractBid):
-                last_contract = bid
-                break
-            elif isinstance(bid, DoubleBid):
-                has_double = True
-            elif isinstance(bid, RedoubleBid):
-                return False  # Cannot double after redouble
-            elif isinstance(bid, PassBid):
-                passes_since_contract += 1
-
-        if last_contract is None or has_double:
-            return False
-
-        # Cannot double if from the same team as the contractor
-        if last_contract.player.team == self.player.team:
-            return False
-
-        # Cannot double if there have been passes since the contract
-        if passes_since_contract > 0:
-            return False
-
-        return True
-
-    def can_be_doubled(self) -> bool:
-        """Double cannot be doubled (but can be redoubled)."""
-        return False
+    """A *contre* — doubles the contract's stake (×2)."""
 
     def __str__(self) -> str:
         return "Double"
 
-    def __eq__(self, other) -> bool:
-        return isinstance(other, DoubleBid)
 
+@dataclass(frozen=True, slots=True)
 class RedoubleBid(Bid):
-    """Represents a redouble bid."""
-
-    def is_valid_after(self, previous_bids: list) -> bool:
-        """
-        Redouble is valid if:
-        1. There's a double bid that hasn't been redoubled yet
-        2. The redoubling player is from the contracting team
-        3. No passes have occurred since the double
-
-        Args:
-            previous_bids: List of previous Bid objects
-
-        Returns:
-            True if redouble is valid, False otherwise
-        """
-        if not previous_bids:
-            return False
-
-        # Find the contract and double bids
-        contract_player = None
-        has_double = False
-        has_redouble = False
-        passes_since_double = 0
-
-        for bid in reversed(previous_bids):
-            if isinstance(bid, RedoubleBid):
-                has_redouble = True
-                break
-            elif isinstance(bid, DoubleBid):
-                # Found the DoubleBid we'd be redoubling; keep scanning
-                # backwards for the ContractBid that established the contract.
-                has_double = True
-            elif isinstance(bid, PassBid):
-                # Only passes that appear after the double (chronologically)
-                # close the redouble window. In reversed iteration that's
-                # passes encountered *before* we see the DoubleBid.
-                if not has_double:
-                    passes_since_double += 1
-            elif isinstance(bid, ContractBid):
-                contract_player = bid.player
-                break
-
-        if not has_double or has_redouble or contract_player is None:
-            return False
-
-        # Can only redouble if from the same team as the contractor
-        if contract_player.team != self.player.team:
-            return False
-
-        # Cannot redouble if there have been passes since the double
-        if passes_since_double > 0:
-            return False
-
-        return True
-
-    def can_be_doubled(self) -> bool:
-        """Redouble cannot be doubled."""
-        return False
+    """A *surcontre* — quadruples the contract's stake (×4)."""
 
     def __str__(self) -> str:
         return "Redouble"
-
-    def __eq__(self, other) -> bool:
-        return isinstance(other, RedoubleBid)
-
-class BidValidator:
-    """
-    Utility class for validating bids and managing bid sequences.
-    """
-
-    @staticmethod
-    def is_bid_valid(bid: Bid, previous_bids: list) -> bool:
-        """
-        Validate if a bid is valid given the previous bids.
-
-        Args:
-            bid: The bid to validate
-            previous_bids: List of previous Bid objects
-
-        Returns:
-            True if the bid is valid, False otherwise
-        """
-        return bid.is_valid_after(previous_bids)
-
-    @staticmethod
-    def get_last_contract(bids: list) -> Optional[ContractBid]:
-        """
-        Get the last contract bid from a list of bids.
-
-        Args:
-            bids: List of Bid objects
-
-        Returns:
-            Last ContractBid or None if no contract exists
-        """
-        for bid in reversed(bids):
-            if isinstance(bid, ContractBid):
-                return bid
-        return None
-
-    @staticmethod
-    def has_double(bids: list) -> bool:
-        """
-        Check if there's a double in the bid sequence after the last contract.
-
-        Args:
-            bids: List of Bid objects
-
-        Returns:
-            True if there's an active double, False otherwise
-        """
-        contract_found = False
-        for bid in reversed(bids):
-            if isinstance(bid, ContractBid):
-                contract_found = True
-                break
-            elif isinstance(bid, DoubleBid):
-                return True
-        return False
-
-    @staticmethod
-    def has_redouble(bids: list) -> bool:
-        """
-        Check if there's a redouble in the bid sequence after the last double.
-
-        Args:
-            bids: List of Bid objects
-
-        Returns:
-            True if there's an active redouble, False otherwise
-        """
-        double_found = False
-        for bid in reversed(bids):
-            if isinstance(bid, DoubleBid):
-                double_found = True
-                break
-            elif isinstance(bid, RedoubleBid):
-                return True
-        return False
-
-    @staticmethod
-    def count_passes_after_last_action(bids: list) -> int:
-        """
-        Count the number of passes since the last non-pass bid.
-
-        Args:
-            bids: List of Bid objects
-
-        Returns:
-            Number of consecutive passes at the end of the sequence
-        """
-        count = 0
-        for bid in reversed(bids):
-            if isinstance(bid, PassBid):
-                count += 1
-            else:
-                break
-        return count

@@ -35,6 +35,7 @@ package "types.py" as p_types {
         DIAMONDS  = "Diamonds"
         CLUBS     = "Clubs"
         NO_TRUMP  = "NoTrump"
+        ALL_TRUMP = "AllTrump"
     }
 
     enum Rank <<enum>> {
@@ -46,7 +47,13 @@ package "types.py" as p_types {
       Module constant:
       **CARD_SUITS** : tuple[Suit, Suit, Suit, Suit]
       = (SPADES, HEARTS, DIAMONDS, CLUBS)
-      —— the 4 real suits, NO_TRUMP excluded.
+      —— the 4 real suits; NO_TRUMP and
+      ALL_TRUMP are contract-only suits
+      (sans atout / tout atout variants —
+      see contree-domain.md §9, §13).
+      ALL_TRUMP is currently inert: it is
+      reserved in the enum but no engine
+      logic produces or consumes it.
     end note
 }
 
@@ -54,18 +61,22 @@ package "types.py" as p_types {
 ' Card & deck (card.py, deck.py)
 ' =========================================================
 package "card.py / deck.py" as p_card {
-    class Card {
+    class Card <<frozen dataclass>> {
         + suit : Suit
         + rank : Rank
-        + points_normal : int
-        + points_trump  : int
-        + order_normal  : int
-        + order_trump   : int
         --
-        + __init__(suit: Suit, rank: Rank)
         + get_points(trump_suit: Suit? = None) : int
         + get_order(trump_suit: Suit? = None)  : int
     }
+
+    note bottom of Card
+      Immutable value object: equality and
+      hashing are by ``(suit, rank)``, so
+      distinct instances of the same physical
+      card are equal and hashable. No ``__lt__`` —
+      strength is parametric via
+      ``get_order(trump_suit)``.
+    end note
 
     class Deck {
         + cards : list<Card>
@@ -129,54 +140,97 @@ package "team.py / player.py" as p_team {
 }
 
 ' =========================================================
-' Bid hierarchy (bid.py)
+' Bid hierarchy (bid.py) — frozen dataclass sum type
 ' =========================================================
 package "bid.py" as p_bid {
-    abstract class Bid <<abstract>> {
-        + player : BasePlayer
+    class Bid <<frozen dataclass>> {
+        + player : BasePlayer  ' field(compare=False)
+    }
+
+    class PassBid <<frozen dataclass>> {
+        + __str__() : str  ' "Pass"
+    }
+
+    enum SlamLevel {
+        SLAM       ' (250, "Slam")
+        SOLO_SLAM  ' (500, "Solo Slam")
         --
-        + __init__(player: BasePlayer)
-        + {abstract} is_valid_after(previous_bids: list<Bid>) : bool
-        + {abstract} can_be_doubled() : bool
-        + {abstract} __str__() : str
-        + {abstract} __eq__(other) : bool
+        + base_value : int  ' single source of truth for 250 / 500
+        + label : str
+        + __str__() : str   ' the label
     }
 
-    class PassBid {
-        + is_valid_after(...) : bool  ' always True
-        + can_be_doubled() : bool     ' False
-    }
-
-    class ContractBid {
-        + {static} VALID_VALUES = [80..160, "Capot"]
+    class ContractBid <<frozen dataclass>> {
+        + {static} VALID_VALUES = [80..180, SlamLevel.SLAM, SlamLevel.SOLO_SLAM]
         + {static} VALID_SUITS = list(Suit)
-        + value : int | str
+        + value : int | SlamLevel
         + suit : Suit
         --
-        + __init__(player, value, suit)
-        + is_valid_after(...) : bool
-        + can_be_doubled() : bool     ' True
-        + get_numeric_value() : int   ' Capot → 250
-        + __gt__(other) : bool
+        + __post_init__() : None  ' validates value + suit
+        + get_numeric_value() : int   ' SlamLevel → base_value
+        + __gt__(other) : bool         ' strict numeric ordering
+        + __str__() : str
     }
 
-    class DoubleBid {
-        + is_valid_after(...) : bool
-        + can_be_doubled() : bool     ' False
+    class DoubleBid <<frozen dataclass>> {
+        + __str__() : str  ' "Double"
     }
 
-    class RedoubleBid {
-        + is_valid_after(...) : bool
-        + can_be_doubled() : bool     ' False
+    class RedoubleBid <<frozen dataclass>> {
+        + __str__() : str  ' "Redouble"
     }
 
-    class BidValidator <<utility>> {
-        + {static} is_bid_valid(bid, previous) : bool
-        + {static} get_last_contract(bids) : ContractBid?
-        + {static} has_double(bids) : bool
-        + {static} has_redouble(bids) : bool
-        + {static} count_passes_after_last_action(bids) : int
+    note bottom of Bid
+      Pure value carriers — no auction-state
+      behaviour. ``player`` is excluded from
+      ``__eq__`` and ``__hash__`` (matching
+      bid equality on *what was announced*,
+      not who announced it). All four
+      variants are ``@dataclass(frozen=True,
+      slots=True)``.
+    end note
+}
+
+' =========================================================
+' Auction (auction.py) — bidding-state rule oracle
+' =========================================================
+package "auction.py" as p_auction {
+    class Auction <<frozen dataclass>> {
+        + bids : tuple<Bid> = ()
+        --
+        + {static} empty() : Auction
+        + is_legal(bid: Bid) : bool
+        + legal_actions(player: BasePlayer) : tuple<Bid>
+        + apply(bid: Bid) : Auction    ' raises IllegalBidError
+        + is_terminal() : bool
+        + contract() : Contract?
+        --
+        + last_contract_bid : ContractBid? <<property>>
+        + has_double : bool             <<property>>
+        + has_redouble : bool           <<property>>
+        + double_player : BasePlayer?   <<property>>
+        + redouble_player : BasePlayer? <<property>>
+        + consecutive_passes : int      <<property>>
+        + partner_bid(player) : Bid?
     }
+
+    note bottom of Auction
+      Immutable bidding-phase state.
+      Owns the chronological bid history
+      and the contrée rules (see
+      ``contree-domain.md §5.2`` and §5.3).
+      ``is_legal`` / ``legal_actions``
+      replace ``Bid.is_valid_after`` and
+      ``BidValidator``; ``apply`` raises
+      :class:`IllegalBidError` rather than
+      silently downgrading an illegal bid
+      to a Pass.
+      The shape (``legal_actions`` +
+      ``apply``) mirrors MCTS / RL game-state
+      interfaces, so the auction phase is
+      ready to drop into a future
+      imperfect-information state object.
+    end note
 }
 
 ' =========================================================
@@ -187,43 +241,62 @@ package "contract.py / trick.py" as p_contract {
         + contract_bid : ContractBid
         + player : BasePlayer
         + team : Team
-        + value : int | str
+        + value : int | SlamLevel
         + suit : Suit
         + double : bool
         + redouble : bool
+        + double_player : BasePlayer?     ' who called Coinche
+        + redouble_player : BasePlayer?   ' who called Surcoinche
         --
-        + __init__(contract_bid, double=False, redouble=False)
-        + {static} from_legacy(player, value, suit, ...) : Contract
+        + __init__(contract_bid, double=False, redouble=False, double_player=None, redouble_player=None)
         + get_multiplier() : int           ' 1, 2, or 4
-        + is_made(team_points: int) : bool
-        + get_attacking_team() : Team
-        + get_defending_team() : Team?     ' TODO: currently None
-        + is_capot() : bool
-        + get_base_points() : int          ' Capot → 250
+        + is_slam() : bool
+        + is_solo_slam() : bool
+        + is_slam_family() : bool
+        + get_base_points() : int           ' Slam → 250, SoloSlam → 500
+        + get_slam_card_substitute() : int  ' Slam → 250, SoloSlam → 500, else 0
     }
 
     class Trick {
         + plays : list<(BasePlayer, Card)>
-        + trump_suit : Suit?
         --
-        + __init__(trump_suit: Suit? = None)
+        + __init__()
         + add_play(player: BasePlayer, card: Card) : None
         + get_cards() : list<Card>
         + get_led_suit() : Suit?
         + get_plays() : list<(BasePlayer, Card)>
-        + get_winner() : BasePlayer?
+        + get_current_winner(trump_suit: Suit?) : BasePlayer?
         + is_complete() : bool
-        + is_empty() : bool
-        + size() : int
         + __len__() : int
     }
+
+    note bottom of Trick
+      A dumb container of plays — it does **not**
+      store trump. `get_current_winner(trump_suit)`
+      takes trump as a **required** argument
+      (like `Card.get_order`/`get_points`) and
+      works on **partial** tricks. The engine
+      builds `Trick()` bare and passes the
+      contract's suit for trick-winner
+      determination, the partner-master legality
+      check, and the view's live winner highlight.
+    end note
 }
 
 ' =========================================================
 ' Exceptions (exceptions.py)
 ' =========================================================
 package "exceptions.py" as p_exc {
+    class "Exception" as Exception <<stdlib>> #DDDDDD
     class "ValueError" as ValueError <<stdlib>> #DDDDDD
+
+    class ContraiError <<base>>
+
+    enum PlayRuleViolation <<StrEnum>> {
+        MUST_FOLLOW_SUIT
+        MUST_TRUMP
+        MUST_OVERTRUMP
+    }
 
     class InvalidPlayerCountError {
         + expected_count : int
@@ -237,8 +310,43 @@ package "exceptions.py" as p_exc {
         + context : str
     }
 
+    class IllegalBidError {
+        + bid : Bid
+        + bids : tuple<Bid>
+        + context : str
+    }
+
+    class IllegalPlayError {
+        + card : Card
+        + reason : PlayRuleViolation
+        + legal_cards : tuple<Card>
+        + context : str
+    }
+
+    class TrickStateError {
+        + context : str
+    }
+
+    class InvalidContractError {
+        + context : str
+    }
+
+    ' Every domain error dual-inherits (ContraiError, ValueError);
+    ' ValueError stays in the MRO so legacy except-ValueError keeps working.
+    ContraiError            --|> Exception
+    InvalidPlayerCountError --|> ContraiError
     InvalidPlayerCountError --|> ValueError
+    InvalidCardCountError   --|> ContraiError
     InvalidCardCountError   --|> ValueError
+    IllegalBidError         --|> ContraiError
+    IllegalBidError         --|> ValueError
+    IllegalPlayError        --|> ContraiError
+    IllegalPlayError        --|> ValueError
+    TrickStateError         --|> ContraiError
+    TrickStateError         --|> ValueError
+    InvalidContractError    --|> ContraiError
+    InvalidContractError    --|> ValueError
+    IllegalPlayError        --> PlayRuleViolation : reason
 }
 
 ' =========================================================
@@ -271,9 +379,12 @@ Team "1" o-- "2" BasePlayer : players
 ' Bid references BasePlayer
 Bid "1" o-- "1" BasePlayer : player
 ContractBid --> Suit : suit
+ContractBid ..> SlamLevel : value (all-tricks bids)
 
-' BidValidator inspects Bid lists (utility, not composition)
-BidValidator ..> Bid : <<inspects>>
+' Auction composes a tuple of Bids and materialises a Contract
+Auction "1" *-- "0..N" Bid       : bids
+Auction ..> Contract             : <<materialises>>
+Auction ..> IllegalBidError      : <<raises (apply)>>
 
 ' Contract references ContractBid + BasePlayer + Team
 Contract "1" o-- "1" ContractBid : contract_bid
@@ -281,14 +392,17 @@ Contract "1" o-- "1" BasePlayer  : player
 Contract "1" o-- "1" Team        : team
 Contract --> Suit                : suit
 
-' Trick composes (player, card) plays + references trump suit
+' Trick composes (player, card) plays; trump arrives via get_current_winner
 Trick "1" *-- "0..4" Card        : (via plays)
 Trick "1" o-- "0..4" BasePlayer  : (via plays)
-Trick --> Suit                   : trump_suit
+Trick ..> Suit                   : get_current_winner(trump_suit)
 
 ' Operations raising exceptions
 Team ..> InvalidPlayerCountError : <<raises>>
 Deck ..> InvalidPlayerCountError : <<raises>>
 Deck ..> InvalidCardCountError   : <<raises>>
+ContractBid ..> InvalidContractError : <<raises (__post_init__)>>
+Contract ..> InvalidContractError    : <<raises (redouble w/o double)>>
+Trick ..> TrickStateError            : <<raises (add_play)>>
 
 @enduml

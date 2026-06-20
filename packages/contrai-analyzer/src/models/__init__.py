@@ -1,1 +1,1 @@
-"""Models initialization for La Contrée."""
+"""Models initialization for contrée."""

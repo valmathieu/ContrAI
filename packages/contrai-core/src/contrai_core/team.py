@@ -1,12 +1,13 @@
-# Team class for "contree" game, representing a team of two players.
+# Team class for the contrée game, representing a team of two players.
 
 from __future__ import annotations
-from contrai_core.exceptions import InvalidPlayerCountError
+
+from .exceptions import InvalidPlayerCountError
 from .player import BasePlayer
 
 class Team:
     """
-    Represents a team of two players in "contree" game.
+    Represents a team of two players in the contrée game.
 
     Attributes:
         name (str): The name of the team (e.g., "North-South", "East-West").

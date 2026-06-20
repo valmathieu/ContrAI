@@ -33,17 +33,17 @@ participant "Trick" as T <<from contrai-core>> #E1F0FF
 participant "Player" as P <<engine>>
 participant "Hand" as H <<from contrai-core>> #E1F0FF
 participant "Deck" as D <<from contrai-core>> #E1F0FF
-participant "CliView" as V <<stub>> #EEEEEE
+participant "RichView" as V <<engine>>
 
 [-> R : play_trick(view)
 activate R
 
 R -> T : new Trick()
 note right of T
-  Note: `Trick()` is built **without** a `trump_suit`.
-  Round uses `self.contract.suit` directly via
-  `_determine_trick_winner` below, bypassing
-  `Trick.get_winner()` from contrai-core.
+  Note: `Trick()` is a bare container — it stores no trump.
+  Round passes `self.contract.suit` into
+  `Trick.get_current_winner(trump_suit)` (contrai-core)
+  when it needs the winner; see "Winner + bookkeeping".
 end note
 
 == Leader determination ==
@@ -74,11 +74,13 @@ loop **for player in trick_order**  (×4)
     alt view ≠ None AND player.is_human
         R -->> V : view.request_card_action(player,\n  current_trick, contract, playable_cards)
         note right of V
-          **<<not implemented>>** —
-          CliView is an empty file
-          today, branch unreachable.
+          RichView renders the
+          mid-trick screen, parses
+          the human's card-number
+          input, and returns the
+          chosen Card.
         end note
-        V -->> R : (overrides card)
+        V -->> R : Card
     end
 
     alt card ∈ playable_cards AND card ∈ player.hand
@@ -89,16 +91,41 @@ loop **for player in trick_order**  (×4)
         R -> T : current_trick.add_play(\n  player, playable_cards[0]\n)
     end
 
+    R -->> V : view.on_card_played(player, played_card,\n                       current_trick)
+    note right of V
+      RichView logs "X plays Y" in the
+      event log. For AI players it
+      re-renders the playing screen and
+      sleeps `CONTRAI_AI_CARD_DELAY`
+      (0.9s default). Humans skip the
+      pause — their own request_card_action
+      already drove the frame.
+    end note
+
+    alt player is belote_holder\nAND card is K-or-Q of trump
+        R -> R : _transition_belote_state(player)\n→ "belote" (first) or "rebelote" (second)
+        R -->> V : view.on_belote_announced(player, kind, self)
+        note right of V
+          Log line: "X announces Belote"
+          (first play) or "Rebelote" (second).
+          The seat badge always reads
+          "★ Belote" regardless of kind —
+          rendered by `_render_diamond` from
+          `round_.belote_state`. Sleeps
+          for `CONTRAI_AI_CARD_DELAY`.
+        end note
+    end
+
 end
 
 == Winner + bookkeeping ==
 
-R -> R : winner = _determine_trick_winner(current_trick)
-note right of R
-  Reads `self.contract.suit` for trump.
-  Trump beats non-trump; within same suit,
-  highest `get_order()` wins. Duplicates the
-  logic that lives on `Trick.get_winner()`.
+R -> T : winner = current_trick.get_current_winner(contract.suit)
+note right of T
+  Trump comes from `self.contract.suit`.
+  Trump beats non-trump; within the same suit,
+  highest `get_order()` wins. The rule lives on
+  `Trick.get_current_winner(trump_suit)` in contrai-core.
 end note
 
 R -> R : last_trick_winner = winner
@@ -110,6 +137,21 @@ T --> R : list<(Player, Card)>
 R -> R : trick_cards = [card for _, card in plays]\ntrick_cards.reverse()  (last played → first back in)
 R -> D : deck.add_cards(trick_cards)
 
+== View callback (gated on hasattr) ==
+
+alt view ≠ None AND hasattr(view, 'on_trick_complete')
+    R -->> V : view.on_trick_complete(\n  current_trick, winner, self\n)
+    note right of V
+      RichView renders the
+      **trick-won** screen with
+      all four cards revealed
+      and the winner highlighted,
+      then blocks on "Press
+      [Enter] to continue…".
+    end note
+    V -->> R : (returns)
+end
+
 [<-- R : return winner  (Player)
 deactivate R
 
@@ -117,12 +159,18 @@ note over R, V
   **Legality (SF-09 / SF-10) — `_get_playable_cards`:**
 
   1. **Empty trick** → any card.
-  2. Player has the **lead suit** → must follow suit.
-  3. No lead-suit cards, **partner is leading** → any card (no obligation to trump).
-  4. No lead-suit cards, opponent led:
-     • no trump suit, or lead = trump → any card.
-     • opponent already trumped → must over-trump if possible;
-       else play any trump if any; else discard.
+  2. Player has the **lead suit**:
+     • lead = trump → must **over-trump** every trump on the table
+       if able (`_higher_trumps_than_played`); else play any trump.
+     • lead ≠ trump → must follow suit (no over-trump duty).
+  3. No lead-suit cards, **partner is currently master**
+     (`Trick.get_current_winner(trump_suit)`) → any card.
+     A partner who led but has been over-trumped no longer protects you.
+  4. No lead-suit cards, partner is not master:
+     • no trump suit → any card.
+     • opponent already trumped → must over-trump
+       (`_highest_opponent_trump`) if possible; else play any trump
+       if any; else discard.
      • no opponent trump yet → must trump if any; else discard.
 end note
 

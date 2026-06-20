@@ -1,1 +1,1 @@
-"""Bidding decision logic initialization for La Contrée."""
+"""Bidding decision logic initialization for contrée."""

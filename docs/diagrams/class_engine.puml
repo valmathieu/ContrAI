@@ -35,26 +35,32 @@ package "model/player.py" as p_player {
     abstract class Player <<abstract>> {
         + is_human : bool <<property>>
         --
-        + {abstract} choose_bid(current_bids) : str | tuple
+        + {abstract} choose_bid(auction: Auction) : Bid?
         + {abstract} choose_card(trick, contract, playable_cards) : Card
     }
 
-    class HumanPlayer #EEEEEE {
-        + choose_bid(current_bids) : None  <<stub>>
-        + choose_card(trick, contract, playable_cards) : None  <<stub>>
+    class HumanPlayer {
+        + choose_bid(auction) : None  <<no-op>>
+        + choose_card(trick, contract, playable_cards) : None  <<no-op>>
     }
 
     class AiPlayer {
         + {static} BIDDING_TABLE : list<tuple>
         + {static} SUIT_PREFERENCE : tuple<Suit>
         --
-        + choose_bid(current_bids) : str | tuple
+        + choose_bid(auction: Auction) : Bid
         + choose_card(trick, contract, playable_cards) : Card
         + initialize_card_tracking() : None
         + update_card_tracking(card, player, led_suit, trump_suit) : None
         --
+        - _choose_wire(current_bids) : str | tuple
         - _fallen_cards : dict<Suit, set<Rank>>
         - _players_without_trump : set<Player>
+    }
+
+    class "wire_to_bid / bid_to_wire" as p_bridge <<module helpers>> #FFEFD9 {
+        wire_to_bid(player, wire) : Bid
+        bid_to_wire(bid : Bid)    : str | tuple
     }
 
     note right of AiPlayer
@@ -71,16 +77,43 @@ package "model/player.py" as p_player {
     end note
 
     note bottom of AiPlayer
-      **BIDDING_TABLE** rows (9 levels, 80–160):
-      (contract, trump_req, trump_min, aces, tricks_min, belote_required).
-      No 'Capot' row today.
+      ``choose_bid(auction)`` is a thin
+      adapter: it projects ``auction.bids``
+      to the legacy ``(player, wire_bid)``
+      tuples the expert table still uses,
+      delegates to ``_choose_wire``, and
+      lifts the wire choice back to a
+      :class:`Bid` via ``wire_to_bid``.
+      Future AI families should read
+      ``auction.legal_actions(self)``
+      directly and let the wire format go.
+
+      **BIDDING_TABLE** rows (11 levels:
+      80–160 + Slam + Solo Slam):
+      (contract, trump_req, trump_min, aces,
+      tricks_min, belote_required).
     end note
 
     note bottom of HumanPlayer
-      Stub today: `choose_bid` / `choose_card`
-      return **None**. Real implementation
-      will route through CliView once that
-      view is wired up.
+      ``choose_bid`` / ``choose_card`` return
+      **None** by design. Human input is
+      serviced by **RichView** through the
+      ``view.request_*_action`` hooks Round
+      calls when ``player.is_human``.
+    end note
+
+    note right of p_bridge
+      Module-level helpers in
+      ``contrai_engine.model.player``.
+      Bridge between the
+      :class:`contrai_core.Bid` boundary
+      (used at the engine perimeter) and
+      the legacy ``'Pass'`` / ``'Double'`` /
+      ``'Redouble'`` / ``(value, suit)``
+      wire format the AI expert table
+      and the Rich view's renderer still
+      consume. Shared by AiPlayer, Round
+      (test scaffolding), and RichView.
     end note
 }
 
@@ -120,6 +153,8 @@ package "model/round.py" as p_round {
         + last_trick_winner : Player?
         + team_tricks : dict<str, list<Trick>>
         + round_scores : dict<str, int>
+        + belote_holder : Player?
+        + belote_state : dict<Player, str>
         --
         + __init__(players_order, dealer, deck, round_number)
         + deal_cards() : None
@@ -129,21 +164,67 @@ package "model/round.py" as p_round {
         + calculate_round_scores() : dict<str, int>
         + handle_failed_contract() : dict<str, int>
         --
-        - _create_bid_from_choice(player, choice) : Bid
-        - _bid_to_legacy_format(bid: Bid)
+        - _gather_bid(player, auction, view) : Bid
         - _get_playable_cards(player) : list<Card>
-        - _determine_trick_winner(trick: Trick) : Player?
+        - _classify_play_violation(player, card) : PlayRuleViolation
+        - _higher_trumps_than_played(trumps, plays, trump) : list<Card>
+        - _highest_opponent_trump(plays, team, trump) : Card?
+        - _detect_belote_holder() : None
+        - _is_belote_event(player, card) : bool
+        - _transition_belote_state(player) : str?
     }
 
     note right of Round
-      `_determine_trick_winner` duplicates
-      `Trick.get_winner()` from contrai-core
-      (open question: pick one).
+      ``manage_bidding`` drives an
+      :class:`contrai_core.Auction` through
+      the cyclic ``players_order``. Each
+      turn: query ``legal_actions(player)``;
+      if the only legal action is Pass
+      (partner just doubled / redoubled),
+      auto-apply it without prompting;
+      otherwise gather a Bid from the
+      player and the view. ``auction.apply``
+      raises :class:`IllegalBidError` on an
+      illegal bid — no silent force-Pass.
+      ----
+      Trick-winner determination delegates to
+      ``Trick.get_current_winner(contract.suit)``
+      in contrai-core — no engine-side duplicate.
+      ----
+      ``_get_playable_cards`` enforces:
+      • follow suit if able,
+      • over-trump when trump is led,
+      • partner-master exemption (current
+        winner, not whoever led),
+      • over-trump opponents otherwise.
+      The partner-master check delegates to
+      ``Trick.get_current_winner(trump_suit)``.
+      ``play_trick`` plays only a card in
+      that legal set; a truthy-but-illegal
+      card raises :class:`IllegalPlayError`
+      (no silent fallback). The
+      ``PlayRuleViolation`` reason comes from
+      ``_classify_play_violation``, which
+      mirrors ``_get_playable_cards`` and
+      must stay in sync with it.
+      ----
+      During play Round fires (each ``hasattr``-guarded):
+      • ``view.on_bid_made(player, bid, history)``
+      • ``view.on_contract_established(self)``
+        (once, immediately after the final
+        Contract is built)
+      • ``view.on_card_played(player, card, trick)``
+      • ``view.on_belote_announced(player, kind, self)``
+      • ``view.on_trick_complete(trick, winner, self)``
+      ``Game.manage_round`` additionally fires
+      ``view.on_round_dealt(round_)`` after the deal
+      and ``view.on_all_pass_redeal(round_)`` when
+      everyone passes.
     end note
 }
 
 ' =========================================================
-' controller/ & view/ — both stubs today
+' controller/ — still a stub today
 ' =========================================================
 package "controller/" as p_ctrl {
     class GameController <<stub>> #EEEEEE {
@@ -158,20 +239,120 @@ package "controller/" as p_ctrl {
     note right of GameController
       **Stub.** References undefined `pygame`;
       no integration with Game / Round.
-      Not wired today.
+      Open question: keep for a future GUI
+      path, or delete now that the Rich CLI
+      handles input/output?
     end note
 }
 
-package "view/" as p_view {
-    class CliView <<stub>> #EEEEEE {
+' =========================================================
+' view/ — live Rich terminal UI
+' =========================================================
+package "view/rich_view.py" as p_view {
+    class RoundSummary <<dataclass>> {
+        + round_number : int
+        + contract : Contract?
+        + contract_team_name : str?
+        + contract_made : bool
+        + ns_pts : int
+        + ew_pts : int
+        + running_ns : int
+        + running_ew : int
     }
 
-    note right of CliView
-      **Empty file.** Round / Game pass
-      `view=None` in practice; the
-      `view.request_bid_action` /
-      `view.request_card_action` branches
-      in Round are guarded but unreachable.
+    class RichView {
+        + {static} LOG_MAX : int = 5
+        + console : rich.Console
+        + target_score : int
+        + history : list<RoundSummary>
+        + last_completed_trick : (Trick, Player)?
+        + game : Game?
+        + event_log : list<Text>
+        --
+        + attach(game, target_score) : None
+        + reset_for_rematch() : None
+        --
+        ' Engine hooks
+        + request_bid_action(player, auction: Auction) : Bid
+        + request_card_action(player, trick, contract, playable) : Card
+        + on_round_dealt(round_) : None
+        + on_all_pass_redeal(round_) : None
+        + on_bid_made(player, bid, history) : None
+        + on_contract_established(round_) : None
+        + on_card_played(player, card, trick) : None
+        + on_belote_announced(player, kind, round_) : None
+        + on_trick_complete(trick, winner, round_) : None
+        + on_round_complete(round_, running_scores) : None
+        --
+        ' CLI flow screens
+        + show_landing(selected_target=1500) : int
+        + show_round_recap(round_, running_scores, *, is_final=False) : None
+        + show_end_game(status) : str  ('n' | 'r' | 'q')
+    }
+
+    note right of RichView
+      Six-screen UI: landing, bidding,
+      mid-trick, trick-won, round-recap,
+      end-game. Per-round summaries tracked
+      here (`history`) so Game stays UI-free.
+      A rolling 5-line `event_log` is shown
+      below the hand in every in-game state.
+      Round / trick / recap panel titles use
+      the `#N` format (e.g. `Round #2`,
+      `Last trick (#7)`, `Current trick (#8)`).
+      ----
+      The round-recap panel breaks the round
+      score down per team:
+      contract bonus (attacker base on
+      normal made, 160+base×mult on doubled
+      made, (160+base)×mult on failed
+      defender) + card points + dix-de-der
+      + belote → `round_scores[team]` →
+      running total. The card/dix/belote
+      rows em-dash when the engine ignores
+      them (doubled-made attacker, failed
+      defender) so the addition matches
+      the engine's round_score.
+      Helpers: `_recap_breakdown`,
+      `_format_recap_table`,
+      `_belote_team_in_round`.
+      ----
+      AI pacing is tunable per-hook via the
+      env vars `CONTRAI_AI_BID_DELAY` (1.4s)
+      and `CONTRAI_AI_CARD_DELAY` (0.9s).
+      The belote hook reuses the card delay.
+      ----
+      Pure helpers (parsers, sorter,
+      current-winner wrapper, hint,
+      `_redouble_available_to`,
+      `_resolve_delay`, `_bid_to_legacy`,
+      `_belote_by_position`) live at module
+      scope. Rendering panels are validated
+      by `uv run contrai` smoke testing plus
+      title/text smoke assertions in
+      `tests/test_view/test_rich_view.py`.
+    end note
+}
+
+' =========================================================
+' cli.py — `contrai` console-script entry point
+' =========================================================
+package "cli.py" as p_cli {
+    class "main()" as Cli <<module>> #FFEFD9 {
+        + main() : None
+        --
+        - _build_game() : Game
+        --
+        Drives landing → game loop →
+        end-game; routes `n`/`r`/`q`.
+    }
+
+    note right of Cli
+      Hardcoded seating: South =
+      `HumanPlayer`, N/E/W = `AiPlayer`
+      (medium). TODO marker for a
+      future seat picker on the landing
+      screen.
     end note
 }
 
@@ -198,8 +379,11 @@ Round "1" o-- "0..1" "Contract" : contract
 Round "1" o-- "1" "Deck" : deck
 Round "1" o-- "4" Player : players_order
 
-' MVC wiring (currently broken / unwired — dashed)
-GameController ..> Game : <<would drive>>
-Round ..> CliView : <<would consult\nfor human input>>
+' MVC wiring
+GameController ..> Game : <<would drive\n(stub)>>
+Round ..> RichView : <<consults for\nhuman input + hooks>>
+Cli ..> Game : <<owns game loop>>
+Cli ..> RichView : <<owns view\n+ screens>>
+RichView "1" *-- "0..N" RoundSummary : history
 
 @enduml

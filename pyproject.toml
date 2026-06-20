@@ -31,3 +31,12 @@ contrai-core = { workspace = true }
 contrai-engine = { workspace = true }
 contrai-analyzer = { workspace = true }
 contrai-scraper = { workspace = true }
+
+[tool.pytest.ini_options]
+# Both contrai-core and contrai-engine ship a top-level ``tests`` package
+# (each with its own ``__init__.py``). Under pytest's default ``prepend``
+# import mode the two collide on ``sys.modules['tests']``, so a
+# whole-workspace ``uv run pytest`` aborts collecting the second one with
+# "No module named 'tests.test_view'". ``importlib`` mode imports each test
+# module under a path-derived name, so the per-package suites compose.
+addopts = "--import-mode=importlib"

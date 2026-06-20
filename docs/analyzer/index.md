@@ -11,8 +11,6 @@ Streamlit dashboard for hand-strength analysis (hypergeometric distribution + bi
 
 **Strict UI/logic split.** All math and game logic in `src/`; `main.py` is pure UI glue.
 
-Package-specific conventions live in `packages/contrai-analyzer/CLAUDE.md` (gitignored).
-
 ## Class structure
 
 ```plantuml format="svg" source="class_analyzer.puml"

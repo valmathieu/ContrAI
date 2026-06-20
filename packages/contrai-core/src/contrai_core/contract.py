@@ -1,12 +1,14 @@
-# Contract class for the "contree" card game.
+# Contract class for the contrée card game.
 # This class represents a contract established during bidding.
 
+from __future__ import annotations
 from typing import Optional, TYPE_CHECKING
 
+from .bid import ContractBid, SlamLevel
+from .exceptions import InvalidContractError
+
 if TYPE_CHECKING:
-    from .player import Player
-    from contrai_core.team import Team
-    from .bid import ContractBid
+    from .player import BasePlayer as Player
 
 class Contract:
     """
@@ -16,41 +18,59 @@ class Contract:
     and handles double/redouble states with score calculations.
     """
 
-    def __init__(self, contract_bid: 'ContractBid', double: bool = False, redouble: bool = False):
+    def __init__(self, contract_bid: ContractBid,
+                 double_player: Optional[Player] = None,
+                 redouble_player: Optional[Player] = None):
         """
         Initialize a contract from a ContractBid.
 
+        The doubled / redoubled state is *derived* from whether a caller
+        is recorded (see :attr:`double` / :attr:`redouble`) — there is no
+        separate boolean flag to keep in sync, so an "anonymous double"
+        (doubled with no known doubler) is unrepresentable by design.
+
         Args:
             contract_bid: The winning ContractBid that established this contract
-            double: Whether contract has been doubled
-            redouble: Whether contract has been redoubled
+            double_player: The player who doubled (coincheur), if any.
+                Its presence is what marks the contract as doubled.
+            redouble_player: The player who redoubled (surcoincheur), if any.
+                Its presence is what marks the contract as redoubled.
+
+        Raises:
+            InvalidContractError: If a ``redouble_player`` is given
+                without a ``double_player`` — a surcoinche can only stand
+                on top of a coinche.
         """
+        if redouble_player is not None and double_player is None:
+            raise InvalidContractError(
+                "A contract cannot be redoubled without first being "
+                "doubled: redouble_player was given but double_player is None."
+            )
         self.contract_bid = contract_bid
         self.player = contract_bid.player
         self.team = contract_bid.player.team
         self.value = contract_bid.value
         self.suit = contract_bid.suit
-        self.double = double
-        self.redouble = redouble
+        self.double_player = double_player
+        self.redouble_player = redouble_player
 
-    @classmethod
-    def from_legacy(cls, player: 'Player', value: int or str, suit: str,
-                   double: bool = False, redouble: bool = False):
+    @property
+    def double(self) -> bool:
+        """Whether the contract has been doubled (coinche).
+
+        Derived from :attr:`double_player`: a contract is doubled iff a
+        doubling player is recorded.
         """
-        Create a Contract from legacy parameters (for backwards compatibility).
+        return self.double_player is not None
 
-        Args:
-            player: Player who made the winning bid
-            value: Contract value (points to make)
-            suit: Trump suit for the contract
-            double: Whether contract has been doubled
-            redouble: Whether contract has been redoubled
+    @property
+    def redouble(self) -> bool:
+        """Whether the contract has been redoubled (surcoinche).
+
+        Derived from :attr:`redouble_player`. The constructor guarantees
+        a redouble can only exist on top of a double.
         """
-        # Import here to avoid circular imports
-        from .bid import ContractBid
-
-        contract_bid = ContractBid(player, value, suit)
-        return cls(contract_bid, double, redouble)
+        return self.redouble_player is not None
 
     def get_multiplier(self) -> int:
         """
@@ -65,59 +85,74 @@ class Contract:
             return 2
         return 1
 
-    def is_made(self, team_points: int) -> bool:
+    def is_slam(self) -> bool:
         """
-        Check if the contract was successfully made.
-
-        Args:
-            team_points: Points scored by the contracting team
+        Check if this is a Slam contract (team must win all 8 tricks).
 
         Returns:
-            True if contract was made, False otherwise
+            True if contract value is ``SlamLevel.SLAM``, False otherwise.
         """
-        if self.value == 'Capot':
-            # For Capot, team must win all tricks (all 162 points)
-            return team_points >= 162
-        else:
-            return team_points >= self.value
+        return self.value is SlamLevel.SLAM
 
-    def get_attacking_team(self) -> 'Team':
+    def is_solo_slam(self) -> bool:
         """
-        Get the team that must make the contract.
+        Check if this is a Solo Slam contract.
 
-        Returns:
-            The contracting team
-        """
-        return self.team
-
-    def get_defending_team(self) -> 'Team':
-        """
-        Get the team defending against the contract.
+        In a Solo Slam the bidder *personally* must win every one of
+        the 8 tricks — their partner is forbidden from winning any.
 
         Returns:
-            The opposing team
+            True if contract value is ``SlamLevel.SOLO_SLAM``, False
+            otherwise.
         """
-        # This requires access to game teams, but we can get it from player's game context
-        # For now, return None - this should be handled at game level
-        return None
+        return self.value is SlamLevel.SOLO_SLAM
 
-    def is_capot(self) -> bool:
-        """
-        Check if this is a Capot contract.
-
-        Returns:
-            True if contract value is 'Capot', False otherwise
-        """
-        return self.value == 'Capot'
+    def is_slam_family(self) -> bool:
+        """Whether this contract is a Slam or Solo Slam."""
+        return isinstance(self.value, SlamLevel)
 
     def get_base_points(self) -> int:
         """
-        Get the base point value of the contract.
+        Get the base point value of the contract — what the bidder
+        committed to and what shows up in the auction's precedence
+        ordering.
 
         Returns:
-            Base points for the contract (250 for Capot, actual value otherwise)
+            250 for Slam, 500 for Solo Slam, the numeric value
+            otherwise.
+
+        Note:
+            For Slam-family contracts this is only *half* of the
+            at-risk amount — the actual card pile (normally up to
+            162) is replaced by a flat substitute equal to the base.
+            See :meth:`get_slam_card_substitute`. The full at-risk
+            amount is ``(base + substitute) × multiplier`` and is
+            awarded to whichever side wins the contract (attacker
+            if made, defender if failed).
         """
-        return 250 if self.value == 'Capot' else self.value
+        return self.contract_bid.get_numeric_value()
+
+    def get_slam_card_substitute(self) -> int:
+        """
+        Return the flat amount that replaces the 162 of trick-card
+        points on a Slam-family round.
+
+        For Slam the substitute is 250; for Solo Slam it is 500.
+        For numeric (80-180) contracts there is no substitute —
+        teams actually count the cards they took — and this method
+        returns 0.
+
+        The Slam-family at-risk amount is
+        ``(get_base_points() + get_slam_card_substitute()) × get_multiplier()``,
+        i.e. ``500 / 1000 / 2000`` for Slam at normal / doubled /
+        redoubled and ``1000 / 2000 / 4000`` for Solo Slam.
+
+        Returns:
+            250 for Slam, 500 for Solo Slam, 0 otherwise.
+        """
+        if isinstance(self.value, SlamLevel):
+            return self.value.base_value
+        return 0
 
     def __str__(self) -> str:
         """String representation of the contract."""

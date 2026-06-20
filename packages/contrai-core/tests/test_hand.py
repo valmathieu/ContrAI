@@ -188,6 +188,23 @@ def test_has_card_hit_and_miss(sample_cards):
     assert h.has_card(Suit.SPADES, Rank.JACK) is False  # right suit, wrong rank
 
 
+def test_has_suit_present_and_absent(sample_cards):
+    h = Hand(sample_cards)
+    assert h.has_suit(Suit.SPADES) is True
+    assert h.has_suit(Suit.HEARTS) is True
+    assert h.has_suit(Suit.DIAMONDS) is False
+    assert h.has_suit(Suit.CLUBS) is False
+
+
+def test_has_card_delegates_to_membership(sample_cards):
+    """``has_card`` agrees with ``Card(...) in hand`` for a hit and a miss."""
+    h = Hand(sample_cards)
+    hit = Card(Suit.SPADES, Rank.ACE)
+    miss = Card(Suit.CLUBS, Rank.SEVEN)
+    assert h.has_card(hit.suit, hit.rank) == (hit in h) is True
+    assert h.has_card(miss.suit, miss.rank) == (miss in h) is False
+
+
 def test_cards_of_suit_returns_matching_cards_in_order(sample_cards):
     h = Hand(sample_cards)
     spades = h.cards_of_suit(Suit.SPADES)
@@ -248,6 +265,28 @@ def test_is_complete_false_when_8_cards_but_duplicate():
         Card(Suit.CLUBS, Rank.SEVEN),
     ]
     assert Hand(cards).is_complete() is False
+
+
+# ----------------------------------------------------------------------
+# copy
+# ----------------------------------------------------------------------
+
+
+def test_copy_returns_list_of_same_cards(sample_cards):
+    h = Hand(sample_cards)
+    snapshot = h.copy()
+    assert isinstance(snapshot, list)
+    assert snapshot == list(sample_cards)
+
+
+def test_copy_is_independent_of_hand(sample_cards):
+    """Mutating the copy must not affect the hand or vice versa."""
+    h = Hand(sample_cards)
+    snapshot = h.copy()
+    snapshot.pop()
+    assert len(h) == len(sample_cards)
+    h.append(Card(Suit.CLUBS, Rank.NINE))
+    assert len(snapshot) == len(sample_cards) - 1
 
 
 # ----------------------------------------------------------------------

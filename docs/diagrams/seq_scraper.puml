@@ -32,7 +32,7 @@ actor "User" as U
 participant "main.py" as M <<scraper>>
 participant "async_playwright" as P <<scraper>>
 participant "Browser / page\n(Chromium)" as B
-participant "DOM\napp.belote-rebelote.fr" as D
+participant "DOM\nspectator site" as D
 participant "SQLite" as S <<future>> #DDDDDD
 
 U -> M : python main.py
@@ -41,7 +41,7 @@ activate M
 M -> P : async_playwright().start()
 M -> P : chromium.launch(headless=False, slow_mo=500)
 P -> B : <<creates>> page
-M -> B : page.goto("https://app.belote-rebelote.fr/")
+M -> B : page.goto(target_url)
 B -> D : navigate
 
 == Phase 1 — Login flow ==
@@ -140,7 +140,6 @@ note over M, S
   • `observe_bidding(page)` and `observe_gameplay(page)` — commented placeholders
   • Any persistence path — no SQLite (or other) writes
   • DB-based de-duplication of already-scraped players
-  See CLAUDE.md §2 (item 5) and §7 for the roadmap.
 end note
 
 @enduml

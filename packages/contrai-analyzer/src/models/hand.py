@@ -78,7 +78,7 @@ class Hand:
 
     def my_points(self) -> int:
         """
-        Calculate the total Contrée point value of this hand.
+        Calculate the total contrée point value of this hand.
 
         Uses the trump scale for cards in SuitSlot.TRUMP and the non-trump
         scale for all other slots.

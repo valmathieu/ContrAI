@@ -1,9 +1,15 @@
-# Trick class for the "contree" card game.
+# Trick class for the contrée card game.
 # This class represents a single trick in the game.
 
-from typing import List, Tuple, Optional
-from .card import Card
-from .player import BasePlayer as Player
+from __future__ import annotations
+from typing import List, Tuple, Optional, TYPE_CHECKING
+
+from .exceptions import TrickStateError
+
+if TYPE_CHECKING:
+    from .card import Card
+    from .player import BasePlayer as Player
+    from .types import Suit
 
 class Trick:
     """
@@ -13,15 +19,16 @@ class Trick:
     with methods to determine the winner based on trump rules.
     """
 
-    def __init__(self, trump_suit: Optional[str] = None):
-        """
-        Initialize a new trick.
+    def __init__(self) -> None:
+        """Initialize a new, empty trick.
 
-        Args:
-            trump_suit: The trump suit for this trick, if any
+        A trick is a dumb container of plays; it does not own the trump
+        suit. Trump is round-level state living on the ``Contract`` and is
+        passed to :meth:`get_current_winner` at call time — mirroring how
+        :meth:`contrai_core.Card.get_order` / ``get_points`` take trump as
+        a parameter rather than storing it.
         """
         self.plays: List[Tuple[Player, Card]] = []
-        self.trump_suit = trump_suit
 
     def add_play(self, player: Player, card: Card) -> None:
         """
@@ -32,10 +39,10 @@ class Trick:
             card: The card being played
 
         Raises:
-            ValueError: If trick is already complete (4 cards)
+            TrickStateError: If trick is already complete (4 cards)
         """
         if self.is_complete():
-            raise ValueError("Cannot add card to complete trick")
+            raise TrickStateError("Cannot add a card to a complete trick")
 
         self.plays.append((player, card))
 
@@ -76,32 +83,37 @@ class Trick:
         """
         return len(self.plays) == 4
 
-    def size(self) -> int:
+    def get_current_winner(self, trump_suit: Optional[Suit]) -> Optional[Player]:
         """
-        Get number of cards played so far.
+        Return the player currently winning this (possibly partial) trick.
+
+        Works on incomplete tricks — useful while a trick is being played
+        for legality checks (e.g. *partner is currently master*) and view
+        rendering (live winner highlight).
+
+        Args:
+            trump_suit: The trump suit to evaluate against, taken from the
+                round's contract. Pass ``None`` (or ``Suit.NO_TRUMP``) when
+                no suit is trump — every trump-related branch then reduces
+                to the follow-suit rule. The argument is required: there is
+                no construction-time trump to fall back to, so callers must
+                state trump explicitly rather than risk a silent no-trump
+                evaluation.
 
         Returns:
-            Number of cards played (0-4)
-        """
-        return len(self.plays)
-
-    def get_winner(self) -> Optional[Player]:
-        """
-        Determine the winner of this trick.
-
-        Returns:
-            Player who won the trick, or None if trick is empty
+            Player who is currently winning, or None if no card has been
+            played yet.
         """
         if not self.plays:
             return None
 
-        lead_suit = self.get_led_suit()
+        lead_suit = self.plays[0][1].suit
         best_player = self.plays[0][0]
         best_card = self.plays[0][1]
-        best_is_trump = self.trump_suit and best_card.suit == self.trump_suit
+        best_is_trump = trump_suit is not None and best_card.suit == trump_suit
 
         for player, card in self.plays[1:]:
-            card_is_trump = self.trump_suit and card.suit == self.trump_suit
+            card_is_trump = trump_suit is not None and card.suit == trump_suit
 
             if card_is_trump and not best_is_trump:
                 # Trump beats non-trump
@@ -109,8 +121,8 @@ class Trick:
                 best_card = card
                 best_is_trump = True
             elif card_is_trump and best_is_trump:
-                # Compare trump cards
-                if card.get_order(self.trump_suit) > best_card.get_order(self.trump_suit):
+                # Compare trump cards (Jack > 9 > Ace > 10 > King > Queen > 8 > 7)
+                if card.get_order(trump_suit) > best_card.get_order(trump_suit):
                     best_player = player
                     best_card = card
             elif not card_is_trump and not best_is_trump and card.suit == lead_suit:
@@ -120,7 +132,3 @@ class Trick:
                     best_card = card
 
         return best_player
-
-    def is_empty(self) -> bool:
-        """Check if the trick is empty."""
-        return len(self.plays) == 0

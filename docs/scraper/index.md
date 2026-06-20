@@ -1,8 +1,6 @@
 # contrai-scraper
 
-Playwright spectator-mode scraper for online Coinche games.
-
-**Target:** `https://app.belote-rebelote.fr/` (auth required).
+Playwright spectator-mode scraper for online Coinche games (auth required).
 
 **Stack:** Playwright async, Python 3.14, uv. Storage: SQLite (default, schema TBD).
 

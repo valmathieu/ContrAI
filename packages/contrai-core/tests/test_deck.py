@@ -1,9 +1,17 @@
-import pytest
 import copy
-from contrai_core.deck import Deck
-from contrai_core.card import Card
-from contrai_core.types import Suit, Rank, CARD_SUITS
-from contrai_core.exceptions import InvalidPlayerCountError, InvalidCardCountError
+from collections import Counter
+
+import pytest
+
+from contrai_core import (
+    CARD_SUITS,
+    Card,
+    Deck,
+    InvalidCardCountError,
+    InvalidPlayerCountError,
+    Rank,
+    Suit,
+)
 
 @pytest.fixture
 def deck():
@@ -26,21 +34,14 @@ def test_deck_initialization(deck):
 def test_deck_has_all_card_combinations():
     """
     Test that the deck contains all expected card combinations.
+
+    ``Card`` is a value object (equality by ``(suit, rank)``), so the deck's
+    cards can be compared directly against the full 32-card set built from
+    the suit × rank product — no ``str()`` projection needed.
     """
     deck = Deck()
-    expected_cards = set()
-    suit_symbols = {
-        Suit.SPADES: '♠',
-        Suit.HEARTS: '♥',
-        Suit.DIAMONDS: '♦',
-        Suit.CLUBS: '♣'
-    }
-    for suit in CARD_SUITS:
-        for rank in Rank:
-            expected_cards.add(f"{rank.value}{suit_symbols[suit]}")
-
-    actual_cards = {str(card) for card in deck.cards}
-    assert actual_cards == expected_cards
+    expected_cards = {Card(suit, rank) for suit in CARD_SUITS for rank in Rank}
+    assert set(deck.cards) == expected_cards
 
 def test_shuffle_changes_order(deck):
     """
@@ -53,7 +54,7 @@ def test_shuffle_changes_order(deck):
     assert deck.cards != original_order
     # Ensure all cards are still present
     assert len(deck.cards) == 32
-    assert sorted(str(card) for card in deck.cards) == sorted(str(card) for card in original_order)
+    assert Counter(deck.cards) == Counter(original_order)
 
 def test_cut_changes_order(deck):
     """
@@ -64,7 +65,7 @@ def test_cut_changes_order(deck):
     # The order should be different after cut
     assert original_order != deck.cards
     # The deck should still have the same cards (no loss or duplication)
-    assert sorted(str(card) for card in original_order) == sorted(str(card) for card in deck.cards)
+    assert Counter(original_order) == Counter(deck.cards)
 
 def test_deal_gives_each_player_8_unique_cards(deck):
     """
@@ -79,8 +80,8 @@ def test_deal_gives_each_player_8_unique_cards(deck):
         assert len(player.hand) == 8
 
     # Ensure all cards are unique and no card is missing
-    all_dealt_cards = [str(card) for player in players for card in player.hand]
-    assert sorted(all_dealt_cards) == sorted([str(card) for card in deck_copy.cards])
+    all_dealt_cards = [card for player in players for card in player.hand]
+    assert Counter(all_dealt_cards) == Counter(deck_copy.cards)
 
     # Deck should be empty after dealing
     assert deck.is_empty()

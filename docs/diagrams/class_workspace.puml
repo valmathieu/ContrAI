@@ -52,14 +52,17 @@ package "contrai-engine\n(MVC + game loop)" as P_engine {
     class "Round"       as E_round    #FFEFD9
 
     class "GameController" as E_ctrl  #EEEEEE
-    class "CliView"        as E_view  #EEEEEE
+    class "RichView"       as E_view  #FFEFD9
+    class "cli.py"         as E_cli   #FFEFD9
 
     E_player <|-- E_human
     E_player <|-- E_ai
     E_game *-- E_round
     E_game *-- E_player
-    E_ctrl ..> E_game : <<would drive>>
-    E_round ..> E_view : <<would consult>>
+    E_ctrl ..> E_game : <<would drive\n(stub)>>
+    E_round ..> E_view : <<consults\nvia hooks>>
+    E_cli ..> E_game : <<owns loop>>
+    E_cli ..> E_view : <<owns screens>>
 }
 
 ' =========================================================
@@ -105,7 +108,6 @@ note as N_analyzer_indep
   from `contrai_core`. Its `SuitSlot` is a
   suit-agnostic abstraction for combinatorial
   math, not a duplicate of core's `Suit`.
-  (CLAUDE.md §2 item 4)
 end note
 P_analyzer .. N_analyzer_indep
 

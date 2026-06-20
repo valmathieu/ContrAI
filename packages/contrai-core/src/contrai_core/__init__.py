@@ -10,10 +10,20 @@ from .deck import Deck
 from .hand import Hand
 from .team import Team
 from .player import BasePlayer
-from .bid import Bid, PassBid, ContractBid, DoubleBid, RedoubleBid, BidValidator
+from .bid import Bid, PassBid, ContractBid, DoubleBid, RedoubleBid, SlamLevel
+from .auction import Auction
 from .contract import Contract
 from .trick import Trick
-from .exceptions import InvalidPlayerCountError, InvalidCardCountError
+from .exceptions import (
+    ContraiError,
+    InvalidPlayerCountError,
+    InvalidCardCountError,
+    IllegalBidError,
+    PlayRuleViolation,
+    IllegalPlayError,
+    TrickStateError,
+    InvalidContractError,
+)
 
 __all__ = [
     "Suit",
@@ -29,9 +39,16 @@ __all__ = [
     "ContractBid",
     "DoubleBid",
     "RedoubleBid",
-    "BidValidator",
+    "SlamLevel",
+    "Auction",
     "Contract",
     "Trick",
+    "ContraiError",
     "InvalidPlayerCountError",
     "InvalidCardCountError",
+    "IllegalBidError",
+    "PlayRuleViolation",
+    "IllegalPlayError",
+    "TrickStateError",
+    "InvalidContractError",
 ]

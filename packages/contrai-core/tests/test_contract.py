@@ -1,23 +1,26 @@
 """Tests for the Contract class.
 
 Covers contract construction (direct + legacy), multiplier semantics,
-Capot vs numeric is_made / base-points logic, and equality.
+Slam / Solo Slam vs numeric base-points logic, and equality.
 
-Note: ``is_made`` currently approximates Capot success as
-``points >= 162`` (see ``Contract.is_made`` / ``Round.calculate_round_scores``).
-Per contree-domain.md §7.2 a Capot requires winning *all 8 tricks* —
-with the Belote 20-point bonus in play those two conditions diverge.
-The tests below pin current behaviour; a strict "8-trick" check is
-tracked as future work.
+Note: whether a contract was *made* is decided in
+``Round.calculate_round_scores`` — it requires trick counts (and, for
+Solo Slam, per-player trick counts) that ``Contract`` does not see, so
+``Contract`` deliberately exposes no ``is_made`` predicate.
 """
 
 import pytest
 
-from contrai_core.bid import ContractBid, PassBid
-from contrai_core.contract import Contract
-from contrai_core.player import BasePlayer
-from contrai_core.team import Team
-from contrai_core.types import Suit
+from contrai_core import (
+    BasePlayer,
+    Contract,
+    ContractBid,
+    InvalidContractError,
+    PassBid,
+    SlamLevel,
+    Suit,
+    Team,
+)
 
 
 @pytest.fixture
@@ -39,13 +42,18 @@ def team_ns(north, south):
 
 
 @pytest.fixture
-def numeric_contract(north, team_ns):
+def numeric_contract(north):
     return Contract(ContractBid(north, 100, Suit.SPADES))
 
 
 @pytest.fixture
-def capot_contract(north, team_ns):
-    return Contract(ContractBid(north, "Capot", Suit.HEARTS))
+def slam_contract(north):
+    return Contract(ContractBid(north, SlamLevel.SLAM, Suit.HEARTS))
+
+
+@pytest.fixture
+def solo_slam_contract(north):
+    return Contract(ContractBid(north, SlamLevel.SOLO_SLAM, Suit.HEARTS))
 
 
 # ---------------------------------------------------------------------------
@@ -65,29 +73,46 @@ class TestContractConstruction:
         assert contract.double is False
         assert contract.redouble is False
 
-    def test_construction_with_double(self, north, team_ns):
-        contract = Contract(ContractBid(north, 80, Suit.CLUBS), double=True)
+    def test_construction_with_double(self, north, south):
+        # The doubled state is derived from the recorded doubler.
+        contract = Contract(
+            ContractBid(north, 80, Suit.CLUBS), double_player=south
+        )
         assert contract.double is True
         assert contract.redouble is False
 
-    def test_construction_with_redouble(self, north, team_ns):
+    def test_construction_with_redouble(self, north, south):
         contract = Contract(
-            ContractBid(north, 80, Suit.CLUBS), double=True, redouble=True
+            ContractBid(north, 80, Suit.CLUBS),
+            double_player=south,
+            redouble_player=north,
         )
         assert contract.double is True
         assert contract.redouble is True
 
-    def test_from_legacy_matches_direct_construction(self, north, team_ns):
-        direct = Contract(ContractBid(north, 90, Suit.HEARTS))
-        legacy = Contract.from_legacy(north, 90, Suit.HEARTS)
-        assert direct == legacy
+    def test_double_redouble_players_default_to_none(self, north):
+        contract = Contract(ContractBid(north, 80, Suit.CLUBS))
+        assert contract.double_player is None
+        assert contract.redouble_player is None
 
-    def test_from_legacy_propagates_flags(self, north, team_ns):
-        legacy = Contract.from_legacy(
-            north, 100, Suit.SPADES, double=True, redouble=True
+    def test_construction_records_double_and_redouble_players(
+        self, north, south
+    ):
+        contract = Contract(
+            ContractBid(north, 100, Suit.HEARTS),
+            double_player=south,
+            redouble_player=north,
         )
-        assert legacy.double is True
-        assert legacy.redouble is True
+        assert contract.double_player is south
+        assert contract.redouble_player is north
+
+    def test_redouble_without_double_is_rejected(self, north, south):
+        # A surcoinche can only stand on top of a coinche, so the
+        # constructor refuses a redoubler with no doubler underneath it.
+        with pytest.raises(InvalidContractError):
+            Contract(
+                ContractBid(north, 80, Suit.CLUBS), redouble_player=south
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -96,87 +121,103 @@ class TestContractConstruction:
 
 
 class TestContractMultiplier:
-    def test_normal_multiplier(self, north, team_ns):
+    def test_normal_multiplier(self, north):
         contract = Contract(ContractBid(north, 80, Suit.SPADES))
         assert contract.get_multiplier() == 1
 
-    def test_double_multiplier(self, north, team_ns):
-        contract = Contract(ContractBid(north, 80, Suit.SPADES), double=True)
+    def test_double_multiplier(self, north, south):
+        contract = Contract(
+            ContractBid(north, 80, Suit.SPADES), double_player=south
+        )
         assert contract.get_multiplier() == 2
 
-    def test_redouble_multiplier(self, north, team_ns):
+    def test_redouble_multiplier(self, north, south):
         contract = Contract(
-            ContractBid(north, 80, Suit.SPADES), double=True, redouble=True
-        )
-        assert contract.get_multiplier() == 4
-
-    def test_redouble_dominates_double_flag(self, north, team_ns):
-        # Current behaviour: redouble flag wins regardless of double flag state.
-        contract = Contract(
-            ContractBid(north, 80, Suit.SPADES), double=False, redouble=True
+            ContractBid(north, 80, Suit.SPADES),
+            double_player=south,
+            redouble_player=north,
         )
         assert contract.get_multiplier() == 4
 
 
 # ---------------------------------------------------------------------------
-# is_made (incl. Capot edge case — see module docstring)
+# Slam helpers and team accessors
 # ---------------------------------------------------------------------------
 
 
-class TestContractIsMade:
-    @pytest.mark.parametrize(
-        "team_points,expected",
-        [(79, False), (80, True), (81, True), (162, True)],
-    )
-    def test_numeric_threshold(self, numeric_contract, team_points, expected):
-        # Override declared contract value (100) by re-fixturing locally.
-        contract = Contract(
-            ContractBid(numeric_contract.player, 80, Suit.SPADES)
-        )
-        assert contract.is_made(team_points) is expected
+class TestContractSlamHelpers:
+    def test_is_slam_true(self, slam_contract):
+        assert slam_contract.is_slam() is True
 
-    def test_numeric_made_at_exact_threshold(self, numeric_contract):
-        assert numeric_contract.is_made(100) is True
-        assert numeric_contract.is_made(99) is False
+    def test_is_slam_false_for_numeric(self, numeric_contract):
+        assert numeric_contract.is_slam() is False
 
-    @pytest.mark.parametrize(
-        "team_points,expected",
-        [(0, False), (100, False), (161, False), (162, True), (200, True)],
-    )
-    def test_capot_threshold(self, capot_contract, team_points, expected):
-        # TODO: strict rule is "all 8 tricks". With Belote (+20) a team could
-        # in principle reach 162 without taking all tricks — see module
-        # docstring and contree-domain.md §7.2.
-        assert capot_contract.is_made(team_points) is expected
+    def test_is_slam_false_for_solo_slam(self, solo_slam_contract):
+        # is_slam is the narrow Slam-only predicate.
+        assert solo_slam_contract.is_slam() is False
 
+    def test_is_solo_slam_true(self, solo_slam_contract):
+        assert solo_slam_contract.is_solo_slam() is True
 
-# ---------------------------------------------------------------------------
-# Capot helpers and team accessors
-# ---------------------------------------------------------------------------
+    def test_is_solo_slam_false_for_slam(self, slam_contract):
+        assert slam_contract.is_solo_slam() is False
 
+    def test_is_solo_slam_false_for_numeric(self, numeric_contract):
+        assert numeric_contract.is_solo_slam() is False
 
-class TestContractCapotHelpers:
-    def test_is_capot_true(self, capot_contract):
-        assert capot_contract.is_capot() is True
+    def test_is_slam_family_true_for_slam(self, slam_contract):
+        assert slam_contract.is_slam_family() is True
 
-    def test_is_capot_false_for_numeric(self, numeric_contract):
-        assert numeric_contract.is_capot() is False
+    def test_is_slam_family_true_for_solo_slam(self, solo_slam_contract):
+        assert solo_slam_contract.is_slam_family() is True
+
+    def test_is_slam_family_false_for_numeric(self, numeric_contract):
+        assert numeric_contract.is_slam_family() is False
 
     def test_get_base_points_numeric(self, numeric_contract):
         assert numeric_contract.get_base_points() == 100
 
-    def test_get_base_points_capot(self, capot_contract):
-        assert capot_contract.get_base_points() == 250
+    def test_get_base_points_slam(self, slam_contract):
+        # 250 = the contract base (auction precedence + half of the
+        # at-risk amount). The other half is the flat card-pile
+        # substitute returned by get_slam_card_substitute().
+        assert slam_contract.get_base_points() == 250
 
+    def test_get_base_points_solo_slam(self, solo_slam_contract):
+        assert solo_slam_contract.get_base_points() == 500
 
-class TestContractTeamAccessors:
-    def test_get_attacking_team(self, numeric_contract, team_ns):
-        assert numeric_contract.get_attacking_team() is team_ns
+    def test_get_slam_card_substitute_numeric_is_zero(self, numeric_contract):
+        # Numeric contracts use the actual 162 of card points — no
+        # substitute applies.
+        assert numeric_contract.get_slam_card_substitute() == 0
 
-    def test_get_defending_team_returns_none_today(self, numeric_contract):
-        # Documented placeholder in contract.py — defending team is computed
-        # at game level today, not on the Contract itself.
-        assert numeric_contract.get_defending_team() is None
+    def test_get_slam_card_substitute_slam(self, slam_contract):
+        # The 162 trick-pile is replaced by a flat 250 for Slam.
+        assert slam_contract.get_slam_card_substitute() == 250
+
+    def test_get_slam_card_substitute_solo_slam(self, solo_slam_contract):
+        # Solo Slam: substitute is 500.
+        assert solo_slam_contract.get_slam_card_substitute() == 500
+
+    def test_at_risk_total_slam_normal(self, slam_contract):
+        # The full at-risk amount for a Slam at normal multiplier:
+        # (base + substitute) × 1 = 250 + 250 = 500.
+        amount = (
+            slam_contract.get_base_points()
+            + slam_contract.get_slam_card_substitute()
+        ) * slam_contract.get_multiplier()
+        assert amount == 500
+
+    def test_at_risk_total_solo_slam_doubled(self, north, south):
+        # Solo Slam doubled: (500 + 500) × 2 = 2000.
+        contract = Contract(
+            ContractBid(north, SlamLevel.SOLO_SLAM, Suit.HEARTS), double_player=south
+        )
+        amount = (
+            contract.get_base_points()
+            + contract.get_slam_card_substitute()
+        ) * contract.get_multiplier()
+        assert amount == 2000
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +226,7 @@ class TestContractTeamAccessors:
 
 
 class TestContractDunders:
-    def test_str_normal(self, north, team_ns):
+    def test_str_normal(self, north):
         contract = Contract(ContractBid(north, 100, Suit.SPADES))
         assert "100" in str(contract)
         assert str(Suit.SPADES) in str(contract)
@@ -193,24 +234,28 @@ class TestContractDunders:
         assert "Doubled" not in str(contract)
         assert "Redoubled" not in str(contract)
 
-    def test_str_doubled(self, north, team_ns):
-        contract = Contract(ContractBid(north, 100, Suit.SPADES), double=True)
+    def test_str_doubled(self, north, south):
+        contract = Contract(
+            ContractBid(north, 100, Suit.SPADES), double_player=south
+        )
         assert "Doubled" in str(contract)
 
-    def test_str_redoubled(self, north, team_ns):
+    def test_str_redoubled(self, north, south):
         contract = Contract(
-            ContractBid(north, 100, Suit.SPADES), double=True, redouble=True
+            ContractBid(north, 100, Suit.SPADES),
+            double_player=south,
+            redouble_player=north,
         )
         assert "Redoubled" in str(contract)
 
-    def test_equality_same_bid_and_flags(self, north, team_ns):
+    def test_equality_same_bid_and_flags(self, north):
         a = Contract(ContractBid(north, 100, Suit.SPADES))
         b = Contract(ContractBid(north, 100, Suit.SPADES))
         assert a == b
 
-    def test_inequality_different_flags(self, north, team_ns):
+    def test_inequality_different_flags(self, north, south):
         a = Contract(ContractBid(north, 100, Suit.SPADES))
-        b = Contract(ContractBid(north, 100, Suit.SPADES), double=True)
+        b = Contract(ContractBid(north, 100, Suit.SPADES), double_player=south)
         assert a != b
 
     def test_inequality_against_non_contract(self, numeric_contract, north):

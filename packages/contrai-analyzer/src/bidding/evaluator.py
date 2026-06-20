@@ -1,7 +1,7 @@
 """
 Bidding Decision Matrix Evaluator.
 
-This module evaluates a player's hand against a truth table of Contrée bidding
+This module evaluates a player's hand against a truth table of contrée bidding
 rules to suggest the optimal opening bid for the trump slot, and estimates the
 probability that an opponent can open in each non-trump slot.
 """

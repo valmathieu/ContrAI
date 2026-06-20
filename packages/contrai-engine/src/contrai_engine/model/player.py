@@ -1,10 +1,91 @@
 # Player, HumanPlayer, AiPlayer classes
 
 from abc import ABC, abstractmethod
-from contrai_core.player import BasePlayer
+from typing import Optional
+
+from contrai_core.auction import Auction
+from contrai_core.bid import (
+    Bid,
+    ContractBid,
+    DoubleBid,
+    PassBid,
+    RedoubleBid,
+    SlamLevel,
+)
 from contrai_core.card import Card
-from contrai_core.types import Suit, Rank, CARD_SUITS
+from contrai_core.exceptions import InvalidContractError
+from contrai_core.player import BasePlayer
+from contrai_core.types import CARD_SUITS, Rank, Suit
 SUITS = CARD_SUITS
+
+
+# ---------------------------------------------------------------------------
+# Wire format bridge
+# ---------------------------------------------------------------------------
+# The AI strategy in this module still operates internally on the
+# legacy "wire" representation of a bid:
+#
+#     'Pass' | 'Double' | 'Redouble' | (value, suit)
+#
+# The Auction API works on real :class:`Bid` instances. These two
+# module-level helpers bridge between the two formats so the engine
+# boundary can pass Bid objects while the AI's expert table keeps
+# using its existing tuple-based helpers. Future AI families should
+# consume :meth:`Auction.legal_actions` directly and let these go.
+
+
+def wire_to_bid(player: BasePlayer, wire) -> Bid:
+    """Lift a legacy wire bid choice to a :class:`Bid` instance.
+
+    Args:
+        player: The player making the bid (attached to the result).
+        wire: ``'Pass'``, ``'Double'``, ``'Redouble'`` or
+            ``(value, suit)``. Unrecognised payloads fall back to a
+            :class:`PassBid` so the caller can still hand the result
+            to :meth:`Auction.apply`, which raises
+            :class:`IllegalBidError` if the engine wiring is broken.
+
+    Returns:
+        The matching :class:`Bid` subclass instance.
+    """
+
+    if wire == 'Pass':
+        return PassBid(player)
+    if wire == 'Double':
+        return DoubleBid(player)
+    if wire == 'Redouble':
+        return RedoubleBid(player)
+    if isinstance(wire, tuple) and len(wire) == 2:
+        value, suit = wire
+        try:
+            return ContractBid(player, value, suit)
+        except InvalidContractError:
+            # Bad contract value/suit — fall back to Pass. Catch the
+            # specific domain error rather than the ValueError umbrella
+            # so an unrelated ValueError from ContractBid still surfaces.
+            return PassBid(player)
+    return PassBid(player)
+
+
+def bid_to_wire(bid: Bid):
+    """Project a :class:`Bid` instance back to the legacy wire format.
+
+    Used by the AI strategy and by the Rich view's bidding-history
+    renderer, both of which still consume the legacy
+    ``'Pass'`` / ``'Double'`` / ``'Redouble'`` / ``(value, suit)``
+    shape.
+    """
+
+    if isinstance(bid, PassBid):
+        return 'Pass'
+    if isinstance(bid, DoubleBid):
+        return 'Double'
+    if isinstance(bid, RedoubleBid):
+        return 'Redouble'
+    if isinstance(bid, ContractBid):
+        return (bid.value, bid.suit)
+    return 'Pass'
+
 
 class Player(BasePlayer, ABC):
     @property
@@ -13,7 +94,22 @@ class Player(BasePlayer, ABC):
         return isinstance(self, HumanPlayer)
 
     @abstractmethod
-    def choose_bid(self, current_bids):
+    def choose_bid(self, auction: Auction) -> Optional[Bid]:
+        """Choose a :class:`Bid` for the current auction state.
+
+        Args:
+            auction: The current :class:`Auction`. Use
+                ``auction.legal_actions(self)`` to enumerate legal
+                bids, or query ``auction.last_contract_bid`` /
+                ``auction.partner_bid(self)`` for the strategy
+                helpers.
+
+        Returns:
+            A :class:`Bid` instance (validated by the engine via
+            :meth:`Auction.apply`), or ``None`` to defer to the view
+            (the contract for :class:`HumanPlayer`).
+        """
+
         pass
 
     @abstractmethod
@@ -21,10 +117,14 @@ class Player(BasePlayer, ABC):
         pass
 
 class HumanPlayer(Player):
-    def choose_bid(self, current_bids):
-        # This method should be called by the controller via the view
-        # Example: return ('Pass') or (value, suit) or 'Double' or 'Redouble'
-        return None  # To be implemented in controller/view
+    def choose_bid(self, auction: Auction) -> None:
+        """Defer to the view's :meth:`request_bid_action`.
+
+        Returns ``None`` by design — Round's bidding loop then
+        consults the view to actually drive the human's input.
+        """
+
+        return None
 
     def choose_card(self, trick, contract, playable_cards):
         # This method should be called by the controller via the view
@@ -35,18 +135,31 @@ class AiPlayer(Player):
     AI Player with sophisticated bidding strategy based on functional specifications.
 
     Bidding strategy:
-    1. Evaluate hand according to bidding table (80-160 points + Capot)
+    1. Evaluate hand according to bidding table (80-160 points + Slam / Solo Slam)
     2. If partner hasn't bid or bid lower, make initial bid if it's hand is strong enough
     3. If partner has bid, support with incremental bidding (+10 per external ace, +10 for trump complement)
     4. If multiple bid are possible : choose best suit based on strength, belote
     """
 
-    # Bidding table. The `contract` column is stored numerically — 250 is the
-    # internal sentinel for Capot, matching ContractBid.get_numeric_value /
-    # Contract.get_base_points in contrai-core. It's translated back to the
-    # string 'Capot' at the bid-return boundary (see _make_initial_bid /
-    # _support_partner_bid). The Capot row is gated purely by the trick
-    # estimator (tricks_min=8) per the agreed AI criterion.
+    # Internal numeric values used in BIDDING_TABLE for the all-tricks
+    # bids. Sourced from the single source of truth on the core
+    # :class:`SlamLevel` enum so the AI's ladder arithmetic and the
+    # domain scoring never drift apart.
+    SLAM_NUMERIC = SlamLevel.SLAM.base_value
+    SOLO_SLAM_NUMERIC = SlamLevel.SOLO_SLAM.base_value
+
+    # Bidding table. The ``contract`` column is stored numerically and
+    # matches each contract's *base value* (what the bidder commits to,
+    # used for auction precedence). The two all-tricks bids live at the
+    # bottom of the table:
+    #   - ``SLAM_NUMERIC``      (250) — team must win all 8 tricks.
+    #   - ``SOLO_SLAM_NUMERIC`` (500) — bidder personally must win all 8.
+    # Both rows are gated purely by the trick estimator (``tricks_min=8``)
+    # in this first pass. The numeric values match
+    # ``ContractBid.get_numeric_value`` / ``Contract.get_base_points`` in
+    # ``contrai-core``; they're translated back to the ``SlamLevel``
+    # members at the bid-return boundary (see ``_make_initial_bid`` /
+    # ``_support_partner_bid``).
     BIDDING_TABLE = [
         # (contract, trump_expected, trump_min, aces, tricks_min, belote_required)
         (80, {'jack_or_nine': True, 'jack_and_nine': False}, 3, 1, 4, False),
@@ -58,24 +171,97 @@ class AiPlayer(Player):
         (140, {'jack_or_nine': True, 'jack_and_nine': False}, 4, 3, 6, True),
         (150, {'jack_or_nine': False, 'jack_and_nine': True}, 4, 3, 6, True),
         (160, {'jack_or_nine': False, 'jack_and_nine': True, 'ace_required': True}, 5, 3, 7, True),
-        (250, {}, 0, 0, 8, False),  # Capot — only the trick estimator gates it.
+        (SLAM_NUMERIC, {}, 0, 0, 8, False),  # Slam — only the trick estimator gates it.
+        # TODO: tune SoloSlam gate — currently shares Slam's gate. A
+        # stricter rule (e.g. holds the 8 top trumps in trump-led play,
+        # or all aces + trump master) would make this conservative.
+        (SOLO_SLAM_NUMERIC, {}, 0, 0, 8, False),  # Solo Slam — same gate as Slam for now.
     ]
-
-    # Internal numeric value used in BIDDING_TABLE for Capot.
-    CAPOT_NUMERIC = 250
 
     # Suit preference order (Spades, Hearts, Diamonds, Clubs)
     SUIT_PREFERENCE = SUITS
 
-    def choose_bid(self, current_bids):
-        """
-        Choose a bid based on simple AI strategy.
+    def choose_bid(self, auction: Auction) -> Bid:
+        """Choose a :class:`Bid` for the current auction state.
+
+        The expert bidding table still operates on the legacy wire
+        format internally; this method adapts the :class:`Auction`
+        boundary into wire-format inputs, delegates to
+        :meth:`_choose_wire`, and lifts the result back to a
+        :class:`Bid` for the engine to apply. The engine is
+        responsible for validating legality — see
+        :meth:`Auction.apply`.
 
         Args:
-            current_bids: List of (player, bid) tuples from the current bidding round
+            auction: The current :class:`Auction` state.
 
         Returns:
-            str or tuple: 'Pass', 'Double', 'Redouble', or (value, suit)
+            A :class:`Bid` instance the engine will validate.
+        """
+
+        # A standing Coinche (Double) freezes the auction: no further
+        # numeric contract bids are legal — only Pass, or a Surcoinche
+        # (Redouble) from the team that owns the contract (see
+        # ``Auction._is_contract_value_legal`` / ``contree-domain.md
+        # §5.3``). The expert bidding table below has no model of this
+        # freeze and would happily try to raise — including raising its
+        # *own* partner's contract — producing an illegal ContractBid.
+        # Resolve the frozen states here before delegating.
+        if auction.has_redouble:
+            # Already surcoinched; nothing legal remains but to pass.
+            return PassBid(self)
+        if auction.has_double:
+            return self._choose_under_double(auction)
+
+        current_bids = [(b.player, bid_to_wire(b)) for b in auction.bids]
+        wire_choice = self._choose_wire(current_bids)
+        bid = wire_to_bid(self, wire_choice)
+
+        # Safety net honouring the Auction design contract: callers must
+        # only propose legal bids, there is no silent force-a-Pass in
+        # ``Auction.apply`` (it raises ``IllegalBidError``). If the
+        # expert table still produced an illegal bid in some unmodeled
+        # edge case, fall back to the always-legal Pass rather than
+        # crash the whole game mid-auction.
+        if not auction.is_legal(bid):
+            return PassBid(self)
+        return bid
+
+    def _choose_under_double(self, auction: Auction) -> Bid:
+        """Pick a bid when a Coinche (Double) has frozen the auction.
+
+        With a Double standing, the only legal actions are :class:`PassBid`
+        and — for the side that owns the contract — a :class:`RedoubleBid`
+        (Surcoinche). Numeric raises are illegal, so the expert bidding
+        table must not run. We offer a Surcoinche only when we are on the
+        contracting team and :meth:`_should_redouble` approves; otherwise
+        we pass.
+
+        Args:
+            auction: The current (doubled) :class:`Auction` state.
+
+        Returns:
+            A :class:`RedoubleBid` when surcoinching is both legal and
+            strategically chosen, else a :class:`PassBid`.
+        """
+
+        contract_bid = auction.last_contract_bid
+        if contract_bid is not None and contract_bid.player.team is self.team:
+            redouble = RedoubleBid(self)
+            if auction.is_legal(redouble) and self._should_redouble():
+                return redouble
+        return PassBid(self)
+
+    def _choose_wire(self, current_bids):
+        """Strategy core: pick a wire-format bid for ``current_bids``.
+
+        Args:
+            current_bids: List of ``(player, wire_bid)`` tuples from
+                the current bidding round in chronological order.
+
+        Returns:
+            ``'Pass'``, ``'Double'``, ``'Redouble'``, or
+            ``(value, suit)``.
         """
 
         # Get current game state
@@ -102,14 +288,19 @@ class AiPlayer(Player):
 
     @classmethod
     def _bid_value_numeric(cls, value):
-        """Coerce a contract value (numeric or 'Capot' string) to int.
+        """Coerce a contract value (numeric or :class:`SlamLevel`) to int.
 
-        The wire format on `current_bids` carries Capot as the literal
-        string 'Capot' (see Round._bid_to_legacy_format), so comparisons
-        anywhere upstream of the wire boundary must normalise.
+        The wire format on ``current_bids`` carries the all-tricks bids
+        as :class:`SlamLevel` members (see the wire-format bridge in
+        :mod:`contrai_engine.model.player`), so the AI's ladder
+        arithmetic must normalise them to their auction-precedence /
+        base-point numeric: ``SlamLevel.SLAM`` → 250,
+        ``SlamLevel.SOLO_SLAM`` → 500.
         """
 
-        return cls.CAPOT_NUMERIC if value == 'Capot' else value
+        if isinstance(value, SlamLevel):
+            return value.base_value
+        return value
 
     @staticmethod
     def _get_last_bid(current_bids):
@@ -185,7 +376,7 @@ class AiPlayer(Player):
     def _evaluate_suit_as_trump(self, suit):
         """Evaluate a specific suit as potential trump."""
         
-        trump_cards = [card for card in self.hand if card.suit == suit]
+        trump_cards = self.hand.cards_of_suit(suit)
 
         if not trump_cards:
             return {'contract': 0, 'strength': 0, 'has_belote': False}
@@ -252,10 +443,10 @@ class AiPlayer(Player):
             if card.suit != trump_suit:
                 if card.rank == Rank.ACE:
                     tricks += 1
-                if card.rank == Rank.TEN and self._count_cards_in_suit(card.suit) > 1:
+                if card.rank == Rank.TEN and self.hand.count_suit(card.suit) > 1:
                     tricks += 1
-                if (card.rank == Rank.KING or card.rank == Rank.QUEEN) and self._suit_has_rank(card.suit, Rank.ACE)\
-                        and self._suit_has_rank(card.suit, Rank.TEN):
+                if (card.rank == Rank.KING or card.rank == Rank.QUEEN) and self.hand.has_card(card.suit, Rank.ACE)\
+                        and self.hand.has_card(card.suit, Rank.TEN):
                     tricks += 1
 
         return min(tricks, 8)  # Maximum 8 tricks in a round
@@ -301,8 +492,8 @@ class AiPlayer(Player):
         # Choose best suit among candidates
         chosen_suit = self._choose_best_suit(best_suits, suit_evaluations)
 
-        # Translate the internal Capot sentinel back to the wire format.
-        bid_value = 'Capot' if max_contract == self.CAPOT_NUMERIC else max_contract
+        # Translate the internal numeric sentinels back to the wire format.
+        bid_value = self._numeric_to_wire(max_contract)
         return bid_value, chosen_suit
 
     def _support_partner_bid(self, partner_bid, last_bid):
@@ -319,7 +510,7 @@ class AiPlayer(Player):
                 contribution += 10
 
         # +10 if we have trump complement (Jack or 9)
-        trump_cards = [card for card in self.hand if card.suit == partner_suit]
+        trump_cards = self.hand.cards_of_suit(partner_suit)
         has_jack = any(card.rank == Rank.JACK for card in trump_cards)
         has_nine = any(card.rank == Rank.NINE for card in trump_cards)
 
@@ -331,12 +522,29 @@ class AiPlayer(Player):
         last_value = self._bid_value_numeric(last_value)
         new_value = last_value + contribution
 
-        # Cap at Capot (the top of the table); don't try to raise past it.
-        if new_value > self.CAPOT_NUMERIC or contribution == 0:
+        # Cap at SoloSlam (the top of the table); don't try to raise past it.
+        if new_value > self.SOLO_SLAM_NUMERIC or contribution == 0:
             return 'Pass'
 
-        bid_value = 'Capot' if new_value == self.CAPOT_NUMERIC else new_value
+        bid_value = self._numeric_to_wire(new_value)
         return bid_value, partner_suit
+
+    @classmethod
+    def _numeric_to_wire(cls, value):
+        """Translate the bidding-table numeric back to the wire value.
+
+        Numeric contracts (80–160) round-trip unchanged. The two
+        all-tricks numerics become their :class:`SlamLevel` members:
+        ``SLAM_NUMERIC`` → ``SlamLevel.SLAM``, ``SOLO_SLAM_NUMERIC`` →
+        ``SlamLevel.SOLO_SLAM`` — so the wire ``(value, suit)`` tuple
+        carries the same value a :class:`ContractBid` will hold.
+        """
+
+        if value == cls.SOLO_SLAM_NUMERIC:
+            return SlamLevel.SOLO_SLAM
+        if value == cls.SLAM_NUMERIC:
+            return SlamLevel.SLAM
+        return value
 
     def _choose_best_suit(self, candidate_suits, suit_evaluations):
         """Choose the best suit from candidates."""
@@ -363,7 +571,7 @@ class AiPlayer(Player):
     def _evaluate_trump_tricks(self, suit):
         """Evaluate potential tricks won with trump suit."""
 
-        trump_cards = [card for card in self.hand if card.suit == suit]
+        trump_cards = self.hand.cards_of_suit(suit)
         expected_won_tricks = 0
 
         has_jack = False
@@ -399,6 +607,13 @@ class AiPlayer(Player):
         Returns:
             Card: The chosen card to play
         """
+
+        # Lazy-init card tracking. The engine never calls
+        # initialize_card_tracking() explicitly, so without this guard
+        # _is_master_card / _opponents_might_have_trump crash on the
+        # first non-opening trick.
+        if not hasattr(self, '_fallen_cards'):
+            self.initialize_card_tracking()
 
         # Determine strategy based on position in trick
         # TODO: adapt the code using the game class to know the trick number
@@ -461,9 +676,9 @@ class AiPlayer(Player):
     def _play_opening_card(self, contract, playable_cards):
         """Play the very first card of the round."""
 
-        trump_suit = contract[2] if contract else None
+        trump_suit = contract.suit if contract else None
 
-        if contract[0].team == self.team:
+        if contract and contract.player.team == self.team:
             # Our team has the contract - play the strongest trump
             trump_cards = [c for c in playable_cards if c.suit == trump_suit]
             if trump_cards:
@@ -478,7 +693,7 @@ class AiPlayer(Player):
             aces = [c for c in playable_cards if c.rank == Rank.ACE]
             if aces:
                 # Play ace from the shortest suit
-                return min(aces, key=lambda c: self._count_cards_in_suit(c.suit))
+                return min(aces, key=lambda c: self.hand.count_suit(c.suit))
 
         # Default: play the lowest value card (excluding trump unless only trumps available)
         non_trump_cards = [c for c in playable_cards if c.suit != trump_suit] if trump_suit else playable_cards
@@ -500,10 +715,10 @@ class AiPlayer(Player):
     def _play_leading_card(self, contract, playable_cards):
         """Play when leading subsequent tricks."""
 
-        trump_suit = contract[2] if contract else None
+        trump_suit = contract.suit if contract else None
 
         # If the team has the contract and opponents might still have trump, play the strongest trump
-        if contract[0].team == self.team and self._opponents_might_have_trump(trump_suit):
+        if contract and contract.player.team == self.team and self._opponents_might_have_trump(trump_suit):
             trump_cards = [c for c in playable_cards if c.suit == trump_suit]
             if trump_cards:
                 return max(trump_cards, key=lambda c: c.get_order(trump_suit))
@@ -512,12 +727,12 @@ class AiPlayer(Player):
         # No trump left with opponents - play ace from the longest suit
         aces = [c for c in playable_cards if c.rank == Rank.ACE]
         if aces:
-            return max(aces, key=lambda c: self._count_cards_in_suit(c.suit))
+            return max(aces, key=lambda c: self.hand.count_suit(c.suit))
 
         # Play master card from the longest suit
         master_cards = [c for c in playable_cards if self._is_master_card(c, trump_suit)]
         if master_cards:
-            return max(master_cards, key=lambda c: self._count_cards_in_suit(c.suit))
+            return max(master_cards, key=lambda c: self.hand.count_suit(c.suit))
 
         # Default: play the lowest value card (excluding trump unless only trumps available)
         non_trump_cards = [c for c in playable_cards if c.suit != trump_suit] if trump_suit else playable_cards
@@ -547,27 +762,50 @@ class AiPlayer(Player):
             return self._play_when_team_losing(trick, contract, playable_cards)
 
     def _play_when_team_winning(self, trick, contract, playable_cards):
-        """Play when our team is currently winning the trick."""
+        """Play when our team is currently winning the trick.
 
-        trump_suit = contract[2] if contract else None
+        Partner already secures the trick, so the goal is to add value
+        (high-points cards) to the pile WITHOUT wasting trumps:
+
+        1. Follow suit if able — pile the highest-points lead-suit card
+           on partner's win.
+        2. Cannot follow suit → discard a NON-TRUMP card. Don't dump
+           trumps onto a trick the partner has already locked down.
+           Prefer non-master cards (preserve cards that can still win
+           their suit later); within the candidate set, pick the
+           highest-points to maximize this trick's value.
+        3. Hand has nothing but trumps → forced to play one. Use the
+           lowest trump so we don't waste the Jack or 9.
+        """
+        trump_suit = contract.suit if contract else None
         led_suit = trick.get_led_suit()
 
-        # Try to follow suit with the highest point card
+        # 1. Follow suit if able.
         same_suit_cards = [c for c in playable_cards if c.suit == led_suit]
         if same_suit_cards:
             return max(same_suit_cards, key=lambda c: c.get_points(trump_suit))
 
-        # Can't follow suit - play the highest point card (excluding masters)
-        non_master_cards = [c for c in playable_cards if not self._is_master_card(c, trump_suit)]
-        if non_master_cards:
-            return max(non_master_cards, key=lambda c: c.get_points(trump_suit))
+        # 2. Discard a non-trump card.
+        non_trump_cards = [
+            c for c in playable_cards if c.suit != trump_suit
+        ]
+        if non_trump_cards:
+            non_master_non_trump = [
+                c for c in non_trump_cards
+                if not self._is_master_card(c, trump_suit)
+            ]
+            candidates = non_master_non_trump or non_trump_cards
+            return max(candidates, key=lambda c: c.get_points(trump_suit))
 
+        # 3. Only trumps in hand — dump the lowest one.
+        if playable_cards:
+            return min(playable_cards, key=lambda c: c.get_order(trump_suit))
         return playable_cards[0]
 
     def _play_when_team_losing(self, trick, contract, playable_cards):
         """Play when opponents are currently winning the trick."""
 
-        trump_suit = contract[2] if contract else None
+        trump_suit = contract.suit if contract else None
         led_suit = trick.get_led_suit()
         current_best = self._get_strongest_card_in_trick(trick, trump_suit)
 
@@ -598,30 +836,11 @@ class AiPlayer(Player):
         non_master_cards = [c for c in playable_cards if not self._is_master_card(c, trump_suit)]
         if non_master_cards:
             return min(non_master_cards, key=lambda c: (
-                self._count_cards_in_suit(c.suit),
+                self.hand.count_suit(c.suit),
                 c.get_points(trump_suit)
             ))
 
         return playable_cards[0]
-
-    def _count_cards_in_suit(self, suit):
-        """Count how many cards we have in the given suit."""
-
-        return sum(1 for card in self.hand if card.suit == suit)
-
-    def _suit_has_rank(self, suit, rank):
-        """
-        Check if the player has a specific rank in a given suit.
-
-        Args:
-            suit: The suit to check (Suit.SPADES, Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS)
-            rank: The rank to look for (Rank.SEVEN, Rank.EIGHT, Rank.NINE, Rank.TEN, Rank.JACK, Rank.QUEEN, Rank.KING, Rank.ACE)
-
-        Returns:
-            bool: True if the player has the specified rank in the specified suit
-        """
-
-        return any(card.suit == suit and card.rank == rank for card in self.hand)
 
     def _opponents_might_have_trump(self, trump_suit):
         """Check if opponents might still have trump cards."""
@@ -629,7 +848,7 @@ class AiPlayer(Player):
         # TODO: upgrade to exclude partner if we can track their cards
         # Count trump cards we've seen fall
         trump_fallen = len(self._fallen_cards.get(trump_suit, set()))
-        trump_in_hand = sum(1 for card in self.hand if card.suit == trump_suit)
+        trump_in_hand = self.hand.count_suit(trump_suit)
 
         # Total trump cards is 8, if we've seen less than 8 - trump_in_hand, opponents might have some
         return trump_fallen < (8 - trump_in_hand)

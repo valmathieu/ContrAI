@@ -1,4 +1,4 @@
-# Game class for the "contree" card game.
+# Game class for the contrée card game.
 # This class manages the game state, players, teams, deck, and game logic.
 
 from contrai_core.deck import Deck
@@ -12,7 +12,7 @@ import random
 
 class Game:
     """
-    Represents a full game of "contree".
+    Represents a full game of contrée.
 
     Attributes:
         teams (list[Team]): The two teams playing the game.
@@ -116,6 +116,11 @@ class Game:
         # Start new round (deal cards, set dealer, etc.)
         self.start_new_round()
 
+        # Notify the view that a fresh round has been dealt. Used by
+        # interactive views to log the deal in the rolling event log.
+        if view is not None and hasattr(view, 'on_round_dealt'):
+            view.on_round_dealt(self.current_round)
+
         # Bidding phase - delegate to Round
         contract = self.current_round.manage_bidding(view)
         self.current_contract = contract
@@ -123,6 +128,9 @@ class Game:
         # If no contract (all passed), handle failed contract
         if not contract:
             round_scores = self.current_round.handle_failed_contract()
+            # Notify the view that the round will be redealt.
+            if view is not None and hasattr(view, 'on_all_pass_redeal'):
+                view.on_all_pass_redeal(self.current_round)
             return {
                 'contract': None,
                 'scores': round_scores,

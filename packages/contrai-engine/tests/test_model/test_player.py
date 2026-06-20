@@ -1,11 +1,79 @@
 # Unit tests for the Player classes (Player, HumanPlayer, AiPlayer)
 
 import pytest
-from contrai_engine.model.player import HumanPlayer, AiPlayer
-from contrai_core import Hand
+from contrai_engine.model.player import HumanPlayer, AiPlayer, wire_to_bid
+from contrai_core import (
+    Auction,
+    Contract,
+    ContractBid,
+    DoubleBid,
+    Hand,
+    PassBid,
+    RedoubleBid,
+    SlamLevel,
+)
 from contrai_core.card import Card
 from contrai_core.team import Team
 from contrai_core.types import Suit, Rank
+
+
+def _contract(player, value, suit):
+    """Build a real Contract for the AiPlayer trick-taking tests.
+
+    The original tests passed a ``(player, value, suit)`` tuple, but the
+    engine threads the actual ``Contract`` object from ``Round`` into
+    ``AiPlayer.choose_card``. This helper keeps the test bodies readable
+    while matching the production type.
+    """
+    return Contract(ContractBid(player, value, suit))
+
+
+def _auction(bids_with_players=()):
+    """Build an :class:`Auction` from a list of ``(player, wire_bid)`` tuples.
+
+    ``AiPlayer.choose_bid`` now takes an Auction; the existing tests
+    were written when it took the legacy ``[(player, wire), …]`` list.
+    This helper lifts each (player, wire) entry into the matching
+    :class:`Bid` and packs the lot into an Auction so the test bodies
+    can stay close to their original shape.
+    """
+    bids = tuple(wire_to_bid(p, w) for p, w in bids_with_players)
+    return Auction(bids)
+
+
+class TestWireToBid:
+    """Test the legacy wire-format → :class:`Bid` bridge."""
+
+    @pytest.fixture
+    def player(self):
+        """A plain player to attach bids to."""
+        return AiPlayer("Bot", "South")
+
+    def test_keyword_wires_map_to_their_bid_types(self, player):
+        """``'Pass'`` / ``'Double'`` / ``'Redouble'`` lift to their classes."""
+        assert isinstance(wire_to_bid(player, "Pass"), PassBid)
+        assert isinstance(wire_to_bid(player, "Double"), DoubleBid)
+        assert isinstance(wire_to_bid(player, "Redouble"), RedoubleBid)
+
+    def test_valid_tuple_yields_contract_bid(self, player):
+        """A legal ``(value, suit)`` tuple builds a matching ContractBid."""
+        bid = wire_to_bid(player, (80, Suit.HEARTS))
+        assert isinstance(bid, ContractBid)
+        assert bid.value == 80
+        assert bid.suit == Suit.HEARTS
+
+    def test_invalid_contract_value_falls_back_to_pass(self, player):
+        """A bad contract value raises InvalidContractError, caught as a Pass.
+
+        85 is not on ``ContractBid.VALID_VALUES``, so construction raises
+        :class:`InvalidContractError`. The bridge must swallow that
+        specific domain error and fall back to a :class:`PassBid`.
+        """
+        assert isinstance(wire_to_bid(player, (85, Suit.HEARTS)), PassBid)
+
+    def test_unknown_payload_falls_back_to_pass(self, player):
+        """An unrecognised wire payload falls back to a Pass."""
+        assert isinstance(wire_to_bid(player, "garbage"), PassBid)
 
 
 class TestPlayer:
@@ -201,30 +269,28 @@ class TestAiPlayerBidding:
     def test_choose_bid_pass_weak_hand(self, ai_player, sample_cards_weak):
         """Test that AI passes with weak hand"""
         ai_player.hand = sample_cards_weak
-        bid = ai_player.choose_bid([])
-        assert bid == 'Pass'
+        bid = ai_player.choose_bid(_auction())
+        assert isinstance(bid, PassBid)
 
     def test_choose_bid_initial_bid_strong_hand(self, ai_player, sample_cards_strong_spades):
         """Test initial bid with strong hand"""
         ai_player.hand = sample_cards_strong_spades
-        bid = ai_player.choose_bid([])
+        bid = ai_player.choose_bid(_auction())
 
-        assert isinstance(bid, tuple)
-        value, suit = bid
-        assert value == 130
-        assert suit == Suit.SPADES
+        assert isinstance(bid, ContractBid)
+        assert bid.value == 130
+        assert bid.suit == Suit.SPADES
 
     def test_choose_bid_overbid_opponent(self, ai_player, ai_opponent_player, sample_cards_strong_spades):
         """Test overbidding opponent"""
         ai_player.hand = sample_cards_strong_spades
 
-        current_bids = [(ai_opponent_player, (90, Suit.HEARTS))]
-        bid = ai_player.choose_bid(current_bids)
+        auction = _auction([(ai_opponent_player, (90, Suit.HEARTS))])
+        bid = ai_player.choose_bid(auction)
 
-        assert isinstance(bid, tuple)
-        value, suit = bid
-        assert value > 90
-        assert suit == Suit.SPADES
+        assert isinstance(bid, ContractBid)
+        assert bid.value > 90
+        assert bid.suit == Suit.SPADES
 
     def test_choose_bid_support_partner(self, ai_player, ai_opponent_player):
         """Test supporting partner's bid"""
@@ -242,14 +308,16 @@ class TestAiPlayerBidding:
 
         # Partner bids 80 in Spades
         partner = ai_player.team.players[1]
-        current_bids = [(partner, (80, Suit.SPADES)), (ai_opponent_player,'Pass')]
-        bid = ai_player.choose_bid(current_bids)
+        auction = _auction([
+            (partner, (80, Suit.SPADES)),
+            (ai_opponent_player, 'Pass'),
+        ])
+        bid = ai_player.choose_bid(auction)
 
         # Should support with higher bid due to 3 external aces + trump complement
-        assert isinstance(bid, tuple)
-        value, suit = bid
-        assert value >= 100  # 80 + 20 (2 aces) + 10 (trump complement)
-        assert suit == Suit.SPADES
+        assert isinstance(bid, ContractBid)
+        assert bid.value >= 100  # 80 + 20 (2 aces) + 10 (trump complement)
+        assert bid.suit == Suit.SPADES
 
     def test_choose_bid_cant_overbid_partner(self, ai_player, ai_opponent_player, sample_cards_weak):
         """Test that AI doesn't overbid partner when it can't"""
@@ -257,18 +325,136 @@ class TestAiPlayerBidding:
 
         # Partner bids high
         partner = ai_player.team.players[1]
-        current_bids = [(partner, (140, Suit.SPADES)), (ai_opponent_player,'Pass')]
-        bid = ai_player.choose_bid(current_bids)
+        auction = _auction([
+            (partner, (140, Suit.SPADES)),
+            (ai_opponent_player, 'Pass'),
+        ])
+        bid = ai_player.choose_bid(auction)
 
-        assert bid == 'Pass'
+        assert isinstance(bid, PassBid)
 
-    # --- Capot bidding -----------------------------------------------------
-    # _estimate_tricks is capped at 8 (player.py: `min(tricks, 8)`), so a hand
-    # holding 5 trumps (J + 9 + A + K + Q) plus all three external aces
-    # triggers the Capot row in BIDDING_TABLE.
+    # --- Bidding under a standing Coinche / Surcoinche --------------------
+    # Regression coverage for the crash where the expert table, blind to a
+    # Double freezing the auction, returned an illegal numeric raise (even
+    # over its *own* partner) and ``Auction.apply`` aborted the game with
+    # ``IllegalBidError``. A standing Double permits only Pass, or a
+    # Surcoinche (Redouble) from the contracting team.
+
+    def test_choose_bid_strong_hand_overbids_partner_without_double(
+        self, ai_player, ai_opponent_player, sample_cards_strong_spades
+    ):
+        """Control case: with no Double, the strong AI *does* raise partner.
+
+        Establishes that the Pass in
+        :meth:`test_choose_bid_passes_when_opponent_doubled_partner` is
+        caused by the freeze, not by the hand being too weak to raise.
+        """
+        ai_player.hand = sample_cards_strong_spades  # max contract 130
+        partner = ai_player.team.players[1]
+        auction = _auction([(partner, (80, Suit.SPADES))])
+        bid = ai_player.choose_bid(auction)
+        assert isinstance(bid, ContractBid)
+        assert bid.value == 130
+        assert bid.suit == Suit.SPADES
+
+    def test_choose_bid_passes_when_opponent_doubled_partner(
+        self, ai_player, ai_opponent_player, sample_cards_strong_spades
+    ):
+        """AI must Pass — not raise — when an opponent Coinched partner.
+
+        The exact reproduction of the reported crash: partner holds the
+        contract, an opponent Doubles, and the AI's hand is strong enough
+        that the open-auction path would raise to 130. The Double freezes
+        the auction, so the only non-redouble action is Pass.
+        """
+        ai_player.hand = sample_cards_strong_spades
+        partner = ai_player.team.players[1]
+        auction = _auction([
+            (partner, (80, Suit.SPADES)),
+            (ai_opponent_player, 'Double'),
+        ])
+        bid = ai_player.choose_bid(auction)
+        assert isinstance(bid, PassBid)
+
+    def test_choose_bid_passes_when_own_team_doubled_opponent(
+        self, ai_player, ai_opponent_player, sample_cards_strong_spades
+    ):
+        """AI on the *doubling* side may only Pass (no raise, no redouble).
+
+        Here the opponents hold the contract and the AI's partner has
+        already Coinched it. The contracting team is the opponents, so a
+        Surcoinche is illegal for this seat and the strong hand must not
+        tempt a numeric raise either.
+        """
+        ai_player.hand = sample_cards_strong_spades
+        partner = ai_player.team.players[1]
+        auction = _auction([
+            (ai_opponent_player, (120, Suit.HEARTS)),
+            (partner, 'Double'),
+        ])
+        bid = ai_player.choose_bid(auction)
+        assert isinstance(bid, PassBid)
+
+    def test_choose_bid_passes_after_redouble(
+        self, ai_player, ai_opponent_player, sample_cards_strong_spades
+    ):
+        """Once the auction is Surcoinched, only Pass remains."""
+        ai_player.hand = sample_cards_strong_spades
+        partner = ai_player.team.players[1]
+        auction = _auction([
+            (partner, (110, Suit.SPADES)),
+            (ai_opponent_player, 'Double'),
+            (partner, 'Redouble'),
+        ])
+        bid = ai_player.choose_bid(auction)
+        assert isinstance(bid, PassBid)
+
+    def test_choose_bid_surcoinches_when_strategy_approves(
+        self, ai_player, ai_opponent_player, sample_cards_weak
+    ):
+        """Contracting team may Redouble when the strategy says so.
+
+        ``_should_redouble`` is a stub returning ``False`` today, so we
+        force it ``True`` to exercise the (legal) Surcoinche path and
+        confirm the resulting :class:`RedoubleBid` is what the Auction
+        would accept.
+        """
+        ai_player.hand = sample_cards_weak
+        partner = ai_player.team.players[1]
+        auction = _auction([
+            (partner, (100, Suit.SPADES)),
+            (ai_opponent_player, 'Double'),
+        ])
+        ai_player._should_redouble = lambda: True  # type: ignore[method-assign]
+        bid = ai_player.choose_bid(auction)
+        assert isinstance(bid, RedoubleBid)
+        assert auction.is_legal(bid)
+
+    def test_choose_bid_guard_converts_illegal_table_bid_to_pass(
+        self, ai_player, ai_opponent_player, sample_cards_weak
+    ):
+        """The is_legal safety net turns an illegal expert-table bid into Pass.
+
+        Independently of the freeze handling, ``choose_bid`` must never
+        hand ``Auction.apply`` a bid it would reject. We force the expert
+        table to emit an under-cutting raise (90 over a live 140) and
+        assert the guard downgrades it to the always-legal Pass.
+        """
+        ai_player.hand = sample_cards_weak
+        auction = _auction([(ai_opponent_player, (140, Suit.SPADES))])
+        ai_player._choose_wire = lambda current_bids: (90, Suit.SPADES)  # type: ignore[method-assign]
+        bid = ai_player.choose_bid(auction)
+        assert isinstance(bid, PassBid)
+
+    # --- Slam / Solo Slam bidding -----------------------------------------
+    # _estimate_tricks is capped at 8 (player.py: `min(tricks, 8)`), so a
+    # hand holding 5 trumps (J + 9 + A + K + Q) plus all three external aces
+    # triggers the Slam-family rows in BIDDING_TABLE. Both Slam (500) and
+    # Solo Slam (1000) share the same trick-estimator gate today
+    # (tricks_min=8), so the table walks both and stops on the higher one.
 
     @pytest.fixture
-    def sample_cards_capot_spades(self):
+    def sample_cards_slam_spades(self):
         return Hand([
             Card(Suit.SPADES, Rank.JACK),
             Card(Suit.SPADES, Rank.NINE),
@@ -280,48 +466,85 @@ class TestAiPlayerBidding:
             Card(Suit.CLUBS, Rank.ACE),
         ])
 
-    def test_evaluate_suit_capot_qualifies(self, ai_player, sample_cards_capot_spades):
-        """A hand estimated at 8 tricks resolves to the Capot row (250)."""
-        ai_player.hand = sample_cards_capot_spades
+    def test_evaluate_suit_slam_family_qualifies(
+        self, ai_player, sample_cards_slam_spades
+    ):
+        """A hand estimated at 8 tricks resolves to the top Slam-family row.
+
+        With the current (deliberately permissive) Solo Slam gate that
+        shares Slam's ``tricks_min=8``, the table walk lands on
+        ``SOLO_SLAM_NUMERIC`` (1000). The Slam row (500) is still
+        reachable via the AI when partner bids below that — see the
+        sentinel-translation tests.
+        """
+        ai_player.hand = sample_cards_slam_spades
         evaluations = ai_player._evaluate_suits()
-        assert evaluations[Suit.SPADES]['contract'] == 250
+        assert evaluations[Suit.SPADES]['contract'] == ai_player.SOLO_SLAM_NUMERIC
         assert evaluations[Suit.SPADES]['estimated_tricks'] == 8
 
-    def test_choose_bid_capot_strong_hand(self, ai_player, sample_cards_capot_spades):
-        """choose_bid returns ('Capot', suit) — the wire format expected by Round."""
-        ai_player.hand = sample_cards_capot_spades
-        bid = ai_player.choose_bid([])
-        assert bid == ('Capot', Suit.SPADES)
+    def test_choose_bid_solo_slam_strong_hand(
+        self, ai_player, sample_cards_slam_spades
+    ):
+        """choose_bid lifts the Solo Slam wire choice to a ContractBid."""
+        ai_player.hand = sample_cards_slam_spades
+        bid = ai_player.choose_bid(_auction())
+        assert isinstance(bid, ContractBid)
+        assert bid.value is SlamLevel.SOLO_SLAM
+        assert bid.suit == Suit.SPADES
 
-    def test_can_overbid_partner_handles_capot_value(self, ai_player, sample_cards_weak):
-        """Normalising 'Capot' → 250 in _can_overbid_partner avoids TypeError."""
+    def test_can_overbid_partner_handles_slam_value(
+        self, ai_player, sample_cards_weak
+    ):
+        """Normalising SlamLevel.SLAM → 500 in _can_overbid_partner avoids TypeError."""
         ai_player.hand = sample_cards_weak
-        # Should not raise; nothing in our weak hand beats Capot.
+        # Should not raise; nothing in our weak hand beats Slam.
         assert ai_player._can_overbid_partner(
-            ('Capot', Suit.SPADES), ai_player._evaluate_suits()
+            (SlamLevel.SLAM, Suit.SPADES), ai_player._evaluate_suits()
         ) is False
 
-    def test_should_double_handles_capot_value(self, ai_player, sample_cards_weak):
-        """_should_double must not TypeError when value is 'Capot'.
+    def test_can_overbid_partner_handles_solo_slam_value(
+        self, ai_player, sample_cards_weak
+    ):
+        """Normalising SlamLevel.SOLO_SLAM → 1000 in _can_overbid_partner avoids TypeError."""
+        ai_player.hand = sample_cards_weak
+        assert ai_player._can_overbid_partner(
+            (SlamLevel.SOLO_SLAM, Suit.SPADES), ai_player._evaluate_suits()
+        ) is False
 
-        The heuristic itself (`strength > 162 - value`) is permissive against
-        Capot because 162 - 250 is negative; we only assert the boolean
-        contract here. Tuning that heuristic is a separate concern.
+    def test_should_double_handles_slam_value(self, ai_player, sample_cards_weak):
+        """_should_double must not TypeError on a SlamLevel value.
+
+        The heuristic itself (``strength > 162 - value``) is permissive
+        against Slam-family bids because ``162 - 500`` (and -1000) is
+        negative; we only assert the boolean contract here. Tuning the
+        heuristic is a separate concern.
         """
         ai_player.hand = sample_cards_weak
-        result = ai_player._should_double(('Capot', Suit.SPADES))
+        result = ai_player._should_double((SlamLevel.SLAM, Suit.SPADES))
+        assert isinstance(result, bool)
+        result = ai_player._should_double((SlamLevel.SOLO_SLAM, Suit.SPADES))
         assert isinstance(result, bool)
 
-    def test_choose_bid_passes_when_partner_announced_capot(
+    def test_choose_bid_passes_when_partner_announced_slam(
         self, ai_player, ai_opponent_player, sample_cards_strong_spades
     ):
-        """A strong-but-not-Capot AI passes cleanly when partner announces Capot."""
+        """A strong-but-not-Slam AI passes cleanly when partner announces Slam."""
         ai_player.hand = sample_cards_strong_spades  # estimates 7 tricks, max 130
         partner = ai_player.team.players[1]
-        current_bids = [(partner, ('Capot', Suit.SPADES))]
-        # Must not TypeError on the 130-vs-'Capot' comparison.
-        bid = ai_player.choose_bid(current_bids)
-        assert bid == 'Pass'
+        auction = _auction([(partner, (SlamLevel.SLAM, Suit.SPADES))])
+        # Must not TypeError on the 130-vs-Slam comparison.
+        bid = ai_player.choose_bid(auction)
+        assert isinstance(bid, PassBid)
+
+    def test_choose_bid_passes_when_partner_announced_solo_slam(
+        self, ai_player, ai_opponent_player, sample_cards_strong_spades
+    ):
+        """A strong-but-not-Slam AI passes when partner announces Solo Slam."""
+        ai_player.hand = sample_cards_strong_spades
+        partner = ai_player.team.players[1]
+        auction = _auction([(partner, (SlamLevel.SOLO_SLAM, Suit.SPADES))])
+        bid = ai_player.choose_bid(auction)
+        assert isinstance(bid, PassBid)
 
     def test_choose_best_suit_preference_order(self, ai_player):
         """Test suit preference order when multiple suits are equal"""
@@ -403,10 +626,10 @@ class TestAiPlayerDoubling:
         ])
 
         # Opponent bids in Spades
-        current_bids = [(opponent1, (120, Suit.SPADES))]
-        bid = player.choose_bid(current_bids)
+        auction = _auction([(opponent1, (120, Suit.SPADES))])
+        bid = player.choose_bid(auction)
 
-        assert bid == 'Double'
+        assert isinstance(bid, DoubleBid)
 
     def test_should_not_double_weak_external(self, ai_players_with_teams):
         """Test not doubling when lacking external strength"""
@@ -425,10 +648,10 @@ class TestAiPlayerDoubling:
         ])
 
         # Opponent bids in Hearts
-        current_bids = [(opponent1, (100, Suit.HEARTS))]
-        bid = player.choose_bid(current_bids)
+        auction = _auction([(opponent1, (100, Suit.HEARTS))])
+        bid = player.choose_bid(auction)
 
-        assert bid == 'Pass'
+        assert isinstance(bid, PassBid)
 
 class TestAiPlayerTrickTaking:
     """Test AI player trick taking strategy"""
@@ -503,7 +726,7 @@ class TestAiPlayerTrickTaking:
     def test_play_first_card_opening_round(self, ai_player_with_tracking, mock_trick, sample_hand_mixed):
         """Test playing the very first card of the round"""
         ai_player_with_tracking.hand = sample_hand_mixed
-        contract = (ai_player_with_tracking, 80, Suit.SPADES)
+        contract = _contract(ai_player_with_tracking, 80, Suit.SPADES)
 
         # Should play the strongest trump (Jack of Spades)
         result = ai_player_with_tracking.choose_card(mock_trick, contract, sample_hand_mixed)
@@ -513,7 +736,7 @@ class TestAiPlayerTrickTaking:
     def test_play_first_card_opponents_contract(self, ai_player_with_tracking, ai_player_opponent, mock_trick, sample_hand_mixed):
         """Test playing first card when opponents have contract"""
         ai_player_with_tracking.hand = sample_hand_mixed
-        contract = (ai_player_opponent, 100, Suit.HEARTS)
+        contract = _contract(ai_player_opponent, 100, Suit.HEARTS)
 
         # Should play ace from the shortest suit (Diamonds or Spades)
         result = ai_player_with_tracking.choose_card(mock_trick, contract, sample_hand_mixed)
@@ -528,7 +751,7 @@ class TestAiPlayerTrickTaking:
             Card(Suit.HEARTS, Rank.ACE),
             Card(Suit.DIAMONDS, Rank.EIGHT)
         ])
-        contract = (ai_player_with_tracking, 100, Suit.SPADES)
+        contract = _contract(ai_player_with_tracking, 100, Suit.SPADES)
 
         # Mark some cards as fallen to simulate non-opening trick
         ai_player_with_tracking._fallen_cards[Suit.HEARTS].add(Rank.KING)
@@ -547,7 +770,7 @@ class TestAiPlayerTrickTaking:
             Card(Suit.DIAMONDS, Rank.ACE),
             Card(Suit.CLUBS, Rank.SEVEN)
         ])
-        contract = (ai_player_with_tracking, 100, Suit.SPADES)
+        contract = _contract(ai_player_with_tracking, 100, Suit.SPADES)
 
         # Mark some cards as fallen
         ai_player_with_tracking._fallen_cards[Suit.HEARTS].add(Rank.KING)
@@ -557,6 +780,123 @@ class TestAiPlayerTrickTaking:
 
         result = ai_player_with_tracking.choose_card(mock_trick, contract, ai_player_with_tracking.hand)
         assert result.rank == Rank.ACE  # Should play ace
+
+    def test_does_not_trump_when_partner_master_non_trump_trick(
+        self, ai_player_with_tracking, mock_trick
+    ):
+        """When the AI cannot follow suit but partner is already master,
+        the AI must NOT waste a trump — even though a trump would add
+        more points to the pile. Picks a non-trump discard instead."""
+        # Hearts trump. Partner led ♠ A and is currently master.
+        # AI hand has high-points trumps PLUS a non-trump option.
+        ai_player_with_tracking.hand = Hand([
+            Card(Suit.HEARTS, Rank.JACK),    # 20 trump points — must NOT play
+            Card(Suit.HEARTS, Rank.NINE),    # 14 trump points — must NOT play
+            Card(Suit.DIAMONDS, Rank.KING),  # 4 points — should play
+        ])
+        mock_trick.cards = [Card(Suit.SPADES, Rank.ACE)]
+        mock_trick.trump_suit = Suit.HEARTS
+        ai_player_with_tracking._is_team_winning_trick = lambda t: True
+
+        contract = _contract(ai_player_with_tracking, 100, Suit.HEARTS)
+        result = ai_player_with_tracking.choose_card(
+            mock_trick, contract, list(ai_player_with_tracking.hand)
+        )
+        assert result.suit == Suit.DIAMONDS
+        assert result.rank == Rank.KING
+
+    def test_dumps_highest_points_non_trump_non_master_when_partner_master(
+        self, ai_player_with_tracking, mock_trick
+    ):
+        """Within the non-trump non-master candidates, pick the highest
+        points to maximize this trick's value."""
+        ai_player_with_tracking.hand = Hand([
+            Card(Suit.HEARTS, Rank.NINE),    # trump — must NOT play
+            Card(Suit.DIAMONDS, Rank.TEN),   # 10 points, non-master if A♦ out
+            Card(Suit.CLUBS, Rank.EIGHT),    # 0 points, non-master
+        ])
+        mock_trick.cards = [Card(Suit.SPADES, Rank.ACE)]
+        mock_trick.trump_suit = Suit.HEARTS
+        ai_player_with_tracking._is_team_winning_trick = lambda t: True
+
+        contract = _contract(ai_player_with_tracking, 100, Suit.HEARTS)
+        result = ai_player_with_tracking.choose_card(
+            mock_trick, contract, list(ai_player_with_tracking.hand)
+        )
+        # 10♦ picked: highest-points non-trump non-master.
+        assert result.suit == Suit.DIAMONDS
+        assert result.rank == Rank.TEN
+
+    def test_falls_back_to_lowest_trump_when_only_trumps_in_hand(
+        self, ai_player_with_tracking, mock_trick
+    ):
+        """Edge case: AI's entire playable set is trumps. Forced to
+        play one — picks the lowest by trump-order so we don't dump
+        the Jack or 9."""
+        ai_player_with_tracking.hand = Hand([
+            Card(Suit.HEARTS, Rank.JACK),    # top trump (order 7)
+            Card(Suit.HEARTS, Rank.NINE),    # 2nd-best (order 6)
+            Card(Suit.HEARTS, Rank.SEVEN),   # lowest (order 0)
+        ])
+        mock_trick.cards = [Card(Suit.SPADES, Rank.ACE)]
+        mock_trick.trump_suit = Suit.HEARTS
+        ai_player_with_tracking._is_team_winning_trick = lambda t: True
+
+        contract = _contract(ai_player_with_tracking, 100, Suit.HEARTS)
+        result = ai_player_with_tracking.choose_card(
+            mock_trick, contract, list(ai_player_with_tracking.hand)
+        )
+        assert result.suit == Suit.HEARTS
+        assert result.rank == Rank.SEVEN
+
+    def test_prefers_non_master_over_master_in_discard(
+        self, ai_player_with_tracking, mock_trick
+    ):
+        """When the AI must discard non-trump, preserve master cards
+        for later wins — pick non-masters first."""
+        ai_player_with_tracking.hand = Hand([
+            # ♣A is master (no higher club exists).
+            Card(Suit.CLUBS, Rank.ACE),
+            # ♦K is non-master (♦A still out — not in fallen set).
+            Card(Suit.DIAMONDS, Rank.KING),
+            Card(Suit.HEARTS, Rank.NINE),    # trump
+        ])
+        mock_trick.cards = [Card(Suit.SPADES, Rank.ACE)]
+        mock_trick.trump_suit = Suit.HEARTS
+        ai_player_with_tracking._is_team_winning_trick = lambda t: True
+
+        contract = _contract(ai_player_with_tracking, 100, Suit.HEARTS)
+        result = ai_player_with_tracking.choose_card(
+            mock_trick, contract, list(ai_player_with_tracking.hand)
+        )
+        # ♣A preserved (master), ♥9 preserved (trump), ♦K dumped.
+        assert result.suit == Suit.DIAMONDS
+        assert result.rank == Rank.KING
+
+    def test_does_not_overtrump_partner_who_already_cut(
+        self, ai_player_with_tracking, mock_trick
+    ):
+        """Partner already cut the non-trump-led trick. The AI must
+        NOT cover (over-trump or under-trump) — discard a non-trump."""
+        ai_player_with_tracking.hand = Hand([
+            Card(Suit.HEARTS, Rank.NINE),    # higher trump — would over-trump partner
+            Card(Suit.HEARTS, Rank.SEVEN),   # lower trump — would under-trump partner
+            Card(Suit.DIAMONDS, Rank.EIGHT), # non-trump discard
+        ])
+        # Spades led; partner trumped with ♥ A.
+        mock_trick.cards = [
+            Card(Suit.SPADES, Rank.KING),
+            Card(Suit.HEARTS, Rank.ACE),
+        ]
+        mock_trick.trump_suit = Suit.HEARTS
+        ai_player_with_tracking._is_team_winning_trick = lambda t: True
+
+        contract = _contract(ai_player_with_tracking, 100, Suit.HEARTS)
+        result = ai_player_with_tracking.choose_card(
+            mock_trick, contract, list(ai_player_with_tracking.hand)
+        )
+        assert result.suit == Suit.DIAMONDS
+        assert result.rank == Rank.EIGHT
 
     def test_follow_suit_when_team_winning(self, ai_player_with_tracking, mock_trick):
         """Test following suit when team is winning"""
@@ -575,7 +915,7 @@ class TestAiPlayerTrickTaking:
         ai_player_with_tracking._is_team_winning_trick = lambda t: True
 
         playable_cards = [Card(Suit.HEARTS, Rank.KING), Card(Suit.HEARTS, Rank.TEN), Card(Suit.HEARTS, Rank.EIGHT)]
-        result = ai_player_with_tracking.choose_card(mock_trick, (ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
+        result = ai_player_with_tracking.choose_card(mock_trick, _contract(ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
 
         # Should play the highest point card (King or 10)
         assert result.suit == Suit.HEARTS
@@ -597,7 +937,7 @@ class TestAiPlayerTrickTaking:
         ai_player_with_tracking._is_team_winning_trick = lambda t: False
 
         playable_cards = [Card(Suit.HEARTS, Rank.ACE), Card(Suit.HEARTS, Rank.EIGHT)]
-        result = ai_player_with_tracking.choose_card(mock_trick, (ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
+        result = ai_player_with_tracking.choose_card(mock_trick, _contract(ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
 
         # Should play Ace to beat King
         assert result.rank == Rank.ACE
@@ -619,7 +959,7 @@ class TestAiPlayerTrickTaking:
         ai_player_with_tracking._is_team_winning_trick = lambda t: False
 
         playable_cards = [Card(Suit.HEARTS, Rank.JACK), Card(Suit.HEARTS, Rank.EIGHT)]
-        result = ai_player_with_tracking.choose_card(mock_trick, (ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
+        result = ai_player_with_tracking.choose_card(mock_trick, _contract(ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
 
         # Should play the lowest card (8)
         assert result.rank == Rank.EIGHT
@@ -642,7 +982,7 @@ class TestAiPlayerTrickTaking:
         ai_player_with_tracking._can_trump_win = lambda card, trick, trump: card.rank == Rank.JACK
 
         playable_cards = [Card(Suit.SPADES, Rank.JACK), Card(Suit.SPADES, Rank.NINE), Card(Suit.DIAMONDS, Rank.EIGHT)]
-        result = ai_player_with_tracking.choose_card(mock_trick, (ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
+        result = ai_player_with_tracking.choose_card(mock_trick, _contract(ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
 
         # Should trump with Jack (lowest winning trump)
         assert result.suit == Suit.SPADES
@@ -666,7 +1006,7 @@ class TestAiPlayerTrickTaking:
         ai_player_with_tracking._is_master_card = lambda card, trump: False
 
         playable_cards = [Card(Suit.DIAMONDS, Rank.SEVEN), Card(Suit.CLUBS, Rank.QUEEN), Card(Suit.CLUBS, Rank.JACK), Card(Suit.CLUBS, Rank.TEN)]
-        result = ai_player_with_tracking.choose_card(mock_trick, (ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
+        result = ai_player_with_tracking.choose_card(mock_trick, _contract(ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
 
         # Should discard lowest from the shortest suit
         assert result.rank == Rank.SEVEN  # Lowest point card

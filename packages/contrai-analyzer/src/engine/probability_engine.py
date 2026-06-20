@@ -15,7 +15,7 @@ from src.models.deck import SuitSlot, Rank
 
 class ProbabilityEngine:
     """
-    Calculates probabilities for La Contrée using hypergeometric distributions.
+    Calculates probabilities for contrée using hypergeometric distributions.
 
     Attributes:
         total_unknown_cards (int): Always 24 (32 − 8 in hand).
@@ -324,7 +324,7 @@ class ProbabilityEngine:
         self, player: Literal["partner", "opponents"]
     ) -> dict[SuitSlot, float]:
         """
-        Expected Contrée points per slot for either the partner or both opponents combined.
+        Expected contrée points per slot for either the partner or both opponents combined.
 
         Each unknown card contributes its point value weighted by the fraction of
         unknown cards that go to the player(s):

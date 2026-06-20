@@ -5,8 +5,13 @@ description = "Add your description here"
 requires-python = ">=3.14"
 dependencies = [
   "contrai-core",
+  "rich>=13",
+  "pyfiglet>=1.0",
 ]
 [project.optional-dependencies]
 test = [
   "pytest>=8.4"
 ]
+
+[project.scripts]
+contrai = "contrai_engine.cli:main"
