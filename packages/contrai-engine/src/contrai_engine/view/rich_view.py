@@ -1972,10 +1972,12 @@ class RichView:
         Two stacked sub-tables share the N-S / E-W columns. The
         **Outcome** table reports the factual play tally — tricks won,
         trick points (trump-aware pile), last trick (10) and belote (20)
-        each side captured. The **Scoring** table then summarizes how
-        the round scored: contract bonus / penalty, round points (the
-        Outcome tally rolled up), then the round-score total. A final
-        Running line carries the game-level totals and the target.
+        each side captured — closing with a Total of those points. The
+        **Scoring** table then summarizes how the round scored: contract
+        bonus / penalty, round points (the score-contributing part of the
+        tally — belote only on a chuté/contré round), then the round-score
+        total. A final Running line carries the game-level totals and the
+        target.
         """
         body = Text()
         body.append("\n")
@@ -2258,6 +2260,23 @@ class RichView:
         rule.append("─" * right, style=DIM)
         return rule
 
+    @staticmethod
+    def _column_divider() -> Text:
+        """A dim rule under the two N-S / E-W number columns only.
+
+        Anchors a sum row (the Outcome ``Total`` or the Scoring ``Round
+        score``) without underlining the label gutter. Geometry matches
+        the shared layout: a 24-char label gutter, then two 6-wide
+        columns separated by two spaces.
+        """
+        divider = Text()
+        divider.append(" " * 24, style=DIM)
+        divider.append("─" * 6, style=DIM)
+        divider.append("  ", style=DIM)
+        divider.append("─" * 6, style=DIM)
+        divider.append("\n")
+        return divider
+
     def _format_outcome_table(
         self,
         breakdown: dict,
@@ -2268,20 +2287,21 @@ class RichView:
     ) -> Text:
         """Render the per-team play tally — the factual results of play.
 
-        Rows: Tricks won (count), Trick points (trump-aware pile), Last
-        trick (10 to whoever won trick 8) and Belote (20 to the side
-        holding K+Q of trump). Every value is the *real* amount each side
-        captured in play, independent of how the contract converts it into
-        score — so a winner-takes-all round still surfaces the points each
-        side genuinely took. Their sum is reported as "Round points" in
-        the Scoring sub-table.
+        Rows: Tricks won (count), Tricks points (trump-aware pile), Last
+        trick (10 to whoever won trick 8), Belote (20 to the side holding
+        K+Q of trump) and a closing Total. Every value is the *real*
+        amount each side captured in play, independent of how the contract
+        converts it into score — so a winner-takes-all round still surfaces
+        the points each side genuinely took. The Total is their per-side
+        sum (trick points + last trick + belote), the honest play tally;
+        the Scoring sub-table then reports how much of it actually scored.
 
         When ``all_passed`` is set (no contract was struck, so no cards
         were played) every cell renders as an em-dash, so the whole panel
         reads consistently.
 
         When ``capot_label`` is set (an :class:`UnannouncedSlam` member)
-        the round was an unannounced capot: the Trick points row already
+        the round was an unannounced capot: the Tricks points row already
         carries the flat 250 substitute, and the label is appended to its
         right (e.g. ``← Grand Slam``) to explain why.
         """
@@ -2294,10 +2314,10 @@ class RichView:
             return Text(f"{value:>6}", style="bold")
 
         def _bonus_cell(value: int) -> Text:
-            # Last trick / belote: a "+N" when earned, em-dash otherwise.
+            # Last trick / belote: the captured amount, em-dash when none.
             if all_passed or value == 0:
                 return Text(f"{'—':>6}", style=DIM)
-            return Text(f"{('+' + str(value)):>6}", style="bold")
+            return Text(f"{value:>6}", style="bold")
 
         # Header row: "                          N-S     E-W"
         header = Text()
@@ -2314,7 +2334,7 @@ class RichView:
         row_tricks.append("\n")
 
         row_points = Text()
-        row_points.append(f"  {'Trick points':<22}", style=FG)
+        row_points.append(f"  {'Tricks points':<22}", style=FG)
         row_points.append_text(_count_cell(ns.get("trick_points", 0)))
         row_points.append("  ")
         row_points.append_text(_count_cell(ew.get("trick_points", 0)))
@@ -2346,12 +2366,25 @@ class RichView:
         row_bel.append_text(_bonus_cell(ew.get("belote", 0)))
         row_bel.append("\n")
 
+        # Total — the honest play tally per side (trick points + last
+        # trick + belote), surfaced as ``round_points`` by the breakdown.
+        # ``_count_cell`` keeps a literal 0 for a side that captured
+        # nothing and an em-dash only when the whole round was passed.
+        row_total = Text()
+        row_total.append(f"  {'Total':<22}", style=f"bold {FG}")
+        row_total.append_text(_count_cell(ns.get("round_points", 0)))
+        row_total.append("  ")
+        row_total.append_text(_count_cell(ew.get("round_points", 0)))
+        row_total.append("\n")
+
         out = Text()
         out.append_text(header)
         out.append_text(row_tricks)
         out.append_text(row_points)
         out.append_text(row_last)
         out.append_text(row_bel)
+        out.append_text(self._column_divider())
+        out.append_text(row_total)
         return out
 
     def _format_recap_table(
@@ -2365,35 +2398,43 @@ class RichView:
         """Render the Scoring sub-table inside the recap panel.
 
         Rows: Contract (the bonus a team earns from the contract being
-        made or failed), Round points (the factual play tally — trick
-        points + last trick + belote — rolled up from the Outcome
-        sub-table), then a divider and the engine-computed Round score.
+        made or failed), Round points (the part of the play tally that
+        actually scored), then a divider and the engine-computed Round
+        score.
 
-        Round points is the *real* total each side captured in play. In a
-        winner-takes-all round (any failed or doubled numeric contract, or
-        a Slam) the engine substitutes a flat formula, so Contract + Round
-        points need not equal Round score — the divider anchors the final
-        Round score rather than asserting an exact column sum.
+        Round points is the score-contributing roll-up, not the raw tally:
+        ``card_points + dix_de_der + belote`` — i.e. ``Round score −
+        Contract`` by the :meth:`_recap_breakdown` invariant. On a
+        winner-takes-all round (chuté or contré) the captured pile and
+        last trick stop counting, so the row collapses to just the belote
+        the holder keeps, or an em-dash when no belote is held. For engine
+        data the columns therefore reconcile: Contract + Round points =
+        Round score, which the divider anchors.
         """
         ns = breakdown.get("North-South", {})
         ew = breakdown.get("East-West", {})
 
-        def _num_cell(value: int, *, show_zero: bool = True, sign: bool = False) -> Text:
+        def _num_cell(value: int, *, show_zero: bool = True) -> Text:
             t = Text()
             if value == 0 and not show_zero:
                 t.append(f"{'—':>6}", style=DIM)
                 return t
-            if sign and value > 0:
-                t.append(f"{('+' + str(value)):>6}", style="bold")
-            else:
-                t.append(f"{value:>6}", style="bold")
+            t.append(f"{value:>6}", style="bold")
             return t
 
         def _round_points_cell(side: dict) -> Text:
-            # Factual play tally; an em-dash only when nothing was played.
+            # The score-contributing part only: cards + der + belote, each
+            # already zeroed by the breakdown when it doesn't count. A
+            # chuté/contré round leaves belote alone, so this is belote
+            # (or an em-dash when the side holds none).
             if all_passed:
                 return Text(f"{'—':>6}", style=DIM)
-            return _num_cell(side.get("round_points", 0), sign=True)
+            scored = (
+                side.get("card_points", 0)
+                + side.get("dix_de_der", 0)
+                + side.get("belote", 0)
+            )
+            return _num_cell(scored, show_zero=False)
 
         # Header row: "                          N-S     E-W"
         header = Text()
@@ -2406,16 +2447,16 @@ class RichView:
         row_contract = Text()
         row_contract.append(f"  {'Contract':<22}", style=FG)
         row_contract.append_text(
-            _num_cell(ns.get("contract", 0), show_zero=False, sign=True)
+            _num_cell(ns.get("contract", 0), show_zero=False)
         )
         row_contract.append("  ")
         row_contract.append_text(
-            _num_cell(ew.get("contract", 0), show_zero=False, sign=True)
+            _num_cell(ew.get("contract", 0), show_zero=False)
         )
         row_contract.append("\n")
 
-        # Round points row — the Outcome tally (trick points + last trick
-        # + belote) rolled into a single number per side.
+        # Round points row — the score-contributing part of the play tally
+        # (belote only on a chuté/contré round, em-dash when none scored).
         row_points = Text()
         row_points.append(f"  {'Round points':<22}", style=FG)
         row_points.append_text(_round_points_cell(ns))
@@ -2423,28 +2464,18 @@ class RichView:
         row_points.append_text(_round_points_cell(ew))
         row_points.append("\n")
 
-        # Divider sits under the two numeric columns only, anchoring the
-        # Round score line below. Label area stays blank so the eye lands
-        # on the numbers.
-        divider = Text()
-        divider.append(" " * 24, style=DIM)
-        divider.append("─" * 6, style=DIM)
-        divider.append("  ", style=DIM)
-        divider.append("─" * 6, style=DIM)
-        divider.append("\n")
-
         row_total = Text()
         row_total.append(f"  {'Round score':<22}", style=f"bold {GOLD}")
-        row_total.append_text(_num_cell(ns_round, sign=True))
+        row_total.append_text(_num_cell(ns_round))
         row_total.append("  ")
-        row_total.append_text(_num_cell(ew_round, sign=True))
+        row_total.append_text(_num_cell(ew_round))
         row_total.append("\n")
 
         out = Text()
         out.append_text(header)
         out.append_text(row_contract)
         out.append_text(row_points)
-        out.append_text(divider)
+        out.append_text(self._column_divider())
         out.append_text(row_total)
         return out
 

@@ -15,6 +15,8 @@ smoke-test pass on ``uv run contrai`` validates them end-to-end.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from rich.text import Text
 
@@ -1229,7 +1231,8 @@ class TestRoundRecapPanel:
         text = panel.renderable.plain
         assert "Round #3 recap" in panel.title.plain
         assert "Contract made" in text
-        assert "+162" in text
+        assert "162" in text  # round score, no leading "+"
+        assert "+162" not in text
         assert "500" in text  # running NS total
 
     def test_recap_shows_trump_recall_line(self):
@@ -1268,9 +1271,10 @@ class TestRoundRecapPanel:
         self, four_players
     ):
         """Section placement after the refactor: the factual play tally
-        (Trick points / Last trick / Belote) sits under Outcome, while the
-        rolled-up Round points sits under Scoring. The Scoring Round points
-        equals trick points + last trick + belote per side."""
+        (Tricks points / Last trick / Belote / Total) sits under Outcome,
+        while the rolled-up Round points sits under Scoring. On this
+        normal-made round the Scoring Round points equals trick points +
+        last trick + belote per side."""
         view = RichView()
         north, east, *_ = four_players
         contract = self._StubContract(100, Suit.HEARTS, "North-South")
@@ -1299,8 +1303,9 @@ class TestRoundRecapPanel:
             round_, {"North-South": 141, "East-West": 0}
         ).renderable.plain
         outcome, scoring = text.split("Scoring")
-        # Tally rows live above the Scoring rule, Round points below it.
-        for row in ("Trick points", "Last trick", "Belote"):
+        # Tally rows (and their Total) live above the Scoring rule, the
+        # rolled-up Round points below it.
+        for row in ("Tricks points", "Last trick", "Belote", "Total"):
             assert row in outcome
             assert row not in scoring
         assert "Round points" in scoring
@@ -1348,9 +1353,13 @@ class TestRoundRecapPanel:
         assert "made" not in text
         assert "failed" not in text
         # Outcome table harmonizes with Scoring: em-dashes, not zeros, on
-        # both the Tricks won and Round points rows when nothing was played.
+        # the Tricks won, Total and Round points rows when nothing was played.
         for line in text.splitlines():
-            if "Tricks won" in line or "Round points" in line:
+            if (
+                "Tricks won" in line
+                or "Total" in line
+                or "Round points" in line
+            ):
                 assert "0" not in line
                 assert "—" in line
 
@@ -1371,8 +1380,13 @@ class TestRoundRecapPanel:
         )
         panel = view._panel_round_recap(round_, {"North-South": 200, "East-West": 0})
         text = panel.renderable.plain
-        assert "Belote" in text
-        assert "+20" in text
+        # The Belote row carries the holder's 20, with no leading "+".
+        # (The "+" in the "K + Q" label is not a sign — guard the value.)
+        belote_line = next(
+            line for line in text.splitlines() if "Belote" in line
+        )
+        assert "20" in belote_line
+        assert "+20" not in belote_line
 
     def test_recap_shows_card_points_sum_per_team(self, four_players):
         """Card-points row shows the trump-aware sum across each team's
@@ -1406,11 +1420,11 @@ class TestRoundRecapPanel:
         # Trump-aware card points:
         #   ns_trick1: J♥(20) + 7♥(0)  = 20
         #   ns_trick2: A♠(11) + 9♥(14) = 25
-        # N-S total = 45 — shown in the Outcome "Trick points" row.
+        # N-S total = 45 — shown in the Outcome "Tricks points" row.
         assert "45" in text
         assert "Outcome" in text
         assert "Tricks won" in text
-        assert "Trick points" in text
+        assert "Tricks points" in text
         # The rolled-up tally lives in the Scoring sub-table now.
         assert "Round points" in text
 
@@ -1466,10 +1480,132 @@ class TestRoundRecapPanel:
         # ...but the real captured pile still shows in round_points.
         assert ew["round_points"] == 20
 
+    def test_recap_outcome_total_sums_the_tally(self, four_players):
+        """The Outcome table closes with a Total row equal to the per-side
+        honest tally — trick points + last trick + belote."""
+        view = RichView()
+        north, east, *_ = four_players
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        # N-S: A♥ (11) + last trick (10) + belote (20) = 41.
+        ns_trick = Trick()
+        ns_trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
+        ns_trick.add_play(east, Card(Suit.CLUBS, Rank.SEVEN))
+        round_ = self._StubRound(
+            round_number=2,
+            contract=contract,
+            round_scores={"North-South": 141, "East-West": 0},
+            team_tricks={"North-South": [ns_trick], "East-West": []},
+            belote_holder=north,
+        )
+        round_.last_trick_winner = north
+        text = view._panel_round_recap(
+            round_, {"North-South": 141, "East-West": 0}
+        ).renderable.plain
+        outcome = text.split("Scoring")[0]
+        total_line = next(
+            line for line in outcome.splitlines() if "Total" in line
+        )
+        # 11 + 10 + 20 = 41, with no leading "+".
+        assert "41" in total_line
+        assert "+" not in total_line
+
+    def test_recap_scoring_round_points_belote_only_when_contre(
+        self, four_players
+    ):
+        """On a chuté/contré round the captured pile stops scoring, so the
+        Scoring 'Round points' row collapses to the belote the holder keeps
+        — while the Outcome 'Total' still reports the full captured tally."""
+        view = RichView()
+        north, east, *_ = four_players
+        # N-S declares doubled, fails; N-S still captured A♥ (11) and holds
+        # the belote (20). E-W took the last trick.
+        contract = self._StubContract(
+            100, Suit.HEARTS, "North-South", double=True
+        )
+        ns_trick = Trick()
+        ns_trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
+        ns_trick.add_play(east, Card(Suit.CLUBS, Rank.SEVEN))
+        round_ = self._StubRound(
+            round_number=3,
+            contract=contract,
+            round_scores={"North-South": 20, "East-West": 360},
+            team_tricks={"North-South": [ns_trick], "East-West": []},
+            belote_holder=north,
+            contract_made=False,
+        )
+        round_.last_trick_winner = east  # der goes to E-W, not N-S
+        text = view._panel_round_recap(
+            round_, {"North-South": 20, "East-West": 360}
+        ).renderable.plain
+        outcome, scoring = text.split("Scoring")
+        # Outcome Total = 11 (A♥) + 0 (no der) + 20 (belote) = 31.
+        total_line = next(
+            line for line in outcome.splitlines() if "Total" in line
+        )
+        assert "31" in total_line
+        # Scoring Round points = belote only (20), not the 31 captured.
+        rp_line = next(
+            line for line in scoring.splitlines() if "Round points" in line
+        )
+        assert "20" in rp_line
+        assert "31" not in rp_line
+
+    def test_recap_scoring_round_points_dashed_when_chute_no_belote(
+        self, four_players
+    ):
+        """A failed contract with no belote held → the Scoring 'Round
+        points' row dashes out entirely (nothing of the pile scores)."""
+        view = RichView()
+        north, east, *_ = four_players
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        ew_trick = Trick()
+        ew_trick.add_play(east, Card(Suit.HEARTS, Rank.JACK))  # E-W captures
+        round_ = self._StubRound(
+            round_number=4,
+            contract=contract,
+            round_scores={"North-South": 0, "East-West": 260},
+            team_tricks={"North-South": [], "East-West": [ew_trick]},
+            contract_made=False,
+        )
+        text = view._panel_round_recap(
+            round_, {"North-South": 0, "East-West": 260}
+        ).renderable.plain
+        scoring = text.split("Scoring")[1]
+        rp_line = next(
+            line for line in scoring.splitlines() if "Round points" in line
+        )
+        # No belote anywhere → both sides dash on the scoring roll-up.
+        assert "—" in rp_line
+        assert "20" not in rp_line
+
+    def test_recap_no_plus_signs_in_made_round(self, four_players):
+        """Regression guard: no leading '+' survives anywhere in the recap
+        after the sign cleanup, on a normal made round with bonuses."""
+        view = RichView()
+        north, east, *_ = four_players
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        ns_trick = Trick()
+        ns_trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
+        ns_trick.add_play(east, Card(Suit.CLUBS, Rank.SEVEN))
+        round_ = self._StubRound(
+            round_number=2,
+            contract=contract,
+            round_scores={"North-South": 141, "East-West": 0},
+            team_tricks={"North-South": [ns_trick], "East-West": []},
+            belote_holder=north,
+        )
+        round_.last_trick_winner = north
+        text = view._panel_round_recap(
+            round_, {"North-South": 141, "East-West": 0}
+        ).renderable.plain
+        # No signed numbers remain (a "+" before a digit). The literal "+"
+        # in the "Belote (K + Q ♥)" label is not a sign and is allowed.
+        assert re.search(r"\+\d", text) is None
+
     def test_recap_unannounced_capot_substitutes_250_and_folds_der(
         self, four_players
     ):
-        """Unannounced capot: the Outcome 'Trick points' row reads 250
+        """Unannounced capot: the Outcome 'Tricks points' row reads 250
         (the flat substitute), 'Last trick' is folded in (0), and the
         contract + substitute still sum to the round score."""
         view = RichView()
@@ -1566,8 +1702,12 @@ class TestRoundRecapPanel:
             round_, {"North-South": 110, "East-West": 0}
         )
         text = panel.renderable.plain
-        assert "Last trick" in text
-        assert "+10" in text
+        # The Last trick row carries the der's 10, with no leading "+".
+        last_trick_line = next(
+            line for line in text.splitlines() if "Last trick" in line
+        )
+        assert "10" in last_trick_line
+        assert "+10" not in last_trick_line
 
     def test_recap_contract_row_shows_contract_value_when_made_normal(
         self, four_players
@@ -1825,7 +1965,8 @@ class TestRoundRecapPanel:
         )
         text = panel.renderable.plain
         assert "Contract " in text  # row label
-        assert "+100" in text  # attacker contract bonus
+        assert "100" in text  # attacker contract bonus, no leading "+"
+        assert "+100" not in text
 
     def test_recap_breakdown_sums_to_round_score_normal_made(
         self, four_players
