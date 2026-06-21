@@ -29,9 +29,11 @@ class BasePlayer <<from contrai-core>> #E1F0FF {
 }
 
 ' =========================================================
-' model/player.py — Player hierarchy
+' model/player/ — Player hierarchy + pluggable AI strategies
 ' =========================================================
-package "model/player.py" as p_player {
+package "model/player/ (subpackage)" as p_player {
+
+    ' --- base.py: Player hierarchy ---
     abstract class Player <<abstract>> {
         + is_human : bool <<property>>
         --
@@ -44,54 +46,90 @@ package "model/player.py" as p_player {
         + choose_card(trick, contract, playable_cards) : None  <<no-op>>
     }
 
+    ' --- ai.py: holds + delegates to strategies ---
     class AiPlayer {
+        + bidding : BiddingStrategy
+        + cardplay : CardPlayStrategy
+        --
+        + __init__(name, position, bidding=…, cardplay=…)
+        + choose_bid(auction) : Bid       <<delegates>>
+        + choose_card(trick, contract, playable) : Card  <<delegates>>
+        + initialize_card_tracking() : None   <<delegates>>
+        + update_card_tracking(…) : None      <<delegates>>
+    }
+
+    ' --- strategy.py: abstract interfaces ---
+    abstract class BiddingStrategy <<abstract>> {
+        + {abstract} choose_bid(auction: Auction) : Bid
+    }
+    abstract class CardPlayStrategy <<abstract>> {
+        + {abstract} choose_card(trick, contract, playable) : Card
+        + {abstract} initialize_card_tracking() : None
+        + {abstract} update_card_tracking(…) : None
+    }
+
+    ' --- rule_based.py: the first concrete level (expert) ---
+    class RuleBasedBiddingStrategy {
         + {static} BIDDING_TABLE : list<tuple>
         + {static} SUIT_PREFERENCE : tuple<Suit>
         --
-        + choose_bid(auction: Auction) : Bid
-        + choose_card(trick, contract, playable_cards) : Card
-        + initialize_card_tracking() : None
-        + update_card_tracking(card, player, led_suit, trump_suit) : None
-        --
+        + choose_bid(auction) : Bid
         - _choose_wire(current_bids) : str | tuple
+    }
+    class RuleBasedCardPlayStrategy {
         - _fallen_cards : dict<Suit, set<Rank>>
         - _players_without_trump : set<Player>
+        --
+        + choose_card(trick, contract, playable) : Card
+        + initialize_card_tracking() : None
+        + update_card_tracking(…) : None
     }
 
+    ' --- wire.py: legacy-format bridge ---
     class "wire_to_bid / bid_to_wire" as p_bridge <<module helpers>> #FFEFD9 {
         wire_to_bid(player, wire) : Bid
         bid_to_wire(bid : Bid)    : str | tuple
     }
 
+    ' --- levels.py: registry + factory ---
+    class "levels.py" as p_levels <<module>> #FFEFD9 {
+        AI_LEVELS : dict<str, (Bidding, CardPlay)>
+        make_ai_player(name, position, level="expert") : AiPlayer
+    }
+
     note right of AiPlayer
-      <<strategy>> private helpers (collapsed):
-      _evaluate_suits / _evaluate_suit_as_trump,
-      _estimate_tricks / _evaluate_trump_tricks,
-      _make_initial_bid / _support_partner_bid,
-      _check_double_redouble / _should_double / _should_redouble,
-      _play_opening_card / _play_leading_card / _play_following_card,
-      _play_when_team_winning / _play_when_team_losing,
-      _is_master_card / _is_stronger_card / _can_trump_win,
-      _opponents_might_have_trump / _get_higher_ranks, …
-      (~25 helpers — see player.py)
+      ``AiPlayer`` owns no strategy logic. It
+      holds an injected ``bidding`` and
+      ``cardplay`` strategy and delegates to
+      them. Strategies are passed as factories
+      (``player -> strategy``) so each can take
+      a back-reference to the player while the
+      player is still being built. Defaults
+      reproduce today's expert bot.
     end note
 
-    note bottom of AiPlayer
-      ``choose_bid(auction)`` is a thin
-      adapter: it projects ``auction.bids``
-      to the legacy ``(player, wire_bid)``
-      tuples the expert table still uses,
-      delegates to ``_choose_wire``, and
-      lifts the wire choice back to a
-      :class:`Bid` via ``wire_to_bid``.
-      Future AI families should read
-      ``auction.legal_actions(self)``
-      directly and let the wire format go.
+    note bottom of RuleBasedBiddingStrategy
+      First concrete level (``AI_LEVELS["expert"]``).
+      ``choose_bid`` projects ``auction.bids`` to the
+      legacy ``(player, wire_bid)`` tuples the expert
+      table still uses, delegates to ``_choose_wire``,
+      and lifts the wire choice back via ``wire_to_bid``.
+      ~25 collapsed strategy helpers (_evaluate_suits,
+      _make_initial_bid, _check_double_redouble, …).
+      **BIDDING_TABLE** rows (11 levels: 80–160 + Slam
+      + Solo Slam): (contract, trump_req, trump_min,
+      aces, tricks_min, belote_required).
+    end note
 
-      **BIDDING_TABLE** rows (11 levels:
-      80–160 + Slam + Solo Slam):
-      (contract, trump_req, trump_min, aces,
-      tricks_min, belote_required).
+    note bottom of RuleBasedCardPlayStrategy
+      First concrete card-play level. Owns the
+      per-round tracking state; ~15 collapsed
+      helpers (_play_opening/leading/following_card,
+      _play_when_team_winning/losing, _is_master_card,
+      _is_stronger_card, _can_trump_win,
+      _opponents_might_have_trump, _get_higher_ranks, …).
+      A future MCTS / learned level is a new
+      strategy class, never an edit to AiPlayer.
     end note
 
     note bottom of HumanPlayer
@@ -103,17 +141,17 @@ package "model/player.py" as p_player {
     end note
 
     note right of p_bridge
-      Module-level helpers in
+      Module-level helpers (``wire.py``),
+      re-exported from
       ``contrai_engine.model.player``.
       Bridge between the
       :class:`contrai_core.Bid` boundary
       (used at the engine perimeter) and
       the legacy ``'Pass'`` / ``'Double'`` /
       ``'Redouble'`` / ``(value, suit)``
-      wire format the AI expert table
+      wire format the rule-based strategy
       and the Rich view's renderer still
-      consume. Shared by AiPlayer, Round
-      (test scaffolding), and RichView.
+      consume.
     end note
 }
 
@@ -409,6 +447,13 @@ package "cli.py" as p_cli {
 BasePlayer <|-- Player
 Player <|-- HumanPlayer
 Player <|-- AiPlayer
+
+' Pluggable AI strategies (injected into AiPlayer)
+BiddingStrategy <|-- RuleBasedBiddingStrategy
+CardPlayStrategy <|-- RuleBasedCardPlayStrategy
+AiPlayer o-- "1" BiddingStrategy : bidding
+AiPlayer o-- "1" CardPlayStrategy : cardplay
+p_levels ..> AiPlayer : <<builds>>
 
 ' Game composes / aggregates engine + core types
 Game "1" *-- "2" "Team" : teams
