@@ -97,10 +97,19 @@ R --> G : team_tricks: dict<str, list<Trick>>
 == Scoring ==
 
 G -> R : calculate_round_scores()
-R -> R : sum card_points per team\n(belote +20, dix-de-der +10)
-R -> R : Slam/SoloSlam: at_risk = (base + substitute) * mult\nbase = substitute = 250 (Slam) or 500 (SoloSlam)\n→ 500/1000/2000 or 1000/2000/4000\nto winning side; trick pile replaced by substitute
-R -> R : numeric: compare points to value\nelse defender = (160 + value) * mult
-R -> R : apply double / redouble multiplier
+R -> R : score_round(self)\n(scoring.py — pure round → RoundScore)
+note right of R
+  ``calculate_round_scores`` is a thin
+  wrapper: it calls ``scoring.score_round``
+  and publishes the returned ``RoundScore``
+  onto ``round_scores`` / ``contract_made`` /
+  ``unannounced_capot``. The branch detail
+  (numeric share-pile vs. unannounced-capot
+  vs. doubled winner-takes-all vs. Slam /
+  Solo Slam, belote +20 on every shape) lives
+  in **flow_scoring.mmd**.
+end note
+R -> R : round_scores, contract_made,\nunannounced_capot = RoundScore
 R --> G : round_scores: dict<str, int>
 deactivate R
 

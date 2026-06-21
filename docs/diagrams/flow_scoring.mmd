@@ -1,0 +1,55 @@
+---
+title: contrai-engine — round scoring decision tree (scoring.score_round)
+---
+flowchart TD
+    Start(["score_round(round)"]) --> HasContract{"contract<br/>established?"}
+
+    HasContract -- "no (all passed)" --> Zero["every team → 0<br/>contract_made = None"]
+    Zero --> End(["RoundScore"])
+
+    HasContract -- "yes" --> Points["card points per team (trump-aware)<br/>+10 dix-de-der → last-trick team<br/>belote_team = holder of K+Q of trump"]
+    Points --> Family{"contract.is_slam_family()?"}
+
+    %% ---------- Slam / Solo Slam path ----------
+    Family -- "Slam / Solo Slam" --> SlamMade{"contract team won all 8?<br/>(Solo Slam: bidder<br/>personally all 8)"}
+    SlamMade -- "yes → made" --> SlamWin["at_risk = (base + substitute) × M<br/>→ contract team<br/>(500/1000/2000 Slam,<br/>1000/2000/4000 Solo Slam)"]
+    SlamMade -- "no → failed" --> SlamLose["at_risk = (base + substitute) × M<br/>→ defending side"]
+    SlamWin --> Belote
+    SlamLose --> Belote
+
+    %% ---------- Numeric path (80–180) ----------
+    Family -- "numeric" --> Capot{"M == 1 AND<br/>contract team won all 8?<br/>(unannounced capot)"}
+    Capot -- "yes" --> CapotTag["pile = 250 substitute<br/>tag GRAND_SLAM (bidder all 8)<br/>else SLAM · made = true"]
+    Capot -- "no" --> NumMade
+    CapotTag --> Mult
+
+    NumMade["made = attacker_pts ≥ value<br/>(attacker_pts = card pts + own belote)"] --> Mult{"multiplier M?"}
+
+    %% --- M == 1: share the pile ---
+    Mult -- "M == 1 (share)" --> ShareMade{"contract made?"}
+    ShareMade -- "made" --> ShareWin["contract → value + pile + belote<br/>(pile = 250 if capot, else card pts)<br/>defenders → own card pts + belote"]
+    ShareMade -- "failed" --> ShareLose["defenders → 160 + value + belote<br/>declarer → belote only"]
+    ShareWin --> Belote
+    ShareLose --> Belote
+
+    %% --- M > 1: winner takes all ---
+    Mult -- "M > 1 (doubled)" --> DblMade{"contract made?"}
+    DblMade -- "made" --> DblWin["contract → 160 + value×M + belote<br/>defenders → belote only"]
+    DblMade -- "failed" --> DblLose["defenders → 160 + value×M + belote<br/>declarer → belote only"]
+    DblWin --> Belote
+    DblLose --> Belote
+
+    %% ---------- Shared belote footer ----------
+    Belote["belote +20 preserved on every shape<br/>→ the K+Q holder's team (even the round's loser)"]
+    Belote --> End
+
+    %% ---------- Engine-orange palette ----------
+    classDef entry fill:#FFD9B3,stroke:#B26A28,stroke-width:2px,color:#5C3A14;
+    classDef step fill:#FFEFD9,stroke:#B26A28,stroke-width:1px,color:#5C3A14;
+    classDef decision fill:#FFF3E0,stroke:#E89A4F,stroke-width:2px,color:#5C3A14;
+    classDef belote fill:#FFF8E1,stroke:#F9A825,stroke-width:2px,color:#5F4B00;
+
+    class Start,End entry;
+    class HasContract,Family,SlamMade,Capot,Mult,ShareMade,DblMade decision;
+    class Zero,Points,SlamWin,SlamLose,CapotTag,NumMade,ShareWin,ShareLose,DblWin,DblLose step;
+    class Belote belote;

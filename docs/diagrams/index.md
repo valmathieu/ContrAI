@@ -60,8 +60,10 @@ Each row links to the canonical `.puml` source, the rendered `.png` preview, and
 | `class_engine.puml`    | Class    | contrai-engine + MVC | [source](class_engine.puml)           | [png](class_engine.png)              | [Engine overview](../engine/#class-structure)              |
 | `class_analyzer.puml`  | Class    | contrai-analyzer     | [source](class_analyzer.puml)         | [png](class_analyzer.png)            | [Analyzer overview](../analyzer/#class-structure)          |
 | `class_workspace.puml` | Class    | Workspace overview   | [source](class_workspace.puml)        | [png](class_workspace.png)           | [Architecture](../architecture/#package-map)               |
+| `seq_cli.puml`         | Sequence | Engine CLI game loop | [source](seq_cli.puml)                | [png](seq_cli.png)                   | [Engine — game loop](../engine/#game-loop)                 |
 | `seq_round.puml`       | Sequence | Engine round flow    | [source](seq_round.puml)              | [png](seq_round.png)                 | [Engine — round lifecycle](../engine/#round-lifecycle)     |
 | `seq_bidding.puml`     | Sequence | Bidding cycle zoom   | [source](seq_bidding.puml)            | [png](seq_bidding.png)               | [Engine — bidding cycle zoom](../engine/#round-lifecycle)  |
 | `seq_trick.puml`       | Sequence | Single trick zoom    | [source](seq_trick.puml)              | [png](seq_trick.png)                 | [Engine — single trick zoom](../engine/#round-lifecycle)   |
+| `flow_scoring.mmd`     | Flowchart| Round scoring tree   | [source](flow_scoring.mmd)            | [png](flow_scoring.png)              | [Engine — scoring](../engine/#scoring)                     |
 | `seq_scraper.puml`     | Sequence | contrai-scraper      | [source](seq_scraper.puml)            | [png](seq_scraper.png)               | [Scraper overview](../scraper/#current-flow-v1)            |
 | `state_cli_screens.mmd`| State    | RichView screen flow | [source](state_cli_screens.mmd)       | [png](state_cli_screens.png)         | [Engine — CLI](../engine/#cli)                             |
