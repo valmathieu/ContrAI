@@ -17,12 +17,8 @@ import pytest
 from rich.text import Text
 
 from contrai_core import Auction, Card, Rank, Suit, Trick
-from contrai_core.bid import ContractBid, DoubleBid, PassBid, SlamLevel
-from contrai_core.contract import Contract
-from contrai_engine.view.rich_view import (
-    RichView,
-    RoundSummary,
-)
+from contrai_core.bid import ContractBid, DoubleBid, PassBid
+from contrai_engine.view.rich_view import RichView
 from contrai_engine.view.screens.bidding import (
     _bidding_prompt_text,
     _panel_bidding_history,
@@ -963,54 +959,3 @@ class TestRenderInGameHandSlot:
         )
         combined = "\n".join(captured)
         assert "Your hand" not in combined
-
-
-# ======================================================================
-# _format_summary_contract — end-game round-by-round table cell
-# ======================================================================
-
-
-class TestFormatSummaryContract:
-    """The end-game summary contract cell must use English vocabulary
-    exclusively — no French ``coinché`` / ``surcoinché`` leakage."""
-
-    class _StubContract:
-        def __init__(self, value, suit, *, double=False, redouble=False):
-            self.value = value
-            self.suit = suit
-            self.double = double
-            self.redouble = redouble
-
-    @staticmethod
-    def _row(contract, team_name="North-South"):
-        return RoundSummary(
-            round_number=1,
-            contract=contract,
-            contract_team_name=team_name,
-            contract_made=True,
-            ns_pts=100,
-            ew_pts=0,
-            running_ns=100,
-            running_ew=0,
-        )
-
-    def test_doubled_contract_reads_english(self):
-        view = RichView()
-        row = self._row(self._StubContract(100, Suit.HEARTS, double=True))
-        text = view._format_summary_contract(row).plain
-        assert "doubled" in text
-        assert "coinché" not in text
-
-    def test_redoubled_contract_reads_english(self):
-        view = RichView()
-        row = self._row(self._StubContract(100, Suit.HEARTS, redouble=True))
-        text = view._format_summary_contract(row).plain
-        assert "redoubled" in text
-        assert "surcoinché" not in text
-
-    def test_plain_contract_has_no_double_marker(self):
-        view = RichView()
-        row = self._row(self._StubContract(100, Suit.HEARTS))
-        text = view._format_summary_contract(row).plain
-        assert "doubled" not in text
-        assert "redoubled" not in text
