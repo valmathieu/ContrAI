@@ -38,13 +38,14 @@ from contrai_engine.view.theme import (
 )
 
 if TYPE_CHECKING:
+    from contrai_engine.model.game import GameOverStatus
     from contrai_engine.view.rich_view import RoundSummary
 
 
-def _panel_game_over_banner(status: dict) -> Panel:
-    winner_name = status.get("winner") or "—"
+def _panel_game_over_banner(status: GameOverStatus) -> Panel:
+    winner_name = status.winner or "—"
     winner_abbr = _team_abbr(winner_name) if winner_name != "—" else "—"
-    final = status.get("final_scores", {})
+    final = status.final_scores
     ns = final.get("North-South", 0)
     ew = final.get("East-West", 0)
     is_ns_winner = winner_name == "North-South"

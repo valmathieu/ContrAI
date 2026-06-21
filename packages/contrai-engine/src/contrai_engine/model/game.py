@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypedDict
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from contrai_core.deck import Deck
 from contrai_core.team import Team
@@ -17,8 +18,16 @@ if TYPE_CHECKING:
     from contrai_engine.view.rich_view import RichView
 
 
-class GameOverStatus(TypedDict):
-    """Structured verdict returned by :meth:`Game.check_game_over`."""
+@dataclass(frozen=True)
+class GameOverStatus:
+    """Structured verdict returned by :meth:`Game.check_game_over`.
+
+    Attributes:
+        game_over: Whether a team has reached the target score.
+        winner: The sole winning team name, or ``None`` on a tie / unfinished game.
+        tied_teams: The teams sharing the lead when the game ends level, else ``None``.
+        final_scores: Snapshot of every team's score at the moment of the check.
+    """
 
     game_over: bool
     winner: str | None
@@ -177,19 +186,19 @@ class Game:
             winning_teams = [team.name for team in self.teams
                            if self.scores[team.name] == max_score]
 
-            return {
-                'game_over': True,
-                'winner': winning_teams[0] if len(winning_teams) == 1 else None,
-                'tied_teams': winning_teams if len(winning_teams) > 1 else None,
-                'final_scores': self.scores.copy()
-            }
+            return GameOverStatus(
+                game_over=True,
+                winner=winning_teams[0] if len(winning_teams) == 1 else None,
+                tied_teams=winning_teams if len(winning_teams) > 1 else None,
+                final_scores=self.scores.copy(),
+            )
 
-        return {
-            'game_over': False,
-            'winner': None,
-            'tied_teams': None,
-            'final_scores': self.scores.copy()
-        }
+        return GameOverStatus(
+            game_over=False,
+            winner=None,
+            tied_teams=None,
+            final_scores=self.scores.copy(),
+        )
 
     def next_dealer(self):
         """

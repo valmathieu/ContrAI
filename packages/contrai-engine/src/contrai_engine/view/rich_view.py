@@ -98,7 +98,7 @@ from rich.console import Console
 from rich.text import Text
 
 if TYPE_CHECKING:
-    from contrai_engine.model.game import Game
+    from contrai_engine.model.game import Game, GameOverStatus
     from contrai_engine.model.round import Round
 
 
@@ -496,7 +496,7 @@ class RichView:
                 continue
             return target
 
-    def show_end_game(self, status: dict) -> str:
+    def show_end_game(self, status: GameOverStatus) -> str:
         """Render the end-game scoreboard and return 'n'/'r'/'q'."""
         while True:
             self.console.clear()
