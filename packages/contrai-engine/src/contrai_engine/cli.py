@@ -16,7 +16,7 @@ from contrai_engine.view.rich_view import RichView
 
 # TODO: replace with a seat picker on the landing screen. For now the
 # layout matches the design handoff exactly: South is the human, the
-# other three seats are AI (medium difficulty).
+# other three seats are AI (expert — the default strategies).
 HUMAN_SEAT = "South"
 SEATS = ("North", "East", "South", "West")
 
