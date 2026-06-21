@@ -28,6 +28,13 @@ from contrai_engine.view.screens.bidding import (
     _panel_bidding_history,
     _render_bidding_diamond,
 )
+from contrai_engine.view.screens.trick import (
+    _panel_current_trick,
+    _panel_hand,
+    _panel_last_trick,
+    _panel_round,
+    _render_diamond,
+)
 
 
 # ======================================================================
@@ -543,7 +550,7 @@ class TestBeloteAnnouncement:
         north, *_ = four_players
         trick = Trick()
         # Empty trick is fine — the badge is keyed off belote_by_position.
-        diamond = view._render_diamond(
+        diamond = _render_diamond(
             trick,
             Suit.HEARTS,
             pending_position=None,
@@ -565,7 +572,7 @@ class TestBeloteAnnouncement:
         seat badge still reads '★ Belote' — the rebelote distinction
         lives only in the event log, not under the seat."""
         view = self._make_view(monkeypatch)
-        diamond = view._render_diamond(
+        diamond = _render_diamond(
             Trick(),
             Suit.HEARTS,
             pending_position=None,
@@ -579,7 +586,7 @@ class TestBeloteAnnouncement:
 
     def test_diamond_no_badge_when_state_empty(self, monkeypatch):
         view = self._make_view(monkeypatch)
-        diamond = view._render_diamond(
+        diamond = _render_diamond(
             Trick(),
             Suit.HEARTS,
             pending_position=None,
@@ -662,7 +669,7 @@ class TestBiddingDiamond:
         """During bidding the Current-trick slot becomes the auction diamond."""
         view = RichView()
         north, east, south, west = four_players
-        panel = view._panel_current_trick(
+        panel = _panel_current_trick(
             self._StubRound(),
             trick=None,
             phase="bidding",
@@ -692,12 +699,12 @@ class TestPanelRoundTitle:
 
     def test_title_contains_round_number(self):
         view = RichView()
-        panel = view._panel_round(self._StubRound(7), phase="bidding")
+        panel = _panel_round(self._StubRound(7), phase="bidding")
         assert "Round #7" in panel.title.plain
 
     def test_title_defaults_when_round_is_none(self):
         view = RichView()
-        panel = view._panel_round(None, phase="bidding")
+        panel = _panel_round(None, phase="bidding")
         assert panel.title.plain.startswith("Round")
         # No # marker when there is no round to talk about.
         assert "#" not in panel.title.plain
@@ -718,7 +725,7 @@ class TestTrickPanelTitles:
     def test_current_trick_title_uses_hash_format(self):
         view = RichView()
         # 4 tricks done, currently playing trick #5.
-        panel = view._panel_current_trick(
+        panel = _panel_current_trick(
             self._StubRound(tricks_done=4),
             trick=Trick(),
             phase="playing",
@@ -737,14 +744,14 @@ class TestTrickPanelTitles:
         # Stub a completed trick.
         view.last_completed_trick = (trick, north)
         round_ = self._StubRound(tricks_done=7)
-        panel = view._panel_last_trick(round_)
+        panel = _panel_last_trick(round_, view.last_completed_trick)
         assert "Last trick (#7)" in panel.title.plain
 
     def test_last_trick_title_bare_when_no_round(self):
         view = RichView()
         # No last_completed_trick set → '(none)' panel with the bare
         # "Last trick" title.
-        panel = view._panel_last_trick(None)
+        panel = _panel_last_trick(None, view.last_completed_trick)
         assert panel.title.plain == "Last trick"
 
 
@@ -794,7 +801,7 @@ class TestPanelHandPersistence:
         rather than disappearing. No redundant second empty-state line."""
         view, human = self._build_view_with_human()
         human.hand.clear()
-        panel = view._panel_hand(
+        panel = _panel_hand(
             human, trick=None, playable_cards=None,
             phase="trick_won", round_=None, interactive=False,
         )
@@ -817,7 +824,7 @@ class TestPanelHandPersistence:
 
         trick = _Trick()
         trick.add_play(human, Card(Suit.CLUBS, Rank.KING))
-        panel = view._panel_hand(
+        panel = _panel_hand(
             human, trick=trick, playable_cards=[human.hand[1]],
             phase="playing", round_=None, interactive=False,
         )
@@ -845,7 +852,7 @@ class TestPanelHandPersistence:
         # the human's hearts are trumps and emits the "must trump" hint.
         contract_stub = type("_C", (), {"suit": Suit.HEARTS})()
         round_stub = type("_R", (), {"contract": contract_stub})()
-        panel = view._panel_hand(
+        panel = _panel_hand(
             human, trick=trick, playable_cards=list(human.hand),
             phase="playing", round_=round_stub, interactive=True,
         )
