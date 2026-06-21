@@ -15,9 +15,6 @@ from contrai_core.exceptions import InvalidPlayerCountError
 import random
 
 if TYPE_CHECKING:
-    # Imported for type checking only — the Model must never import the View
-    # at runtime (MVC layering). ``from __future__ import annotations`` makes
-    # the annotation a lazy string, so this stays a static-analysis concern.
     from contrai_engine.view.rich_view import RichView
 
 

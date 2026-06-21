@@ -4,7 +4,6 @@ from contrai_core.deck import Deck
 from contrai_core.exceptions import InvalidPlayerCountError
 from contrai_core.card import Card
 
-#TODO : add test for trick number in game
 class DummyPlayer:
     def __init__(self, name, position):
         self.name = name
