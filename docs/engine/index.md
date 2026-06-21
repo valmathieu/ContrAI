@@ -11,7 +11,15 @@ Source at `packages/contrai-engine/src/contrai_engine/`:
   - `game.py` — `Game` (fires `view.on_round_dealt(...)` after the deal and `view.on_all_pass_redeal(...)` when nobody contracts)
   - `round.py` — `Round` (publishes `view.on_bid_made(...)`, `view.on_contract_established(...)`, `view.on_card_played(...)`, `view.on_trick_complete(...)`, and `view.on_belote_announced(...)` so the view can pace and narrate AI turns)
 - `controller/` — `GameController` (partial stub — see [Open work](#open-work))
-- `view/` — `RichView` (terminal UI, see [CLI](#cli) below)
+- `view/` — the terminal UI, split into focused modules (see [CLI](#cli) below):
+  - `rich_view.py` — `RichView`, the stateful orchestrator: console + per-game state, the engine hooks (`request_*_action`, `on_*`, `show_*`), the input loops, and `_render_in_game` (the single seam that pulls state off `self` and feeds the pure builders). `RoundSummary` lives here too. Re-exported from `view/__init__.py`, so both `from contrai_engine.view.rich_view import RichView` (used by `cli.py` / `model/game.py`) and `from contrai_engine.view import RichView` work.
+  - `theme.py` — design tokens (colour palette) and lookup tables (target-score options, position / team labels, bid aliases, valid contract values)
+  - `formatting.py` — stateless text / glyph / label builders (seat & suit labels, the shared contract / trump / legacy-bid labels)
+  - `parsing.py` — human-input parsers (`_parse_bid_input`, `_parse_card_input`)
+  - `bidding_rules.py` — messaging-only mirrors of the auction rules that gate the bid-prompt hint (`_double_available_to`, `_redouble_available_to`, `_min_legal_contract_value`, `_illegal_bid_reason`, `_bid_to_legacy`)
+  - `state_helpers.py` — small game-state readers (`_current_winner`, `_explain_constraint`, `_sort_hand_for_display`, `_belote_by_position`, `_resolve_delay`)
+  - `layout.py` — cross-screen layout (`_two_column`, the Prompt panel, the event-log panel)
+  - `screens/` — one module per screen of the five-screen design: `landing.py`, `bidding.py`, `trick.py`, `recap.py`, `endgame.py`. Each exposes pure `(data) -> Panel/Text` builders; `RichView` composes and prints them.
 - `cli.py` — `contrai` console-script entry point: landing → game-loop → end-game
 - `tests/` — pytest suite (`test_model/`, `test_view/`)
 
@@ -59,7 +67,7 @@ CONTRAI_AI_BID_DELAY=0.5  CONTRAI_AI_CARD_DELAY=0.3  uv run contrai
 
 **Bid legality at the input boundary.** `request_bid_action` parses raw input for *shape* (`_parse_bid_input`) and then validates it against `Auction.is_legal` before returning. An illegal-but-parseable bid — e.g. doubling your own partner's contract — re-prompts with a specific reason (`_illegal_bid_reason`) instead of escaping to `Auction.apply` and crashing the CLI. The model keeps its strict hard-raise contract; the human-input layer is where unvalidated input is filtered. The bid prompt hint is likewise adaptive: `double` / `redouble` are only advertised when `_double_available_to` / `_redouble_available_to` say they're legal for the seat to act, and the worked contract example tracks the auction via `_min_legal_contract_value` — it offers the cheapest legal raise (`100 H` once a `90` stands, not the bare `80` floor), and is dropped past `180` where only Slam outranks the standing contract.
 
-The pure helpers (bid parser, card parser, hand sorter, current-winner, constraint hint, double- and redouble-availability checks, minimum-legal-contract floor, illegal-bid reason, delay resolver, bid-to-legacy converter) live at module scope and are covered by `tests/test_view/test_rich_view.py`. The `Panel`/`Table` builders are validated end-to-end by smoke-running `uv run contrai`.
+The pure helpers (bid parser, card parser, hand sorter, current-winner, constraint hint, double- and redouble-availability checks, minimum-legal-contract floor, illegal-bid reason, delay resolver, bid-to-legacy converter) are module-level functions in their respective modules (`parsing`, `state_helpers`, `bidding_rules`, `formatting`), and the per-screen `Panel` / `Table` builders are pure functions under `screens/`. The test suite mirrors that split — `tests/test_view/test_{formatting,parsing,bidding_rules,state_helpers,layout,recap,endgame}.py` test the extracted modules, while `test_rich_view.py` keeps the stateful `RichView` behaviour (hooks, input loops, in-game frame). The shared `four_players` fixture lives in `tests/test_view/conftest.py`. The deepest `Panel` / `Table` layouts not asserted on are validated end-to-end by smoke-running `uv run contrai`.
 
 ```mermaid format="svg" source="state_cli_screens.mmd"
 ```
@@ -94,7 +102,7 @@ The two zoom diagrams below break out the dense parts.
 ## Open work
 
 - `Round` now has its first dedicated pytest file (`tests/test_model/test_round.py`) covering the `_get_playable_cards` legality oracle, the `_classify_play_violation` reason classifier and `play_trick`'s `IllegalPlayError` raise on an illegal card, the belote tracking helpers, and the auction-driven integration test that the human seat is never prompted when their partner has doubled. The lifecycle path (`manage_bidding` end-to-end / `play_all_tricks` / `calculate_round_scores`) is still un-tested past that single integration scenario — backfill needed.
-- `RichView`'s `Panel`/`Table` *rendering* methods (`_panel_*`) are now lightly covered: title/text smoke tests for the round panel, bidding-history, event-log, and round-recap panels, plus the diamond's belote badge. Layouts that aren't asserted on are still validated by `uv run contrai` smoke-running.
+- The screen `Panel`/`Table` *builders* (now pure functions under `view/screens/` and `view/layout.py`, no longer `RichView` methods) are lightly covered: title/text smoke tests for the round panel, bidding-history, event-log, recap tables, and the diamond's belote badge, in the matching `test_view/test_*.py` files. Layouts that aren't asserted on are still validated by `uv run contrai` smoke-running.
 - `GameController` is still the lone surviving stub (see the grey box on the class diagram). It references undefined `pygame` and isn't wired to `Game` / `Round` — open question whether to delete it now that the Rich CLI doesn't need a separate controller, or keep it for a future GUI path.
 - Sweep `AiPlayer` private helpers for any remaining `contract[…]` indexing residues — the four visible call sites were fixed during CLI work but a defensive pass through the strategy code would not hurt.
 - `_check_double_redouble` in `AiPlayer._choose_wire` still uses the legacy-format `last_bid` to detect a prior Double; the inner check `last_bid == 'Double'` shadows the earlier `isinstance(last_bid, tuple)` guard so AI redouble is effectively gated on a `TODO`. Worth revisiting alongside the next AI bidding refactor — the cleanest fix is to read `auction.has_double` / `auction.has_redouble` directly instead of inferring from the wire history.
