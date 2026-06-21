@@ -17,7 +17,7 @@ by the end-game scoreboard are tracked here, not in ``Game``.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 from contrai_core.bid import Bid
@@ -32,10 +32,7 @@ from contrai_core import (
 from contrai_engine.model.player import wire_to_bid
 from contrai_engine.view.bidding_rules import (
     _bid_to_legacy,
-    _double_available_to,
     _illegal_bid_reason,
-    _min_legal_contract_value,
-    _redouble_available_to,
 )
 from contrai_engine.view.formatting import (
     _format_card_compact,
@@ -44,8 +41,6 @@ from contrai_engine.view.formatting import (
     _position_short,
     _suit_color,
     _suit_glyph,
-    _team_abbr,
-    _team_color,
 )
 from contrai_engine.view.layout import (
     _panel_event_log,
@@ -90,28 +85,16 @@ from contrai_engine.view.state_helpers import (
     _sort_hand_for_display,
 )
 from contrai_engine.view.theme import (
-    BLUE,
-    BORDER,
     DEFAULT_TARGET,
     DIM,
     FG,
     GOLD,
-    GOLD_BG,
-    GOLD_FG,
-    GREEN_CHECK,
     GREEN_FG,
-    ORANGE,
     RED,
-    RULE,
     TARGET_OPTIONS,
-    TEAM_ABBR,
-    TITLE,
     YELLOW,
 )
-from rich.box import DOUBLE, ROUNDED, SQUARE
 from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
 from rich.text import Text
 
 if TYPE_CHECKING:
