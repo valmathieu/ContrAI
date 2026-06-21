@@ -53,6 +53,7 @@ from contrai_engine.view.formatting import (
     _team_abbr,
     _team_color,
 )
+from contrai_engine.view.parsing import _parse_bid_input, _parse_card_input
 from contrai_engine.view.theme import (
     BLUE,
     BORDER,
@@ -60,7 +61,6 @@ from contrai_engine.view.theme import (
     DEFAULT_TARGET,
     DIM,
     DOT,
-    DOUBLE_WORDS,
     FG,
     GOLD,
     GOLD_BG,
@@ -69,17 +69,11 @@ from contrai_engine.view.theme import (
     GREEN_CHECK,
     GREEN_FG,
     ORANGE,
-    PASS_WORDS,
-    POSITION_SHORT,
     RED,
-    RED_DIM,
-    REDOUBLE_WORDS,
     RULE,
-    SUIT_ALIASES,
     TARGET_OPTIONS,
     TEAM_ABBR,
     TITLE,
-    VALID_BID_VALUES,
     YELLOW,
 )
 from rich.align import Align
@@ -178,89 +172,6 @@ def _explain_constraint(
 
     hint.append("(free discard)", style=GREEN_FG)
     return hint
-
-
-def _parse_bid_input(raw: str) -> Optional[str | tuple[int | SlamLevel, Suit]]:
-    """Parse a human bid string. Returns engine bid representation or None.
-
-    Accepted forms:
-        pass / p               -> 'Pass'
-        double / d             -> 'Double'
-        redouble / r           -> 'Redouble'
-        "80 h" / "100 hearts" / "150nt"   -> (value, Suit)
-        "slam s" / "slams"                -> (SlamLevel.SLAM, Suit)
-        "solo slam h" / "soloslam h"      -> (SlamLevel.SOLO_SLAM, Suit)
-    """
-    s = raw.strip().lower()
-    if not s:
-        return None
-    if s in PASS_WORDS:
-        return "Pass"
-    if s in DOUBLE_WORDS:
-        return "Double"
-    if s in REDOUBLE_WORDS:
-        return "Redouble"
-
-    # Try "<value><sep><suit>" with optional whitespace; also accept
-    # the value and suit being glued together ("100h", "slams").
-    parts = s.replace(",", " ").split()
-
-    # Accept the two-word form "solo slam <suit>" by collapsing the
-    # first two tokens into the canonical "soloslam" wire form.
-    if len(parts) == 3 and parts[0] == "solo" and parts[1] == "slam":
-        parts = ["soloslam", parts[2]]
-
-    if len(parts) == 1:
-        token = parts[0]
-        # Split alpha tail (suit) from leading value.
-        i = 0
-        while i < len(token) and (token[i].isdigit() or token[i] == "-"):
-            i += 1
-        if i == 0:
-            # All-alpha: maybe "soloslams" -> soloslam + s, or "slams" -> slam + s
-            if token.startswith("soloslam") and len(token) > len("soloslam"):
-                parts = ["soloslam", token[len("soloslam"):]]
-            elif token.startswith("slam") and len(token) > len("slam"):
-                parts = ["slam", token[len("slam"):]]
-            else:
-                return None
-        else:
-            parts = [token[:i], token[i:]]
-
-    if len(parts) != 2:
-        return None
-    raw_value, raw_suit = parts
-    suit = SUIT_ALIASES.get(raw_suit)
-    if suit is None:
-        return None
-
-    if raw_value == "slam":
-        return (SlamLevel.SLAM, suit)
-    if raw_value == "soloslam":
-        return (SlamLevel.SOLO_SLAM, suit)
-    try:
-        value = int(raw_value)
-    except ValueError:
-        return None
-    if value not in VALID_BID_VALUES:
-        return None
-    return (value, suit)
-
-
-def _parse_card_input(
-    raw: str, sorted_hand: list[Card], playable: list[Card]
-) -> Optional[Card]:
-    """Parse a card-selection number; validate it's in playable. None on error."""
-    s = raw.strip()
-    if not s.isdigit():
-        return None
-    idx = int(s) - 1
-    if idx < 0 or idx >= len(sorted_hand):
-        return None
-    card = sorted_hand[idx]
-    if card not in playable:
-        return None
-    return card
 
 
 def _belote_by_position(round_) -> dict[str, str]:
