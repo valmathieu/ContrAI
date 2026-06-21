@@ -60,7 +60,7 @@ R -> R : leader_idx = players_order.index(trick_leader)\ntrick_order = rotate(pl
 
 loop **for player in trick_order**  (×4)
 
-    R -> R : playable_cards = _get_playable_cards(player)
+    R -> R : playable_cards = legality.get_playable_cards(\n              player, contract, current_trick)
 
     ref over R : **SF-09 / SF-10** — see legality rules below
 
@@ -156,7 +156,7 @@ end
 deactivate R
 
 note over R, V
-  **Legality (SF-09 / SF-10) — `_get_playable_cards`:**
+  **Legality (SF-09 / SF-10) — `legality.get_playable_cards`:**
 
   1. **Empty trick** → any card.
   2. Player has the **lead suit**:

@@ -156,7 +156,7 @@ package "model/player/ (subpackage)" as p_player {
 }
 
 ' =========================================================
-' model/game.py & model/round.py — orchestration
+' model/game.py & model/round/ package — orchestration
 ' =========================================================
 package "model/game.py" as p_game {
     class Game {
@@ -179,7 +179,8 @@ package "model/game.py" as p_game {
     }
 }
 
-package "model/round.py" as p_round {
+package "model/round/ package" as p_round {
+    ' --- round.py: the lifecycle orchestrator ---
     class Round {
         + players_order : list<Player>
         + dealer : Player
@@ -191,6 +192,8 @@ package "model/round.py" as p_round {
         + last_trick_winner : Player?
         + team_tricks : dict<str, list<Trick>>
         + round_scores : dict<str, int>
+        + contract_made : bool?
+        + unannounced_capot : UnannouncedSlam?
         + belote_holder : Player?
         + belote_state : dict<Player, str>
         --
@@ -203,14 +206,29 @@ package "model/round.py" as p_round {
         + handle_failed_contract() : dict<str, int>
         --
         - _gather_bid(player, auction, view) : Bid
-        - _get_playable_cards(player) : list<Card>
-        - _classify_play_violation(player, card) : PlayRuleViolation
-        - _higher_trumps_than_played(trumps, plays, trump) : list<Card>
-        - _highest_opponent_trump(plays, team, trump) : Card?
         - _detect_belote_holder() : None
         - _is_belote_event(player, card) : bool
         - _transition_belote_state(player) : str?
     }
+
+    ' --- scoring.py: the pure scoring transformation ---
+    class "scoring.py" as r_scoring <<module>> #FFEFD9 {
+        score_round(round) : RoundScore
+        count_player_tricks(tricks, trump, player) : int
+        UnannouncedSlam <<enum>> : {SLAM, GRAND_SLAM}
+        RoundScore <<dataclass>>
+    }
+
+    ' --- legality.py: the pure card-legality oracle ---
+    class "legality.py" as r_legality <<module>> #FFEFD9 {
+        get_playable_cards(player, contract, trick) : list<Card>
+        classify_play_violation(player, card, contract, trick) : PlayRuleViolation
+        - _higher_trumps_than_played(trumps, plays, trump) : list<Card>
+        - _highest_opponent_trump(plays, team, trump) : Card?
+    }
+
+    Round ..> r_scoring : calculate_round_scores()\ndelegates to score_round
+    Round ..> r_legality : play_trick() consults
 
     note right of Round
       ``manage_bidding`` drives an
@@ -229,22 +247,15 @@ package "model/round.py" as p_round {
       ``Trick.get_current_winner(contract.suit)``
       in contrai-core — no engine-side duplicate.
       ----
-      ``_get_playable_cards`` enforces:
-      • follow suit if able,
-      • over-trump when trump is led,
-      • partner-master exemption (current
-        winner, not whoever led),
-      • over-trump opponents otherwise.
-      The partner-master check delegates to
-      ``Trick.get_current_winner(trump_suit)``.
       ``play_trick`` plays only a card in
-      that legal set; a truthy-but-illegal
-      card raises :class:`IllegalPlayError`
-      (no silent fallback). The
-      ``PlayRuleViolation`` reason comes from
-      ``_classify_play_violation``, which
-      mirrors ``_get_playable_cards`` and
-      must stay in sync with it.
+      ``legality.get_playable_cards``'s legal
+      set; a truthy-but-illegal card raises
+      :class:`IllegalPlayError` (no silent
+      fallback). ``calculate_round_scores`` is
+      a thin wrapper that publishes
+      ``score_round``'s ``RoundScore`` onto
+      ``round_scores`` / ``contract_made`` /
+      ``unannounced_capot``.
       ----
       During play Round fires (each ``hasattr``-guarded):
       • ``view.on_bid_made(player, bid, history)``
@@ -258,6 +269,32 @@ package "model/round.py" as p_round {
       ``view.on_round_dealt(round_)`` after the deal
       and ``view.on_all_pass_redeal(round_)`` when
       everyone passes.
+    end note
+
+    note bottom of r_legality
+      Pure rule functions — read
+      ``(player, contract, current_trick)``,
+      mutate nothing. ``get_playable_cards``
+      enforces: follow suit if able, over-trump
+      when trump is led, partner-master
+      exemption (current winner, not whoever
+      led), over-trump opponents otherwise.
+      ``classify_play_violation`` mirrors its
+      branch order to name the broken rule and
+      **must stay in sync** with it — the two
+      are co-located here until a future
+      ``Ruleset`` unifies them.
+    end note
+
+    note bottom of r_scoring
+      Pure ``round -> RoundScore`` transform.
+      Four scoring shapes (numeric share-pile,
+      unannounced-capot 250 substitute, doubled
+      winner-takes-all, Slam / Solo Slam grid),
+      belote +20 to the K+Q holder layered on
+      every shape. ``UnannouncedSlam`` tags an
+      undeclared all-trick sweep on a numeric
+      contract.
     end note
 }
 
