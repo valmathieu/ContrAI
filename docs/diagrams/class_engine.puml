@@ -1,5 +1,5 @@
 @startuml class_engine
-title contrai-engine — model + MVC (current state, honest portrayal)
+title contrai-engine — model + view + cli (current state, honest portrayal)
 
 ' --- Palette: engine orange (model), grey (stubs), core blue (boundary) ---
 skinparam shadowing false
@@ -177,6 +177,26 @@ package "model/game.py" as p_game {
         + next_dealer() : None
         + set_players_order() : None
     }
+
+    class GameOverStatus <<frozen dataclass>> {
+        + game_over : bool
+        + winner : str?
+        + tied_teams : list<str>?
+        + final_scores : dict<str, int>
+    }
+
+    Game ..> GameOverStatus : check_game_over()\nreturns
+
+    note bottom of GameOverStatus
+      Frozen verdict returned by
+      ``Game.check_game_over(target)``.
+      ``winner`` is the sole leader, or
+      ``None`` on a tie / unfinished game;
+      ``tied_teams`` carries the level
+      leaders instead. ``cli.py`` loops
+      on ``.game_over`` and the end-game
+      banner reads off the rest.
+    end note
 }
 
 package "model/round/ package" as p_round {
@@ -295,28 +315,6 @@ package "model/round/ package" as p_round {
       every shape. ``UnannouncedSlam`` tags an
       undeclared all-trick sweep on a numeric
       contract.
-    end note
-}
-
-' =========================================================
-' controller/ — still a stub today
-' =========================================================
-package "controller/" as p_ctrl {
-    class GameController <<stub>> #EEEEEE {
-        + running : bool = True
-        --
-        + handle_events() : None
-        + update() : None
-        + render() : None
-        + run() : None
-    }
-
-    note right of GameController
-      **Stub.** References undefined `pygame`;
-      no integration with Game / Round.
-      Open question: keep for a future GUI
-      path, or delete now that the Rich CLI
-      handles input/output?
     end note
 }
 
@@ -506,8 +504,7 @@ Round "1" o-- "0..1" "Contract" : contract
 Round "1" o-- "1" "Deck" : deck
 Round "1" o-- "4" Player : players_order
 
-' MVC wiring
-GameController ..> Game : <<would drive\n(stub)>>
+' View + CLI wiring (the controller role today = cli.py loop + view hooks)
 Round ..> RichView : <<consults for\nhuman input + hooks>>
 Cli ..> Game : <<owns game loop>>
 Cli ..> RichView : <<owns view\n+ screens>>
