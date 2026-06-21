@@ -23,6 +23,11 @@ from contrai_engine.view.rich_view import (
     RichView,
     RoundSummary,
 )
+from contrai_engine.view.screens.bidding import (
+    _bidding_prompt_text,
+    _panel_bidding_history,
+    _render_bidding_diamond,
+)
 
 
 # ======================================================================
@@ -35,7 +40,7 @@ class TestBiddingPromptHint:
 
     def _prompt(self, history, next_player):
         view = RichView()
-        return view._bidding_prompt_text(history, next_player).plain
+        return _bidding_prompt_text(history, next_player).plain
 
     def test_no_double_hint_before_any_contract(self, four_players):
         """With nothing but a Pass on the table there's no contract to
@@ -196,7 +201,7 @@ class TestPanelBiddingHistorySeparator:
             (north, (80, Suit.HEARTS)),
             (west, "Pass"),
         ]
-        text = view._panel_bidding_history(bids).renderable.plain
+        text = _panel_bidding_history(bids).renderable.plain
         assert "\n" not in text
 
     def test_newline_between_rounds(self, four_players):
@@ -213,7 +218,7 @@ class TestPanelBiddingHistorySeparator:
             (north, (130, Suit.HEARTS)),
             (west, "Double"),
         ]
-        text = view._panel_bidding_history(bids).renderable.plain
+        text = _panel_bidding_history(bids).renderable.plain
         # Exactly one line break between round 1 and round 2.
         assert text.count("\n") == 1
         # Each line opens with its round-number gutter.
@@ -238,7 +243,7 @@ class TestPanelBiddingHistorySeparator:
             (north, (130, Suit.HEARTS)),
             (west, "Double"),
         ]
-        text = view._panel_bidding_history(bids).renderable.plain
+        text = _panel_bidding_history(bids).renderable.plain
         line1, line2 = text.split("\n", 1)
         # The seat letters start at identical offsets on both lines, so
         # the bids stack in vertical lanes despite differing bid widths.
@@ -607,7 +612,7 @@ class TestBiddingDiamond:
             (west, (80, Suit.HEARTS)),
             (north, "Pass"),
         ]
-        diamond = view._render_bidding_diamond(
+        diamond = _render_bidding_diamond(
             history, pending_position=None, width=42
         )
         text = diamond.plain
@@ -618,7 +623,7 @@ class TestBiddingDiamond:
     def test_pending_seat_marked_with_question(self, four_players):
         view = RichView()
         north, east, south, west = four_players
-        diamond = view._render_bidding_diamond(
+        diamond = _render_bidding_diamond(
             [(west, (80, Suit.HEARTS))],
             pending_position="North",
             width=42,
@@ -629,7 +634,7 @@ class TestBiddingDiamond:
 
     def test_seat_without_bid_shows_dot(self, four_players):
         view = RichView()
-        diamond = view._render_bidding_diamond(
+        diamond = _render_bidding_diamond(
             [], pending_position=None, width=42
         )
         # Empty auction: every seat is a placeholder dot, no "?".
@@ -647,7 +652,7 @@ class TestBiddingDiamond:
             (south, "Pass"),
             (west, (100, Suit.HEARTS)),
         ]
-        text = view._render_bidding_diamond(
+        text = _render_bidding_diamond(
             history, pending_position=None, width=42
         ).plain
         assert "100 ♥" in text
