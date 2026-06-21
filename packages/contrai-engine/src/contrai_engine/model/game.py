@@ -9,22 +9,12 @@ from contrai_core.deck import Deck
 from contrai_core.team import Team
 from .player import Player
 from contrai_core.trick import Trick
-from contrai_core.contract import Contract
 from .round import Round
 from contrai_core.exceptions import InvalidPlayerCountError
 import random
 
 if TYPE_CHECKING:
     from contrai_engine.view.rich_view import RichView
-
-
-class RoundResult(TypedDict):
-    """Structured result of a single round managed by :meth:`Game.manage_round`."""
-
-    contract: Contract | None
-    scores: dict[str, int]
-    total_scores: dict[str, int]
-    message: str
 
 
 class GameOverStatus(TypedDict):
@@ -128,16 +118,16 @@ class Game:
         # Deal cards
         self.current_round.deal_cards()
 
-    def manage_round(self, view: RichView | None = None) -> RoundResult:
+    def manage_round(self, view: RichView | None = None) -> None:
         """
         Manages a complete round: bidding, trick-taking, and scoring using Round class.
 
+        Mutates game state in place: sets ``current_contract`` (``None`` when every
+        player passed) and folds the round's points into ``scores``. Returns nothing —
+        callers read the outcome off the ``Game``/``Round`` they passed in.
+
         Args:
             view: Optional view for human player interaction.
-
-        Returns:
-            RoundResult: Round outcome with the contract, per-round scores,
-                cumulative total scores, and a human-readable message.
         """
         # Start new round (deal cards, set dealer, etc.)
         self.start_new_round()
@@ -151,18 +141,13 @@ class Game:
         contract = self.current_round.manage_bidding(view)
         self.current_contract = contract
 
-        # If no contract (all passed), handle failed contract
+        # If no contract (all passed), handle failed contract (redistributes cards).
         if not contract:
-            round_scores = self.current_round.handle_failed_contract()
+            self.current_round.handle_failed_contract()
             # Notify the view that the round will be redealt.
             if view is not None and hasattr(view, 'on_all_pass_redeal'):
                 view.on_all_pass_redeal(self.current_round)
-            return {
-                'contract': None,
-                'scores': round_scores,
-                'total_scores': self.scores.copy(),
-                'message': 'All players passed. Cards redistributed.'
-            }
+            return
 
         # Play all tricks - delegate to Round
         self.current_round.play_all_tricks(view)
@@ -173,13 +158,6 @@ class Game:
         # Update total scores
         for team_name, points in round_scores.items():
             self.scores[team_name] += points
-
-        return {
-            'contract': contract,
-            'scores': round_scores,
-            'total_scores': self.scores.copy(),
-            'message': 'Round completed'
-        }
 
     def check_game_over(self, target_score: int = 1500) -> GameOverStatus:
         """
