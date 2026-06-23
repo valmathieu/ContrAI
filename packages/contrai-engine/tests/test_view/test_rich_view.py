@@ -23,7 +23,6 @@ from contrai_engine.model.round import UnannouncedSlam
 from contrai_core.bid import ContractBid, DoubleBid, PassBid, SlamLevel
 from contrai_core.contract import Contract
 from contrai_engine.view.rich_view import (
-    RED,
     RichView,
     RoundSummary,
 )
@@ -181,30 +180,6 @@ class TestRequestBidActionLegality:
         assert isinstance(result, DoubleBid)
         # Accepted on the first frame — no rejection notice was ever set.
         assert notices == [None]
-
-
-class TestPanelPromptNotice:
-    """The rejection line is rendered inside the Prompt panel itself."""
-
-    def test_notice_appears_above_question(self):
-        view = RichView()
-        notice = Text("✗ doubling your own side", style=RED)
-        panel = view._panel_prompt(Text("Your bid?"), False, notice=notice)
-        text = panel.renderable.plain
-        # Both the reason and the question share the one panel, reason
-        # first — so the player never has to scroll to see why input
-        # bounced.
-        assert "own side" in text
-        assert "Your bid?" in text
-        assert text.index("own side") < text.index("Your bid?")
-        # Grows a row to fit the extra line.
-        assert panel.height == 5
-
-    def test_no_notice_keeps_compact_height(self):
-        view = RichView()
-        panel = view._panel_prompt(Text("Your bid?"), False)
-        assert "own side" not in panel.renderable.plain
-        assert panel.height == 4
 
 
 # ======================================================================
@@ -491,20 +466,6 @@ class TestEventLog:
 
         view.on_contract_established(_StubRound())
         assert view.event_log == []
-
-    def test_panel_event_log_renders_lines(self, monkeypatch):
-        view = self._make_view(monkeypatch)
-        view._log(Text("alpha"))
-        view._log(Text("beta"))
-        panel = view._panel_event_log()
-        assert "alpha" in panel.renderable.plain
-        assert "beta" in panel.renderable.plain
-        assert panel.title.plain == "Log"
-
-    def test_panel_event_log_empty_placeholder(self, monkeypatch):
-        view = self._make_view(monkeypatch)
-        panel = view._panel_event_log()
-        assert "(no events yet)" in panel.renderable.plain
 
     def test_attach_resets_log(self, monkeypatch, four_players):
         view = self._make_view(monkeypatch)

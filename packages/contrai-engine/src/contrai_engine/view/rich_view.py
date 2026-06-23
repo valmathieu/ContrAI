@@ -52,6 +52,11 @@ from contrai_engine.view.formatting import (
     _team_abbr,
     _team_color,
 )
+from contrai_engine.view.layout import (
+    _panel_event_log,
+    _panel_prompt,
+    _two_column,
+)
 from contrai_engine.view.parsing import _parse_bid_input, _parse_card_input
 from contrai_engine.view.state_helpers import (
     _belote_by_position,
@@ -411,7 +416,7 @@ class RichView:
             prompt_text = Text(
                 "Press [Enter] to deal the next round…", style=FG
             )
-        self.console.print(self._panel_prompt(prompt_text, mandatory=False))
+        self.console.print(_panel_prompt(prompt_text, mandatory=False))
         try:
             self.console.input(Text("> ", style=f"bold {GOLD}").markup)
         except (EOFError, KeyboardInterrupt):
@@ -459,7 +464,7 @@ class RichView:
             self.console.print()
             self.console.print(self._panel_game_setup(selected_target))
             self.console.print(self._panel_players())
-            self.console.print(self._panel_prompt(
+            self.console.print(_panel_prompt(
                 self._landing_prompt_text(selected_target),
                 mandatory=False,
             ))
@@ -498,7 +503,7 @@ class RichView:
             self.console.clear()
             self.console.print(self._panel_game_over_banner(status))
             self.console.print(self._panel_round_summary())
-            self.console.print(self._panel_prompt(
+            self.console.print(_panel_prompt(
                 self._end_game_prompt_text(),
                 mandatory=False,
             ))
@@ -576,9 +581,9 @@ class RichView:
         if hand_panel is not None:
             self.console.print(hand_panel)
         # Event log: a rolling narrative of the last few engine events.
-        self.console.print(self._panel_event_log())
+        self.console.print(_panel_event_log(self.event_log, self.LOG_MAX))
         self.console.print(
-            self._panel_prompt(prompt_question, mandatory, notice=notice)
+            _panel_prompt(prompt_question, mandatory, notice=notice)
         )
 
     # ------------------------------------------------------------------
@@ -1300,35 +1305,6 @@ class RichView:
             width=70,
         )
 
-    def _panel_prompt(
-        self,
-        question: Text,
-        mandatory: bool,
-        notice: Optional[Text] = None,
-    ) -> Panel:
-        body = Text()
-        # A rejection from the previous input sits above the question, in
-        # red, so the player reads *why* the last entry bounced without it
-        # ever leaving the frame. The panel grows one row to fit it.
-        if notice is not None:
-            body.append_text(notice)
-            body.append("\n")
-        if mandatory:
-            q = question.copy()
-            q.stylize(f"bold {YELLOW}")
-            body.append_text(q)
-        else:
-            body.append_text(question)
-        body.append("\n")
-        return Panel(
-            body,
-            title=Text("Prompt", style=f"bold {TITLE}"),
-            border_style=BORDER,
-            box=ROUNDED,
-            width=70,
-            height=5 if notice is not None else 4,
-        )
-
     # ------------------------------------------------------------------
     # Prompt text builders
     # ------------------------------------------------------------------
@@ -1989,25 +1965,6 @@ class RichView:
         scores = getattr(round_, "round_scores", {}) or {}
         return scores.get(contract.team.name, 0) > 0
 
-    def _panel_event_log(self) -> Panel:
-        """Bottom panel showing the last ``LOG_MAX`` events."""
-        body = Text()
-        if not self.event_log:
-            body.append("(no events yet)", style=DIM)
-        else:
-            for i, line in enumerate(self.event_log):
-                if i > 0:
-                    body.append("\n")
-                body.append_text(line)
-        return Panel(
-            body,
-            title=Text("Log", style=f"bold {TITLE}"),
-            border_style=BORDER_DIM,
-            box=ROUNDED,
-            width=70,
-            height=self.LOG_MAX + 2,
-        )
-
     # ------------------------------------------------------------------
     # Prompt text builders (continued)
     # ------------------------------------------------------------------
@@ -2185,21 +2142,3 @@ class RichView:
         elif row.contract.double:
             t.append(" doubled", style=GOLD)
         return t
-
-
-# ---------------------------------------------------------------------------
-# Layout helper
-# ---------------------------------------------------------------------------
-
-
-def _two_column(left, right, *, left_width: int) -> Table:
-    """Place two panels side-by-side with a fixed-width left column.
-
-    A ``Table.grid`` keeps the row exactly as tall as the panels (unlike
-    ``rich.layout.Layout``, which expands to fill the console height).
-    """
-    grid = Table.grid(expand=False, padding=(0, 1))
-    grid.add_column(width=left_width, no_wrap=True)
-    grid.add_column(no_wrap=True)
-    grid.add_row(left, right)
-    return grid
