@@ -53,26 +53,22 @@ class TestWireToBid:
         assert isinstance(wire_to_bid(player, "garbage"), PassBid)
 
 
-class TestPlayer:
-    """Test the abstract Player class"""
+class TestIsHumanProperty:
+    """The engine's is_human property splits human from AI players.
 
-    def test_player_creation(self):
-        """Test creating a human player"""
-        player = HumanPlayer("Alice", "North")
-        assert player.name == "Alice"
-        assert player.position == "North"
-        assert len(player.hand) == 0
-        assert player.team is None
-        assert player.is_human is True
+    Identity state (name, position, hand, team) comes from
+    :class:`contrai_core.BasePlayer` and is covered by core's
+    ``test_base_player.py``; here we only assert the engine-specific
+    polymorphic behavior.
+    """
 
-    def test_ai_player_creation(self):
-        """Test creating an AI player"""
-        player = AiPlayer("Bot", "South")
-        assert player.name == "Bot"
-        assert player.position == "South"
-        assert len(player.hand) == 0
-        assert player.team is None
-        assert player.is_human is False
+    def test_human_player_is_human(self):
+        """HumanPlayer reports is_human True."""
+        assert HumanPlayer("Alice", "North").is_human is True
+
+    def test_ai_player_is_not_human(self):
+        """AiPlayer reports is_human False."""
+        assert AiPlayer("Bot", "South").is_human is False
 
 
 class TestAiPlayerStrategyInjection:
