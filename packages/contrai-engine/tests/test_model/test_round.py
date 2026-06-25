@@ -22,11 +22,12 @@ from contrai_core import Hand
 from contrai_core.bid import ContractBid, PassBid
 from contrai_core.card import Card
 from contrai_core.contract import Contract
+from contrai_core.team import Team
 from contrai_core.exceptions import IllegalPlayError, PlayRuleViolation
 from contrai_core.trick import Trick
 from contrai_core.types import Rank, Suit
 
-from contrai_engine.model.player import HumanPlayer, wire_to_bid
+from contrai_engine.model.player import AiPlayer, HumanPlayer, wire_to_bid
 from contrai_engine.model.round import Round
 
 
@@ -95,6 +96,66 @@ class TestPlayTrickRejectsIllegalCard:
         assert excinfo.value.card is e_illegal
         assert excinfo.value.reason == PlayRuleViolation.MUST_FOLLOW_SUIT
         assert set(excinfo.value.legal_cards) == {Card(Suit.HEARTS, Rank.ACE)}
+
+
+class TestPlayTrickHumanUsesView:
+    """A human's card is sourced from the view, never from
+    ``HumanPlayer.choose_card`` (which only returns None by design)."""
+
+    def test_human_card_comes_from_view_not_choose_card(self):
+        human = HumanPlayer("H", "North")
+        east = AiPlayer("E", "East")
+        south = AiPlayer("S", "South")
+        west = AiPlayer("W", "West")
+        order = [human, east, south, west]
+        ns = Team("North-South", [human, south])
+        ew = Team("East-West", [east, west])
+        for p in (human, south):
+            p.team = ns
+        for p in (east, west):
+            p.team = ew
+
+        contract = _contract(human, 100, Suit.SPADES)
+        # One heart each so following suit is trivial; human leads.
+        cards = {
+            human: Card(Suit.HEARTS, Rank.KING),
+            east: Card(Suit.HEARTS, Rank.SEVEN),
+            south: Card(Suit.HEARTS, Rank.EIGHT),
+            west: Card(Suit.HEARTS, Rank.NINE),
+        }
+        for player, card in cards.items():
+            player.hand = Hand([card])
+
+        class _StubDeck:
+            def add_cards(self, cards):
+                pass
+
+        round_ = Round(order, dealer=human, deck=_StubDeck(), round_number=1)
+        round_.contract = contract
+
+        # Spy: the human's choose_card must NOT be called on the view path.
+        human_calls = []
+        human.choose_card = (  # type: ignore[method-assign]
+            lambda *args, _calls=human_calls: _calls.append(args)
+        )
+        # Bots play their single legal card straight through choose_card.
+        for player in (east, south, west):
+            player.choose_card = (  # type: ignore[method-assign]
+                lambda trick, c, playable, _card=cards[player]: _card
+            )
+
+        view_calls = []
+
+        class _SpyView:
+            def request_card_action(self, player, trick, contract, playable):
+                view_calls.append(player)
+                return cards[player]
+
+        round_.play_trick(view=_SpyView())
+
+        assert human_calls == []  # choose_card bypassed for the human
+        assert view_calls == [human]  # the view drove the human's turn
+        assert cards[human] not in human.hand  # the chosen card was played
 
 
 # ---------------------------------------------------------------------------

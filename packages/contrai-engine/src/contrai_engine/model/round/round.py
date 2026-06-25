@@ -258,17 +258,22 @@ class Round:
                 player, self.contract, self.current_trick
             )
 
-            if hasattr(player, 'choose_card'):
-                # AI player or player with choose_card method
+            # Source the card. A human's input is driven by the view —
+            # the model can't block on terminal I/O under MVC — so we
+            # ask the view directly and never call choose_card, whose
+            # HumanPlayer override only returns None. AI players (and any
+            # viewless/headless player) are asked via choose_card, with a
+            # bare first-playable fallback for objects that lack it.
+            if view is not None and getattr(player, 'is_human', False):
+                card = view.request_card_action(
+                    player, self.current_trick, self.contract, playable_cards
+                )
+            elif hasattr(player, 'choose_card'):
                 # Pass playable cards to help AI make legal moves
                 card = player.choose_card(self.current_trick, self.contract, playable_cards)
             else:
                 # Simple fallback: play first playable card
                 card = playable_cards[0] if playable_cards else None
-
-            # If view provided and player is human, use view for input
-            if view and hasattr(player, 'is_human') and player.is_human:
-                card = view.request_card_action(player, self.current_trick, self.contract, playable_cards)
 
             # Validate that the chosen card is legal. An illegal card is
             # surfaced as a loud failure (IllegalPlayError) rather than
