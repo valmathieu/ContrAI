@@ -27,7 +27,6 @@ from contrai_core import (
     BasePlayer,
     Card,
     Contract,
-    Suit,
     Trick,
 )
 from contrai_engine.model.player import wire_to_bid
@@ -59,6 +58,15 @@ from contrai_engine.view.screens.bidding import (
     _bidding_prompt_text,
     _panel_bidding_history,
 )
+from contrai_engine.view.screens.landing import (
+    _landing_prompt_text,
+    _landing_subtitle,
+    _landing_suit_ribbon,
+    _landing_title,
+    _panel_game_score,
+    _panel_game_setup,
+    _panel_players,
+)
 from contrai_engine.view.screens.recap import (
     _contract_made,
     _panel_round_recap,
@@ -81,7 +89,6 @@ from contrai_engine.view.theme import (
     BORDER,
     DEFAULT_TARGET,
     DIM,
-    DOT,
     FG,
     GOLD,
     GOLD_BG,
@@ -101,12 +108,6 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-
-try:
-    from pyfiglet import Figlet
-    _HAS_PYFIGLET = True
-except ImportError:
-    _HAS_PYFIGLET = False
 
 if TYPE_CHECKING:
     from contrai_engine.model.game import Game
@@ -468,14 +469,14 @@ class RichView:
         """Render the landing screen and return the chosen target score."""
         while True:
             self.console.clear()
-            self.console.print(self._landing_title())
-            self.console.print(self._landing_subtitle())
-            self.console.print(self._landing_suit_ribbon())
+            self.console.print(_landing_title())
+            self.console.print(_landing_subtitle())
+            self.console.print(_landing_suit_ribbon())
             self.console.print()
-            self.console.print(self._panel_game_setup(selected_target))
-            self.console.print(self._panel_players())
+            self.console.print(_panel_game_setup(selected_target))
+            self.console.print(_panel_players())
             self.console.print(_panel_prompt(
-                self._landing_prompt_text(selected_target),
+                _landing_prompt_text(selected_target),
                 mandatory=False,
             ))
             raw = self.console.input(
@@ -558,7 +559,11 @@ class RichView:
         self.console.clear()
         round_ = self.game.current_round if self.game else None
         # Top row: game score + round info
-        top_left = self._panel_game_score()
+        scores = (
+            self.game.scores if self.game
+            else {"North-South": 0, "East-West": 0}
+        )
+        top_left = _panel_game_score(scores, self.target_score)
         top_right = _panel_round(round_, phase)
         self.console.print(_two_column(top_left, top_right, left_width=24))
         # Middle row: last trick + current trick
@@ -594,157 +599,6 @@ class RichView:
         self.console.print(_panel_event_log(self.event_log, self.LOG_MAX))
         self.console.print(
             _panel_prompt(prompt_question, mandatory, notice=notice)
-        )
-
-    # ------------------------------------------------------------------
-    # Landing screen pieces
-    # ------------------------------------------------------------------
-
-    def _landing_title(self) -> Text:
-        """Centered block-ASCII CONTRAI title."""
-        if _HAS_PYFIGLET:
-            ascii_art = Figlet(font="ansi_shadow", width=70).renderText("CONTRAI")
-        else:
-            ascii_art = "CONTRAI"
-        t = Text()
-        for line in ascii_art.splitlines():
-            t.append(line.center(70), style=f"bold {YELLOW}")
-            t.append("\n")
-        return t
-
-    def _landing_subtitle(self) -> Text:
-        return Text("Belote · Contrée · CLI edition".center(70), style=DIM)
-
-    def _landing_suit_ribbon(self) -> Text:
-        ribbon = Text()
-        glyphs = [(Suit.SPADES, FG), (Suit.HEARTS, RED),
-                  (Suit.DIAMONDS, RED), (Suit.CLUBS, FG)]
-        # Build "  ♠   ♥   ♦   ♣  " then center it.
-        segments = []
-        for suit, color in glyphs:
-            segments.append((suit, color))
-        # Render with 3 spaces between glyphs.
-        inner = Text()
-        for i, (suit, color) in enumerate(segments):
-            if i > 0:
-                inner.append("   ")
-            inner.append(_suit_glyph(suit), style=f"bold {color}")
-        # Centered within 70 cols.
-        total = inner.cell_len
-        pad = max(0, (70 - total) // 2)
-        ribbon.append(" " * pad)
-        ribbon.append_text(inner)
-        return ribbon
-
-    def _panel_game_setup(self, selected: int) -> Panel:
-        """Five radio rows for target score, highlight the selected one."""
-        rows = Text()
-        rows.append("Target score", style=f"bold {FG}")
-        rows.append(" ", style=FG)
-        rows.append(
-            "(first team to reach the target wins the game)\n\n",
-            style=DIM,
-        )
-        for value, label, estimate in TARGET_OPTIONS:
-            is_sel = value == selected
-            line = Text()
-            if is_sel:
-                radio = "(●)"
-                line.append(f" {radio} ", style=f"bold {GOLD_FG} on {GOLD_BG}")
-                line.append(f"{value:<4}  ", style=f"bold {GOLD_FG} on {GOLD_BG}")
-                line.append(f"{label:<10}", style=f"{GOLD_FG} on {GOLD_BG}")
-                line.append(f"  ·  {estimate}", style=f"{GOLD_FG} on {GOLD_BG}")
-                if value == DEFAULT_TARGET:
-                    line.append("   ← default", style=f"bold {GOLD} on {GOLD_BG}")
-                # Pad to fill the panel width with the gold background.
-                used = line.cell_len
-                line.append(" " * max(0, 60 - used), style=f"on {GOLD_BG}")
-            else:
-                line.append(" ( ) ", style=DIM)
-                line.append(f"{value:<4}  ", style=f"bold {FG}")
-                line.append(f"{label:<10}", style=FG)
-                line.append(f"  ·  {estimate}", style=DIM)
-            rows.append_text(line)
-            rows.append("\n")
-        return Panel(
-            rows,
-            title=Text("Game setup", style=f"bold {TITLE}"),
-            border_style=BORDER,
-            box=ROUNDED,
-            width=70,
-        )
-
-    def _panel_players(self) -> Panel:
-        """Players block. Hardcoded for v1 — South=human, others=AI medium.
-
-        TODO: replace with a configurable seat picker when we expose
-        difficulty / player config on the landing screen.
-        """
-        seats = [
-            ("N", "North", "AI · medium", BLUE, False),
-            ("E", "East", "AI · medium", ORANGE, False),
-            ("S", "You", "human", GREEN_FG, True),
-            ("W", "West", "AI · medium", ORANGE, False),
-        ]
-        # Two columns of two: render as a 2-row, 2-col Table.
-        table = Table.grid(expand=True, padding=(0, 2))
-        table.add_column(ratio=1)
-        table.add_column(ratio=1)
-        rows = []
-        for label, name, role, color, is_human in seats:
-            cell = Text()
-            cell.append(label, style=f"bold {color}")
-            cell.append(" ", style=FG)
-            if is_human:
-                cell.append(name, style=f"bold {color}")
-            else:
-                cell.append(name, style=FG)
-            cell.append(f" ({role})", style=DIM)
-            rows.append(cell)
-        table.add_row(rows[0], rows[1])  # N, E
-        table.add_row(rows[2], rows[3])  # S, W
-        return Panel(
-            table,
-            title=Text("Players", style=f"bold {TITLE}"),
-            border_style=BORDER,
-            box=ROUNDED,
-            width=70,
-        )
-
-    def _landing_prompt_text(self, selected: int) -> Text:
-        t = Text()
-        t.append(
-            "Target score? [500 / 1000 / 1500 / 2000 / 3000] (default ",
-            style=FG,
-        )
-        t.append(str(selected), style=f"bold {GOLD}")
-        t.append(")", style=FG)
-        return t
-
-    # ------------------------------------------------------------------
-    # In-game panels
-    # ------------------------------------------------------------------
-
-    def _panel_game_score(self) -> Panel:
-        scores = self.game.scores if self.game else {"North-South": 0, "East-West": 0}
-        body = Text()
-        ns = scores.get("North-South", 0)
-        ew = scores.get("East-West", 0)
-        body.append(f"{'N-S':<8}", style=f"bold {BLUE}")
-        body.append(f"{ns:>10}\n", style=FG)
-        body.append(f"{'E-W':<8}", style=f"bold {ORANGE}")
-        body.append(f"{ew:>10}\n", style=FG)
-        body.append("·" * 18, style=DOT)
-        body.append("\n")
-        body.append(f"{'Target':<8}", style=DIM)
-        body.append(f"{self.target_score:>10}", style=f"bold {YELLOW}")
-        return Panel(
-            body,
-            title=Text("Game score", style=f"bold {TITLE}"),
-            border_style=BORDER,
-            box=ROUNDED,
-            width=22,
-            height=6,
         )
 
     def _find_human_player(self) -> Optional[BasePlayer]:
