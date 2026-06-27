@@ -246,9 +246,9 @@ package "controller/" as p_ctrl {
 }
 
 ' =========================================================
-' view/ — live Rich terminal UI
+' view/ — live Rich terminal UI (split package)
 ' =========================================================
-package "view/rich_view.py" as p_view {
+package "view/ package" as p_view {
     class RoundSummary <<dataclass>> {
         + round_number : int
         + contract : Contract?
@@ -288,49 +288,94 @@ package "view/rich_view.py" as p_view {
         + show_landing(selected_target=1500) : int
         + show_round_recap(round_, running_scores, *, is_final=False) : None
         + show_end_game(status) : str  ('n' | 'r' | 'q')
+        --
+        ' Orchestration seam (private)
+        - _render_in_game(*, phase, …) : None
+    }
+
+    class "view helpers\n(pure functions)" as p_view_helpers <<modules>> #FFEFD9 {
+        theme.py
+        formatting.py
+        parsing.py
+        bidding_rules.py
+        state_helpers.py
+        layout.py
+    }
+
+    class "view screens\n(pure (data)->Panel/Text)" as p_view_screens <<modules>> #FFEFD9 {
+        screens/landing.py
+        screens/bidding.py
+        screens/trick.py
+        screens/recap.py
+        screens/endgame.py
     }
 
     note right of RichView
-      Six-screen UI: landing, bidding,
-      mid-trick, trick-won, round-recap,
-      end-game. Per-round summaries tracked
-      here (`history`) so Game stays UI-free.
-      A rolling 5-line `event_log` is shown
-      below the hand in every in-game state.
-      Round / trick / recap panel titles use
-      the `#N` format (e.g. `Round #2`,
+      Stateful orchestrator (in `rich_view.py`).
+      Six-screen UI: landing, bidding, mid-trick,
+      trick-won, round-recap, end-game. Per-round
+      summaries tracked here (`history`) so Game
+      stays UI-free. A rolling 5-line `event_log`
+      is shown below the hand in every in-game
+      state. Round / trick / recap panel titles
+      use the `#N` format (e.g. `Round #2`,
       `Last trick (#7)`, `Current trick (#8)`).
       ----
-      The round-recap panel breaks the round
-      score down per team:
-      contract bonus (attacker base on
+      Rendering is the pure-function modules' job.
+      `_render_in_game` is the single seam that
+      pulls state off `self` and feeds the screen
+      builders; the hooks and input loops own all
+      console I/O. Re-exported from
+      `view/__init__.py` (so both
+      `view.RichView` and
+      `view.rich_view.RichView` resolve).
+      ----
+      AI pacing is tunable per-hook via the env
+      vars `CONTRAI_AI_BID_DELAY` (1.4s) and
+      `CONTRAI_AI_CARD_DELAY` (0.9s). The belote
+      hook reuses the card delay.
+    end note
+
+    note bottom of p_view_helpers
+      Stateless, `self`-free helpers, each in
+      its own module:
+      • theme — colour tokens + lookup tables
+      • formatting — seat / suit / contract /
+        trump / legacy-bid labels
+      • parsing — `_parse_bid_input`,
+        `_parse_card_input`
+      • bidding_rules — `_double_/`,
+        `_redouble_available_to`,
+        `_min_legal_contract_value`,
+        `_illegal_bid_reason`, `_bid_to_legacy`
+      • state_helpers — `_current_winner`,
+        `_explain_constraint`,
+        `_sort_hand_for_display`,
+        `_belote_by_position`, `_resolve_delay`
+      • layout — `_two_column`, `_panel_prompt`,
+        `_panel_event_log`
+    end note
+
+    note bottom of p_view_screens
+      Pure `(data) -> Panel/Text` builders — no
+      state, no I/O. RichView composes + prints
+      them; screens reuse the helpers above.
+      The round-recap breakdown credits each
+      team: contract bonus (attacker base on
       normal made, 160+base×mult on doubled
-      made, (160+base)×mult on failed
-      defender) + card points + dix-de-der
-      + belote → `round_scores[team]` →
-      running total. The card/dix/belote
-      rows em-dash when the engine ignores
-      them (doubled-made attacker, failed
-      defender) so the addition matches
-      the engine's round_score.
-      Helpers: `_recap_breakdown`,
-      `_format_recap_table`,
-      `_belote_team_in_round`.
+      made, (160+base)×mult on failed defender)
+      + card points + dix-de-der + belote →
+      `round_scores[team]`. Card/dix/belote rows
+      em-dash when the engine ignores them so
+      the addition matches `round_score`.
+      Helpers `_recap_breakdown` /
+      `_format_recap_table` /
+      `_belote_team_in_round` live in
+      `screens/recap.py`.
       ----
-      AI pacing is tunable per-hook via the
-      env vars `CONTRAI_AI_BID_DELAY` (1.4s)
-      and `CONTRAI_AI_CARD_DELAY` (0.9s).
-      The belote hook reuses the card delay.
-      ----
-      Pure helpers (parsers, sorter,
-      current-winner wrapper, hint,
-      `_redouble_available_to`,
-      `_resolve_delay`, `_bid_to_legacy`,
-      `_belote_by_position`) live at module
-      scope. Rendering panels are validated
-      by `uv run contrai` smoke testing plus
-      title/text smoke assertions in
-      `tests/test_view/test_rich_view.py`.
+      Tested per-module in
+      `tests/test_view/test_*.py`; the deepest
+      layouts are validated by `uv run contrai`.
     end note
 }
 
@@ -385,5 +430,8 @@ Round ..> RichView : <<consults for\nhuman input + hooks>>
 Cli ..> Game : <<owns game loop>>
 Cli ..> RichView : <<owns view\n+ screens>>
 RichView "1" *-- "0..N" RoundSummary : history
+RichView ..> p_view_screens : <<composes\n+ prints>>
+RichView ..> p_view_helpers : <<uses>>
+p_view_screens ..> p_view_helpers : <<uses>>
 
 @enduml
