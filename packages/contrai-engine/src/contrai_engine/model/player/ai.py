@@ -1,134 +1,19 @@
-# Player, HumanPlayer, AiPlayer classes
-
-from abc import ABC, abstractmethod
-from typing import Optional
+# AiPlayer class — expert bidding table and card-play strategy
 
 from contrai_core.auction import Auction
 from contrai_core.bid import (
     Bid,
-    ContractBid,
-    DoubleBid,
     PassBid,
     RedoubleBid,
     SlamLevel,
 )
-from contrai_core.card import Card
-from contrai_core.exceptions import InvalidContractError
-from contrai_core.player import BasePlayer
 from contrai_core.types import CARD_SUITS, Rank, Suit
+
+from .base import Player
+from .wire import bid_to_wire, wire_to_bid
+
 SUITS = CARD_SUITS
 
-
-# ---------------------------------------------------------------------------
-# Wire format bridge
-# ---------------------------------------------------------------------------
-# The AI strategy in this module still operates internally on the
-# legacy "wire" representation of a bid:
-#
-#     'Pass' | 'Double' | 'Redouble' | (value, suit)
-#
-# The Auction API works on real :class:`Bid` instances. These two
-# module-level helpers bridge between the two formats so the engine
-# boundary can pass Bid objects while the AI's expert table keeps
-# using its existing tuple-based helpers. Future AI families should
-# consume :meth:`Auction.legal_actions` directly and let these go.
-
-
-def wire_to_bid(player: BasePlayer, wire) -> Bid:
-    """Lift a legacy wire bid choice to a :class:`Bid` instance.
-
-    Args:
-        player: The player making the bid (attached to the result).
-        wire: ``'Pass'``, ``'Double'``, ``'Redouble'`` or
-            ``(value, suit)``. Unrecognised payloads fall back to a
-            :class:`PassBid` so the caller can still hand the result
-            to :meth:`Auction.apply`, which raises
-            :class:`IllegalBidError` if the engine wiring is broken.
-
-    Returns:
-        The matching :class:`Bid` subclass instance.
-    """
-
-    if wire == 'Pass':
-        return PassBid(player)
-    if wire == 'Double':
-        return DoubleBid(player)
-    if wire == 'Redouble':
-        return RedoubleBid(player)
-    if isinstance(wire, tuple) and len(wire) == 2:
-        value, suit = wire
-        try:
-            return ContractBid(player, value, suit)
-        except InvalidContractError:
-            # Bad contract value/suit — fall back to Pass. Catch the
-            # specific domain error rather than the ValueError umbrella
-            # so an unrelated ValueError from ContractBid still surfaces.
-            return PassBid(player)
-    return PassBid(player)
-
-
-def bid_to_wire(bid: Bid):
-    """Project a :class:`Bid` instance back to the legacy wire format.
-
-    Used by the AI strategy and by the Rich view's bidding-history
-    renderer, both of which still consume the legacy
-    ``'Pass'`` / ``'Double'`` / ``'Redouble'`` / ``(value, suit)``
-    shape.
-    """
-
-    if isinstance(bid, PassBid):
-        return 'Pass'
-    if isinstance(bid, DoubleBid):
-        return 'Double'
-    if isinstance(bid, RedoubleBid):
-        return 'Redouble'
-    if isinstance(bid, ContractBid):
-        return (bid.value, bid.suit)
-    return 'Pass'
-
-
-class Player(BasePlayer, ABC):
-    @property
-    def is_human(self):
-        """Returns True if this is a human player."""
-        return isinstance(self, HumanPlayer)
-
-    @abstractmethod
-    def choose_bid(self, auction: Auction) -> Optional[Bid]:
-        """Choose a :class:`Bid` for the current auction state.
-
-        Args:
-            auction: The current :class:`Auction`. Use
-                ``auction.legal_actions(self)`` to enumerate legal
-                bids, or query ``auction.last_contract_bid`` /
-                ``auction.partner_bid(self)`` for the strategy
-                helpers.
-
-        Returns:
-            A :class:`Bid` instance (validated by the engine via
-            :meth:`Auction.apply`), or ``None`` to defer to the view
-            (the contract for :class:`HumanPlayer`).
-        """
-
-        pass
-
-    @abstractmethod
-    def choose_card(self, trick, contract, playable_cards):
-        pass
-
-class HumanPlayer(Player):
-    def choose_bid(self, auction: Auction) -> None:
-        """Defer to the view's :meth:`request_bid_action`.
-
-        Returns ``None`` by design — Round's bidding loop then
-        consults the view to actually drive the human's input.
-        """
-
-        return None
-
-    def choose_card(self, trick, contract, playable_cards):
-        # This method should be called by the controller via the view
-        return None  # To be implemented in controller/view
 
 class AiPlayer(Player):
     """
@@ -365,7 +250,7 @@ class AiPlayer(Player):
 
     def _evaluate_suits(self):
         """Evaluate each suit for potential trump contracts."""
-        
+
         evaluations = {}
 
         for suit in SUITS:
@@ -375,7 +260,7 @@ class AiPlayer(Player):
 
     def _evaluate_suit_as_trump(self, suit):
         """Evaluate a specific suit as potential trump."""
-        
+
         trump_cards = self.hand.cards_of_suit(suit)
 
         if not trump_cards:
