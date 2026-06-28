@@ -13,7 +13,7 @@ from contrai_core.trick import Trick
 from contrai_core.types import Rank, Suit
 
 if TYPE_CHECKING:
-    from .player import Player
+    from ..player import Player
     from contrai_core.team import Team
     from contrai_core.deck import Deck
 
