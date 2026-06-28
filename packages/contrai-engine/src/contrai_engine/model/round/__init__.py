@@ -7,6 +7,7 @@
 # (``from contrai_engine.model.round import Round, UnannouncedSlam``) keep
 # working byte-for-byte.
 
-from .round import Round, UnannouncedSlam
+from .round import Round
+from .scoring import UnannouncedSlam
 
 __all__ = ["Round", "UnannouncedSlam"]
