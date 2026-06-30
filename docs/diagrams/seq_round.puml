@@ -82,7 +82,7 @@ alt all players passed (contract is None)
     R -> D : add_cards(all hands)
     R --> G : {team: 0}
     G -->> V : on_all_pass_redeal(current_round)
-    G --> C : { contract: None,\n  message: "All players passed.\n  Cards redistributed." }
+    G --> C : returns None\n(current_contract = None,\n cards redistributed)
     return
 end
 
@@ -108,7 +108,7 @@ loop team_name, points in round_scores
     G -> G : scores[team_name] += points
 end
 
-G --> C : { contract, scores, total_scores,\n  message: "Round completed" }
+G --> C : returns None\n(current_contract + scores\n mutated in place)
 deactivate G
 
 == Between rounds — cli.py ==

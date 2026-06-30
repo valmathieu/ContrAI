@@ -331,13 +331,12 @@ def test_manage_round_completed(game, monkeypatch):
     monkeypatch.setattr(game_module, 'Round', FakeRound)
 
     view = RecordingView()
-    result = game.manage_round(view)
+    game.manage_round(view)
 
-    assert result['contract'] is contract
-    assert result['scores'] == {'North-South': 160, 'East-West': 0}
-    assert result['total_scores'] == {'North-South': 160, 'East-West': 0}
-    assert result['message'] == 'Round completed'
+    # manage_round mutates game state in place and returns nothing: the contract
+    # is recorded and the round's points are folded into the running totals.
     assert game.current_contract is contract
+    assert game.scores == {'North-South': 160, 'East-West': 0}
 
     # The full lifecycle ran, in order.
     assert game.current_round.calls == [
@@ -356,31 +355,28 @@ def test_manage_round_accumulates_scores_across_rounds(game, monkeypatch):
     FakeRound.play_scores = {'North-South': 90, 'East-West': 70}
     monkeypatch.setattr(game_module, 'Round', FakeRound)
 
-    first = game.manage_round()
-    second = game.manage_round()
+    game.manage_round()
+    assert game.scores == {'North-South': 90, 'East-West': 70}
 
-    assert first['total_scores'] == {'North-South': 90, 'East-West': 70}
-    assert second['total_scores'] == {'North-South': 180, 'East-West': 140}
-    # The returned per-round scores are the round's own, not the running total.
-    assert second['scores'] == {'North-South': 90, 'East-West': 70}
+    game.manage_round()
+    assert game.scores == {'North-South': 180, 'East-West': 140}
 
 
 def test_manage_round_all_pass_redeals(game, monkeypatch):
     """
     Test the all-pass path of manage_round: with no contract, tricks are never
-    played, the failed-contract scores are returned, and the redeal callback
-    fires on the view.
+    played, the failed-contract branch redistributes cards, and the redeal
+    callback fires on the view.
     """
     FakeRound.bidding_contract = None
     FakeRound.failed_scores = {'North-South': 0, 'East-West': 0}
     monkeypatch.setattr(game_module, 'Round', FakeRound)
 
     view = RecordingView()
-    result = game.manage_round(view)
+    game.manage_round(view)
 
-    assert result['contract'] is None
-    assert result['scores'] == {'North-South': 0, 'East-West': 0}
-    assert result['message'] == 'All players passed. Cards redistributed.'
+    # No contract was recorded for the passed-out round.
+    assert game.current_contract is None
 
     # No trick play or scoring happened; the failed-contract branch ran instead.
     assert 'play_all_tricks' not in game.current_round.calls
