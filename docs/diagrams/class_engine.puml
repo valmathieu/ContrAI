@@ -173,7 +173,7 @@ package "model/game.py" as p_game {
         + __init__(players: list<Player>)
         + start_new_round() : None
         + manage_round(view=None) : None
-        + check_game_over(target_score=1500) : dict
+        + check_game_over(target_score=1500) : GameOverStatus
         + next_dealer() : None
         + set_players_order() : None
     }

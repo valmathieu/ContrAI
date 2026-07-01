@@ -217,10 +217,10 @@ def test_check_game_over_not_finished(game):
 
     result = game.check_game_over(target_score=1500)
 
-    assert result['game_over'] is False
-    assert result['winner'] is None
-    assert result['tied_teams'] is None
-    assert result['final_scores'] == {'North-South': 1200, 'East-West': 800}
+    assert result.game_over is False
+    assert result.winner is None
+    assert result.tied_teams is None
+    assert result.final_scores == {'North-South': 1200, 'East-West': 800}
 
 def test_check_game_over_winner(game):
     """
@@ -230,10 +230,10 @@ def test_check_game_over_winner(game):
 
     result = game.check_game_over(target_score=1500)
 
-    assert result['game_over'] is True
-    assert result['winner'] == 'North-South'
-    assert result['tied_teams'] is None
-    assert result['final_scores'] == {'North-South': 1600, 'East-West': 1200}
+    assert result.game_over is True
+    assert result.winner == 'North-South'
+    assert result.tied_teams is None
+    assert result.final_scores == {'North-South': 1600, 'East-West': 1200}
 
 def test_check_game_over_tie(game):
     """
@@ -243,10 +243,10 @@ def test_check_game_over_tie(game):
 
     result = game.check_game_over(target_score=1500)
 
-    assert result['game_over'] is True
-    assert result['winner'] is None
-    assert result['tied_teams'] == ['North-South', 'East-West']
-    assert result['final_scores'] == {'North-South': 1600, 'East-West': 1600}
+    assert result.game_over is True
+    assert result.winner is None
+    assert result.tied_teams == ['North-South', 'East-West']
+    assert result.final_scores == {'North-South': 1600, 'East-West': 1600}
 
 
 def test_check_game_over_default_target_score(game):
@@ -257,8 +257,8 @@ def test_check_game_over_default_target_score(game):
 
     result = game.check_game_over()
 
-    assert result['game_over'] is True
-    assert result['winner'] == 'North-South'
+    assert result.game_over is True
+    assert result.winner == 'North-South'
 
 
 def test_next_dealer_picks_random_when_none(game, monkeypatch):
