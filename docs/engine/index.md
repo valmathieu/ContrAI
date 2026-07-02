@@ -1,6 +1,6 @@
 # contrai-engine
 
-Game engine for Coinche / Contrée. MVC architecture, sits on top of `contrai-core` for all shared types.
+Game engine for Coinche / Contrée. Model–View architecture (the controller role is the `cli.py` game loop plus the view hooks today), sits on top of `contrai-core` for all shared types.
 
 ## Layout
 
@@ -19,7 +19,6 @@ Source at `packages/contrai-engine/src/contrai_engine/`:
     - `round.py` — `Round`, the lifecycle orchestrator: deal → `manage_bidding` → `play_trick` / `play_all_tricks` → the thin `calculate_round_scores` wrapper, plus the inline belote/rebelote helpers. Publishes `view.on_bid_made(...)`, `view.on_contract_established(...)`, `view.on_card_played(...)`, `view.on_trick_complete(...)`, and `view.on_belote_announced(...)` so the view can pace and narrate AI turns
     - `scoring.py` — the pure `score_round(round) -> RoundScore` transformation (the numeric / unannounced-capot / doubled / Slam scoring shapes, belote +20), plus `count_player_tricks` and the `UnannouncedSlam` outcome tag
     - `legality.py` — the pure card-legality oracle `get_playable_cards(player, contract, current_trick)` and its companion `classify_play_violation(...)`, co-located because their branch orders must stay in sync (this realises the *co-location* half of the deferred `Ruleset`)
-- `controller/` — `GameController` (partial stub — see [Open work](#open-work))
 - `view/` — the terminal UI, split into focused modules (see [CLI](#cli) below):
   - `rich_view.py` — `RichView`, the stateful orchestrator: console + per-game state, the engine hooks (`request_*_action`, `on_*`, `show_*`), the input loops, and `_render_in_game` (the single seam that pulls state off `self` and feeds the pure builders). `RoundSummary` lives here too. Re-exported from `view/__init__.py`, so both `from contrai_engine.view.rich_view import RichView` (used by `cli.py` / `model/game.py`) and `from contrai_engine.view import RichView` work.
   - `theme.py` — design tokens (colour palette) and lookup tables (target-score options, position / team labels, bid aliases, valid contract values)
@@ -39,7 +38,7 @@ Everything else (`Card`, `Deck`, `Hand`, `Suit`, `Rank`, `Bid`, `Contract`, `Tri
 ```plantuml format="svg" source="class_engine.puml"
 ```
 
-`Player` extends `BasePlayer` from `contrai-core` (drawn as a blue boundary element). The two concrete subclasses are `HumanPlayer` (whose `choose_bid` / `choose_card` still return `None` — the `RichView` is what actually services human input through `Round`'s `view.request_*_action` hooks) and `AiPlayer`, which holds an injected `BiddingStrategy` and `CardPlayStrategy` and delegates to them. `GameController` remains in the grey stub palette: it still references undefined `pygame` and isn't wired to `Game` / `Round`. `RichView` is the live engine view; the old `CliView` placeholder has been removed. See [Diagrams](../diagrams/) for the colour convention.
+`Player` extends `BasePlayer` from `contrai-core` (drawn as a blue boundary element). The two concrete subclasses are `HumanPlayer` (whose `choose_bid` / `choose_card` still return `None` — the `RichView` is what actually services human input through `Round`'s `view.request_*_action` hooks) and `AiPlayer`, which holds an injected `BiddingStrategy` and `CardPlayStrategy` and delegates to them. There is no standalone controller class today: the controller role is the `cli.py` game loop plus the view hooks `Round` calls. `RichView` is the live engine view; the old `CliView` placeholder has been removed. See [Diagrams](../diagrams/) for the colour convention.
 
 ## AI players
 
@@ -114,7 +113,6 @@ The two zoom diagrams below break out the dense parts.
 
 - The round test suite mirrors the `model/round/` split into three files (sharing the `players` fixture in `tests/test_model/conftest.py`): `test_round_legality.py` covers the `legality.get_playable_cards` oracle and the `legality.classify_play_violation` reason classifier; `test_round_scoring.py` covers the `scoring.score_round` grid (numeric / unannounced-capot / doubled / Slam) plus a direct `RoundScore`/`score_round` purity check; and `test_round.py` keeps the orchestrator concerns — `play_trick`'s `IllegalPlayError` raise on an illegal card, the belote tracking helpers, and the auction-driven integration test that the human seat is never prompted when their partner has doubled. The lifecycle path (`manage_bidding` end-to-end / `play_all_tricks` / `calculate_round_scores`) is still un-tested past that single integration scenario — backfill needed.
 - The screen `Panel`/`Table` *builders* (now pure functions under `view/screens/` and `view/layout.py`, no longer `RichView` methods) are lightly covered: title/text smoke tests for the round panel, bidding-history, event-log, recap tables, and the diamond's belote badge, in the matching `test_view/test_*.py` files. Layouts that aren't asserted on are still validated by `uv run contrai` smoke-running.
-- `GameController` is still the lone surviving stub (see the grey box on the class diagram). It references undefined `pygame` and isn't wired to `Game` / `Round` — open question whether to delete it now that the Rich CLI doesn't need a separate controller, or keep it for a future GUI path.
 - Sweep the rule-based strategy private helpers for any remaining `contract[…]` indexing residues — the four visible call sites were fixed during CLI work but a defensive pass through `rule_based.py` would not hurt.
 - `_check_double_redouble` in `RuleBasedBiddingStrategy._choose_wire` still uses the legacy-format `last_bid` to detect a prior Double; the inner check `last_bid == 'Double'` shadows the earlier `isinstance(last_bid, tuple)` guard so AI redouble is effectively gated on a `TODO`. Worth revisiting alongside the next AI bidding refactor — the cleanest fix is to read `auction.has_double` / `auction.has_redouble` directly instead of inferring from the wire history.
 - The rule-based strategy consumes `Auction.legal_actions(self)` indirectly today (through the wire-format adapter). A future cleanup should make the expert helpers (`_get_last_bid`, `_get_partner_bid`, `_check_double_redouble`) query the Auction directly and let `wire_to_bid` / `bid_to_wire` retire.
