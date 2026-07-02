@@ -22,7 +22,7 @@ Colour encodes **which package owns the element**, reused consistently across ev
 | Stub / unimplemented | `#9E9E9E`   | `#EEEEEE`   | `#616161` |
 | `<<future>>`         | greyed      | greyed      | dashed    |
 
-Stubbed elements (e.g. the engine's `GameController` / `CliView` today) use the grey palette plus a `<<stub>>` stereotype. Planned-but-unwired elements (e.g. SQLite persistence in the scraper) use dashed arrows and the `<<future>>` stereotype.
+Stubbed elements — code that exists but isn't wired in — use the grey palette plus a `<<stub>>` stereotype (the engine carries none today). Planned-but-unwired elements (e.g. SQLite persistence in the scraper) use dashed arrows and the `<<future>>` stereotype.
 
 ## Rendering
 
