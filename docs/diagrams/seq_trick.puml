@@ -83,12 +83,21 @@ loop **for player in trick_order**  (×4)
         V -->> R : Card
     end
 
-    alt card ∈ playable_cards AND card ∈ player.hand
+    alt card ∈ playable_cards  (playable ⊆ hand, so in-hand is implied)
         R -> H : player.hand.remove(card)
         R -> T : current_trick.add_play(player, card)
-    else illegal choice → fallback to playable_cards[0]
-        R -> H : player.hand.remove(playable_cards[0])
-        R -> T : current_trick.add_play(\n  player, playable_cards[0]\n)
+    else card truthy but illegal → loud failure
+        R ->x R : raise IllegalPlayError(card,\n  legality.classify_play_violation(\n    player, card, contract, current_trick),\n  playable_cards)
+        note right of R
+          No silent correction. ``choose_card`` /
+          ``request_card_action`` are contracted to
+          return a card from ``playable_cards``; a
+          violation here is a wiring bug surfaced
+          loudly, not papered over. (A falsy card —
+          the bare ``playable_cards[0]`` fallback for
+          a player without ``choose_card`` — is left
+          unchanged; out of scope here.)
+        end note
     end
 
     R -->> V : view.on_card_played(player, played_card,\n                       current_trick)
