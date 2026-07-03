@@ -9,6 +9,11 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 ## [Unreleased]
 
+### Fixed
+
+- (engine) Landing screen now labels the three AI seats `AI · expert` instead of
+  `AI · medium` — the bots play the expert strategy, which is the only level wired today.
+
 ## [0.1.0] - 2026-06-21
 
 First playable release: a complete CLI Contrée engine backed by a shared domain model,

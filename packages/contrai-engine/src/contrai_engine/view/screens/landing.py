@@ -119,16 +119,16 @@ def _panel_game_setup(selected: int) -> Panel:
 
 
 def _panel_players() -> Panel:
-    """Players block. Hardcoded for v1 — South=human, others=AI medium.
+    """Players block. Hardcoded for v1 — South=human, others=AI expert.
 
     TODO: replace with a configurable seat picker when we expose
     difficulty / player config on the landing screen.
     """
     seats = [
-        ("N", "North", "AI · medium", BLUE, False),
-        ("E", "East", "AI · medium", ORANGE, False),
+        ("N", "North", "AI · expert", BLUE, False),
+        ("E", "East", "AI · expert", ORANGE, False),
         ("S", "You", "human", GREEN_FG, True),
-        ("W", "West", "AI · medium", ORANGE, False),
+        ("W", "West", "AI · expert", ORANGE, False),
     ]
     # Two columns of two: render as a 2-row, 2-col Table.
     table = Table.grid(expand=True, padding=(0, 2))
