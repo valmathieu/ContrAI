@@ -1,0 +1,120 @@
+@startuml seq_cli
+title contrai-engine — CLI game loop (cli.py main)
+
+' --- Palette: engine orange for engine participants, core blue for core types ---
+skinparam shadowing false
+skinparam sequence {
+    ArrowColor #B26A28
+    LifeLineBorderColor #E89A4F
+    LifeLineBackgroundColor #FFEFD9
+    ParticipantBorderColor #B26A28
+    ParticipantBackgroundColor #FFEFD9
+    ParticipantFontColor #5C3A14
+    ActorBorderColor #B26A28
+    ActorBackgroundColor #FFEFD9
+    ActorFontColor #5C3A14
+    GroupBorderColor #B26A28
+    GroupBackgroundColor #FFF3E0
+    GroupHeaderFontColor #5C3A14
+    BoxBorderColor #B26A28
+    BoxBackgroundColor #FFF3E0
+    DividerBorderColor #B26A28
+    DividerBackgroundColor #FFD9B3
+    DividerFontColor #5C3A14
+}
+skinparam note {
+    BackgroundColor #FFFDE7
+    BorderColor #F9A825
+    FontColor #5F4B00
+}
+
+actor "user" as U
+participant "main()\n(cli.py)" as M <<engine>>
+participant "RichView" as V <<engine>>
+participant "Game" as G <<engine>>
+participant "Round\n(per round)" as R <<engine>>
+
+[-> M : contrai
+activate M
+
+M -> V : new RichView()
+M -> V : show_landing()
+note right of V
+  Target-score picker
+  (500 / 1000 / 1500 / 2000 / 3000).
+  Returns the chosen target.
+end note
+V --> M : target : int
+
+== New-game / rematch loop ==
+
+loop while True
+    M -> M : game = _build_game()
+    note right of M
+      Hardcoded seating: South = ``HumanPlayer``,
+      N/E/W = ``AiPlayer`` (expert — the default
+      strategies). TODO: a seat picker on the
+      landing screen.
+    end note
+    M -> V : attach(game, target_score=target)
+
+    == Round loop ==
+
+    loop while not game.check_game_over(target).game_over
+        M -> G : manage_round(view=view)
+        activate G
+        ref over G, R : **seq_round** — setup → bidding → 8 tricks → scoring
+        G --> M : (mutates current_round / scores in place)
+        deactivate G
+
+        M -> V : on_round_complete(game.current_round, game.scores)
+        note right of V
+          Append a RoundSummary to ``history``
+          for the end-game scoreboard.
+        end note
+
+        M -> G : is_final = check_game_over(target).game_over
+        M -> V : show_round_recap(current_round, scores,\n              is_final=is_final)
+        note right of V
+          Between-round recap (contract, made/failed,
+          per-team round points, running totals). Blocks
+          on Enter. When ``is_final`` the prompt flips to
+          "see the final score…" so the next screen is
+          the end-game banner, not a fresh deal.
+        end note
+    end
+
+    == End-game routing ==
+
+    M -> G : status = check_game_over(target)
+    M -> V : show_end_game(status)
+    note right of V
+      Double-line winner banner + round-by-round
+      table. Returns the user's choice.
+    end note
+    V --> M : choice : 'n' | 'r' | 'q'
+
+    alt choice == 'q'
+        M ->x M : break  (leave the loop)
+    else choice == 'n'  (new game)
+        M -> V : show_landing(selected_target=target)
+        V --> M : target  (fresh pick)
+    else choice == 'r'  (rematch)
+        note right of M
+          Same target; a fresh ``_build_game``
+          starts on the next loop tick.
+        end note
+    end
+end
+
+[<- M : return  (clean exit)
+
+note over M, V
+  ``KeyboardInterrupt`` / ``EOFError`` anywhere in the
+  loop is caught at the top level and prints "Goodbye." —
+  a Ctrl-C / Ctrl-D quits gracefully rather than dumping a
+  traceback. ``main`` first reconfigures stdout/stderr to
+  UTF-8 so the suit glyphs render on legacy Windows consoles.
+end note
+
+@enduml

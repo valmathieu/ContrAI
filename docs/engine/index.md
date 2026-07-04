@@ -86,6 +86,13 @@ The screen flow above is rendered from [`state_cli_screens.mmd`](../diagrams/sta
 
 See the [Rich TUI design handoff](../../ContrAI%20CLI/design_handoff_contrai_tui/README.md) for the visual spec, including all five SVG mockups (the design predates the recap screen and the event log panel, both of which build on top of the same vocabulary).
 
+## Game loop
+
+```plantuml format="svg" source="seq_cli.puml"
+```
+
+`cli.py`'s `main()` is the controller role today — there is no separate controller class. It builds a `RichView`, asks for a target score on the landing screen, then runs two nested loops: an outer **new-game / rematch** loop (each iteration `_build_game()`s a fresh `Game` — South `HumanPlayer`, N/E/W expert `AiPlayer` — and `view.attach`es it) and an inner **round** loop that runs while `game.check_game_over(target).game_over` is false. Each round tick calls `game.manage_round(view=view)` (detailed in [Round lifecycle](#round-lifecycle)), then `view.on_round_complete` to feed the scoreboard and `view.show_round_recap(..., is_final=…)` to block on the between-round panel. When the game is over, `view.show_end_game(status)` returns `'q'` (break), `'n'` (re-prompt the landing target), or `'r'` (rematch on the same target). A top-level `try/except (KeyboardInterrupt, EOFError)` turns Ctrl-C / Ctrl-D into a graceful "Goodbye." rather than a traceback.
+
 ## Round lifecycle
 
 ```plantuml format="svg" source="seq_round.puml"
@@ -108,6 +115,13 @@ The two zoom diagrams below break out the dense parts.
     ```
 
     Leader determination → four players play in order → winner + bookkeeping → `view.on_card_played(player, card, trick)` after each landing card → optional `view.on_belote_announced(player, kind, round_)` when the trump K-or-Q is played by the holder → `view.on_trick_complete(trick, winner, round_)` callback (each hook is gated on `hasattr(view, …)`, so non-Rich callers stay unaffected). Two subtleties to know: `Trick()` is built bare (it stores no trump), so `Round.play_trick` passes `self.contract.suit` into `Trick.get_current_winner(trump_suit)` to pick the winner — there is no engine-side duplicate of that rule; and a truthy-but-illegal `choose_card` result raises `IllegalPlayError` (carrying the offending card, a `classify_play_violation` reason, and the legal alternatives) rather than being silently corrected — consistent with the play-legality boundary described above. Legality (`legality.get_playable_cards`) now correctly forces over-trump when trump is led and keys the partner exemption on the *current master* of the partial trick — see the legality note at the foot of the diagram.
+
+### Scoring
+
+`Round.calculate_round_scores` is a thin wrapper around `scoring.score_round(self)`, the pure `round → RoundScore` transformation: it reads the played-out round and publishes the result's `scores` / `contract_made` / `unannounced_capot` back onto the round. The decision tree below traces every scoring shape — the all-passed zero case, the Slam / Solo Slam at-risk grid, and the numeric path with its unannounced-capot 250 substitute, share-the-pile (M = 1) and doubled winner-takes-all (M > 1) branches — with the Belote +20 to the K + Q holder layered on top of every one.
+
+```mermaid format="svg" source="flow_scoring.mmd"
+```
 
 ## Open work
 
