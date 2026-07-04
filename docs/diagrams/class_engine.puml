@@ -468,9 +468,9 @@ package "cli.py" as p_cli {
     note right of Cli
       Hardcoded seating: South =
       `HumanPlayer`, N/E/W = `AiPlayer`
-      (medium). TODO marker for a
-      future seat picker on the landing
-      screen.
+      (expert — the AiPlayer default).
+      TODO marker for a future seat
+      picker on the landing screen.
     end note
 }
 
