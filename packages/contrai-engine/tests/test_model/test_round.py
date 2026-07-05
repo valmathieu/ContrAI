@@ -19,7 +19,7 @@ from __future__ import annotations
 import pytest
 
 from contrai_core import Hand
-from contrai_core.bid import ContractBid, PassBid
+from contrai_core.bid import ContractBid, DoubleBid, PassBid
 from contrai_core.card import Card
 from contrai_core.contract import Contract
 from contrai_core.team import Team
@@ -27,7 +27,7 @@ from contrai_core.exceptions import IllegalPlayError, PlayRuleViolation
 from contrai_core.trick import Trick
 from contrai_core.types import Rank, Suit
 
-from contrai_engine.model.player import AiPlayer, HumanPlayer, wire_to_bid
+from contrai_engine.model.player import AiPlayer, HumanPlayer
 from contrai_engine.model.round import Round
 
 
@@ -325,19 +325,20 @@ class TestManageBiddingAutoPasses:
         human.team = players["S"].team  # same N-S team
         players["S"] = human
 
-        # Pre-seed each AI's choose_bid via a scripted queue. Lambdas
-        # consume wire-format entries and lift them through
-        # ``wire_to_bid`` so the returned objects match the new
-        # :class:`Bid`-typed signature of ``Player.choose_bid``.
+        # Pre-seed each AI's choose_bid via a scripted queue of concrete
+        # :class:`Bid` objects, matching the ``Bid``-typed signature of
+        # ``Player.choose_bid``. Each seat's bids are attached to that
+        # seat so ``Auction`` records the right player.
+        w, n, e = players["W"], players["N"], players["E"]
         scripted = {
-            players["W"]: [(100, Suit.HEARTS), "Pass", "Pass", "Pass"],
-            players["N"]: ["Double", "Pass", "Pass", "Pass"],
-            players["E"]: ["Pass", "Pass", "Pass", "Pass"],
+            w: [ContractBid(w, 100, Suit.HEARTS), PassBid(w), PassBid(w), PassBid(w)],
+            n: [DoubleBid(n), PassBid(n), PassBid(n), PassBid(n)],
+            e: [PassBid(e), PassBid(e), PassBid(e), PassBid(e)],
         }
         for ai, choices in scripted.items():
             queue = list(choices)
-            ai.choose_bid = lambda _auction, _p=ai, _q=queue: wire_to_bid(
-                _p, _q.pop(0) if _q else "Pass"
+            ai.choose_bid = lambda _auction, _p=ai, _q=queue: (
+                _q.pop(0) if _q else PassBid(_p)
             )
 
         # Stub view: records request_bid_action calls. Asserting it

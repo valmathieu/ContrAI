@@ -7,7 +7,7 @@
 # ``ai_player.bidding.*`` (the injected strategy object).
 
 import pytest
-from contrai_engine.model.player import AiPlayer, wire_to_bid
+from contrai_engine.model.player import AiPlayer
 from contrai_core import (
     Auction,
     ContractBid,
@@ -22,17 +22,14 @@ from contrai_core.team import Team
 from contrai_core.types import Suit, Rank
 
 
-def _auction(bids_with_players=()):
-    """Build an :class:`Auction` from a list of ``(player, wire_bid)`` tuples.
+def _auction(bids=()):
+    """Pack a sequence of :class:`Bid` objects into an :class:`Auction`.
 
-    ``AiPlayer.choose_bid`` takes an Auction; the original tests were
-    written when it took the legacy ``[(player, wire), …]`` list. This
-    helper lifts each (player, wire) entry into the matching :class:`Bid`
-    and packs the lot into an Auction so the test bodies stay close to
-    their original shape.
+    ``AiPlayer.choose_bid`` takes an Auction; test bodies build the
+    chronological :class:`Bid` history directly (``ContractBid`` /
+    ``PassBid`` / ``DoubleBid`` / ``RedoubleBid``) and hand it here.
     """
-    bids = tuple(wire_to_bid(p, w) for p, w in bids_with_players)
-    return Auction(bids)
+    return Auction(tuple(bids))
 
 
 class TestAiPlayerBidding:
@@ -180,28 +177,32 @@ class TestAiPlayerBidding:
         ai_player_partner = ai_player.team.players[1]
         ai_opponent_player_partner = ai_opponent_player.team.players[1]
 
-        current_bids = [
-            (ai_opponent_player, 'Pass'),
-            (ai_player_partner, (80, Suit.SPADES)),
-            (ai_opponent_player_partner, (90, Suit.HEARTS)),
+        bids = [
+            PassBid(ai_opponent_player),
+            ContractBid(ai_player_partner, 80, Suit.SPADES),
+            ContractBid(ai_opponent_player_partner, 90, Suit.HEARTS),
         ]
 
-        last_bid = ai_player.bidding._get_last_bid(current_bids)
-        assert last_bid == (90, Suit.HEARTS)
+        last_bid = ai_player.bidding._get_last_bid(bids)
+        assert isinstance(last_bid, ContractBid)
+        assert last_bid.value == 90
+        assert last_bid.suit == Suit.HEARTS
 
     def test_get_partner_bid(self, ai_player, ai_opponent_player):
         """Test getting partner's bid"""
         ai_player_partner = ai_player.team.players[1]
         ai_opponent_player_partner = ai_opponent_player.team.players[1]
 
-        current_bids = [
-            (ai_opponent_player, 'Pass'),
-            (ai_player_partner, (80, Suit.SPADES)),
-            (ai_opponent_player_partner, (90, Suit.HEARTS)),
+        bids = [
+            PassBid(ai_opponent_player),
+            ContractBid(ai_player_partner, 80, Suit.SPADES),
+            ContractBid(ai_opponent_player_partner, 90, Suit.HEARTS),
         ]
 
-        partner_bid = ai_player.bidding._get_partner_bid(current_bids)
-        assert partner_bid == (80, Suit.SPADES)
+        partner_bid = ai_player.bidding._get_partner_bid(bids)
+        assert isinstance(partner_bid, ContractBid)
+        assert partner_bid.value == 80
+        assert partner_bid.suit == Suit.SPADES
 
     def test_choose_bid_pass_weak_hand(self, ai_player, sample_cards_weak):
         """Test that AI passes with weak hand"""
@@ -222,7 +223,7 @@ class TestAiPlayerBidding:
         """Test overbidding opponent"""
         ai_player.hand = sample_cards_strong_spades
 
-        auction = _auction([(ai_opponent_player, (90, Suit.HEARTS))])
+        auction = _auction([ContractBid(ai_opponent_player, 90, Suit.HEARTS)])
         bid = ai_player.choose_bid(auction)
 
         assert isinstance(bid, ContractBid)
@@ -246,8 +247,8 @@ class TestAiPlayerBidding:
         # Partner bids 80 in Spades
         partner = ai_player.team.players[1]
         auction = _auction([
-            (partner, (80, Suit.SPADES)),
-            (ai_opponent_player, 'Pass'),
+            ContractBid(partner, 80, Suit.SPADES),
+            PassBid(ai_opponent_player),
         ])
         bid = ai_player.choose_bid(auction)
 
@@ -263,8 +264,8 @@ class TestAiPlayerBidding:
         # Partner bids high
         partner = ai_player.team.players[1]
         auction = _auction([
-            (partner, (140, Suit.SPADES)),
-            (ai_opponent_player, 'Pass'),
+            ContractBid(partner, 140, Suit.SPADES),
+            PassBid(ai_opponent_player),
         ])
         bid = ai_player.choose_bid(auction)
 
@@ -288,7 +289,7 @@ class TestAiPlayerBidding:
         """
         ai_player.hand = sample_cards_strong_spades  # max contract 130
         partner = ai_player.team.players[1]
-        auction = _auction([(partner, (80, Suit.SPADES))])
+        auction = _auction([ContractBid(partner, 80, Suit.SPADES)])
         bid = ai_player.choose_bid(auction)
         assert isinstance(bid, ContractBid)
         assert bid.value == 130
@@ -307,8 +308,8 @@ class TestAiPlayerBidding:
         ai_player.hand = sample_cards_strong_spades
         partner = ai_player.team.players[1]
         auction = _auction([
-            (partner, (80, Suit.SPADES)),
-            (ai_opponent_player, 'Double'),
+            ContractBid(partner, 80, Suit.SPADES),
+            DoubleBid(ai_opponent_player),
         ])
         bid = ai_player.choose_bid(auction)
         assert isinstance(bid, PassBid)
@@ -326,8 +327,8 @@ class TestAiPlayerBidding:
         ai_player.hand = sample_cards_strong_spades
         partner = ai_player.team.players[1]
         auction = _auction([
-            (ai_opponent_player, (120, Suit.HEARTS)),
-            (partner, 'Double'),
+            ContractBid(ai_opponent_player, 120, Suit.HEARTS),
+            DoubleBid(partner),
         ])
         bid = ai_player.choose_bid(auction)
         assert isinstance(bid, PassBid)
@@ -339,9 +340,9 @@ class TestAiPlayerBidding:
         ai_player.hand = sample_cards_strong_spades
         partner = ai_player.team.players[1]
         auction = _auction([
-            (partner, (110, Suit.SPADES)),
-            (ai_opponent_player, 'Double'),
-            (partner, 'Redouble'),
+            ContractBid(partner, 110, Suit.SPADES),
+            DoubleBid(ai_opponent_player),
+            RedoubleBid(partner),
         ])
         bid = ai_player.choose_bid(auction)
         assert isinstance(bid, PassBid)
@@ -359,8 +360,8 @@ class TestAiPlayerBidding:
         ai_player.hand = sample_cards_weak
         partner = ai_player.team.players[1]
         auction = _auction([
-            (partner, (100, Suit.SPADES)),
-            (ai_opponent_player, 'Double'),
+            ContractBid(partner, 100, Suit.SPADES),
+            DoubleBid(ai_opponent_player),
         ])
         ai_player.bidding._should_redouble = lambda: True  # type: ignore[method-assign]
         bid = ai_player.choose_bid(auction)
@@ -378,8 +379,10 @@ class TestAiPlayerBidding:
         assert the guard downgrades it to the always-legal Pass.
         """
         ai_player.hand = sample_cards_weak
-        auction = _auction([(ai_opponent_player, (140, Suit.SPADES))])
-        ai_player.bidding._choose_wire = lambda current_bids: (90, Suit.SPADES)  # type: ignore[method-assign]
+        auction = _auction([ContractBid(ai_opponent_player, 140, Suit.SPADES)])
+        ai_player.bidding._choose_open_bid = (  # type: ignore[method-assign]
+            lambda _auction: ContractBid(ai_player, 90, Suit.SPADES)
+        )
         bid = ai_player.choose_bid(auction)
         assert isinstance(bid, PassBid)
 
@@ -436,7 +439,8 @@ class TestAiPlayerBidding:
         ai_player.hand = sample_cards_weak
         # Should not raise; nothing in our weak hand beats Slam.
         assert ai_player.bidding._can_overbid_partner(
-            (SlamLevel.SLAM, Suit.SPADES), ai_player.bidding._evaluate_suits()
+            ContractBid(ai_player, SlamLevel.SLAM, Suit.SPADES),
+            ai_player.bidding._evaluate_suits(),
         ) is False
 
     def test_can_overbid_partner_handles_solo_slam_value(
@@ -445,7 +449,8 @@ class TestAiPlayerBidding:
         """Normalising SlamLevel.SOLO_SLAM → 1000 in _can_overbid_partner avoids TypeError."""
         ai_player.hand = sample_cards_weak
         assert ai_player.bidding._can_overbid_partner(
-            (SlamLevel.SOLO_SLAM, Suit.SPADES), ai_player.bidding._evaluate_suits()
+            ContractBid(ai_player, SlamLevel.SOLO_SLAM, Suit.SPADES),
+            ai_player.bidding._evaluate_suits(),
         ) is False
 
     def test_should_double_handles_slam_value(self, ai_player, sample_cards_weak):
@@ -457,9 +462,13 @@ class TestAiPlayerBidding:
         heuristic is a separate concern.
         """
         ai_player.hand = sample_cards_weak
-        result = ai_player.bidding._should_double((SlamLevel.SLAM, Suit.SPADES))
+        result = ai_player.bidding._should_double(
+            ContractBid(ai_player, SlamLevel.SLAM, Suit.SPADES)
+        )
         assert isinstance(result, bool)
-        result = ai_player.bidding._should_double((SlamLevel.SOLO_SLAM, Suit.SPADES))
+        result = ai_player.bidding._should_double(
+            ContractBid(ai_player, SlamLevel.SOLO_SLAM, Suit.SPADES)
+        )
         assert isinstance(result, bool)
 
     def test_choose_bid_passes_when_partner_announced_slam(
@@ -468,7 +477,7 @@ class TestAiPlayerBidding:
         """A strong-but-not-Slam AI passes cleanly when partner announces Slam."""
         ai_player.hand = sample_cards_strong_spades  # estimates 7 tricks, max 130
         partner = ai_player.team.players[1]
-        auction = _auction([(partner, (SlamLevel.SLAM, Suit.SPADES))])
+        auction = _auction([ContractBid(partner, SlamLevel.SLAM, Suit.SPADES)])
         # Must not TypeError on the 130-vs-Slam comparison.
         bid = ai_player.choose_bid(auction)
         assert isinstance(bid, PassBid)
@@ -479,7 +488,7 @@ class TestAiPlayerBidding:
         """A strong-but-not-Slam AI passes when partner announces Solo Slam."""
         ai_player.hand = sample_cards_strong_spades
         partner = ai_player.team.players[1]
-        auction = _auction([(partner, (SlamLevel.SOLO_SLAM, Suit.SPADES))])
+        auction = _auction([ContractBid(partner, SlamLevel.SOLO_SLAM, Suit.SPADES)])
         bid = ai_player.choose_bid(auction)
         assert isinstance(bid, PassBid)
 
@@ -563,7 +572,7 @@ class TestAiPlayerDoubling:
         ])
 
         # Opponent bids in Spades
-        auction = _auction([(opponent1, (120, Suit.SPADES))])
+        auction = _auction([ContractBid(opponent1, 120, Suit.SPADES)])
         bid = player.choose_bid(auction)
 
         assert isinstance(bid, DoubleBid)
@@ -585,7 +594,7 @@ class TestAiPlayerDoubling:
         ])
 
         # Opponent bids in Hearts
-        auction = _auction([(opponent1, (100, Suit.HEARTS))])
+        auction = _auction([ContractBid(opponent1, 100, Suit.HEARTS)])
         bid = player.choose_bid(auction)
 
         assert isinstance(bid, PassBid)
