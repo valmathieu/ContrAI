@@ -159,7 +159,7 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
         bids = auction.bids
 
         # Get current game state
-        last_bid = self._get_last_bid(bids)
+        last_bid = auction.last_contract_bid
         partner_bid = self._get_partner_bid(bids)
 
         # Check if we can double or redouble
@@ -182,21 +182,6 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
             return self._support_partner_bid(partner_bid, last_bid)
 
         return PassBid(self._player)
-
-    @staticmethod
-    def _get_last_bid(bids):
-        """Return the most recent :class:`ContractBid`, or ``None``.
-
-        Walks the chronological :class:`Bid` history backwards and
-        returns the last numeric/Slam contract. Passes and
-        Double/Redouble markers are skipped — the expert table only
-        conditions on the standing *contract*.
-        """
-
-        for bid in reversed(bids):
-            if isinstance(bid, ContractBid):
-                return bid
-        return None
 
     def _get_partner_bid(self, bids):
         """Return our side's most recent non-pass :class:`Bid`, or ``None``.

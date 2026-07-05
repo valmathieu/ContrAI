@@ -172,22 +172,6 @@ class TestAiPlayerBidding:
         # Jack + 9 = 2 tricks, plus additional tricks from trump length
         assert expected_tricks == 4
 
-    def test_get_last_bid(self, ai_player, ai_opponent_player):
-        """Test getting the last contract bid"""
-        ai_player_partner = ai_player.team.players[1]
-        ai_opponent_player_partner = ai_opponent_player.team.players[1]
-
-        bids = [
-            PassBid(ai_opponent_player),
-            ContractBid(ai_player_partner, 80, Suit.SPADES),
-            ContractBid(ai_opponent_player_partner, 90, Suit.HEARTS),
-        ]
-
-        last_bid = ai_player.bidding._get_last_bid(bids)
-        assert isinstance(last_bid, ContractBid)
-        assert last_bid.value == 90
-        assert last_bid.suit == Suit.HEARTS
-
     def test_get_partner_bid(self, ai_player, ai_opponent_player):
         """Test getting partner's bid"""
         ai_player_partner = ai_player.team.players[1]
