@@ -64,13 +64,6 @@ loop **for player in trick_order**  (×4)
 
     ref over R : **SF-09 / SF-10** — see legality rules below
 
-    alt player has choose_card (AI / Human)
-        R -> P : choose_card(current_trick,\n                contract, playable_cards)
-        P --> R : Card
-    else fallback
-        R -> R : card = playable_cards[0]
-    end
-
     alt view ≠ None AND player.is_human
         R -->> V : view.request_card_action(player,\n  current_trick, contract, playable_cards)
         note right of V
@@ -78,9 +71,16 @@ loop **for player in trick_order**  (×4)
           mid-trick screen, parses
           the human's card-number
           input, and returns the
-          chosen Card.
+          chosen Card. choose_card is
+          skipped — HumanPlayer's
+          override only returns None.
         end note
         V -->> R : Card
+    else player has choose_card (AI)
+        R -> P : choose_card(current_trick,\n                contract, playable_cards)
+        P --> R : Card
+    else fallback
+        R -> R : card = playable_cards[0]
     end
 
     alt card ∈ playable_cards  (playable ⊆ hand, so in-hand is implied)
