@@ -9,7 +9,14 @@ from __future__ import annotations
 import pytest
 
 from contrai_core import Card, Rank, Suit
-from contrai_core.bid import SlamLevel
+from contrai_core.bid import (
+    ContractBid,
+    DoubleBid,
+    PassBid,
+    RedoubleBid,
+    SlamLevel,
+)
+from contrai_engine.model.player import AiPlayer
 from contrai_engine.view.parsing import _parse_bid_input, _parse_card_input
 
 
@@ -19,35 +26,45 @@ from contrai_engine.view.parsing import _parse_bid_input, _parse_card_input
 
 
 class TestParseBidInput:
-    """Bid-string parser. Returns engine-shaped bid or ``None`` on error."""
+    """Bid-string parser. Returns a :class:`Bid` or ``None`` on error.
+
+    ``Bid`` equality is type + payload (the player is excluded), so the
+    parsed bid compares equal to the expected variant regardless of which
+    player instance it is attached to.
+    """
+
+    @pytest.fixture
+    def player(self):
+        """A player to attach the parsed bid to."""
+        return AiPlayer("Bot", "South")
 
     @pytest.mark.parametrize("raw", ["pass", "PASS", "Pass", "p", " pass "])
-    def test_pass_variants(self, raw):
-        assert _parse_bid_input(raw) == "Pass"
+    def test_pass_variants(self, raw, player):
+        assert _parse_bid_input(raw, player) == PassBid(player)
 
     @pytest.mark.parametrize(
         "raw", ["double", "d", "Double", "DOUBLE", " double "]
     )
-    def test_double_variants(self, raw):
-        assert _parse_bid_input(raw) == "Double"
+    def test_double_variants(self, raw, player):
+        assert _parse_bid_input(raw, player) == DoubleBid(player)
 
     @pytest.mark.parametrize(
         "raw", ["redouble", "r", "Redouble", "REDOUBLE", " redouble "]
     )
-    def test_redouble_variants(self, raw):
-        assert _parse_bid_input(raw) == "Redouble"
+    def test_redouble_variants(self, raw, player):
+        assert _parse_bid_input(raw, player) == RedoubleBid(player)
 
     @pytest.mark.parametrize(
         "raw",
         ["coinche", "surcoinche", "contrée", "contree",
          "surcontrée", "surcontree", "passe"],
     )
-    def test_rejects_french_aliases(self, raw):
+    def test_rejects_french_aliases(self, raw, player):
         """The CLI uses the English vocabulary exclusively. The parser
         used to accept the French aliases ``coinche`` / ``surcoinche`` /
         ``contrée`` / ``surcontrée`` / ``passe``; those have been
         retired."""
-        assert _parse_bid_input(raw) is None
+        assert _parse_bid_input(raw, player) is None
 
     @pytest.mark.parametrize(
         "raw,value,suit",
@@ -67,8 +84,8 @@ class TestParseBidInput:
             ("80 ♠", 80, Suit.SPADES),
         ],
     )
-    def test_contract_bid_separated(self, raw, value, suit):
-        assert _parse_bid_input(raw) == (value, suit)
+    def test_contract_bid_separated(self, raw, value, suit, player):
+        assert _parse_bid_input(raw, player) == ContractBid(player, value, suit)
 
     @pytest.mark.parametrize(
         "raw,value,suit",
@@ -78,9 +95,9 @@ class TestParseBidInput:
             ("130c", 130, Suit.CLUBS),
         ],
     )
-    def test_contract_bid_glued(self, raw, value, suit):
+    def test_contract_bid_glued(self, raw, value, suit, player):
         """Value and suit may be glued together with no separator."""
-        assert _parse_bid_input(raw) == (value, suit)
+        assert _parse_bid_input(raw, player) == ContractBid(player, value, suit)
 
     @pytest.mark.parametrize(
         "raw,suit",
@@ -93,8 +110,10 @@ class TestParseBidInput:
             ("SLAM H", Suit.HEARTS),  # case-insensitive
         ],
     )
-    def test_slam(self, raw, suit):
-        assert _parse_bid_input(raw) == (SlamLevel.SLAM, suit)
+    def test_slam(self, raw, suit, player):
+        assert _parse_bid_input(raw, player) == ContractBid(
+            player, SlamLevel.SLAM, suit
+        )
 
     @pytest.mark.parametrize(
         "raw,suit",
@@ -107,11 +126,15 @@ class TestParseBidInput:
             ("SOLO SLAM H", Suit.HEARTS),  # case-insensitive
         ],
     )
-    def test_solo_slam(self, raw, suit):
-        assert _parse_bid_input(raw) == (SlamLevel.SOLO_SLAM, suit)
+    def test_solo_slam(self, raw, suit, player):
+        assert _parse_bid_input(raw, player) == ContractBid(
+            player, SlamLevel.SOLO_SLAM, suit
+        )
 
-    def test_capital_letters_in_value_suit(self):
-        assert _parse_bid_input("100 H") == (100, Suit.HEARTS)
+    def test_capital_letters_in_value_suit(self, player):
+        assert _parse_bid_input("100 H", player) == ContractBid(
+            player, 100, Suit.HEARTS
+        )
 
     @pytest.mark.parametrize(
         "raw",
@@ -131,8 +154,8 @@ class TestParseBidInput:
             "160 sa",    # French sans-atout alias no longer accepted
         ],
     )
-    def test_rejects_garbage(self, raw):
-        assert _parse_bid_input(raw) is None
+    def test_rejects_garbage(self, raw, player):
+        assert _parse_bid_input(raw, player) is None
 
 
 # ======================================================================

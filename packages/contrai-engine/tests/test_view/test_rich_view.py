@@ -39,18 +39,21 @@ from contrai_engine.view.screens.trick import (
 
 
 class TestBiddingPromptHint:
-    """End-to-end test that the prompt text adapts to the bid history."""
+    """End-to-end test that the prompt text adapts to the auction state.
 
-    def _prompt(self, history, next_player):
-        view = RichView()
-        return _bidding_prompt_text(history, next_player).plain
+    The hint is derived from :meth:`Auction.legal_actions`, so each case
+    builds a real :class:`Auction` from :class:`Bid` objects.
+    """
+
+    def _prompt(self, auction, next_player):
+        return _bidding_prompt_text(auction, next_player).plain
 
     def test_no_double_hint_before_any_contract(self, four_players):
         """With nothing but a Pass on the table there's no contract to
         double, so the hint offers only bidding and passing."""
         north, _east, _south, _west = four_players
-        history = [(north, "Pass")]
-        text = self._prompt(history, north)
+        auction = Auction((PassBid(north),))
+        text = self._prompt(auction, north)
         assert "double" not in text
         assert "redouble" not in text
         assert "80 H" in text and "pass" in text
@@ -59,11 +62,11 @@ class TestBiddingPromptHint:
         self, four_players
     ):
         north, east, _south, _west = four_players
-        history = [
-            (north, (100, Suit.HEARTS)),
-            (east, "Double"),
-        ]
-        text = self._prompt(history, north)
+        auction = Auction((
+            ContractBid(north, 100, Suit.HEARTS),
+            DoubleBid(east),
+        ))
+        text = self._prompt(auction, north)
         assert "redouble" in text
         # The default '80 H' example shouldn't appear in the redouble
         # variant since the only meaningful play is pass/redouble.
@@ -74,15 +77,14 @@ class TestBiddingPromptHint:
     ):
         """The reported bug: N (South's partner) holds the contract, so
         the hint must NOT advertise 'double' to South."""
-        north, east, _south, west = four_players
-        history = [
-            (east, "Pass"),
-            (north, (90, Suit.SPADES)),
-            (west, "Pass"),
-        ]
+        north, east, south, west = four_players
+        auction = Auction((
+            PassBid(east),
+            ContractBid(north, 90, Suit.SPADES),
+            PassBid(west),
+        ))
         # South is North's partner — doubling own side is illegal.
-        _, _, south, _ = four_players
-        text = self._prompt(history, south)
+        text = self._prompt(auction, south)
         assert "double" not in text
         # Bidding higher and passing are still on the table — and the
         # example tracks the 90♠ contract, so it offers 100, not 80.
@@ -92,19 +94,19 @@ class TestBiddingPromptHint:
     def test_double_hint_when_opponent_holds_contract(self, four_players):
         """East (an opponent of South) holds the contract → offer double."""
         _north, east, south, _west = four_players
-        history = [(east, (90, Suit.SPADES))]
-        text = self._prompt(history, south)
+        auction = Auction((ContractBid(east, 90, Suit.SPADES),))
+        text = self._prompt(auction, south)
         assert "double" in text
 
     def test_example_tracks_highest_contract(self, four_players):
         """The reported request: with 90♦ standing, the worked example
         must propose at least 100, never the bare 80 floor."""
         north, east, south, _west = four_players
-        history = [
-            (east, (80, Suit.HEARTS)),
-            (south, (90, Suit.DIAMONDS)),
-        ]
-        text = self._prompt(history, north)
+        auction = Auction((
+            ContractBid(east, 80, Suit.HEARTS),
+            ContractBid(south, 90, Suit.DIAMONDS),
+        ))
+        text = self._prompt(auction, north)
         assert "100 H" in text
         assert "80 H" not in text and "90 H" not in text
 
@@ -112,8 +114,8 @@ class TestBiddingPromptHint:
         """At 180 only Slam/SoloSlam are legal raises, so the numeric
         example is dropped rather than suggesting an illegal bid."""
         north, east, _south, _west = four_players
-        history = [(east, (180, Suit.HEARTS))]
-        text = self._prompt(history, north)
+        auction = Auction((ContractBid(east, 180, Suit.HEARTS),))
+        text = self._prompt(auction, north)
         # No numeric contract example, but passing/doubling remain.
         assert "180 H" not in text
         assert "pass" in text and "double" in text
@@ -196,30 +198,28 @@ class TestPanelBiddingHistorySeparator:
     """Bidding rounds break onto separate lines."""
 
     def test_single_line_within_first_round(self, four_players):
-        view = RichView()
         north, east, south, west = four_players
         bids = [
-            (south, "Pass"),
-            (east, "Pass"),
-            (north, (80, Suit.HEARTS)),
-            (west, "Pass"),
+            PassBid(south),
+            PassBid(east),
+            ContractBid(north, 80, Suit.HEARTS),
+            PassBid(west),
         ]
         text = _panel_bidding_history(bids).renderable.plain
         assert "\n" not in text
 
     def test_newline_between_rounds(self, four_players):
-        view = RichView()
         north, east, south, west = four_players
         bids = [
-            (south, "Pass"),
-            (east, "Pass"),
-            (north, (80, Suit.HEARTS)),
-            (west, "Pass"),
+            PassBid(south),
+            PassBid(east),
+            ContractBid(north, 80, Suit.HEARTS),
+            PassBid(west),
             # round 2 begins:
-            (south, (100, Suit.HEARTS)),
-            (east, "Pass"),
-            (north, (130, Suit.HEARTS)),
-            (west, "Double"),
+            ContractBid(south, 100, Suit.HEARTS),
+            PassBid(east),
+            ContractBid(north, 130, Suit.HEARTS),
+            DoubleBid(west),
         ]
         text = _panel_bidding_history(bids).renderable.plain
         # Exactly one line break between round 1 and round 2.
@@ -234,17 +234,16 @@ class TestPanelBiddingHistorySeparator:
 
     def test_seats_align_vertically_across_rounds(self, four_players):
         """Each seat sits in the same column on every round's line."""
-        view = RichView()
         north, east, south, west = four_players
         bids = [
-            (south, "Pass"),
-            (east, "Pass"),
-            (north, (80, Suit.HEARTS)),
-            (west, "Pass"),
-            (south, (100, Suit.HEARTS)),
-            (east, "Pass"),
-            (north, (130, Suit.HEARTS)),
-            (west, "Double"),
+            PassBid(south),
+            PassBid(east),
+            ContractBid(north, 80, Suit.HEARTS),
+            PassBid(west),
+            ContractBid(south, 100, Suit.HEARTS),
+            PassBid(east),
+            ContractBid(north, 130, Suit.HEARTS),
+            DoubleBid(west),
         ]
         text = _panel_bidding_history(bids).renderable.plain
         line1, line2 = text.split("\n", 1)
@@ -608,12 +607,11 @@ class TestBiddingDiamond:
             self.belote_state = {}
 
     def test_each_seat_shows_its_latest_bid(self, four_players):
-        view = RichView()
         north, east, south, west = four_players
         history = [
-            (south, "Pass"),
-            (west, (80, Suit.HEARTS)),
-            (north, "Pass"),
+            PassBid(south),
+            ContractBid(west, 80, Suit.HEARTS),
+            PassBid(north),
         ]
         diamond = _render_bidding_diamond(
             history, pending_position=None, width=42
@@ -624,10 +622,9 @@ class TestBiddingDiamond:
         assert "Pass" in text
 
     def test_pending_seat_marked_with_question(self, four_players):
-        view = RichView()
         north, east, south, west = four_players
         diamond = _render_bidding_diamond(
-            [(west, (80, Suit.HEARTS))],
+            [ContractBid(west, 80, Suit.HEARTS)],
             pending_position="North",
             width=42,
         )
@@ -636,7 +633,6 @@ class TestBiddingDiamond:
         assert "80 ♥" in diamond.plain
 
     def test_seat_without_bid_shows_dot(self, four_players):
-        view = RichView()
         diamond = _render_bidding_diamond(
             [], pending_position=None, width=42
         )
@@ -646,14 +642,13 @@ class TestBiddingDiamond:
 
     def test_latest_bid_overwrites_earlier(self, four_players):
         """A second bid by the same seat replaces the first in the diamond."""
-        view = RichView()
         north, east, south, west = four_players
         history = [
-            (west, (80, Suit.HEARTS)),
-            (north, (90, Suit.SPADES)),
-            (east, "Pass"),
-            (south, "Pass"),
-            (west, (100, Suit.HEARTS)),
+            ContractBid(west, 80, Suit.HEARTS),
+            ContractBid(north, 90, Suit.SPADES),
+            PassBid(east),
+            PassBid(south),
+            ContractBid(west, 100, Suit.HEARTS),
         ]
         text = _render_bidding_diamond(
             history, pending_position=None, width=42
@@ -663,7 +658,6 @@ class TestBiddingDiamond:
 
     def test_panel_current_trick_bidding_renders_diamond(self, four_players):
         """During bidding the Current-trick slot becomes the auction diamond."""
-        view = RichView()
         north, east, south, west = four_players
         panel = _panel_current_trick(
             self._StubRound(),
@@ -671,7 +665,7 @@ class TestBiddingDiamond:
             phase="bidding",
             current_player=south,
             trick_winner=None,
-            bidding_history=[(west, (80, Suit.HEARTS))],
+            bidding_history=[ContractBid(west, 80, Suit.HEARTS)],
         )
         assert panel.title.plain == "Bidding"
         body = panel.renderable.plain

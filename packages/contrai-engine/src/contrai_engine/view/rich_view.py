@@ -20,7 +20,13 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
-from contrai_core.bid import Bid
+from contrai_core.bid import (
+    Bid,
+    ContractBid,
+    DoubleBid,
+    PassBid,
+    RedoubleBid,
+)
 
 from contrai_core import (
     Auction,
@@ -29,11 +35,7 @@ from contrai_core import (
     Contract,
     Trick,
 )
-from contrai_engine.model.player import wire_to_bid
-from contrai_engine.view.bidding_rules import (
-    _bid_to_legacy,
-    _illegal_bid_reason,
-)
+from contrai_engine.view.bidding_rules import _illegal_bid_reason
 from contrai_engine.view.formatting import (
     _format_card_compact,
     _format_contract_short,
@@ -179,9 +181,9 @@ class RichView:
 
         Args:
             player: The human player whose turn it is.
-            auction: The current auction state — projected to the
-                legacy ``(player, wire_bid)`` shape internally for the
-                renderer, which still consumes that format.
+            auction: The current auction state — its ``bids`` feed the
+                renderer directly and its :meth:`Auction.legal_actions`
+                drive the adaptive prompt hint.
 
         Returns:
             A :class:`Bid` that is guaranteed legal in ``auction`` —
@@ -189,9 +191,7 @@ class RichView:
             auction rules reject, so :meth:`Auction.apply` downstream
             never sees an illegal human bid.
         """
-        legacy_bids = [
-            (bid.player, _bid_to_legacy(bid)) for bid in auction.bids
-        ]
+        bidding_history = list(auction.bids)
         # A rejection from the previous iteration. Rendered *inside* the
         # next frame's Prompt panel rather than ``console.print``ed after
         # the input — otherwise the loop's ``console.clear()`` pushes the
@@ -202,23 +202,22 @@ class RichView:
             self._render_in_game(
                 phase="bidding",
                 current_player=player,
-                bidding_history=legacy_bids,
-                prompt_question=_bidding_prompt_text(legacy_bids, player),
+                bidding_history=bidding_history,
+                prompt_question=_bidding_prompt_text(auction, player),
                 mandatory=False,
                 notice=notice,
             )
             raw = self.console.input(
                 Text("> ", style=f"bold {GREEN_FG}").markup
             )
-            parsed = _parse_bid_input(raw)
-            if parsed is None:
+            bid = _parse_bid_input(raw, player)
+            if bid is None:
                 notice = Text(
                     "✗ Unrecognized bid. Try '80 h', 'pass', "
                     "'double', 'redouble'.",
                     style=RED,
                 )
                 continue
-            bid = wire_to_bid(player, parsed)
             # Syntactic parsing only checks the *shape* of the input;
             # the auction owns the rules (precedence, the Double freeze,
             # can't-double-your-own-side, …). Validate here so an
@@ -333,16 +332,14 @@ class RichView:
         without a frame — this hook gives the user time to read the
         bidding history.
         """
-        legacy_bid = _bid_to_legacy(bid)
-        self._log(self._format_bid_log(player, legacy_bid))
+        self._log(self._format_bid_log(player, bid))
         if getattr(player, "is_human", False):
             return
-        legacy_history = [(b.player, _bid_to_legacy(b)) for b in history]
         self._render_in_game(
             phase="bidding",
             current_player=None,
-            bidding_history=legacy_history,
-            prompt_question=_ai_bid_announcement(player, legacy_bid),
+            bidding_history=list(history),
+            prompt_question=_ai_bid_announcement(player, bid),
             mandatory=False,
         )
         time.sleep(_resolve_delay("CONTRAI_AI_BID_DELAY", default=1.4))
@@ -615,22 +612,21 @@ class RichView:
         if len(self.event_log) > self.LOG_MAX:
             del self.event_log[: len(self.event_log) - self.LOG_MAX]
 
-    def _format_bid_log(self, player: BasePlayer, bid) -> Text:
+    def _format_bid_log(self, player: BasePlayer, bid: Bid) -> Text:
         """Build the log line for a single bid action."""
         label = _position_short(player.position)
         color = _position_color(player.position)
         t = Text()
         t.append(f"{label} ", style=f"bold {color}")
-        if bid == "Pass":
+        if isinstance(bid, PassBid):
             t.append("passed.", style=DIM)
-        elif bid == "Double":
-            t.append("doubled.", style=f"bold {GOLD}")
-        elif bid == "Redouble":
+        elif isinstance(bid, RedoubleBid):
             t.append("redoubled.", style=f"bold {GOLD}")
-        elif isinstance(bid, tuple):
-            value, suit = bid
-            t.append(f"bid {value} ", style=FG)
-            t.append(_suit_glyph(suit), style=_suit_color(suit))
+        elif isinstance(bid, DoubleBid):
+            t.append("doubled.", style=f"bold {GOLD}")
+        elif isinstance(bid, ContractBid):
+            t.append(f"bid {bid.value} ", style=FG)
+            t.append(_suit_glyph(bid.suit), style=_suit_color(bid.suit))
             t.append(".", style=FG)
         return t
 

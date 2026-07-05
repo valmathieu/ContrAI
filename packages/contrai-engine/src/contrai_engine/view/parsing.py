@@ -1,19 +1,25 @@
 """Human-input parsers for the Rich terminal UI.
 
 Turn the raw strings a player types at the prompt into engine-shaped
-values: a bid (``"Pass"`` / ``"Double"`` / ``"Redouble"`` / a
-``(value, suit)`` tuple) or the selected :class:`~contrai_core.card.Card`.
-Both return ``None`` on unrecognized input so the prompt loops can
-re-ask rather than crash. Syntactic validation only — the auction and
-round rules own legality.
+values: a :class:`~contrai_core.bid.Bid` attached to the acting player,
+or the selected :class:`~contrai_core.card.Card`. Both return ``None`` on
+unrecognized input so the prompt loops can re-ask rather than crash.
+Syntactic validation only — the auction and round rules own legality.
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
-from contrai_core import Card, Suit
-from contrai_core.bid import SlamLevel
+from contrai_core import BasePlayer, Card
+from contrai_core.bid import (
+    Bid,
+    ContractBid,
+    DoubleBid,
+    PassBid,
+    RedoubleBid,
+    SlamLevel,
+)
 
 from contrai_engine.view.theme import (
     DOUBLE_WORDS,
@@ -24,33 +30,39 @@ from contrai_engine.view.theme import (
 )
 
 
-def _parse_bid_input(raw: str) -> Optional[str | tuple[int | SlamLevel, Suit]]:
-    """Parse a human bid string. Returns engine bid representation or None.
+def _parse_bid_input(raw: str, player: BasePlayer) -> Optional[Bid]:
+    """Parse a human bid string into a :class:`Bid` for ``player``.
+
+    Construction is always safe here: numeric values are checked against
+    ``VALID_BID_VALUES`` and the Slam sentinels are always valid, so the
+    resulting :class:`ContractBid` never trips ``__post_init__``. Legality
+    within the auction is a separate concern the caller checks with
+    :meth:`Auction.is_legal`.
 
     Accepted forms:
-        pass / p               -> 'Pass'
-        double / d             -> 'Double'
-        redouble / r           -> 'Redouble'
-        "80 h" / "100 hearts" / "150nt"   -> (value, Suit)
-        "slam s" / "slams"                -> (SlamLevel.SLAM, Suit)
-        "solo slam h" / "soloslam h"      -> (SlamLevel.SOLO_SLAM, Suit)
+        pass / p               -> PassBid
+        double / d             -> DoubleBid
+        redouble / r           -> RedoubleBid
+        "80 h" / "100 hearts" / "150nt"   -> ContractBid(value, Suit)
+        "slam s" / "slams"                -> ContractBid(SlamLevel.SLAM, Suit)
+        "solo slam h" / "soloslam h"      -> ContractBid(SlamLevel.SOLO_SLAM, Suit)
     """
     s = raw.strip().lower()
     if not s:
         return None
     if s in PASS_WORDS:
-        return "Pass"
+        return PassBid(player)
     if s in DOUBLE_WORDS:
-        return "Double"
+        return DoubleBid(player)
     if s in REDOUBLE_WORDS:
-        return "Redouble"
+        return RedoubleBid(player)
 
     # Try "<value><sep><suit>" with optional whitespace; also accept
     # the value and suit being glued together ("100h", "slams").
     parts = s.replace(",", " ").split()
 
     # Accept the two-word form "solo slam <suit>" by collapsing the
-    # first two tokens into the canonical "soloslam" wire form.
+    # first two tokens into the canonical "soloslam" token.
     if len(parts) == 3 and parts[0] == "solo" and parts[1] == "slam":
         parts = ["soloslam", parts[2]]
 
@@ -79,16 +91,16 @@ def _parse_bid_input(raw: str) -> Optional[str | tuple[int | SlamLevel, Suit]]:
         return None
 
     if raw_value == "slam":
-        return (SlamLevel.SLAM, suit)
+        return ContractBid(player, SlamLevel.SLAM, suit)
     if raw_value == "soloslam":
-        return (SlamLevel.SOLO_SLAM, suit)
+        return ContractBid(player, SlamLevel.SOLO_SLAM, suit)
     try:
         value = int(raw_value)
     except ValueError:
         return None
     if value not in VALID_BID_VALUES:
         return None
-    return (value, suit)
+    return ContractBid(player, value, suit)
 
 
 def _parse_card_input(

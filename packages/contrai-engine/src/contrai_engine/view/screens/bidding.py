@@ -3,26 +3,29 @@
 The auction view: the running bidding-history panel, the per-seat
 bidding diamond (each seat shows its latest bid), the adaptive bid
 prompt (only advertising actions legal for the next bidder), and the
-brief AI post-bid announcement. Pure builders consuming the legacy
-``(player, wire_bid)`` history that ``RichView`` projects.
+brief AI post-bid announcement. Pure builders consuming the chronological
+``list[Bid]`` history that ``RichView`` passes straight from the
+:class:`~contrai_core.auction.Auction`.
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
-from contrai_core import BasePlayer
+from contrai_core import Auction, BasePlayer
+from contrai_core.bid import (
+    Bid,
+    ContractBid,
+    DoubleBid,
+    PassBid,
+    RedoubleBid,
+)
 from rich.box import ROUNDED
 from rich.panel import Panel
 from rich.text import Text
 
-from contrai_engine.view.bidding_rules import (
-    _double_available_to,
-    _min_legal_contract_value,
-    _redouble_available_to,
-)
 from contrai_engine.view.formatting import (
-    _bid_legacy_label,
+    _bid_label,
     _position_color,
     _position_short,
     _suit_color,
@@ -52,16 +55,14 @@ def _render_bidding_diamond(
     spatially the same way cards do during play. The seat about to bid
     is marked ``?``; seats that have not bid yet show ``·``.
 
-    ``bidding_history`` is the legacy ``(player, wire_bid)`` list the
-    rest of the bidding renderer already consumes, where ``wire_bid``
-    is one of ``"Pass"`` / ``"Double"`` / ``"Redouble"`` / a
-    ``(value, suit)`` tuple.
+    ``bidding_history`` is the chronological ``list[Bid]`` the rest of
+    the bidding renderer consumes, straight from ``Auction.bids``.
     """
     # Collapse the history to the latest bid standing at each seat;
     # a later bid by the same player overwrites the earlier one.
-    latest_by_pos: dict[str, str | tuple] = {}
-    for player, bid in bidding_history:
-        latest_by_pos[player.position] = bid
+    latest_by_pos: dict[str, Bid] = {}
+    for bid in bidding_history:
+        latest_by_pos[bid.player.position] = bid
 
     def slot(pos: str) -> Text:
         t = Text()
@@ -71,7 +72,7 @@ def _render_bidding_diamond(
         if pos == pending_position:
             t.append("?", style=f"bold {YELLOW}")
         elif pos in latest_by_pos:
-            t.append_text(_bid_legacy_label(latest_by_pos[pos]))
+            t.append_text(_bid_label(latest_by_pos[pos]))
         else:
             t.append("·", style=DIM)
         return t
@@ -117,7 +118,7 @@ def _panel_bidding_history(bids: list) -> Panel:
     if not bids:
         body.append("(no bids yet)", style=DIM)
     else:
-        for i, (player, bid) in enumerate(bids):
+        for i, bid in enumerate(bids):
             if i % 4 == 0:
                 # New bidding round: break the line (except the very
                 # first) and emit the round-number gutter.
@@ -127,10 +128,10 @@ def _panel_bidding_history(bids: list) -> Panel:
                 body.append(label, style=f"bold {DIM}")
                 body.append(" " * max(1, round_w - len(label)), style=FG)
             cell = Text()
-            cell.append(_position_short(player.position),
-                        style=f"bold {_position_color(player.position)}")
+            cell.append(_position_short(bid.player.position),
+                        style=f"bold {_position_color(bid.player.position)}")
             cell.append(" ", style=FG)
-            cell.append_text(_bid_legacy_label(bid))
+            cell.append_text(_bid_label(bid))
             # Right-pad the cell to keep the seats in vertical lanes.
             body.append_text(cell)
             body.append(" " * max(1, cell_w - cell.cell_len), style=FG)
@@ -144,63 +145,77 @@ def _panel_bidding_history(bids: list) -> Panel:
 
 
 def _bidding_prompt_text(
-    history: list,
+    auction: Auction,
     next_player: Optional[BasePlayer] = None,
 ) -> Text:
+    """Adaptive bid prompt: recap the last bid, then hint legal actions.
+
+    The action hint is derived straight from
+    :meth:`Auction.legal_actions` for ``next_player``, so it never
+    advertises a move the auction would reject (e.g. doubling one's own
+    partner, or a numeric raise once a Slam stands).
+    """
     t = Text()
-    # Find what last non-self event was — for "West passed.".
-    if history:
-        last_player, last_bid = history[-1]
-        label = _position_short(last_player.position)
-        if last_bid == "Pass":
+    # Recap the last event — for "West passed.".
+    bids = auction.bids
+    if bids:
+        last_bid = bids[-1]
+        label = _position_short(last_bid.player.position)
+        if isinstance(last_bid, PassBid):
             t.append(f"{label} passed. ", style=FG)
-        elif last_bid == "Double":
-            t.append(f"{label} doubled. ", style=f"bold {GOLD}")
-        elif last_bid == "Redouble":
+        elif isinstance(last_bid, RedoubleBid):
             t.append(f"{label} redoubled. ", style=f"bold {GOLD}")
-        elif isinstance(last_bid, tuple):
-            value, suit = last_bid
-            t.append(f"{label} bid {value} ", style=FG)
-            t.append(_suit_glyph(suit), style=_suit_color(suit))
+        elif isinstance(last_bid, DoubleBid):
+            t.append(f"{label} doubled. ", style=f"bold {GOLD}")
+        elif isinstance(last_bid, ContractBid):
+            t.append(f"{label} bid {last_bid.value} ", style=FG)
+            t.append(_suit_glyph(last_bid.suit), style=_suit_color(last_bid.suit))
             t.append(". ", style=FG)
     t.append("Your bid? ", style=FG)
-    # Adaptive example — only advertise actions that are actually
-    # legal for the next bidder, so the hint never invites a move
-    # the auction will reject (e.g. doubling one's own partner).
-    if next_player is not None and _redouble_available_to(history, next_player):
+    # Adaptive example — only advertise actions that are actually legal
+    # for the next bidder. The enumerated legal action space is the
+    # single source of truth here.
+    legal = auction.legal_actions(next_player) if next_player is not None else ()
+    if any(isinstance(b, RedoubleBid) for b in legal):
         # Contractor just got doubled: redouble is the only
         # meaningful active option besides passing.
         t.append("(pass / redouble)", style=DIM)
     else:
         # The worked contract example tracks the auction: show the
         # cheapest *legal* raise (100 once 90 stands), never the bare
-        # 80 floor, so the hint can't suggest a bid the auction would
-        # reject. Dropped entirely past 180, where only Slam remains.
+        # 80 floor. Dropped entirely past 180, where only Slam remains
+        # (its value is a SlamLevel, not an int, so it's filtered out).
         options: list[str] = []
-        min_value = _min_legal_contract_value(history)
+        min_value = min(
+            (
+                b.value
+                for b in legal
+                if isinstance(b, ContractBid) and isinstance(b.value, int)
+            ),
+            default=None,
+        )
         if min_value is not None:
             options.append(f"'{min_value} H'")
         options.append("'pass'")
-        if next_player is not None and _double_available_to(history, next_player):
+        if any(isinstance(b, DoubleBid) for b in legal):
             options.append("'double'")
         t.append(f"(e.g. {' / '.join(options)})", style=DIM)
     return t
 
 
-def _ai_bid_announcement(player: BasePlayer, bid) -> Text:
+def _ai_bid_announcement(player: BasePlayer, bid: Bid) -> Text:
     """Prompt text shown during an AI's brief post-bid pause."""
     label = _position_short(player.position)
     t = Text()
-    if bid == "Pass":
+    if isinstance(bid, PassBid):
         t.append(f"{label} passes.", style=DIM)
-    elif bid == "Double":
-        t.append(f"{label} doubles.", style=f"bold {GOLD}")
-    elif bid == "Redouble":
+    elif isinstance(bid, RedoubleBid):
         t.append(f"{label} redoubles.", style=f"bold {GOLD}")
-    elif isinstance(bid, tuple):
-        value, suit = bid
-        t.append(f"{label} bids {value} ", style=FG)
-        t.append(_suit_glyph(suit), style=_suit_color(suit))
+    elif isinstance(bid, DoubleBid):
+        t.append(f"{label} doubles.", style=f"bold {GOLD}")
+    elif isinstance(bid, ContractBid):
+        t.append(f"{label} bids {bid.value} ", style=FG)
+        t.append(_suit_glyph(bid.suit), style=_suit_color(bid.suit))
         t.append(".", style=FG)
     else:
         t.append(f"{label} is thinking…", style=DIM)
