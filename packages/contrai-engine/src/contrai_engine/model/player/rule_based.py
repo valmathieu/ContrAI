@@ -9,6 +9,8 @@
 from contrai_core.auction import Auction
 from contrai_core.bid import (
     Bid,
+    ContractBid,
+    DoubleBid,
     PassBid,
     RedoubleBid,
     SlamLevel,
@@ -16,7 +18,6 @@ from contrai_core.bid import (
 from contrai_core.types import CARD_SUITS, Rank, Suit
 
 from .strategy import BiddingStrategy, CardPlayStrategy, _PlayerStrategy
-from .wire import bid_to_wire, wire_to_bid
 
 SUITS = CARD_SUITS
 
@@ -74,13 +75,11 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
     def choose_bid(self, auction: Auction) -> Bid:
         """Choose a :class:`Bid` for the current auction state.
 
-        The expert bidding table still operates on the legacy wire
-        format internally; this method adapts the :class:`Auction`
-        boundary into wire-format inputs, delegates to
-        :meth:`_choose_wire`, and lifts the result back to a
-        :class:`Bid` for the engine to apply. The engine is
-        responsible for validating legality — see
-        :meth:`Auction.apply`.
+        The expert bidding table reads the :class:`Auction` history
+        directly: :meth:`_choose_open_bid` walks ``auction.bids`` and
+        returns a concrete :class:`Bid` (``PassBid`` /
+        ``ContractBid`` / ``DoubleBid``). The engine is responsible for
+        validating legality — see :meth:`Auction.apply`.
 
         Args:
             auction: The current :class:`Auction` state.
@@ -103,9 +102,7 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
         if auction.has_double:
             return self._choose_under_double(auction)
 
-        current_bids = [(b.player, bid_to_wire(b)) for b in auction.bids]
-        wire_choice = self._choose_wire(current_bids)
-        bid = wire_to_bid(self._player, wire_choice)
+        bid = self._choose_open_bid(auction)
 
         # Safety net honouring the Auction design contract: callers must
         # only propose legal bids, there is no silent force-a-Pass in
@@ -142,104 +139,103 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
                 return redouble
         return PassBid(self._player)
 
-    def _choose_wire(self, current_bids):
-        """Strategy core: pick a wire-format bid for ``current_bids``.
+    def _choose_open_bid(self, auction: Auction) -> Bid:
+        """Strategy core: pick a :class:`Bid` for an open (unfrozen) auction.
+
+        Reads the chronological :class:`Bid` history off ``auction``
+        directly — no wire-format projection. Called by
+        :meth:`choose_bid` only once the Double/Redouble freeze states
+        have been ruled out, so the full expert table (raise, support,
+        Coinche) is in play here.
 
         Args:
-            current_bids: List of ``(player, wire_bid)`` tuples from
-                the current bidding round in chronological order.
+            auction: The current :class:`Auction` state.
 
         Returns:
-            ``'Pass'``, ``'Double'``, ``'Redouble'``, or
-            ``(value, suit)``.
+            A :class:`PassBid`, :class:`ContractBid`, or
+            :class:`DoubleBid`. Legality is re-checked by the caller.
         """
 
+        bids = auction.bids
+
         # Get current game state
-        last_bid = self._get_last_bid(current_bids)
-        partner_bid = self._get_partner_bid(current_bids)
+        last_bid = self._get_last_bid(bids)
+        partner_bid = self._get_partner_bid(bids)
 
         # Check if we can double or redouble
-        double_action = self._check_double_redouble(current_bids, last_bid)
-        if double_action:
+        double_action = self._check_double_redouble(last_bid)
+        if double_action is not None:
             return double_action
 
         # Evaluate our hand for each suit
         suit_evaluations = self._evaluate_suits()
 
         # Determine bidding strategy
-        if partner_bid is None or (isinstance(partner_bid, tuple) and self._can_overbid_partner(partner_bid, suit_evaluations)):
+        if partner_bid is None or (
+            isinstance(partner_bid, ContractBid)
+            and self._can_overbid_partner(partner_bid, suit_evaluations)
+        ):
             # Make initial bid or overbid partner
             return self._make_initial_bid(suit_evaluations, last_bid)
-        elif isinstance(partner_bid, tuple):
+        elif isinstance(partner_bid, ContractBid):
             # Support partner's bid
             return self._support_partner_bid(partner_bid, last_bid)
 
-        return 'Pass'
-
-    @classmethod
-    def _bid_value_numeric(cls, value):
-        """Coerce a contract value (numeric or :class:`SlamLevel`) to int.
-
-        The wire format on ``current_bids`` carries the all-tricks bids
-        as :class:`SlamLevel` members (see the wire-format bridge in
-        :mod:`contrai_engine.model.player`), so the AI's ladder
-        arithmetic must normalise them to their auction-precedence /
-        base-point numeric: ``SlamLevel.SLAM`` → 250,
-        ``SlamLevel.SOLO_SLAM`` → 500.
-        """
-
-        if isinstance(value, SlamLevel):
-            return value.base_value
-        return value
+        return PassBid(self._player)
 
     @staticmethod
-    def _get_last_bid(current_bids):
-        """Get the last non-pass bid."""
+    def _get_last_bid(bids):
+        """Return the most recent :class:`ContractBid`, or ``None``.
 
-        for player, bid in reversed(current_bids):
-            if bid != 'Pass' and isinstance(bid, tuple):
+        Walks the chronological :class:`Bid` history backwards and
+        returns the last numeric/Slam contract. Passes and
+        Double/Redouble markers are skipped — the expert table only
+        conditions on the standing *contract*.
+        """
+
+        for bid in reversed(bids):
+            if isinstance(bid, ContractBid):
                 return bid
         return None
 
-    def _get_partner_bid(self, current_bids):
-        """Get partner's last bid."""
+    def _get_partner_bid(self, bids):
+        """Return our side's most recent non-pass :class:`Bid`, or ``None``.
 
-        for player, bid in reversed(current_bids):
-            if player.team == self.team and bid != 'Pass':
+        Matches any bid made by a player on our team (including our own
+        earlier bid this round); only :class:`PassBid` is skipped.
+        """
+
+        for bid in reversed(bids):
+            if not isinstance(bid, PassBid) and bid.player.team is self.team:
                 return bid
         return None
 
-    def _check_double_redouble(self, current_bids, last_bid):
-        """Check if we should double or redouble."""
+    def _check_double_redouble(self, last_bid):
+        """Return a :class:`DoubleBid` if we should Coinche, else ``None``.
 
-        if not last_bid or not isinstance(last_bid, tuple):
+        Args:
+            last_bid: The standing :class:`ContractBid`, or ``None``.
+        """
+
+        if last_bid is None:
             return None
 
-        # Find who made the last bid
-        last_bidder = None
-        for player, bid in reversed(current_bids):
-            if bid == last_bid:
-                last_bidder = player
-                break
-
-        # Check for double (only if opponent team made the bid)
-        if last_bidder.team != self.team:
-            # Simple double strategy: double if we have strong hand in other suits
-            if self._should_double(last_bid):
-                return 'Double'
-
-        # Check for redouble (only if the opposite team made the original bid it was a double)
-        if last_bidder.team != self.team and last_bid == 'Double':
-            if self._should_redouble():
-                return 'Redouble'
+        # Double only if the standing contract belongs to the opponents
+        # and we hold enough external strength to threaten it.
+        if last_bid.player.team is not self.team and self._should_double(last_bid):
+            return DoubleBid(self._player)
 
         return None
 
     def _should_double(self, opponent_bid):
-        """Determine if we should double opponent's bid."""
+        """Determine if we should double opponent's bid.
 
-        value, suit = opponent_bid
-        value = self._bid_value_numeric(value)
+        Args:
+            opponent_bid: The opposing :class:`ContractBid` in play.
+        """
+
+        value = opponent_bid.get_numeric_value()
+        suit = opponent_bid.suit
 
         strength = self._estimate_tricks(suit) * 20  # Each expected trick worth 20 points
 
@@ -343,10 +339,15 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
 
     @classmethod
     def _can_overbid_partner(cls, partner_bid, suit_evaluations):
-        """Check if we can make a higher bid than our partner."""
+        """Check if we can make a higher bid than our partner.
 
-        partner_value, partner_suit = partner_bid
-        partner_value = cls._bid_value_numeric(partner_value)
+        Args:
+            partner_bid: Our partner's standing :class:`ContractBid`.
+            suit_evaluations: Per-suit evaluation dicts from
+                :meth:`_evaluate_suits`.
+        """
+
+        partner_value = partner_bid.get_numeric_value()
 
         # Find our best contract
         best_contract = 0
@@ -356,7 +357,17 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
         return best_contract > partner_value
 
     def _make_initial_bid(self, suit_evaluations, last_bid):
-        """Make an initial bid or overbid."""
+        """Make an initial bid or overbid.
+
+        Args:
+            suit_evaluations: Per-suit evaluation dicts from
+                :meth:`_evaluate_suits`.
+            last_bid: The standing :class:`ContractBid`, or ``None``.
+
+        Returns:
+            A :class:`ContractBid` for the chosen suit, or a
+            :class:`PassBid` when nothing legal improves the auction.
+        """
 
         # Find the best suit to bid
         best_suits = []
@@ -370,26 +381,30 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
                 best_suits.append(suit)
 
         if max_contract == 0:
-            return 'Pass'
+            return PassBid(self._player)
 
         # Check if we can overbid the last bid
-        if last_bid:
-            last_value, _ = last_bid
-            last_value = self._bid_value_numeric(last_value)
-            if max_contract <= last_value:
-                return 'Pass'
+        if last_bid is not None and max_contract <= last_bid.get_numeric_value():
+            return PassBid(self._player)
 
         # Choose best suit among candidates
         chosen_suit = self._choose_best_suit(best_suits, suit_evaluations)
 
-        # Translate the internal numeric sentinels back to the wire format.
-        bid_value = self._numeric_to_wire(max_contract)
-        return bid_value, chosen_suit
+        return self._contract_bid(max_contract, chosen_suit)
 
     def _support_partner_bid(self, partner_bid, last_bid):
-        """Support partner's bid with incremental bidding."""
+        """Support partner's bid with incremental bidding.
 
-        _, partner_suit = partner_bid
+        Args:
+            partner_bid: Our partner's standing :class:`ContractBid`.
+            last_bid: The standing :class:`ContractBid`, or ``None``.
+
+        Returns:
+            A :class:`ContractBid` raising partner's suit, or a
+            :class:`PassBid` when we add nothing or would overshoot.
+        """
+
+        partner_suit = partner_bid.suit
 
         # Calculate our contribution to partner's suit
         contribution = 0
@@ -408,33 +423,40 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
             contribution += 10
 
         # Calculate new bid value
-        last_value, _ = last_bid
-        last_value = self._bid_value_numeric(last_value)
+        last_value = last_bid.get_numeric_value()
         new_value = last_value + contribution
 
         # Cap at SoloSlam (the top of the table); don't try to raise past it.
         if new_value > self.SOLO_SLAM_NUMERIC or contribution == 0:
-            return 'Pass'
+            return PassBid(self._player)
 
-        bid_value = self._numeric_to_wire(new_value)
-        return bid_value, partner_suit
+        return self._contract_bid(new_value, partner_suit)
 
-    @classmethod
-    def _numeric_to_wire(cls, value):
-        """Translate the bidding-table numeric back to the wire value.
+    def _contract_bid(self, numeric, suit) -> Bid:
+        """Build a :class:`ContractBid` from a bidding-table numeric + suit.
 
-        Numeric contracts (80–160) round-trip unchanged. The two
-        all-tricks numerics become their :class:`SlamLevel` members:
-        ``SLAM_NUMERIC`` → ``SlamLevel.SLAM``, ``SOLO_SLAM_NUMERIC`` →
-        ``SlamLevel.SOLO_SLAM`` — so the wire ``(value, suit)`` tuple
-        carries the same value a :class:`ContractBid` will hold.
+        The expert table stores the all-tricks bids as their base-value
+        numerics (``SLAM_NUMERIC`` = 250, ``SOLO_SLAM_NUMERIC`` = 500);
+        those map to the corresponding :class:`SlamLevel` members here,
+        so the constructed :class:`ContractBid` carries a value the
+        domain accepts. Numeric steps (80–180) pass through unchanged.
+
+        A numeric that lands off the contract ladder — e.g. the running
+        support total overshooting a partner's Slam (250 + 40 = 290) —
+        is not a constructible contract; we fall back to a
+        :class:`PassBid` rather than raise. (``choose_bid``'s
+        ``is_legal`` net then leaves that Pass untouched.)
         """
 
-        if value == cls.SOLO_SLAM_NUMERIC:
-            return SlamLevel.SOLO_SLAM
-        if value == cls.SLAM_NUMERIC:
-            return SlamLevel.SLAM
-        return value
+        if numeric == self.SOLO_SLAM_NUMERIC:
+            value: int | SlamLevel = SlamLevel.SOLO_SLAM
+        elif numeric == self.SLAM_NUMERIC:
+            value = SlamLevel.SLAM
+        elif numeric in ContractBid.VALID_VALUES:
+            value = numeric
+        else:
+            return PassBid(self._player)
+        return ContractBid(self._player, value, suit)
 
     def _choose_best_suit(self, candidate_suits, suit_evaluations):
         """Choose the best suit from candidates."""
