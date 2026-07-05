@@ -17,6 +17,13 @@ from contrai_core import (
     Rank,
     Suit,
 )
+from contrai_core.bid import (
+    Bid,
+    ContractBid,
+    DoubleBid,
+    PassBid,
+    RedoubleBid,
+)
 from rich.text import Text
 
 from contrai_engine.view.theme import (
@@ -170,19 +177,24 @@ def _format_trump_label(suit: Optional[Suit], *, star: bool = True) -> Text:
     return t
 
 
-def _bid_legacy_label(bid: str | tuple) -> Text:
-    """Legacy bid label for the bidding-history line."""
-    if bid == "Pass":
+def _bid_label(bid: Bid) -> Text:
+    """Compact bid label for the bidding history and diamond.
+
+    Renders a :class:`~contrai_core.bid.Bid` to the short glyphs the
+    auction panels use: ``Pass`` for a pass, ``×2`` / ``×4`` for a
+    Coinche / Surcoinche, and ``"<value> <suit-glyph>"`` for a numeric
+    or Slam-family contract.
+    """
+    if isinstance(bid, PassBid):
         return Text("Pass", style=DIM)
-    if bid == "Double":
+    if isinstance(bid, DoubleBid):
         return Text("×2", style=GOLD)
-    if bid == "Redouble":
+    if isinstance(bid, RedoubleBid):
         return Text("×4", style=GOLD)
-    if isinstance(bid, tuple):
-        value, suit = bid
+    if isinstance(bid, ContractBid):
         t = Text()
-        t.append(str(value), style="bold")
+        t.append(str(bid.value), style="bold")
         t.append(" ", style=FG)
-        t.append(_suit_glyph(suit), style=_suit_color(suit))
+        t.append(_suit_glyph(bid.suit), style=_suit_color(bid.suit))
         return t
     return Text(str(bid), style=DIM)
