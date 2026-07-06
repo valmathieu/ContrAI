@@ -9,6 +9,12 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 ## [Unreleased]
 
+### Changed
+
+- (engine) Unify the internal bid representation on core `Bid`/`Auction` objects and
+  remove the legacy wire-format bridge — the rule-based AI and the bidding view now
+  operate directly on typed `Bid` objects. Behaviour is unchanged.
+
 ### Fixed
 
 - (engine) Landing screen now labels the three AI seats `AI · expert` instead of
