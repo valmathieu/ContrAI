@@ -162,8 +162,8 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
         last_bid = auction.last_contract_bid
         partner_bid = self._get_partner_bid(bids)
 
-        # Check if we can double or redouble
-        double_action = self._check_double_redouble(last_bid)
+        # Check if we can Coinche (Double) the opponents' standing contract
+        double_action = self._check_double(last_bid)
         if double_action is not None:
             return double_action
 
@@ -195,8 +195,12 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
                 return bid
         return None
 
-    def _check_double_redouble(self, last_bid):
+    def _check_double(self, last_bid):
         """Return a :class:`DoubleBid` if we should Coinche, else ``None``.
+
+        Only the Coinche (Double) decision lives here — the Surcoinche
+        (Redouble) is a defence of our *own* contract and is handled on
+        the frozen-auction path in :meth:`_choose_under_double`.
 
         Args:
             last_bid: The standing :class:`ContractBid`, or ``None``.
