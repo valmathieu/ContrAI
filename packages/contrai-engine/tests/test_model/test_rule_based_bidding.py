@@ -416,27 +416,6 @@ class TestAiPlayerBidding:
         assert bid.value is SlamLevel.SOLO_SLAM
         assert bid.suit == Suit.SPADES
 
-    def test_can_overbid_partner_handles_slam_value(
-        self, ai_player, sample_cards_weak
-    ):
-        """Normalising SlamLevel.SLAM → 500 in _can_overbid_partner avoids TypeError."""
-        ai_player.hand = sample_cards_weak
-        # Should not raise; nothing in our weak hand beats Slam.
-        assert ai_player.bidding._can_overbid_partner(
-            ContractBid(ai_player, SlamLevel.SLAM, Suit.SPADES),
-            ai_player.bidding._evaluate_suits(),
-        ) is False
-
-    def test_can_overbid_partner_handles_solo_slam_value(
-        self, ai_player, sample_cards_weak
-    ):
-        """Normalising SlamLevel.SOLO_SLAM → 1000 in _can_overbid_partner avoids TypeError."""
-        ai_player.hand = sample_cards_weak
-        assert ai_player.bidding._can_overbid_partner(
-            ContractBid(ai_player, SlamLevel.SOLO_SLAM, Suit.SPADES),
-            ai_player.bidding._evaluate_suits(),
-        ) is False
-
     def test_should_double_handles_slam_value(self, ai_player, sample_cards_weak):
         """_should_double must not TypeError on a SlamLevel value.
 
@@ -476,9 +455,32 @@ class TestAiPlayerBidding:
         bid = ai_player.choose_bid(auction)
         assert isinstance(bid, PassBid)
 
-    def test_choose_best_suit_preference_order(self, ai_player):
-        """Test suit preference order when multiple suits are equal"""
-        # Create hand with equal strength in multiple suits
+    # --- Best-contract resolution ------------------------------------------
+    # _find_best_contract folds the max-contract search and the suit
+    # tie-break (belote first, then the fixed preference order) into a
+    # single step, so the open-bid path handles one (contract, suit)
+    # pair. Tie cases build the evaluation dicts directly — real hands
+    # rarely produce exact contract ties on demand.
+
+    def test_find_best_contract_weak_hand(self, ai_player, sample_cards_weak):
+        """No suit meets the bidding table → (0, None)."""
+        ai_player.hand = sample_cards_weak
+        evaluations = ai_player.bidding._evaluate_suits()
+
+        assert ai_player.bidding._find_best_contract(evaluations) == (0, None)
+
+    def test_find_best_contract_single_best_suit(
+        self, ai_player, sample_cards_strong_spades
+    ):
+        """A hand with one dominant suit resolves to that suit's contract."""
+        ai_player.hand = sample_cards_strong_spades
+        evaluations = ai_player.bidding._evaluate_suits()
+
+        assert ai_player.bidding._find_best_contract(evaluations) == (130, Suit.SPADES)
+
+    def test_find_best_contract_tie_preference_order(self, ai_player):
+        """Tied suits without belote fall back to the preference order."""
+        # Mirror-image Spades/Hearts holdings: both evaluate to 130.
         ai_player.hand = Hand([
             Card(Suit.SPADES, Rank.JACK),
             Card(Suit.SPADES, Rank.NINE),
@@ -492,30 +494,51 @@ class TestAiPlayerBidding:
 
         evaluations = ai_player.bidding._evaluate_suits()
 
-        # Both Spades and Hearts should be good, but Spades should be preferred
-        candidate_suits = [Suit.SPADES, Suit.HEARTS]
-        chosen_suit = ai_player.bidding._choose_best_suit(candidate_suits, evaluations)
-        assert chosen_suit == Suit.SPADES
+        # Spades wins the tie: first in the preference order.
+        assert ai_player.bidding._find_best_contract(evaluations) == (130, Suit.SPADES)
 
-    def test_choose_best_suit_belote_preference(self, ai_player):
-        """Test that belote is preferred when contract values are equal"""
-        ai_player.hand = Hand([
-            Card(Suit.SPADES, Rank.JACK),
-            Card(Suit.SPADES, Rank.NINE),
-            Card(Suit.SPADES, Rank.ACE),
-            Card(Suit.HEARTS, Rank.JACK),
-            Card(Suit.HEARTS, Rank.KING),
-            Card(Suit.HEARTS, Rank.QUEEN),  # Belote in Hearts
-            Card(Suit.DIAMONDS, Rank.ACE),
-            Card(Suit.CLUBS, Rank.ACE)
-        ])
+    def test_find_best_contract_tie_belote_preference(self, ai_player):
+        """A belote suit wins the tie over an equal belote-less suit."""
+        evaluations = {
+            Suit.SPADES: {'contract': 100, 'has_belote': False},
+            Suit.HEARTS: {'contract': 100, 'has_belote': True},
+            Suit.DIAMONDS: {'contract': 0, 'has_belote': False},
+            Suit.CLUBS: {'contract': 0, 'has_belote': False},
+        }
 
-        evaluations = ai_player.bidding._evaluate_suits()
+        assert ai_player.bidding._find_best_contract(evaluations) == (100, Suit.HEARTS)
 
-        # Hearts should be preferred due to belote
-        candidate_suits = [Suit.SPADES, Suit.HEARTS]
-        chosen_suit = ai_player.bidding._choose_best_suit(candidate_suits, evaluations)
-        assert chosen_suit == Suit.HEARTS
+    def test_find_best_contract_tie_respects_candidates(self, ai_player):
+        """The preference tie-break must pick among the *tied* suits only.
+
+        Regression: the retired ``_choose_best_suit`` fallback loop
+        returned ``SUIT_PREFERENCE[0]`` (Spades) unconditionally — even
+        when Spades never met the bidding table.
+        """
+        evaluations = {
+            Suit.SPADES: {'contract': 0, 'has_belote': False},
+            Suit.HEARTS: {'contract': 100, 'has_belote': False},
+            Suit.DIAMONDS: {'contract': 100, 'has_belote': False},
+            Suit.CLUBS: {'contract': 0, 'has_belote': False},
+        }
+
+        assert ai_player.bidding._find_best_contract(evaluations) == (100, Suit.HEARTS)
+
+    def test_find_best_contract_tie_multiple_belotes(self, ai_player):
+        """Several belote suits: tie-break *within* the belote holders.
+
+        Regression: two belote suits fell through to the raw preference
+        order over all candidates, so a belote-less suit (here Spades)
+        could win the tie it should have lost.
+        """
+        evaluations = {
+            Suit.SPADES: {'contract': 100, 'has_belote': False},
+            Suit.HEARTS: {'contract': 100, 'has_belote': True},
+            Suit.DIAMONDS: {'contract': 100, 'has_belote': True},
+            Suit.CLUBS: {'contract': 0, 'has_belote': False},
+        }
+
+        assert ai_player.bidding._find_best_contract(evaluations) == (100, Suit.HEARTS)
 
 
 class TestAiPlayerDoubling:

@@ -106,10 +106,14 @@ package "model/player/ (subpackage)" as p_player {
       First concrete level (``AI_LEVELS["expert"]``).
       ``choose_bid`` resolves the Double/Redouble freeze,
       then ``_choose_open_bid`` walks ``auction.bids``
-      directly and returns a typed Bid (PassBid /
-      ContractBid / DoubleBid) — no wire format.
-      ~25 collapsed strategy helpers (_evaluate_suits,
-      _make_initial_bid, _check_double, …).
+      directly, resolves the hand once to a single
+      (contract, suit) pair via ``_find_best_contract``
+      (belote first, then preference-order tie-break)
+      and returns a typed Bid (PassBid / ContractBid /
+      DoubleBid) — no wire format.
+      ~13 collapsed strategy helpers (_evaluate_suits,
+      _find_best_contract, _make_initial_bid,
+      _check_double, …).
       **BIDDING_TABLE** rows (11 levels: 80–160 + Slam
       + Solo Slam): (contract, trump_req, trump_min,
       aces, tricks_min, belote_required).
