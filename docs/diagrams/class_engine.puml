@@ -74,7 +74,7 @@ package "model/player/ (subpackage)" as p_player {
         + {static} SUIT_PREFERENCE : tuple<Suit>
         --
         + choose_bid(auction) : Bid
-        - _choose_wire(current_bids) : str | tuple
+        - _choose_open_bid(auction) : Bid
     }
     class RuleBasedCardPlayStrategy {
         - _fallen_cards : dict<Suit, set<Rank>>
@@ -83,12 +83,6 @@ package "model/player/ (subpackage)" as p_player {
         + choose_card(trick, contract, playable) : Card
         + initialize_card_tracking() : None
         + update_card_tracking(…) : None
-    }
-
-    ' --- wire.py: legacy-format bridge ---
-    class "wire_to_bid / bid_to_wire" as p_bridge <<module helpers>> #FFEFD9 {
-        wire_to_bid(player, wire) : Bid
-        bid_to_wire(bid : Bid)    : str | tuple
     }
 
     ' --- levels.py: registry + factory ---
@@ -110,12 +104,12 @@ package "model/player/ (subpackage)" as p_player {
 
     note bottom of RuleBasedBiddingStrategy
       First concrete level (``AI_LEVELS["expert"]``).
-      ``choose_bid`` projects ``auction.bids`` to the
-      legacy ``(player, wire_bid)`` tuples the expert
-      table still uses, delegates to ``_choose_wire``,
-      and lifts the wire choice back via ``wire_to_bid``.
+      ``choose_bid`` resolves the Double/Redouble freeze,
+      then ``_choose_open_bid`` walks ``auction.bids``
+      directly and returns a typed Bid (PassBid /
+      ContractBid / DoubleBid) — no wire format.
       ~25 collapsed strategy helpers (_evaluate_suits,
-      _make_initial_bid, _check_double_redouble, …).
+      _make_initial_bid, _check_double, …).
       **BIDDING_TABLE** rows (11 levels: 80–160 + Slam
       + Solo Slam): (contract, trump_req, trump_min,
       aces, tricks_min, belote_required).
@@ -140,19 +134,6 @@ package "model/player/ (subpackage)" as p_player {
       calls when ``player.is_human``.
     end note
 
-    note right of p_bridge
-      Module-level helpers (``wire.py``),
-      re-exported from
-      ``contrai_engine.model.player``.
-      Bridge between the
-      :class:`contrai_core.Bid` boundary
-      (used at the engine perimeter) and
-      the legacy ``'Pass'`` / ``'Double'`` /
-      ``'Redouble'`` / ``(value, suit)``
-      wire format the rule-based strategy
-      and the Rich view's renderer still
-      consume.
-    end note
 }
 
 ' =========================================================
@@ -414,13 +395,12 @@ package "view/ package" as p_view {
       its own module:
       • theme — colour tokens + lookup tables
       • formatting — seat / suit / contract /
-        trump / legacy-bid labels
+        trump labels + the compact `_bid_label`
       • parsing — `_parse_bid_input`,
         `_parse_card_input`
-      • bidding_rules — `_double_/`,
-        `_redouble_available_to`,
-        `_min_legal_contract_value`,
-        `_illegal_bid_reason`, `_bid_to_legacy`
+      • bidding_rules — `_illegal_bid_reason`
+        (the prompt hint reads
+        `Auction.legal_actions` directly)
       • state_helpers — `_current_winner`,
         `_explain_constraint`,
         `_sort_hand_for_display`,
