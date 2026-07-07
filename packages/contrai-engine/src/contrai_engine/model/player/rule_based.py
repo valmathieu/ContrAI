@@ -167,16 +167,18 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
         if double_action is not None:
             return double_action
 
-        # Evaluate our hand for each suit
-        suit_evaluations = self._evaluate_suits()
+        # Evaluate our hand once and resolve it to the single best
+        # (contract, suit) pair — ties already broken (belote first,
+        # then the fixed preference order).
+        best_contract, best_suit = self._find_best_contract(self._evaluate_suits())
 
         # Determine bidding strategy
         if partner_bid is None or (
             isinstance(partner_bid, ContractBid)
-            and self._can_overbid_partner(partner_bid, suit_evaluations)
+            and best_contract > partner_bid.get_numeric_value()
         ):
             # Make initial bid or overbid partner
-            return self._make_initial_bid(suit_evaluations, last_bid)
+            return self._make_initial_bid(best_contract, best_suit, last_bid)
         elif isinstance(partner_bid, ContractBid):
             # Support partner's bid
             return self._support_partner_bid(partner_bid, last_bid)
@@ -326,31 +328,59 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
 
         return min(tricks, 8)  # Maximum 8 tricks in a round
 
-    @classmethod
-    def _can_overbid_partner(cls, partner_bid, suit_evaluations):
-        """Check if we can make a higher bid than our partner.
+    def _find_best_contract(self, suit_evaluations: dict) -> tuple[int, Suit | None]:
+        """Resolve the suit evaluations to the single best (contract, suit).
+
+        Folds the two questions the open-bid path used to answer
+        separately — "what is the highest contract I can reach?" and
+        "in which suit?" — into one pass. Ties on the contract value
+        are broken here as well: suits carrying a Belote (King + Queen
+        of trump) win first, then the fixed preference order
+        (Spades, Hearts, Diamonds, Clubs) decides among the rest.
 
         Args:
-            partner_bid: Our partner's standing :class:`ContractBid`.
             suit_evaluations: Per-suit evaluation dicts from
                 :meth:`_evaluate_suits`.
+
+        Returns:
+            The highest reachable bidding-table contract and the single
+            suit chosen for it, or ``(0, None)`` when no suit supports
+            any contract.
         """
 
-        partner_value = partner_bid.get_numeric_value()
+        max_contract = max(
+            evaluation['contract'] for evaluation in suit_evaluations.values()
+        )
+        if max_contract == 0:
+            return 0, None
 
-        # Find our best contract
-        best_contract = 0
-        for suit_eval in suit_evaluations.values():
-            best_contract = max(best_contract, suit_eval['contract'])
+        # Suits tied on the best contract value.
+        candidates = [
+            suit for suit, evaluation in suit_evaluations.items()
+            if evaluation['contract'] == max_contract
+        ]
 
-        return best_contract > partner_value
+        # Prefer belote-carrying suits; narrow the field when any exist.
+        belote_suits = [
+            suit for suit in candidates if suit_evaluations[suit]['has_belote']
+        ]
+        if belote_suits:
+            candidates = belote_suits
 
-    def _make_initial_bid(self, suit_evaluations, last_bid):
+        # Break the remaining tie with the fixed preference order. The
+        # order covers every suit, so the first hit always exists.
+        chosen_suit = next(
+            suit for suit in self.SUIT_PREFERENCE if suit in candidates
+        )
+        return max_contract, chosen_suit
+
+    def _make_initial_bid(self, best_contract, best_suit, last_bid):
         """Make an initial bid or overbid.
 
         Args:
-            suit_evaluations: Per-suit evaluation dicts from
-                :meth:`_evaluate_suits`.
+            best_contract: Our highest reachable bidding-table contract
+                (from :meth:`_find_best_contract`).
+            best_suit: The single suit resolved for it, or ``None``.
             last_bid: The standing :class:`ContractBid`, or ``None``.
 
         Returns:
@@ -358,28 +388,14 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
             :class:`PassBid` when nothing legal improves the auction.
         """
 
-        # Find the best suit to bid
-        best_suits = []
-        max_contract = 0
-
-        for suit, evaluation in suit_evaluations.items():
-            if evaluation['contract'] > max_contract:
-                max_contract = evaluation['contract']
-                best_suits = [suit]
-            elif evaluation['contract'] == max_contract and max_contract > 0:
-                best_suits.append(suit)
-
-        if max_contract == 0:
+        if best_contract == 0 or best_suit is None:
             return PassBid(self._player)
 
         # Check if we can overbid the last bid
-        if last_bid is not None and max_contract <= last_bid.get_numeric_value():
+        if last_bid is not None and best_contract <= last_bid.get_numeric_value():
             return PassBid(self._player)
 
-        # Choose best suit among candidates
-        chosen_suit = self._choose_best_suit(best_suits, suit_evaluations)
-
-        return self._contract_bid(max_contract, chosen_suit)
+        return self._contract_bid(best_contract, best_suit)
 
     def _support_partner_bid(self, partner_bid, last_bid):
         """Support partner's bid with incremental bidding.
@@ -446,28 +462,6 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
         else:
             return PassBid(self._player)
         return ContractBid(self._player, value, suit)
-
-    def _choose_best_suit(self, candidate_suits, suit_evaluations):
-        """Choose the best suit from candidates."""
-
-        if len(candidate_suits) == 1:
-            return candidate_suits[0]
-
-        strongest_suits = []
-
-        # If tied, prefer suit with belote
-        belote_suits = [suit for suit in candidate_suits
-                       if suit_evaluations[suit]['has_belote']]
-
-        if belote_suits:
-            if len(belote_suits) == 1:
-                return belote_suits[0]
-
-        # If still tied, use preference order: Spades, Hearts, Diamonds, Clubs
-        for preferred_suit in self.SUIT_PREFERENCE:
-            return preferred_suit
-
-        return strongest_suits[0]  # Fallback
 
     def _evaluate_trump_tricks(self, suit):
         """Evaluate potential tricks won with trump suit."""

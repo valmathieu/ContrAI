@@ -14,11 +14,18 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) Unify the internal bid representation on core `Bid`/`Auction` objects and
   remove the legacy wire-format bridge — the rule-based AI and the bidding view now
   operate directly on typed `Bid` objects. Behaviour is unchanged.
+- (engine) The expert AI now resolves its best (contract, suit) pair once per bidding
+  turn — the duplicated best-contract scans in the overbid check and the initial-bid
+  builder are folded into a single helper that also owns the suit tie-break.
 
 ### Fixed
 
 - (engine) Landing screen now labels the three AI seats `AI · expert` instead of
   `AI · medium` — the bots play the expert strategy, which is the only level wired today.
+- (engine) Expert AI suit tie-break: with several suits tied for the best contract, the
+  AI always fell back to Spades — even when Spades never met the bidding table — and
+  ignored the belote preference when more than one tied suit held a belote. It now picks
+  among the tied suits only, preferring belote holders.
 
 ## [0.1.0] - 2026-06-21
 
