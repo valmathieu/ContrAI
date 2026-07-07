@@ -81,14 +81,13 @@ loop **while not auction.is_terminal()**
         alt player has choose_bid (AI / Human)
             R -> P : player.choose_bid(auction)
             note right of P
-              AiPlayer adapts auction.bids
-              back to the legacy
-              ``(player, wire_bid)``
-              tuples its expert table
-              still uses, picks a wire
-              choice, and lifts the
-              result to a Bid via
-              ``wire_to_bid``.
+              AiPlayer walks ``auction.bids``
+              directly: its expert table
+              reads the standing contract
+              and partner bid off the typed
+              Bid history and returns a
+              concrete Bid (PassBid /
+              ContractBid / DoubleBid).
 
               HumanPlayer.choose_bid
               returns None by design.
@@ -99,22 +98,18 @@ loop **while not auction.is_terminal()**
         alt view ≠ None AND player.is_human
             R -->> V : view.request_bid_action(\n  player, auction\n)
             note right of V
-              RichView projects
-              ``auction.bids`` to the
-              legacy ``(player, wire_bid)``
-              shape its renderer
-              internals still consume,
-              renders the bidding screen,
+              RichView feeds ``auction.bids``
+              straight to its renderer
+              (now a plain list<Bid>) and
+              derives the prompt hint from
+              ``auction.legal_actions``. It
               parses the human's input
               (``pass``, ``80 h``,
               ``double``, ``redouble``,
-              …), and loops on parse
-              errors.
-
-              The parsed wire choice is
-              lifted to a Bid via
-              ``wire_to_bid`` and
-              returned.
+              …) into a Bid, loops on parse
+              errors, and re-prompts on any
+              bid ``Auction.is_legal``
+              rejects before returning.
             end note
             V -->> R : Bid
         end
@@ -178,14 +173,14 @@ end
 deactivate R
 
 note over R, V
-  **Wire format vs Bid objects.** Bidding flows through real
+  **Typed Bid objects end to end.** Bidding flows through real
   :class:`Bid` subclass instances at every boundary
   (``Player.choose_bid``, ``view.request_bid_action``,
-  ``Auction.apply``, ``view.on_bid_made``). The legacy
+  ``Auction.apply``, ``view.on_bid_made``) — and now *inside*
+  AiPlayer's expert table and RichView's renderer as well. The legacy
   ``'Pass'`` / ``'Double'`` / ``'Redouble'`` / ``(value, suit)`` wire
-  format only survives *inside* AiPlayer's expert table and RichView's
-  renderer; the ``wire_to_bid`` / ``bid_to_wire`` helpers in
-  ``contrai_engine.model.player`` are the bridge.
+  format and its ``wire_to_bid`` / ``bid_to_wire`` bridge have been
+  retired.
 end note
 
 @enduml
