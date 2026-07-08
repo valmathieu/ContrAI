@@ -28,7 +28,9 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
     Bidding strategy:
     1. Evaluate hand according to bidding table (80-160 points + Slam / Solo Slam)
     2. If partner hasn't bid or bid lower, make initial bid if it's hand is strong enough
-    3. If partner has bid, support with incremental bidding (+10 per external ace, +10 for trump complement)
+    3. If partner has bid, support once with our complement (+10 per external ace,
+       +10 for trump complement), capped at partner's opening bid + that complement —
+       the team ceiling that stops partners from alternately re-raising each other
     4. If multiple bid are possible : choose best suit based on strength, belote
     """
 
@@ -181,7 +183,7 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
             return self._make_initial_bid(best_contract, best_suit, last_bid)
         elif isinstance(partner_bid, ContractBid):
             # Support partner's bid
-            return self._support_partner_bid(partner_bid, last_bid)
+            return self._support_partner_bid(partner_bid, last_bid, bids)
 
         return PassBid(self._player)
 
@@ -397,19 +399,66 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
 
         return self._contract_bid(best_contract, best_suit)
 
-    def _support_partner_bid(self, partner_bid, last_bid):
-        """Support partner's bid with incremental bidding.
+    def _team_opening_bid(self, bids, suit):
+        """Return our team's first :class:`ContractBid` in ``suit``, or ``None``.
+
+        That opening bid anchors the support ceiling: the expert table
+        always opens at its full evaluation of the suit (there is no
+        slow walk-up), so everything our side may legitimately add on
+        top of it is the *other* seat's complement — announced once.
 
         Args:
-            partner_bid: Our partner's standing :class:`ContractBid`.
+            bids: Chronological bid history.
+            suit: The trump suit whose team opening we want.
+        """
+
+        for bid in bids:
+            if (
+                isinstance(bid, ContractBid)
+                and bid.suit == suit
+                and bid.player.team is self.team
+            ):
+                return bid
+        return None
+
+    def _support_partner_bid(self, partner_bid, last_bid, bids):
+        """Support partner's suit up to a fixed team ceiling.
+
+        The ceiling is partner's *opening* bid in the suit (their full
+        table evaluation) plus our own contribution (+10 per external
+        ace, +10 for the trump complement). Anchoring the raise on the
+        opening bid — never on the standing contract — is what breaks
+        the partner-support loop: a hand is static during the auction,
+        so re-adding the same contribution on top of a value that
+        already contains it would count the same cards on every lap and
+        ratchet the contract far past what the two hands can make.
+
+        Two Pass conditions fall out of the same invariant: we opened
+        the suit ourselves (our cards are already priced into the
+        anchor, so there is nothing of ours left to announce), or the
+        standing contract already reaches the ceiling (our complement
+        is spent, whether by our earlier raise or an opponent overbid).
+
+        Args:
+            partner_bid: Our side's most recent standing :class:`ContractBid`.
             last_bid: The standing :class:`ContractBid`, or ``None``.
+            bids: Chronological bid history, to locate the anchor.
 
         Returns:
-            A :class:`ContractBid` raising partner's suit, or a
-            :class:`PassBid` when we add nothing or would overshoot.
+            A :class:`ContractBid` raising partner's suit to the team
+            ceiling, or a :class:`PassBid` when we add nothing, opened
+            the suit ourselves, or the ceiling is already reached.
         """
 
         partner_suit = partner_bid.suit
+
+        # Anchor on our team's opening bid of the suit. If *we* opened
+        # it, `partner_bid` is our own bid echoed back by
+        # `_get_partner_bid` — supporting it would double-count the
+        # very cards that priced it.
+        anchor = self._team_opening_bid(bids, partner_suit)
+        if anchor is None or anchor.player is self._player:
+            return PassBid(self._player)
 
         # Calculate our contribution to partner's suit
         contribution = 0
@@ -427,15 +476,18 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
         if has_jack or has_nine:
             contribution += 10
 
-        # Calculate new bid value
-        last_value = last_bid.get_numeric_value()
-        new_value = last_value + contribution
-
-        # Cap at SoloSlam (the top of the table); don't try to raise past it.
-        if new_value > self.SOLO_SLAM_NUMERIC or contribution == 0:
+        if contribution == 0:
             return PassBid(self._player)
 
-        return self._contract_bid(new_value, partner_suit)
+        # The team ceiling: partner's evaluation + our complement. Once
+        # the standing contract reaches it, our support is spent.
+        ceiling = anchor.get_numeric_value() + contribution
+        if ceiling <= last_bid.get_numeric_value():
+            return PassBid(self._player)
+
+        # An off-ladder ceiling (e.g. overshooting a partner's Slam)
+        # falls back to Pass inside _contract_bid.
+        return self._contract_bid(ceiling, partner_suit)
 
     def _contract_bid(self, numeric, suit) -> Bid:
         """Build a :class:`ContractBid` from a bidding-table numeric + suit.
@@ -446,8 +498,8 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
         so the constructed :class:`ContractBid` carries a value the
         domain accepts. Numeric steps (80–180) pass through unchanged.
 
-        A numeric that lands off the contract ladder — e.g. the running
-        support total overshooting a partner's Slam (250 + 40 = 290) —
+        A numeric that lands off the contract ladder — e.g. the support
+        ceiling overshooting a partner's Slam (250 + 40 = 290) —
         is not a constructible contract; we fall back to a
         :class:`PassBid` rather than raise. (``choose_bid``'s
         ``is_legal`` net then leaves that Pass untouched.)
