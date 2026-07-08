@@ -20,6 +20,14 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 ### Fixed
 
+- (engine) Expert AI partner-support escalation: every supporting turn re-added the seat's
+  full complement (+10 per external ace, +10 for the trump complement) on top of the
+  *standing* contract, so partners alternately raised each other far past their combined
+  strength (an 80 opening ratcheting to 160+, at which point the opponents' double
+  heuristic armed itself on the inflated value), and a seat could even "support" its own
+  bid after an opponent overbid. Support is now capped at a team ceiling — partner's
+  opening bid plus the supporter's complement, announced once — and a seat never supports
+  a suit it opened itself.
 - (engine) Landing screen now labels the three AI seats `AI · expert` instead of
   `AI · medium` — the bots play the expert strategy, which is the only level wired today.
 - (engine) Expert AI suit tie-break: with several suits tied for the best contract, the
