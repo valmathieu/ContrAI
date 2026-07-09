@@ -6,6 +6,8 @@
 # while private helpers and constants are reached through
 # ``ai_player.bidding.*`` (the injected strategy object).
 
+import itertools
+
 import pytest
 from contrai_engine.model.player import AiPlayer
 from contrai_core import (
@@ -605,3 +607,227 @@ class TestAiPlayerDoubling:
         bid = player.choose_bid(auction)
 
         assert isinstance(bid, PassBid)
+
+
+class TestSupportCeiling:
+    """Partner-support raises are anchored to the team's opening bid.
+
+    Regression suite for the support escalation loop: each supporting
+    turn used to re-add the seat's full (static) contribution on top of
+    the *standing* contract, so two partners alternately raised each
+    other — the same aces re-counted on every lap — until the value
+    walked off the ladder (typically at 180). Support is now capped at
+    a team ceiling: partner's opening bid in the suit (their full table
+    evaluation) plus our own contribution, announced exactly once. A
+    seat never supports a suit it opened itself.
+    """
+
+    @pytest.fixture
+    def four_ai_players(self):
+        """Four AI players seated N/E/S/W with N-S and E-W teams."""
+        north = AiPlayer("North", "North")
+        east = AiPlayer("East", "East")
+        south = AiPlayer("South", "South")
+        west = AiPlayer("West", "West")
+
+        ns_team = Team("North-South", [north, south])
+        ew_team = Team("East-West", [east, west])
+        north.team = ns_team
+        south.team = ns_team
+        east.team = ew_team
+        west.team = ew_team
+
+        return north, east, south, west
+
+    @pytest.fixture
+    def opener_80_spades(self):
+        """A hand the bidding table resolves to exactly 80 in Spades.
+
+        4 trumps with the Jack (no 9), 1 external ace, 4 estimated
+        tricks. Its own support contribution to Spades is +20
+        (1 external ace + trump complement).
+        """
+        return Hand([
+            Card(Suit.SPADES, Rank.JACK),
+            Card(Suit.SPADES, Rank.ACE),
+            Card(Suit.SPADES, Rank.KING),
+            Card(Suit.SPADES, Rank.EIGHT),
+            Card(Suit.HEARTS, Rank.ACE),
+            Card(Suit.HEARTS, Rank.SEVEN),
+            Card(Suit.DIAMONDS, Rank.EIGHT),
+            Card(Suit.CLUBS, Rank.EIGHT),
+        ])
+
+    @pytest.fixture
+    def supporter_30_spades(self):
+        """A hand worth no table contract but a +30 support of Spades.
+
+        2 external aces (+20) and the 9 of trump (+10); disjoint from
+        :meth:`opener_80_spades` so the pair can be dealt together in
+        the full-auction test.
+        """
+        return Hand([
+            Card(Suit.DIAMONDS, Rank.ACE),
+            Card(Suit.CLUBS, Rank.ACE),
+            Card(Suit.SPADES, Rank.NINE),
+            Card(Suit.SPADES, Rank.SEVEN),
+            Card(Suit.HEARTS, Rank.NINE),
+            Card(Suit.HEARTS, Rank.EIGHT),
+            Card(Suit.DIAMONDS, Rank.SEVEN),
+            Card(Suit.CLUBS, Rank.SEVEN),
+        ])
+
+    @pytest.fixture
+    def strong_spades_130(self):
+        """The 130-in-Spades hand (3 external aces, J+9 of trump)."""
+        return Hand([
+            Card(Suit.SPADES, Rank.JACK),
+            Card(Suit.SPADES, Rank.NINE),
+            Card(Suit.SPADES, Rank.ACE),
+            Card(Suit.SPADES, Rank.KING),
+            Card(Suit.HEARTS, Rank.ACE),
+            Card(Suit.DIAMONDS, Rank.ACE),
+            Card(Suit.CLUBS, Rank.ACE),
+            Card(Suit.CLUBS, Rank.JACK),
+        ])
+
+    def test_support_raises_to_partner_opening_plus_contribution(
+        self, four_ai_players, supporter_30_spades
+    ):
+        """The ceiling is partner's opening bid + our contribution.
+
+        With an opponent overbid wedged between partner's 80 and our
+        turn, the raise must land on 80 + 30 = 110 — not on
+        standing-90 + 30 = 120, which would silently inflate the team
+        estimate.
+        """
+        north, east, south, _ = four_ai_players
+        north.hand = supporter_30_spades
+
+        auction = _auction([
+            ContractBid(south, 80, Suit.SPADES),
+            ContractBid(east, 90, Suit.DIAMONDS),
+        ])
+        bid = north.choose_bid(auction)
+
+        assert isinstance(bid, ContractBid)
+        assert bid.value == 110
+        assert bid.suit == Suit.SPADES
+
+    def test_support_passes_when_ceiling_already_beaten(
+        self, four_ai_players, supporter_30_spades
+    ):
+        """No raise once the standing contract exceeds the team ceiling.
+
+        Partner opened 80, our complement is +30, and an opponent
+        already stands at 120 > 110: supporting would commit the team
+        past its own combined estimate, so the only sane action is Pass.
+        """
+        north, east, south, _ = four_ai_players
+        north.hand = supporter_30_spades
+
+        auction = _auction([
+            ContractBid(south, 80, Suit.SPADES),
+            ContractBid(east, 120, Suit.DIAMONDS),
+        ])
+        bid = north.choose_bid(auction)
+
+        assert isinstance(bid, PassBid)
+
+    def test_opener_does_not_reraise_after_partner_support(
+        self, four_ai_players, strong_spades_130
+    ):
+        """The suit opener passes on partner's support raise.
+
+        The opening bid already carries the opener's full table
+        evaluation; re-adding the same aces on top of partner's raise
+        is the first lap of the escalation loop.
+        """
+        north, east, south, west = four_ai_players
+        north.hand = strong_spades_130
+
+        auction = _auction([
+            ContractBid(north, 130, Suit.SPADES),
+            PassBid(east),
+            ContractBid(south, 140, Suit.SPADES),
+            PassBid(west),
+        ])
+        bid = north.choose_bid(auction)
+
+        assert isinstance(bid, PassBid)
+
+    def test_opener_does_not_support_own_bid_after_opponent_overbid(
+        self, four_ai_players, opener_80_spades
+    ):
+        """A seat never 'supports' its own opening bid.
+
+        With partner silent, ``_get_partner_bid`` hands back the seat's
+        own contract; piling the support contribution on top would
+        re-count the very cards that priced the opening 80.
+        """
+        north, east, south, west = four_ai_players
+        north.hand = opener_80_spades
+
+        auction = _auction([
+            ContractBid(north, 80, Suit.SPADES),
+            ContractBid(east, 90, Suit.HEARTS),
+            PassBid(south),
+            PassBid(west),
+        ])
+        bid = north.choose_bid(auction)
+
+        assert isinstance(bid, PassBid)
+
+    def test_full_auction_settles_at_team_ceiling(
+        self, four_ai_players, opener_80_spades, supporter_30_spades
+    ):
+        """End-to-end: a full 4-AI auction stops at opener + complement.
+
+        The user-visible symptom of the loop: an 80 opening with a +30
+        partner complement ratcheted 80 → 110 → 130 → 160, at which
+        point the double heuristic (`strength > 162 - value`) armed
+        itself on the inflated value and an opponent Coinched — the
+        80-hand team ended up committed to a doubled 160. The auction
+        must now settle at 110, un-doubled.
+        """
+        north, east, south, west = four_ai_players
+        north.hand = opener_80_spades
+        south.hand = supporter_30_spades
+        # Weak opposing hands (disjoint from N/S): no table row is met
+        # and the double heuristic stays quiet at every standing value.
+        east.hand = Hand([
+            Card(Suit.SPADES, Rank.QUEEN),
+            Card(Suit.HEARTS, Rank.JACK),
+            Card(Suit.HEARTS, Rank.QUEEN),
+            Card(Suit.HEARTS, Rank.TEN),
+            Card(Suit.DIAMONDS, Rank.JACK),
+            Card(Suit.DIAMONDS, Rank.NINE),
+            Card(Suit.CLUBS, Rank.JACK),
+            Card(Suit.CLUBS, Rank.NINE),
+        ])
+        west.hand = Hand([
+            Card(Suit.SPADES, Rank.TEN),
+            Card(Suit.HEARTS, Rank.KING),
+            Card(Suit.DIAMONDS, Rank.QUEEN),
+            Card(Suit.DIAMONDS, Rank.KING),
+            Card(Suit.DIAMONDS, Rank.TEN),
+            Card(Suit.CLUBS, Rank.QUEEN),
+            Card(Suit.CLUBS, Rank.KING),
+            Card(Suit.CLUBS, Rank.TEN),
+        ])
+
+        auction = Auction()
+        for player in itertools.cycle([north, east, south, west]):
+            if auction.is_terminal():
+                break
+            auction = auction.apply(player.choose_bid(auction))
+            # A converging auction is short; a long one means the
+            # escalation loop is back.
+            assert len(auction.bids) <= 24, "auction failed to converge"
+
+        final = auction.last_contract_bid
+        assert final is not None
+        assert final.value == 110
+        assert final.suit == Suit.SPADES
+        # A sane 110 stays below the opponents' double threshold.
+        assert not auction.has_double
