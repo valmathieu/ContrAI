@@ -458,6 +458,69 @@ class TestAiPlayerTrickTaking:
             in ai_player_with_tracking.cardplay._players_without_trump
         )
 
+    def test_no_trump_pull_when_both_opponents_void(
+        self, ai_player_with_tracking, ai_player_opponent
+    ):
+        """Counting alone says trumps remain unseen, but both opponents
+        are known void — the unseen trumps can only sit in partner's
+        hand, so the pull stops."""
+        ai_player_with_tracking.hand = Hand([Card(Suit.SPADES, Rank.JACK)])
+        west = ai_player_opponent
+        east = ai_player_opponent.team.players[1]
+        ai_player_with_tracking.cardplay._players_without_trump = {west, east}
+
+        result = ai_player_with_tracking.cardplay._opponents_might_have_trump(
+            Suit.SPADES
+        )
+        assert result is False
+
+    def test_trump_pull_continues_when_only_one_opponent_void(
+        self, ai_player_with_tracking, ai_player_opponent
+    ):
+        """One opponent void is not enough — the other might still hold
+        trump, so the pull continues."""
+        ai_player_with_tracking.hand = Hand([Card(Suit.SPADES, Rank.JACK)])
+        ai_player_with_tracking.cardplay._players_without_trump = {
+            ai_player_opponent
+        }
+
+        result = ai_player_with_tracking.cardplay._opponents_might_have_trump(
+            Suit.SPADES
+        )
+        assert result is True
+
+    def test_partner_void_does_not_stop_the_trump_pull(
+        self, ai_player_with_tracking
+    ):
+        """A void *partner* says nothing about the opponents — own-team
+        entries are filtered out of the inference."""
+        ai_player_with_tracking.hand = Hand([Card(Suit.SPADES, Rank.JACK)])
+        partner = ai_player_with_tracking.team.players[1]
+        ai_player_with_tracking.cardplay._players_without_trump = {partner}
+
+        result = ai_player_with_tracking.cardplay._opponents_might_have_trump(
+            Suit.SPADES
+        )
+        assert result is True
+
+    def test_counting_alone_still_stops_the_trump_pull(
+        self, ai_player_with_tracking
+    ):
+        """Pre-existing behavior preserved: every trump outside our hand
+        has fallen — no void knowledge needed to stop the pull."""
+        ai_player_with_tracking.hand = Hand([
+            Card(Suit.SPADES, Rank.JACK), Card(Suit.SPADES, Rank.NINE)
+        ])
+        ai_player_with_tracking.cardplay._fallen_cards[Suit.SPADES] = {
+            Rank.KING, Rank.QUEEN, Rank.ACE, Rank.TEN, Rank.EIGHT, Rank.SEVEN
+        }
+        assert ai_player_with_tracking.cardplay._players_without_trump == set()
+
+        result = ai_player_with_tracking.cardplay._opponents_might_have_trump(
+            Suit.SPADES
+        )
+        assert result is False
+
     def test_is_master_card_detection(self, ai_player_with_tracking):
         """Test detection of master cards"""
         # Set up fallen cards

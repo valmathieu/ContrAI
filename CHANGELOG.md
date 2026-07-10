@@ -16,6 +16,9 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
   the expert bot's mid-round leads, master-card detection and trump accounting operate
   on real data — the trackers existed but were never fed by the engine. The trump-void
   inference is sound: a seat discarding behind its master partner is not marked void.
+- (engine) The expert AI stops pulling trumps once both opponents are known void in
+  trump (inferred from plays where they were compelled to trump but couldn't), even
+  while unseen trumps remain — those can only sit in partner's hand.
 
 ### Changed
 
