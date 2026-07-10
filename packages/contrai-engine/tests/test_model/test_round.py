@@ -22,6 +22,7 @@ from contrai_core import Hand
 from contrai_core.bid import ContractBid, DoubleBid, PassBid
 from contrai_core.card import Card
 from contrai_core.contract import Contract
+from contrai_core.deck import Deck
 from contrai_core.team import Team
 from contrai_core.exceptions import IllegalPlayError, PlayRuleViolation
 from contrai_core.trick import Trick
@@ -36,7 +37,18 @@ from contrai_engine.model.round import Round
 # ---------------------------------------------------------------------------
 
 
-def _make_round(players_dict, hands, contract, plays):
+class _StubDeck:
+    """Deck stand-in for tests that drive ``play_trick`` to completion.
+
+    ``play_trick`` returns the trick's cards to the deck at the end;
+    the stub just swallows them so no real ``Deck`` state is needed.
+    """
+
+    def add_cards(self, cards):
+        pass
+
+
+def _make_round(players_dict, hands, contract, plays, deck=None):
     """Build a ``Round`` wired to the supplied state.
 
     Args:
@@ -47,6 +59,9 @@ def _make_round(players_dict, hands, contract, plays):
         contract: a Contract object (provides trump) or None.
         plays: ordered list of (seat_letter, Card) tuples — the cards
             already played in the current trick.
+        deck: optional deck object; tests that run ``play_trick`` to
+            completion pass a ``_StubDeck`` so the end-of-trick
+            ``add_cards`` call has something to land on.
 
     Returns:
         A Round whose ``current_trick`` reflects ``plays`` and whose
@@ -55,7 +70,7 @@ def _make_round(players_dict, hands, contract, plays):
     order = [players_dict[s] for s in ("N", "E", "S", "W")]
     for seat, cards in hands.items():
         players_dict[seat].hand = Hand(cards)
-    round_ = Round(order, dealer=players_dict["N"], deck=None, round_number=1)
+    round_ = Round(order, dealer=players_dict["N"], deck=deck, round_number=1)
     round_.contract = contract
     round_.current_trick = Trick()
     for seat, card in plays:
@@ -126,10 +141,6 @@ class TestPlayTrickHumanUsesView:
         for player, card in cards.items():
             player.hand = Hand([card])
 
-        class _StubDeck:
-            def add_cards(self, cards):
-                pass
-
         round_ = Round(order, dealer=human, deck=_StubDeck(), round_number=1)
         round_.contract = contract
 
@@ -156,6 +167,193 @@ class TestPlayTrickHumanUsesView:
         assert human_calls == []  # choose_card bypassed for the human
         assert view_calls == [human]  # the view drove the human's turn
         assert cards[human] not in human.hand  # the chosen card was played
+
+
+# ---------------------------------------------------------------------------
+# Card-tracking fan-out (play_trick) and per-deal reset (deal_cards)
+# ---------------------------------------------------------------------------
+
+
+class TestPlayTrickFeedsCardTrackers:
+    """``play_trick`` fans every landing card out to every AI seat's
+    tracker, with the sound (compelled-only) trump-void inference."""
+
+    def _script(self, players, cards):
+        """Monkey-patch each seat's ``choose_card`` to its scripted card."""
+        for seat, card in cards.items():
+            players[seat].choose_card = (
+                lambda trick, c, playable, _card=card: _card
+            )
+
+    def test_full_trick_updates_every_ai_tracker(self, players):
+        """All four seats follow the led suit: every tracker records all
+        four cards and nobody is marked void in trump."""
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        cards = {
+            "N": Card(Suit.HEARTS, Rank.KING),
+            "E": Card(Suit.HEARTS, Rank.SEVEN),
+            "S": Card(Suit.HEARTS, Rank.EIGHT),
+            "W": Card(Suit.HEARTS, Rank.NINE),
+        }
+        round_ = _make_round(
+            players,
+            {seat: [card] for seat, card in cards.items()},
+            contract,
+            [],
+            deck=_StubDeck(),
+        )
+        self._script(players, cards)
+
+        round_.play_trick()
+
+        for player in round_.players_order:
+            assert player.cardplay._fallen_cards[Suit.HEARTS] == {
+                Rank.KING, Rank.SEVEN, Rank.EIGHT, Rank.NINE
+            }
+            assert player.cardplay._players_without_trump == set()
+
+    def test_compelled_discard_marks_void_for_every_tracker(self, players):
+        """E cannot follow hearts and cannot trump while the opponents
+        are master — the compelled discard proves E holds no trump, and
+        every tracker learns it."""
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        cards = {
+            "N": Card(Suit.HEARTS, Rank.ACE),
+            "E": Card(Suit.CLUBS, Rank.SEVEN),  # no hearts, no trump
+            "S": Card(Suit.HEARTS, Rank.EIGHT),
+            "W": Card(Suit.HEARTS, Rank.NINE),
+        }
+        round_ = _make_round(
+            players,
+            {seat: [card] for seat, card in cards.items()},
+            contract,
+            [],
+            deck=_StubDeck(),
+        )
+        self._script(players, cards)
+
+        round_.play_trick()
+
+        for player in round_.players_order:
+            assert player.cardplay._players_without_trump == {players["E"]}
+
+    def test_voluntary_discard_behind_master_partner_is_not_marked_void(
+        self, players
+    ):
+        """S discards a club while actually holding a trump — legal
+        because partner N is master. The card is recorded everywhere but
+        S must NOT be marked void: that is exactly the false positive
+        the ``partner_was_master`` flag exists to avoid."""
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        s_discard = Card(Suit.CLUBS, Rank.SEVEN)
+        cards = {
+            "N": Card(Suit.HEARTS, Rank.ACE),  # master lead
+            "E": Card(Suit.HEARTS, Rank.SEVEN),
+            "S": s_discard,
+            "W": Card(Suit.HEARTS, Rank.EIGHT),
+        }
+        hands = {
+            "N": [cards["N"]],
+            "E": [cards["E"]],
+            # S holds a trump too — the discard is voluntary.
+            "S": [s_discard, Card(Suit.SPADES, Rank.SEVEN)],
+            "W": [cards["W"]],
+        }
+        round_ = _make_round(players, hands, contract, [], deck=_StubDeck())
+        self._script(players, cards)
+
+        round_.play_trick()
+
+        for player in round_.players_order:
+            assert players["S"] not in player.cardplay._players_without_trump
+            assert Rank.SEVEN in player.cardplay._fallen_cards[Suit.CLUBS]
+
+    def test_human_seat_is_skipped_but_its_card_is_tracked(self):
+        """The human seat has no tracker (hasattr gate) yet the card it
+        plays still lands in every AI tracker."""
+        human = HumanPlayer("H", "North")
+        east = AiPlayer("E", "East")
+        south = AiPlayer("S", "South")
+        west = AiPlayer("W", "West")
+        order = [human, east, south, west]
+        ns = Team("North-South", [human, south])
+        ew = Team("East-West", [east, west])
+        for p in (human, south):
+            p.team = ns
+        for p in (east, west):
+            p.team = ew
+
+        contract = _contract(human, 100, Suit.SPADES)
+        cards = {
+            human: Card(Suit.HEARTS, Rank.KING),
+            east: Card(Suit.HEARTS, Rank.SEVEN),
+            south: Card(Suit.HEARTS, Rank.EIGHT),
+            west: Card(Suit.HEARTS, Rank.NINE),
+        }
+        for player, card in cards.items():
+            player.hand = Hand([card])
+
+        round_ = Round(order, dealer=human, deck=_StubDeck(), round_number=1)
+        round_.contract = contract
+
+        for player in (east, south, west):
+            player.choose_card = (  # type: ignore[method-assign]
+                lambda trick, c, playable, _card=cards[player]: _card
+            )
+
+        class _StubView:
+            def request_card_action(self, player, trick, contract, playable):
+                return cards[player]
+
+        round_.play_trick(view=_StubView())
+
+        assert not hasattr(human, 'update_card_tracking')
+        for ai in (east, south, west):
+            assert Rank.KING in ai.cardplay._fallen_cards[Suit.HEARTS]
+
+
+class TestDealCardsResetsCardTracking:
+    """``deal_cards`` resets every AI seat's card tracking — player
+    objects persist across rounds, so leftover state from the previous
+    round must be zeroed at each deal."""
+
+    def _poison(self, ai_players, scapegoat):
+        """Fill each AI's tracking state with leftover-looking data."""
+        for player in ai_players:
+            player.cardplay._fallen_cards[Suit.HEARTS].add(Rank.ACE)
+            player.cardplay._players_without_trump.add(scapegoat)
+
+    def test_deal_resets_poisoned_trackers(self, players):
+        order = [players[s] for s in ("N", "E", "S", "W")]
+        round_ = Round(order, dealer=players["N"], deck=Deck(), round_number=2)
+        self._poison(order, players["E"])
+
+        round_.deal_cards()
+
+        for player in order:
+            assert all(
+                len(ranks) == 0
+                for ranks in player.cardplay._fallen_cards.values()
+            )
+            assert player.cardplay._players_without_trump == set()
+            assert len(player.hand) == 8
+
+    def test_deal_skips_seats_without_a_tracker(self, players):
+        human = HumanPlayer("H", "North")
+        human.team = players["N"].team  # Round.__init__ maps teams by seat
+        ais = [players[s] for s in ("E", "S", "W")]
+        order = [human] + ais
+        round_ = Round(order, dealer=human, deck=Deck(), round_number=1)
+        self._poison(ais, players["E"])
+
+        round_.deal_cards()  # must not raise on the tracker-less human
+
+        for player in ais:
+            assert all(
+                len(ranks) == 0
+                for ranks in player.cardplay._fallen_cards.values()
+            )
+            assert player.cardplay._players_without_trump == set()
 
 
 # ---------------------------------------------------------------------------

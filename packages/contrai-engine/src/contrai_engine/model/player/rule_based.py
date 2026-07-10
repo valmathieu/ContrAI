@@ -547,9 +547,10 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
     """Expert card-play policy (SF-10).
 
     Owns the per-round card-tracking state (``_fallen_cards`` /
-    ``_players_without_trump``), initialised at construction so the lazy
-    ``hasattr`` guards below are harmless no-ops, and decides which card
-    to play based on the trick state, the contract, and what has fallen.
+    ``_players_without_trump``): initialised at construction, reset by
+    the engine at every deal (``Round.deal_cards``), and fed by
+    ``Round.play_trick`` on every landing card. Decides which card to
+    play based on the trick state, the contract, and what has fallen.
     """
 
     def __init__(self, player):
@@ -575,19 +576,14 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
             Card: The chosen card to play
         """
 
-        # Lazy-init card tracking. The engine never calls
-        # initialize_card_tracking() explicitly, so without this guard
-        # _is_master_card / _opponents_might_have_trump crash on the
-        # first non-opening trick.
-        if not hasattr(self, '_fallen_cards'):
-            self.initialize_card_tracking()
-
         # Determine strategy based on position in trick
         # TODO: adapt the code using the game class to know the trick number
         # First to play - use fallback approach since we don't have game reference
         if len(trick) == 0:
-            # Check if this is likely the very first card by checking if we have tracking data
-            if not hasattr(self, '_fallen_cards') or all(len(cards) == 0 for cards in self._fallen_cards.values()):
+            # Tracking is reset at every deal and fed on every play, so
+            # an all-empty fallen-cards map is a reliable "no card has
+            # been played yet this round" signal — the opening lead.
+            if all(len(cards) == 0 for cards in self._fallen_cards.values()):
                 return self._play_opening_card(contract, playable_cards)
             else:
                 return self._play_leading_card(contract, playable_cards)
@@ -596,7 +592,10 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
             return self._play_following_card(trick, contract, playable_cards)
 
     def initialize_card_tracking(self):
-        """Initialize tracking of fallen cards and trump distribution. Should be called by the game."""
+        """Reset per-round tracking of fallen cards and trump distribution.
+
+        Called by the engine at every deal (``Round.deal_cards``).
+        """
 
         self._fallen_cards = {
             Suit.SPADES: set(),
@@ -606,28 +605,37 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
         }
         self._players_without_trump = set()
 
-    def update_card_tracking(self, card, player, led_suit, trump_suit):
+    def update_card_tracking(self, card, player, led_suit, trump_suit,
+                             partner_was_master=False):
         """
         Update tracking based on a card played by any player.
-        Should be called by the game whenever a card is played.
+        Called by ``Round.play_trick`` whenever a card lands.
 
         Args:
             card: The card that was played
             player: Player who played the card
             led_suit: The suit that was led this trick
             trump_suit: The current trump suit
+            partner_was_master: Whether ``player``'s partner was master
+                when the card was chosen — a voluntary discard behind a
+                master partner proves nothing about trumps
         """
-
-        if not hasattr(self, '_fallen_cards'):
-            self.initialize_card_tracking()
 
         # Track fallen cards
         self._fallen_cards[card.suit].add(card.rank)
 
-        # Track trump distribution - if player couldn't follow suit and didn't trump
-        if (led_suit == trump_suit and card.suit != trump_suit) or (led_suit != trump_suit and
-                (card.suit != led_suit and card.suit != trump_suit)):
-            # Player couldn't follow suit and didn't trump - no trump
+        # Trump led: holding trump forces playing it (no partner-master
+        # exemption), so a non-trump card always proves the void.
+        if led_suit == trump_suit:
+            if card.suit != trump_suit:
+                self._players_without_trump.add(player)
+            return
+        # Non-trump led: off-suit without trumping proves the void only when
+        # the seat was compelled to trump — behind a master partner,
+        # discarding while holding trump is legal and proves nothing.
+        if partner_was_master:
+            return
+        if card.suit != led_suit and card.suit != trump_suit:
             self._players_without_trump.add(player)
 
     def _play_first_card(self, game, contract, playable_cards):

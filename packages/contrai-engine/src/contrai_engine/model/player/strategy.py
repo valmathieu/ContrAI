@@ -95,15 +95,26 @@ class CardPlayStrategy(ABC):
 
     @abstractmethod
     def initialize_card_tracking(self) -> None:
-        """Reset per-round card-tracking state. Called by the game."""
+        """Reset per-round card-tracking state.
+
+        Called by the engine at every deal (``Round.deal_cards``) —
+        player objects persist across rounds, so the per-round
+        counters must not survive a redeal.
+        """
 
     @abstractmethod
-    def update_card_tracking(self, card, player, led_suit, trump_suit) -> None:
-        """Record a played card. Called by the game on every play.
+    def update_card_tracking(
+        self, card, player, led_suit, trump_suit,
+        partner_was_master: bool = False,
+    ) -> None:
+        """Record a played card. Called by ``Round.play_trick`` on every play.
 
         Args:
             card: The card that was played.
             player: The player who played it.
             led_suit: The suit led this trick.
             trump_suit: The current trump suit.
+            partner_was_master: Whether the seat's partner was master
+                when the card was chosen — a voluntary discard behind a
+                master partner proves nothing about trumps.
         """

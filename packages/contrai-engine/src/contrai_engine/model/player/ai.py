@@ -53,6 +53,10 @@ class AiPlayer(Player):
         """Delegate card-tracking reset to the card-play strategy."""
         self.cardplay.initialize_card_tracking()
 
-    def update_card_tracking(self, card, player, led_suit, trump_suit):
+    def update_card_tracking(self, card, player, led_suit, trump_suit,
+                             partner_was_master=False):
         """Delegate a played-card update to the card-play strategy."""
-        self.cardplay.update_card_tracking(card, player, led_suit, trump_suit)
+        self.cardplay.update_card_tracking(
+            card, player, led_suit, trump_suit,
+            partner_was_master=partner_was_master,
+        )

@@ -9,6 +9,14 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 ## [Unreleased]
 
+### Added
+
+- (engine) AI card tracking is now live: `Round.play_trick` feeds every played card to
+  each AI seat's tracker and `Round.deal_cards` resets the counters at every deal, so
+  the expert bot's mid-round leads, master-card detection and trump accounting operate
+  on real data — the trackers existed but were never fed by the engine. The trump-void
+  inference is sound: a seat discarding behind its master partner is not marked void.
+
 ### Changed
 
 - (engine) Unify the internal bid representation on core `Bid`/`Auction` objects and

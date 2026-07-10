@@ -427,6 +427,37 @@ class TestAiPlayerTrickTaking:
         result = ai_player_with_tracking.cardplay._opponents_might_have_trump(Suit.SPADES)
         assert result is False
 
+    def test_voluntary_discard_does_not_mark_void(
+        self, ai_player_with_tracking, ai_player_opponent
+    ):
+        """A discard behind a master partner is voluntary — the card is
+        recorded but the player is NOT marked void in trump."""
+        card = Card(Suit.CLUBS, Rank.SEVEN)
+        ai_player_with_tracking.update_card_tracking(
+            card, ai_player_opponent, Suit.HEARTS, Suit.SPADES,
+            partner_was_master=True,
+        )
+
+        assert Rank.SEVEN in ai_player_with_tracking.cardplay._fallen_cards[Suit.CLUBS]
+        assert ai_player_with_tracking.cardplay._players_without_trump == set()
+
+    def test_trump_lead_void_proof_ignores_partner_master(
+        self, ai_player_with_tracking, ai_player_opponent
+    ):
+        """On a trump lead, holding trump always forces playing it — a
+        non-trump card proves the void regardless of the partner-master
+        flag."""
+        card = Card(Suit.CLUBS, Rank.SEVEN)
+        ai_player_with_tracking.update_card_tracking(
+            card, ai_player_opponent, Suit.SPADES, Suit.SPADES,
+            partner_was_master=True,
+        )
+
+        assert (
+            ai_player_opponent
+            in ai_player_with_tracking.cardplay._players_without_trump
+        )
+
     def test_is_master_card_detection(self, ai_player_with_tracking):
         """Test detection of master cards"""
         # Set up fallen cards
