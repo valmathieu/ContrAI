@@ -818,15 +818,37 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
         return playable_cards[0]
 
     def _opponents_might_have_trump(self, trump_suit):
-        """Check if opponents might still have trump cards."""
+        """Check if opponents might still have trump cards.
 
-        # TODO: upgrade to exclude partner if we can track their cards
-        # Count trump cards we've seen fall
+        Two knowledge sources, both fed by the engine's tracking calls:
+
+        1. **Counting** — 8 trumps exist; once every trump outside our
+           own hand has fallen, nobody else holds one.
+        2. **Void inference** — a contrée table has exactly two
+           opponents. When both are known void (they were compelled to
+           trump but couldn't), any unseen trumps sit in partner's hand,
+           so pulling them helps nobody.
+
+        Args:
+            trump_suit: The current trump suit.
+
+        Returns:
+            True if at least one opponent might still hold a trump.
+        """
+
+        # Counting: 8 trumps total; unseen = 8 - fallen - in our hand.
         trump_fallen = len(self._fallen_cards.get(trump_suit, set()))
         trump_in_hand = self.hand.count_suit(trump_suit)
+        if trump_fallen >= (8 - trump_in_hand):
+            return False
 
-        # Total trump cards is 8, if we've seen less than 8 - trump_in_hand, opponents might have some
-        return trump_fallen < (8 - trump_in_hand)
+        # Void inference: a contrée table has exactly two opponents. When both
+        # are known void, any unseen trumps sit in partner's hand — pulling
+        # them helps nobody. (`is not` — Team has no __eq__, identity is it.)
+        opponents_void = {
+            p for p in self._players_without_trump if p.team is not self.team
+        }
+        return len(opponents_void) < 2
 
     # TODO: replace trump_suit with a boolean is_trump parameter
     def _is_master_card(self, card, trump_suit):
