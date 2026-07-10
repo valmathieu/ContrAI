@@ -85,8 +85,19 @@ class Round:
         """
         Deal cards to all players in the proper order.
         Dealer gets cards last.
+
+        Also resets each AI seat's card-tracking state: Player objects
+        persist across rounds (and across all-pass redeals), so the
+        per-round counters must be zeroed at every deal, not at
+        construction time.
         """
         self.deck.deal(self.players_order)
+
+        # Reset AI card tracking for the new deal. hasattr-gated like
+        # the view hooks — human seats have no tracker.
+        for player in self.players_order:
+            if hasattr(player, 'initialize_card_tracking'):
+                player.initialize_card_tracking()
 
     def manage_bidding(self, view=None) -> Optional[Contract]:
         """Handle the complete bidding phase.
@@ -251,6 +262,10 @@ class Round:
         for i in range(4):
             trick_order.append(self.players_order[(leader_idx + i) % 4])
 
+        # Trump is fixed for the whole trick; resolve it once for the
+        # per-play tracking fan-out and the final winner call.
+        trump_suit = self.contract.suit if self.contract else None
+
         # Each player plays a card
         for player in trick_order:
             # Get the playable cards for this player
@@ -275,6 +290,14 @@ class Round:
                 # Simple fallback: play first playable card
                 card = playable_cards[0] if playable_cards else None
 
+            # Snapshot who was master BEFORE this card lands: the void
+            # inference needs the trick state the player decided against,
+            # not the state their own card just created.
+            prior_winner = (
+                self.current_trick.get_current_winner(trump_suit)
+                if len(self.current_trick) else None
+            )
+
             # Validate that the chosen card is legal. An illegal card is
             # surfaced as a loud failure (IllegalPlayError) rather than
             # silently corrected to a legal one: choose_card /
@@ -296,6 +319,23 @@ class Round:
                     context=f"{getattr(player, 'position', player)} card play",
                 )
             # card falsy → unchanged (out of scope)
+
+            # Fan the landing card out to every AI tracker — including
+            # the seat that just played, so each tracker's per-suit
+            # arithmetic stays exact (fallen + own hand + unseen = 8).
+            # hasattr-gated like the view hooks: human seats have no
+            # tracker. Model bookkeeping happens before view pacing.
+            if played_card is not None:
+                led_suit = self.current_trick.get_led_suit()
+                partner_was_master = (
+                    prior_winner is not None and prior_winner.team == player.team
+                )
+                for tracker in self.players_order:
+                    if hasattr(tracker, 'update_card_tracking'):
+                        tracker.update_card_tracking(
+                            played_card, player, led_suit, trump_suit,
+                            partner_was_master=partner_was_master,
+                        )
 
             # Notify the view that a card just landed on the table.
             # Lets interactive views render the AI action and pause.
@@ -319,9 +359,7 @@ class Round:
         # given trump, so we delegate to contrai-core rather than duplicate
         # the comparison here. The contract carries the authoritative trump
         # suit (None only defensively, before a contract is established).
-        winner = self.current_trick.get_current_winner(
-            self.contract.suit if self.contract else None
-        )
+        winner = self.current_trick.get_current_winner(trump_suit)
         self.last_trick_winner = winner
 
         # Add trick to the tricks list and to winner's team

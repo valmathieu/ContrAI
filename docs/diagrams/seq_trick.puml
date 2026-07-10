@@ -83,6 +83,14 @@ loop **for player in trick_order**  (×4)
         R -> R : card = playable_cards[0]
     end
 
+    R -> T : prior_winner = current_trick.get_current_winner(trump_suit)
+    note right of T
+      Captured **before** add_play: the void
+      inference below needs the trick state the
+      player decided against, not the state their
+      own card just created. None on a lead.
+    end note
+
     alt card ∈ playable_cards  (playable ⊆ hand, so in-hand is implied)
         R -> H : player.hand.remove(card)
         R -> T : current_trick.add_play(player, card)
@@ -97,6 +105,19 @@ loop **for player in trick_order**  (×4)
           the bare ``playable_cards[0]`` fallback for
           a player without ``choose_card`` — is left
           unchanged; out of scope here.)
+        end note
+    end
+
+    loop **for tracker in players_order**  (×4, hasattr-gated)
+        R -> P : tracker.update_card_tracking(played_card, player,\n  led_suit, trump_suit, partner_was_master)
+        note right of P
+          AI card counting: **every** seat — including
+          the one that just played — records the landing
+          card, so each tracker's per-suit arithmetic
+          stays exact. `partner_was_master` comes from
+          `prior_winner`: a voluntary discard behind a
+          master partner is NOT marked as a trump void.
+          Human seats have no tracker and are skipped.
         end note
     end
 

@@ -60,6 +60,17 @@ G -> R : new Round(players_order, dealer,\n            deck, round_number)
 activate R
 G -> R : deal_cards()
 R -> D : deal(players_order)\n(dealer gets last cards)
+R -> P : initialize_card_tracking()\n(every seat, hasattr-gated)
+note right of P
+  AI card-tracking counters are
+  reset at **every deal**: Player
+  objects persist across rounds
+  (and all-pass redeals), so the
+  per-round state must not
+  survive into the next deal.
+  Human seats have no tracker
+  and are skipped.
+end note
 return
 
 G -->> V : on_round_dealt(current_round)
