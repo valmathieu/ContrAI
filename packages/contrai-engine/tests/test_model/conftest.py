@@ -1,12 +1,12 @@
 """Shared fixtures for the model-layer round tests.
 
-The single ``round.py`` module was split into a ``round/`` subpackage
-(the lifecycle orchestrator plus the pure ``scoring`` and ``legality``
-transformations), and the round test suite mirrors that split into
-``test_round.py`` (lifecycle / belote / bidding), ``test_round_legality.py``
-(the legal-play oracle) and ``test_round_scoring.py`` (the scoring grid).
-The four positioned players are used across all three, so the fixture
-lives here. Each file keeps its own scenario-builder helpers, which are
+The ``round/`` subpackage holds the lifecycle orchestrator plus the pure
+``scoring`` transformation, and the round test suite mirrors that split
+into ``test_round.py`` (lifecycle / play-state loop / belote / bidding)
+and ``test_round_scoring.py`` (the scoring grid). The legal-play oracle
+now lives in ``contrai-core`` (``test_play_legality.py``). The four
+positioned players are used across the round tests, so the fixture lives
+here. Each file keeps its own scenario-builder helpers, which are
 specific to the state that file exercises.
 """
 

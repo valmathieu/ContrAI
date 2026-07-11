@@ -29,6 +29,11 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 ### Changed
 
+- (engine) The trick loop is now driven by the core `PlayState`: `Round` seeds an
+  immutable play-phase state at the start of play, derives the legal cards from it, and
+  mirrors the players' hands and the current trick from it each play; card-play legality
+  moved to `contrai-core` wholesale. An absent or illegal card now raises
+  `IllegalPlayError` (`CARD_NOT_IN_HAND`) instead of being silently skipped.
 - (engine) Unify the internal bid representation on core `Bid`/`Auction` objects and
   remove the legacy wire-format bridge — the rule-based AI and the bidding view now
   operate directly on typed `Bid` objects. Behaviour is unchanged.
