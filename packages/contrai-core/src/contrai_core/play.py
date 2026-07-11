@@ -18,6 +18,10 @@ search or reinforcement-learning game-state interface wants:
   :meth:`PlayState.is_terminal`) recomputed from the flat play history.
 - :meth:`PlayState.with_hands` to fork the same public state onto
   replacement hands — the determinization primitive search-based AIs need.
+- :meth:`PlayState.observe` to project the full state — which holds every
+  seat's hand — down to a :class:`PlayObservation`, the imperfect-
+  information view a single player is allowed to see. This is the input
+  surface handed to AI card-play strategies, never the raw ``PlayState``.
 
 Play records are plain ``(player, card)`` pairs, so the same tuples flow
 through the derived views and the winner rule (:func:`current_winner`) that
@@ -33,6 +37,7 @@ from .exceptions import IllegalPlayError, PlayRuleViolation
 from .trick import current_winner
 
 if TYPE_CHECKING:
+    from .bid import Bid
     from .card import Card
     from .contract import Contract
     from .player import BasePlayer
@@ -445,6 +450,47 @@ class PlayState:
         )
 
     # ------------------------------------------------------------------
+    # Observation
+    # ------------------------------------------------------------------
+
+    def observe(
+        self, player: "BasePlayer", bids: tuple["Bid", ...] = ()
+    ) -> "PlayObservation":
+        """Project this state down to what ``player`` is allowed to see.
+
+        This is the state's sanctioned trust boundary: the full
+        ``PlayState`` holds every seat's hand, but a card-play strategy
+        must reason from only what its own seat has observed. The
+        resulting :class:`PlayObservation` carries ``player``'s own hand,
+        the public trick history, and ``player``'s legal plays right now
+        — nothing else.
+
+        Args:
+            player: The observing seat.
+            bids: The auction history to attach to the observation,
+                passed through unchanged. ``PlayState`` has no notion of
+                the auction itself — the caller (the engine's ``Round``)
+                supplies it. Defaults to an empty tuple.
+
+        Returns:
+            A :class:`PlayObservation` seeded from this state, from
+            ``player``'s point of view.
+
+        Raises:
+            ValueError: If ``player`` is not seated in this state.
+        """
+
+        return PlayObservation(
+            player=player,
+            hand=self.hand_of(player),
+            contract=self.contract,
+            bids=tuple(bids),
+            completed_tricks=self.completed_tricks,
+            current_trick=self.current_trick,
+            legal_cards=self.legal_actions(player),
+        )
+
+    # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
 
@@ -483,6 +529,112 @@ class PlayState:
         if trick_index == 0:
             return self.players[0]
         return self.trick_winners[trick_index - 1]
+
+
+@dataclass(frozen=True, slots=True)
+class PlayObservation:
+    """The imperfect-information view of a play phase for one player.
+
+    Where :class:`PlayState` is the omniscient state — every seat's hand,
+    all at once — ``PlayObservation`` is what a *single* player is allowed
+    to know: their own remaining hand, the publicly visible trick history,
+    the established contract and auction, and their own legal plays right
+    now. :meth:`PlayState.observe` builds one per player; this is the
+    input surface AI card-play strategies are handed, so a strategy can
+    never accidentally read another seat's hand through the object it was
+    given.
+
+    Trust-boundary caveat: the :class:`Play` records carried in
+    ``completed_tricks`` and ``current_trick`` hold live ``BasePlayer``
+    references (``Play.player``), so a strategy that reaches through
+    ``play.player.hand`` could technically still see another seat's cards
+    — this observation seals what is *handed over*, not every object path
+    reachable from it. Sealing that off (e.g. replacing ``Play.player``
+    with an opaque seat identifier for observations) is a noted follow-up,
+    not something this projection solves.
+
+    Attributes:
+        player: The observer — the seat this observation is from the
+            point of view of.
+        hand: The observer's own remaining cards, and only the observer's;
+            no other seat's hand is reachable from this field.
+        contract: The established contract, supplying the trump suit,
+            value, and bidder.
+        bids: The auction history, passed through unchanged from whatever
+            :meth:`PlayState.observe` was given — the play state itself
+            has no notion of the auction.
+        completed_tricks: The completed tricks, each a tuple of four
+            plays, exactly as :attr:`PlayState.completed_tricks` reports —
+            this history is public.
+        current_trick: The plays made so far in the in-progress trick —
+            also public.
+        legal_cards: The observer's legal plays right now, a subset of
+            ``hand``.
+    """
+
+    player: "BasePlayer"
+    hand: tuple["Card", ...]
+    contract: "Contract"
+    bids: tuple["Bid", ...]
+    completed_tricks: tuple[tuple[Play, ...], ...]
+    current_trick: tuple[Play, ...]
+    legal_cards: tuple["Card", ...]
+
+    @property
+    def trick_number(self) -> int:
+        """The index of the trick in progress.
+
+        Consistent with :attr:`PlayState.trick_number`: the count of
+        completed tricks, so it reads the same whether the state sits
+        between tricks or the phase has not started yet.
+        """
+
+        return len(self.completed_tricks)
+
+    @property
+    def trump_suit(self) -> Optional["Suit"]:
+        """The contract's trump suit, or ``None`` when there is no contract.
+
+        Mirrors :attr:`PlayState._trump_suit`: for a ``NO_TRUMP`` contract
+        this is ``Suit.NO_TRUMP`` itself, not ``None`` — no real card ever
+        carries that suit, so every trump-related rule (and
+        :func:`current_winner`) already degrades correctly when handed it.
+        """
+
+        return self.contract.suit if self.contract else None
+
+    @property
+    def led_suit(self) -> Optional["Suit"]:
+        """The suit led in the in-progress trick, or ``None`` if it is empty."""
+
+        if not self.current_trick:
+            return None
+        return self.current_trick[0].card.suit
+
+    @property
+    def played_cards(self) -> tuple["Card", ...]:
+        """Every publicly seen card, flattened in chronological play order.
+
+        Completed tricks first (in trick order), then the in-progress
+        trick's plays so far.
+        """
+
+        return tuple(
+            play.card for trick in self.completed_tricks for play in trick
+        ) + tuple(play.card for play in self.current_trick)
+
+    @property
+    def current_winner(self) -> Optional["BasePlayer"]:
+        """The player currently winning the in-progress trick.
+
+        ``None`` while the trick is empty. Computed the same way
+        :attr:`PlayState.trick_winners` computes a completed trick's
+        winner — via the module-level :func:`current_winner` — so a
+        partially played trick and a just-completed one agree on who is
+        master.
+        """
+
+        return current_winner(list(self.current_trick), self.trump_suit)
 
 
 def _higher_trumps_than_played(

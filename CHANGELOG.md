@@ -15,6 +15,9 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
   immutable, trick-by-trick state that owns the follow/trump legality rules, enforces turn
   order and the new `OUT_OF_TURN`/`CARD_NOT_IN_HAND` violation reasons through `apply`, and
   can be forked onto replacement hands via `with_hands` for future search-based AIs.
+- (core) `PlayObservation` imperfect-information view: the projection of a `PlayState` that
+  a single player is allowed to see (own hand, public trick history, legal cards), the
+  input surface for AI card-play strategies.
 - (engine) AI card tracking is now live: `Round.play_trick` feeds every played card to
   each AI seat's tracker and `Round.deal_cards` resets the counters at every deal, so
   the expert bot's mid-round leads, master-card detection and trump accounting operate
