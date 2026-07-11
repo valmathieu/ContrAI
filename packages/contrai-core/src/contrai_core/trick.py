@@ -104,31 +104,58 @@ class Trick:
             Player who is currently winning, or None if no card has been
             played yet.
         """
-        if not self.plays:
-            return None
+        return current_winner(self.plays, trump_suit)
 
-        lead_suit = self.plays[0][1].suit
-        best_player = self.plays[0][0]
-        best_card = self.plays[0][1]
-        best_is_trump = trump_suit is not None and best_card.suit == trump_suit
 
-        for player, card in self.plays[1:]:
-            card_is_trump = trump_suit is not None and card.suit == trump_suit
+def current_winner(
+    plays: List[Tuple[Player, Card]], trump_suit: Optional[Suit]
+) -> Optional[Player]:
+    """
+    Determine who currently wins a (possibly partial) trick.
 
-            if card_is_trump and not best_is_trump:
-                # Trump beats non-trump
+    Works on incomplete plays — useful while a trick is being played for
+    legality checks (e.g. *partner is currently master*) and view
+    rendering (live winner highlight).
+
+    Args:
+        plays: The ordered (player, card) pairs played so far, in play
+            order. The first entry sets the led suit.
+        trump_suit: The trump suit to evaluate against, taken from the
+            round's contract. Pass ``None`` (or ``Suit.NO_TRUMP``) when no
+            suit is trump — every trump-related branch then reduces to the
+            follow-suit rule. The argument is required: there is no
+            construction-time trump to fall back to, so callers must state
+            trump explicitly rather than risk a silent no-trump evaluation.
+
+    Returns:
+        Player who is currently winning, or None if no card has been
+        played yet.
+    """
+    if not plays:
+        return None
+
+    lead_suit = plays[0][1].suit
+    best_player = plays[0][0]
+    best_card = plays[0][1]
+    best_is_trump = trump_suit is not None and best_card.suit == trump_suit
+
+    for player, card in plays[1:]:
+        card_is_trump = trump_suit is not None and card.suit == trump_suit
+
+        if card_is_trump and not best_is_trump:
+            # Trump beats non-trump
+            best_player = player
+            best_card = card
+            best_is_trump = True
+        elif card_is_trump and best_is_trump:
+            # Compare trump cards (Jack > 9 > Ace > 10 > King > Queen > 8 > 7)
+            if card.get_order(trump_suit) > best_card.get_order(trump_suit):
                 best_player = player
                 best_card = card
-                best_is_trump = True
-            elif card_is_trump and best_is_trump:
-                # Compare trump cards (Jack > 9 > Ace > 10 > King > Queen > 8 > 7)
-                if card.get_order(trump_suit) > best_card.get_order(trump_suit):
-                    best_player = player
-                    best_card = card
-            elif not card_is_trump and not best_is_trump and card.suit == lead_suit:
-                # Compare cards of the same suit (non-trump)
-                if card.get_order() > best_card.get_order():
-                    best_player = player
-                    best_card = card
+        elif not card_is_trump and not best_is_trump and card.suit == lead_suit:
+            # Compare cards of the same suit (non-trump)
+            if card.get_order() > best_card.get_order():
+                best_player = player
+                best_card = card
 
-        return best_player
+    return best_player
