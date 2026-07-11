@@ -1,17 +1,22 @@
 """Tests for the ``Round`` lifecycle orchestrator.
 
-Covers the parts that stay in the orchestrator after the pure scoring
-and legality transformations were carved into sibling modules:
+Covers the parts that stay in the orchestrator now that the trick loop is
+driven by the immutable core :class:`PlayState`:
 
     * ``play_trick`` rejecting an illegal card with ``IllegalPlayError``
-      (the orchestrator's enforcement seam over ``legality``);
+      (raised by the core state machine, no longer by the engine);
+    * the mirror bookkeeping — the players' hands and ``current_trick``
+      kept in lock-step with the authoritative ``play_state``;
+    * card identity flowing unbroken from the seed to the playable set;
+    * auction retention and play-state seeding across the lifecycle;
     * belote / rebelote detection and the announcement state machine;
     * the ``manage_bidding`` auto-pass UX promise (the human is never
       prompted when Pass is the only legal action).
 
-The legal-play oracle itself lives in ``test_round_legality.py`` and the
-scoring grid in ``test_round_scoring.py``. The shared ``players`` fixture
-lives in ``conftest.py``.
+The legal-play oracle itself lives in ``contrai-core``'s
+``test_play_legality.py`` and the scoring grid in
+``test_round_scoring.py``. The shared ``players`` fixture lives in
+``conftest.py``.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ from contrai_core.bid import ContractBid, DoubleBid, PassBid
 from contrai_core.card import Card
 from contrai_core.contract import Contract
 from contrai_core.deck import Deck
+from contrai_core.play import Play, PlayState
 from contrai_core.team import Team
 from contrai_core.exceptions import IllegalPlayError, PlayRuleViolation
 from contrai_core.trick import Trick
@@ -167,6 +173,210 @@ class TestPlayTrickHumanUsesView:
         assert human_calls == []  # choose_card bypassed for the human
         assert view_calls == [human]  # the view drove the human's turn
         assert cards[human] not in human.hand  # the chosen card was played
+
+
+# ---------------------------------------------------------------------------
+# PlayState-driven loop: seeding, hand mirroring, and card identity
+# ---------------------------------------------------------------------------
+
+
+class TestSyncHandsMirrorsPlayState:
+    """After each play the players' hands are re-mirrored from the
+    authoritative ``play_state``: same content, same order, same ``Hand``
+    object identity."""
+
+    def test_hands_mirror_play_state_and_keep_hand_identity(self, players):
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        # Each seat holds the heart it will play plus a distinct spare, so
+        # the hands are non-empty after the trick and the mirror content is
+        # observable.
+        played = {
+            "N": Card(Suit.HEARTS, Rank.KING),
+            "E": Card(Suit.HEARTS, Rank.SEVEN),
+            "S": Card(Suit.HEARTS, Rank.EIGHT),
+            "W": Card(Suit.HEARTS, Rank.NINE),
+        }
+        spares = {
+            "N": Card(Suit.DIAMONDS, Rank.KING),
+            "E": Card(Suit.DIAMONDS, Rank.QUEEN),
+            "S": Card(Suit.DIAMONDS, Rank.JACK),
+            "W": Card(Suit.DIAMONDS, Rank.TEN),
+        }
+        hands = {seat: [played[seat], spares[seat]] for seat in played}
+        round_ = _make_round(players, hands, contract, [], deck=_StubDeck())
+        for seat, card in played.items():
+            players[seat].choose_card = (
+                lambda trick, c, playable, _card=card: _card
+            )
+
+        # Capture the Hand object identities before the trick runs.
+        original_hands = {seat: players[seat].hand for seat in played}
+
+        round_.play_trick()
+
+        for seat in played:
+            player = players[seat]
+            # The same Hand object, mutated in place — never reassigned.
+            assert player.hand is original_hands[seat]
+            authoritative = round_.play_state.hand_of(player)
+            # Content and order agree with the authoritative state, and the
+            # played heart is gone.
+            assert list(player.hand) == list(authoritative)
+            assert list(player.hand) == [spares[seat]]
+
+
+class TestCardIdentityFlowsFromSeed:
+    """The playable set handed to a strategy holds the very ``Card``
+    objects seeded into ``play_state`` — no copy or reconstruction — so
+    identity-matching call sites (the view) keep working."""
+
+    def test_playables_are_the_seeded_card_objects(self, players):
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        # N leads, so every card in N's hand is legal — the playable set is
+        # N's whole hand and identity is easy to assert end-to-end.
+        n_cards = [Card(Suit.HEARTS, Rank.KING), Card(Suit.CLUBS, Rank.ACE)]
+        hands = {
+            "N": n_cards,
+            "E": [Card(Suit.HEARTS, Rank.SEVEN)],
+            "S": [Card(Suit.HEARTS, Rank.EIGHT)],
+            "W": [Card(Suit.HEARTS, Rank.NINE)],
+        }
+        round_ = _make_round(players, hands, contract, [], deck=_StubDeck())
+
+        captured: dict[str, list] = {}
+
+        def n_choose(trick, c, playable):
+            captured["playable"] = playable
+            return playable[0]
+
+        players["N"].choose_card = n_choose
+        for seat in ("E", "S", "W"):
+            card = hands[seat][0]
+            players[seat].choose_card = (
+                lambda trick, c, playable, _card=card: _card
+            )
+
+        # The exact Card objects the seed will draw from N's hand.
+        seeded = list(players["N"].hand)
+
+        round_.play_trick()
+
+        # Same objects, same order — matched by identity, not equality.
+        assert len(captured["playable"]) == len(seeded)
+        assert all(a is b for a, b in zip(captured["playable"], seeded))
+
+
+class TestAuctionRetention:
+    """``manage_bidding`` retains the terminal auction on the round."""
+
+    def test_round_keeps_the_auction_that_set_the_contract(self, players):
+        w, n, e, s = players["W"], players["N"], players["E"], players["S"]
+        scripted = {
+            n: [ContractBid(n, 80, Suit.HEARTS)],
+            e: [PassBid(e)],
+            s: [PassBid(s)],
+            w: [PassBid(w)],
+        }
+        for ai, choices in scripted.items():
+            queue = list(choices)
+            ai.choose_bid = lambda _auction, _p=ai, _q=queue: (
+                _q.pop(0) if _q else PassBid(_p)
+            )
+
+        # A capture view anchors the identity: the auction present when the
+        # contract was established is the very object retained afterward.
+        captured: dict[str, object] = {}
+
+        class _CaptureView:
+            def on_contract_established(self, round_):
+                captured["auction"] = round_.auction
+
+        round_ = _empty_round(players)  # order N, E, S, W
+        contract = round_.manage_bidding(view=_CaptureView())
+
+        assert contract is not None
+        assert round_.auction is not None
+        assert round_.auction is captured["auction"]
+        assert round_.auction.is_terminal()
+        assert round_.auction.contract() == contract
+
+
+class TestPlayStateSeeding:
+    """``play_all_tricks`` seeds a *validated* start state; ``play_trick``
+    lazy-seeds an *unvalidated* one when called directly."""
+
+    def _script_first_playable(self, order):
+        for player in order:
+            player.choose_card = (
+                lambda trick, c, playable: playable[0]
+            )
+
+    def test_play_all_tricks_validates_the_deal(self, players):
+        order = [players[s] for s in ("N", "E", "S", "W")]
+        round_ = Round(order, dealer=players["N"], deck=Deck(), round_number=1)
+        round_.deal_cards()  # 8 distinct cards per seat
+        round_.contract = _contract(players["N"], 100, Suit.SPADES)
+        # Corrupt the deal: one seat now holds only 7 cards. A validated
+        # seeding (PlayState.start) must reject it.
+        players["N"].hand.remove(players["N"].hand[0])
+
+        with pytest.raises(ValueError):
+            round_.play_all_tricks()
+
+    def test_play_trick_lazy_seeds_unvalidated_when_unseeded(self, players):
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        # One card per seat — an invalid start deal, so a validated seeding
+        # would raise. Lazy-seeding uses the bare constructor and proceeds.
+        cards = {
+            "N": Card(Suit.HEARTS, Rank.KING),
+            "E": Card(Suit.HEARTS, Rank.SEVEN),
+            "S": Card(Suit.HEARTS, Rank.EIGHT),
+            "W": Card(Suit.HEARTS, Rank.NINE),
+        }
+        round_ = _make_round(
+            players,
+            {seat: [card] for seat, card in cards.items()},
+            contract,
+            [],
+            deck=_StubDeck(),
+        )
+        for seat, card in cards.items():
+            players[seat].choose_card = (
+                lambda trick, c, playable, _card=card: _card
+            )
+
+        assert round_.play_state is None
+
+        round_.play_trick()
+
+        # The state was seeded and advanced by exactly one trick's worth of
+        # plays — no exception despite the sub-8-card hands.
+        assert round_.play_state is not None
+        assert len(round_.play_state.plays) == 4
+        assert round_.play_state.trick_number == 1
+
+
+class TestPlayThroughReachesTerminal:
+    """A full ``play_all_tricks`` drives the ``play_state`` to a terminal
+    state: 8 completed tricks and every card played."""
+
+    def test_full_round_is_terminal_after_eight_tricks(self, players):
+        order = [players[s] for s in ("N", "E", "S", "W")]
+        round_ = Round(order, dealer=players["N"], deck=Deck(), round_number=1)
+        round_.deal_cards()
+        round_.contract = _contract(players["N"], 100, Suit.SPADES)
+        for player in order:
+            player.choose_card = (
+                lambda trick, c, playable: playable[0]
+            )
+
+        round_.play_all_tricks()
+
+        assert round_.play_state.is_terminal()
+        assert len(round_.play_state.completed_tricks) == 8
+        assert len(round_.tricks) == 8
+        for player in order:
+            assert len(player.hand) == 0
 
 
 # ---------------------------------------------------------------------------

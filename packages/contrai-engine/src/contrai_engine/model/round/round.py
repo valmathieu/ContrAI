@@ -7,11 +7,10 @@ from typing import Optional, Dict, List, TYPE_CHECKING
 from contrai_core.auction import Auction
 from contrai_core.bid import Bid
 from contrai_core.contract import Contract
-from contrai_core.exceptions import IllegalPlayError
+from contrai_core.play import Play, PlayState
 from contrai_core.trick import Trick
 from contrai_core.types import Rank, Suit
 
-from . import legality
 from .scoring import UnannouncedSlam, score_round
 
 if TYPE_CHECKING:
@@ -45,6 +44,19 @@ class Round:
 
         # Round state
         self.contract: Optional[Contract] = None
+        # The auction that produced ``contract``, retained by
+        # ``manage_bidding`` once the bidding phase closes. ``None`` until
+        # then. Kept so the play phase can attach the bidding history to
+        # the observation it hands each card-play strategy.
+        self.auction: Auction | None = None
+        # The immutable core play-phase state — authoritative for whose
+        # turn it is, which cards are legal, and each seat's remaining
+        # cards. Seeded at the start of play (by ``play_all_tricks``, or
+        # lazily by ``play_trick`` when driven directly); ``None`` before
+        # play begins. The engine mirrors it onto ``current_trick`` and the
+        # players' hands so the view, the AI ``choose_card`` call, and the
+        # card-tracking fan-out keep reading the classic engine objects.
+        self.play_state: PlayState | None = None
         self.tricks: List[Trick] = []
         self.current_trick: Optional[Trick] = None
         self.last_trick_winner: Optional['Player'] = None
@@ -147,6 +159,7 @@ class Round:
             if view is not None and hasattr(view, 'on_bid_made'):
                 view.on_bid_made(player, bid, list(auction.bids))
 
+        self.auction = auction
         self.contract = auction.contract()
         if self.contract is not None:
             self._detect_belote_holder()
@@ -243,9 +256,31 @@ class Round:
                 return
         self.belote_holder = None
 
+    def _sync_hands(self) -> None:
+        """Re-mirror the players' hands from the authoritative play state.
+
+        :attr:`play_state` is the single source of truth for each seat's
+        remaining cards; the players' :class:`~contrai_core.Hand` objects
+        are mutable mirrors kept in lock-step so the view, the AI
+        ``choose_card`` call, and the card-tracking fan-out — all of which
+        still read ``player.hand`` — stay correct. Clearing and re-extending
+        the same ``Hand`` in place preserves its object identity, the card
+        object references, and their relative order.
+        """
+        for player in self.players_order:
+            player.hand.clear()
+            player.hand.extend(self.play_state.hand_of(player))
+
     def play_trick(self, view=None) -> Optional['Player']:
         """
-        Play a single trick and return winner.
+        Play a single trick and return its winner.
+
+        The trick is driven by the immutable core :class:`PlayState`: the
+        active player, the legal cards, and each play's effect on the hands
+        all come from it. The engine keeps two mutable mirrors in
+        lock-step — :attr:`current_trick` and each ``player.hand`` — for the
+        view, the AI ``choose_card`` call, and the card-tracking fan-out,
+        which still read the classic engine objects.
 
         Args:
             view: Optional view for human player interaction
@@ -253,25 +288,34 @@ class Round:
         Returns:
             Player: The winner of the trick or None if no winner
         """
-        self.current_trick = Trick()
-        trick_leader = self.players_order[0] if self.last_trick_winner is None else self.last_trick_winner
+        # Lazy-seed guard: tests drive ``play_trick`` directly without going
+        # through ``play_all_tricks``. Seed from the current contract,
+        # seating and hands via the bare (unvalidated) constructor —
+        # mirroring the Auction idiom — since a directly injected mid-round
+        # hand need not hold the full 8 cards.
+        if self.play_state is None:
+            self.play_state = PlayState(
+                self.contract,
+                tuple(self.players_order),
+                tuple(tuple(player.hand) for player in self.players_order),
+            )
 
-        # Determine the order for this trick (winner of last trick leads)
-        leader_idx = self.players_order.index(trick_leader)
-        trick_order = []
-        for i in range(4):
-            trick_order.append(self.players_order[(leader_idx + i) % 4])
+        # The mutable mirror of the trick. Its object identity must persist
+        # across all four ``on_card_played`` notifications and the
+        # ``on_trick_complete`` call, so it is built once here and never
+        # rebuilt mid-trick.
+        self.current_trick = Trick()
 
         # Trump is fixed for the whole trick; resolve it once for the
         # per-play tracking fan-out and the final winner call.
         trump_suit = self.contract.suit if self.contract else None
 
-        # Each player plays a card
-        for player in trick_order:
-            # Get the playable cards for this player
-            playable_cards = legality.get_playable_cards(
-                player, self.contract, self.current_trick
-            )
+        # Four plays make a trick. The active player and the legal cards
+        # come from the authoritative play state, never from local
+        # bookkeeping.
+        for _ in range(4):
+            player = self.play_state.to_act
+            playable_cards = list(self.play_state.legal_actions(player))
 
             # Source the card. A human's input is driven by the view —
             # the model can't block on terminal I/O under MVC — so we
@@ -298,57 +342,42 @@ class Round:
                 if len(self.current_trick) else None
             )
 
-            # Validate that the chosen card is legal. An illegal card is
-            # surfaced as a loud failure (IllegalPlayError) rather than
-            # silently corrected to a legal one: choose_card /
-            # request_card_action are contracted to return a card from
-            # playable_cards, so a violation here is a wiring bug we want
-            # to see, not paper over.
-            played_card = None
-            if card and card in playable_cards:  # playable ⊆ hand, so in-hand is implied
-                player.hand.remove(card)
-                self.current_trick.add_play(player, card)
-                played_card = card
-            elif card:  # truthy but illegal → loud failure
-                raise IllegalPlayError(
-                    card,
-                    legality.classify_play_violation(
-                        player, card, self.contract, self.current_trick
-                    ),
-                    playable_cards,
-                    context=f"{getattr(player, 'position', player)} card play",
-                )
-            # card falsy → unchanged (out of scope)
+            # Advance the authoritative state. The core enforces turn order
+            # and legality itself: an out-of-turn, not-held, or
+            # obligation-breaking card raises IllegalPlayError rather than
+            # being silently corrected — so an absent/illegal card from
+            # choose_card / request_card_action fails loudly here.
+            self.play_state = self.play_state.apply(Play(player, card))
+
+            # Re-mirror the hands from the new state, then mirror the play
+            # onto the trick. Model bookkeeping stays ahead of view pacing.
+            self._sync_hands()
+            self.current_trick.add_play(player, card)
 
             # Fan the landing card out to every AI tracker — including
             # the seat that just played, so each tracker's per-suit
             # arithmetic stays exact (fallen + own hand + unseen = 8).
             # hasattr-gated like the view hooks: human seats have no
-            # tracker. Model bookkeeping happens before view pacing.
-            if played_card is not None:
-                led_suit = self.current_trick.get_led_suit()
-                partner_was_master = (
-                    prior_winner is not None and prior_winner.team == player.team
-                )
-                for tracker in self.players_order:
-                    if hasattr(tracker, 'update_card_tracking'):
-                        tracker.update_card_tracking(
-                            played_card, player, led_suit, trump_suit,
-                            partner_was_master=partner_was_master,
-                        )
+            # tracker.
+            led_suit = self.current_trick.get_led_suit()
+            partner_was_master = (
+                prior_winner is not None and prior_winner.team == player.team
+            )
+            for tracker in self.players_order:
+                if hasattr(tracker, 'update_card_tracking'):
+                    tracker.update_card_tracking(
+                        card, player, led_suit, trump_suit,
+                        partner_was_master=partner_was_master,
+                    )
 
             # Notify the view that a card just landed on the table.
             # Lets interactive views render the AI action and pause.
-            if (
-                played_card is not None
-                and view is not None
-                and hasattr(view, 'on_card_played')
-            ):
-                view.on_card_played(player, played_card, self.current_trick)
+            if view is not None and hasattr(view, 'on_card_played'):
+                view.on_card_played(player, card, self.current_trick)
 
             # Belote / rebelote announcement. Fires only when the holder
             # plays one of the K/Q of trump. Each card fires at most once.
-            if played_card is not None and self._is_belote_event(player, played_card):
+            if self._is_belote_event(player, card):
                 kind = self._transition_belote_state(player)
                 if kind is not None and view is not None and hasattr(
                     view, 'on_belote_announced'
@@ -394,6 +423,16 @@ class Round:
         """
         # Initialize team tricks tracking
         self.last_trick_winner = None
+
+        # Seed the authoritative play state from the fresh deal — a
+        # validated start (4 seats, 8 distinct cards each). The very Card
+        # objects held in the players' hands flow into it, so the view can
+        # keep matching playable cards by identity.
+        self.play_state = PlayState.start(
+            self.contract,
+            tuple(self.players_order),
+            tuple(tuple(player.hand) for player in self.players_order),
+        )
 
         # Play 8 tricks
         for trick_num in range(8):
