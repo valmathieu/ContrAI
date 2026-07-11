@@ -11,6 +11,10 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 ### Added
 
+- (core) `PlayState` play-phase state machine, the play-side sibling of `Auction`: an
+  immutable, trick-by-trick state that owns the follow/trump legality rules, enforces turn
+  order and the new `OUT_OF_TURN`/`CARD_NOT_IN_HAND` violation reasons through `apply`, and
+  can be forked onto replacement hands via `with_hands` for future search-based AIs.
 - (engine) AI card tracking is now live: `Round.play_trick` feeds every played card to
   each AI seat's tracker and `Round.deal_cards` resets the counters at every deal, so
   the expert bot's mid-round leads, master-card detection and trump accounting operate

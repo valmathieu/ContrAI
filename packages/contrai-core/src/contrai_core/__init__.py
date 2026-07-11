@@ -14,6 +14,7 @@ from .bid import Bid, PassBid, ContractBid, DoubleBid, RedoubleBid, SlamLevel
 from .auction import Auction
 from .contract import Contract
 from .trick import Trick
+from .play import Play, PlayState
 from .exceptions import (
     ContraiError,
     InvalidPlayerCountError,
@@ -43,6 +44,8 @@ __all__ = [
     "Auction",
     "Contract",
     "Trick",
+    "Play",
+    "PlayState",
     "ContraiError",
     "InvalidPlayerCountError",
     "InvalidCardCountError",

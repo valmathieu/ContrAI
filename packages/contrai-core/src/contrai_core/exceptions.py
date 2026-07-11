@@ -148,6 +148,14 @@ class PlayRuleViolation(StrEnum):
     """Held a higher trump than required (trump led, or over an
     opponent's ruff) but played a lower trump."""
 
+    OUT_OF_TURN = "out_of_turn"
+    """Attempted to play when it was not this player's turn — including
+    any play attempted once the play phase is over."""
+
+    CARD_NOT_IN_HAND = "card_not_in_hand"
+    """Attempted to play a card the player does not hold — either never
+    dealt to them or already played earlier in the round."""
+
 
 class IllegalPlayError(ContraiError, ValueError):
     """Raised when a card play violates a follow / trump obligation.

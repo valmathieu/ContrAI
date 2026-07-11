@@ -43,17 +43,21 @@ class TestContraiError:
 
 
 class TestPlayRuleViolation:
-    def test_three_members_exist(self):
+    def test_members_exist(self):
         assert {m.name for m in PlayRuleViolation} == {
             "MUST_FOLLOW_SUIT",
             "MUST_TRUMP",
             "MUST_OVERTRUMP",
+            "OUT_OF_TURN",
+            "CARD_NOT_IN_HAND",
         }
 
     def test_str_enum_behaviour(self):
         assert PlayRuleViolation.MUST_TRUMP == "must_trump"
         assert PlayRuleViolation.MUST_FOLLOW_SUIT == "must_follow_suit"
         assert PlayRuleViolation.MUST_OVERTRUMP == "must_overtrump"
+        assert PlayRuleViolation.OUT_OF_TURN == "out_of_turn"
+        assert PlayRuleViolation.CARD_NOT_IN_HAND == "card_not_in_hand"
 
 
 class TestIllegalPlayError:
