@@ -9,6 +9,7 @@ scenarios.
 import pytest
 
 from contrai_core import BasePlayer, Card, Rank, Suit, TrickStateError, Trick
+from contrai_core.trick import current_winner
 
 
 @pytest.fixture
@@ -251,3 +252,70 @@ class TestTrickCurrentWinner:
         trick.add_play(east, Card(Suit.SPADES, Rank.SEVEN))  # weak trump
         trick.add_play(south, Card(Suit.SPADES, Rank.JACK))  # master trump
         assert trick.get_current_winner(Suit.SPADES) is south
+
+
+# ---------------------------------------------------------------------------
+# current_winner — parity with Trick.get_current_winner
+#
+# Trick.get_current_winner delegates to the module-level current_winner
+# function so the winner rule can be reused without instantiating a Trick.
+# Both must agree on every scenario the method itself is tested against.
+# ---------------------------------------------------------------------------
+
+
+class TestCurrentWinnerParity:
+    def test_empty_plays(self):
+        trick = Trick()
+        assert current_winner(trick.plays, Suit.HEARTS) == trick.get_current_winner(Suit.HEARTS)
+        assert current_winner(trick.plays, Suit.HEARTS) is None
+
+    def test_partial_trick(self, north, east):
+        trick = Trick()
+        trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
+        trick.add_play(east, Card(Suit.HEARTS, Rank.SEVEN))
+        assert current_winner(trick.plays, Suit.SPADES) == trick.get_current_winner(Suit.SPADES)
+        assert current_winner(trick.plays, Suit.SPADES) is north
+
+    def test_full_trick(self, north, east, south, west):
+        trick = Trick()
+        trick.add_play(north, Card(Suit.HEARTS, Rank.SEVEN))
+        trick.add_play(east, Card(Suit.HEARTS, Rank.ACE))
+        trick.add_play(south, Card(Suit.HEARTS, Rank.KING))
+        trick.add_play(west, Card(Suit.HEARTS, Rank.JACK))
+        assert current_winner(trick.plays, None) == trick.get_current_winner(None)
+        assert current_winner(trick.plays, None) is east
+
+    def test_trump_beats_non_trump(self, north, east, south, west):
+        trick = Trick()
+        trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
+        trick.add_play(east, Card(Suit.CLUBS, Rank.SEVEN))
+        trick.add_play(south, Card(Suit.HEARTS, Rank.KING))
+        trick.add_play(west, Card(Suit.HEARTS, Rank.JACK))
+        assert current_winner(trick.plays, Suit.CLUBS) == trick.get_current_winner(Suit.CLUBS)
+        assert current_winner(trick.plays, Suit.CLUBS) is east
+
+    def test_overtrump(self, north, east, south, west):
+        trick = Trick()
+        trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
+        trick.add_play(east, Card(Suit.SPADES, Rank.SEVEN))
+        trick.add_play(south, Card(Suit.SPADES, Rank.JACK))
+        trick.add_play(west, Card(Suit.SPADES, Rank.NINE))
+        assert current_winner(trick.plays, Suit.SPADES) == trick.get_current_winner(Suit.SPADES)
+        assert current_winner(trick.plays, Suit.SPADES) is south
+
+    def test_no_trump_led_suit_wins(self, north, east, south, west):
+        trick = Trick()
+        trick.add_play(north, Card(Suit.HEARTS, Rank.SEVEN))
+        trick.add_play(east, Card(Suit.SPADES, Rank.ACE))
+        trick.add_play(south, Card(Suit.DIAMONDS, Rank.ACE))
+        trick.add_play(west, Card(Suit.CLUBS, Rank.ACE))
+        assert current_winner(trick.plays, None) == trick.get_current_winner(None)
+        assert current_winner(trick.plays, None) is north
+
+    def test_discard_does_not_win(self, north, east):
+        """An off-suit, non-trump discard never overtakes the lead card."""
+        trick = Trick()
+        trick.add_play(north, Card(Suit.HEARTS, Rank.SEVEN))
+        trick.add_play(east, Card(Suit.DIAMONDS, Rank.ACE))
+        assert current_winner(trick.plays, Suit.SPADES) == trick.get_current_winner(Suit.SPADES)
+        assert current_winner(trick.plays, Suit.SPADES) is north
