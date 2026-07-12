@@ -15,6 +15,9 @@ from contrai_core.bid import (
     RedoubleBid,
     SlamLevel,
 )
+from contrai_core.card import Card
+from contrai_core.play import PlayObservation
+from contrai_core.trick import current_winner
 from contrai_core.types import CARD_SUITS, Rank, Suit
 
 from .strategy import BiddingStrategy, CardPlayStrategy, _PlayerStrategy
@@ -546,112 +549,129 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
 class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
     """Expert card-play policy (SF-10).
 
-    Owns the per-round card-tracking state (``_fallen_cards`` /
-    ``_players_without_trump``): initialised at construction, reset by
-    the engine at every deal (``Round.deal_cards``), and fed by
-    ``Round.play_trick`` on every landing card. Decides which card to
-    play based on the trick state, the contract, and what has fallen.
+    Stateless between calls: every decision is a pure function of the
+    frozen :class:`~contrai_core.PlayObservation` it is handed. The card
+    tracking the rules need — which cards have fallen and which seats are
+    known void in trump — is *derived* from the observation's public trick
+    history on each turn (see :meth:`_derive_tracking`), never carried
+    across calls or rounds. Decides which card to play from the trick
+    state, the contract, and what has fallen.
     """
 
-    def __init__(self, player):
-        """Bind to the player and initialise card tracking.
+    def choose_card(self, observation: PlayObservation) -> Card:
+        """Choose a card to play based on the expert card-play rules.
 
         Args:
-            player: The owning :class:`AiPlayer`.
-        """
-
-        super().__init__(player)
-        self.initialize_card_tracking()
-
-    def choose_card(self, trick, contract, playable_cards):
-        """
-        Choose a card to play based on simple AI strategy.
-
-        Args:
-            trick: List of (player, card) tuples, current trick with cards played by players so far
-            contract: Current contract (value, trump_suit, player) or None
-            playable_cards: List of cards the AI can legally play
+            observation: The frozen play-phase view for this seat — its
+                hand, legal cards, the contract, and the public trick
+                history.
 
         Returns:
-            Card: The chosen card to play
+            The chosen :class:`Card`, drawn from
+            ``observation.legal_cards``.
         """
 
-        # Determine strategy based on position in trick
-        # TODO: adapt the code using the game class to know the trick number
-        # First to play - use fallback approach since we don't have game reference
-        if len(trick) == 0:
-            # Tracking is reset at every deal and fed on every play, so
-            # an all-empty fallen-cards map is a reliable "no card has
-            # been played yet this round" signal — the opening lead.
-            if all(len(cards) == 0 for cards in self._fallen_cards.values()):
-                return self._play_opening_card(contract, playable_cards)
-            else:
-                return self._play_leading_card(contract, playable_cards)
-        else:
-            # Not first to play
-            return self._play_following_card(trick, contract, playable_cards)
+        # Rebuild the fallen-card map and the trump-void set from the
+        # public history before deciding; the trick-reading helpers below
+        # consume them.
+        fallen, voids = self._derive_tracking(observation)
 
-    def initialize_card_tracking(self):
-        """Reset per-round tracking of fallen cards and trump distribution.
+        if not observation.current_trick:
+            # First to play this trick. Trick 0 with nothing played yet is
+            # the opening lead; any later trick is a fresh lead with
+            # history behind it.
+            if observation.trick_number == 0:
+                return self._play_opening_card(observation)
+            return self._play_leading_card(observation, fallen, voids)
 
-        Called by the engine at every deal (``Round.deal_cards``).
+        # Someone has already played this trick — we are following.
+        return self._play_following_card(observation, fallen, voids)
+
+    def _derive_tracking(
+        self, observation: PlayObservation
+    ) -> tuple[dict[Suit, set], set]:
+        """Rebuild fallen-card and trump-void tracking from public history.
+
+        Replays every play in ``(*completed_tricks, current_trick)``
+        chronologically and reconstructs, for each play, exactly the
+        information a per-card tracker accumulates:
+
+        - **Fallen cards**: every played card is recorded under its suit —
+          own plays included — so ``fallen[suit]`` plus the seat's own
+          holding plus the still-unseen cards always sum to 8 per suit.
+        - **Voids in trump**: a seat that fails to follow the led suit and
+          does not trump has proven it holds no trump, but only when it was
+          *compelled* to. The compulsion is judged against the trick state
+          **before** the play lands — the master among the plays strictly
+          earlier in the same trick. A seat discarding while its own
+          partner is already master was free to (the partner-master
+          exemption), so that discard proves nothing. On a trump lead there
+          is no exemption: holding trump forces playing it, so any
+          off-trump card there is always a void.
+
+        The pre-play winner must be read from the plays *before* this one,
+        not after: a discard whose partner becomes master only through a
+        later play in the same trick was still compelled at decision time,
+        and evaluating the winner one play too late would silently hide the
+        void.
+
+        Args:
+            observation: The play-phase view whose public history is
+                replayed.
+
+        Returns:
+            A ``(fallen, voids)`` pair — ``fallen`` maps each card suit to
+            its set of fallen ranks; ``voids`` is the set of players known
+            to hold no trump.
         """
 
-        self._fallen_cards = {
+        trump_suit = observation.trump_suit
+        fallen: dict[Suit, set] = {
             Suit.SPADES: set(),
             Suit.HEARTS: set(),
             Suit.DIAMONDS: set(),
-            Suit.CLUBS: set()
+            Suit.CLUBS: set(),
         }
-        self._players_without_trump = set()
+        voids: set = set()
 
-    def update_card_tracking(self, card, player, led_suit, trump_suit,
-                             partner_was_master=False):
-        """
-        Update tracking based on a card played by any player.
-        Called by ``Round.play_trick`` whenever a card lands.
+        for trick in (*observation.completed_tricks, observation.current_trick):
+            for index, (player, card) in enumerate(trick):
+                # Record the fallen card — happens for every play, whatever
+                # it proves about voids.
+                fallen[card.suit].add(card.rank)
 
-        Args:
-            card: The card that was played
-            player: Player who played the card
-            led_suit: The suit that was led this trick
-            trump_suit: The current trump suit
-            partner_was_master: Whether ``player``'s partner was master
-                when the card was chosen — a voluntary discard behind a
-                master partner proves nothing about trumps
-        """
+                # Reconstruct the pre-play master: the winner among the
+                # plays strictly earlier in this trick — the state the seat
+                # decided against.
+                prior = current_winner(list(trick[:index]), trump_suit)
+                led_suit = trick[0].card.suit
+                partner_was_master = (
+                    prior is not None and prior.team == player.team
+                )
 
-        # Track fallen cards
-        self._fallen_cards[card.suit].add(card.rank)
+                # Trump led: holding trump forces playing it (no
+                # partner-master exemption), so a non-trump card always
+                # proves the void.
+                if led_suit == trump_suit:
+                    if card.suit != trump_suit:
+                        voids.add(player)
+                    continue
+                # Non-trump led: a discard behind a master partner is
+                # voluntary and proves nothing.
+                if partner_was_master:
+                    continue
+                if card.suit != led_suit and card.suit != trump_suit:
+                    voids.add(player)
 
-        # Trump led: holding trump forces playing it (no partner-master
-        # exemption), so a non-trump card always proves the void.
-        if led_suit == trump_suit:
-            if card.suit != trump_suit:
-                self._players_without_trump.add(player)
-            return
-        # Non-trump led: off-suit without trumping proves the void only when
-        # the seat was compelled to trump — behind a master partner,
-        # discarding while holding trump is legal and proves nothing.
-        if partner_was_master:
-            return
-        if card.suit != led_suit and card.suit != trump_suit:
-            self._players_without_trump.add(player)
+        return fallen, voids
 
-    def _play_first_card(self, game, contract, playable_cards):
-        """Strategy when AI is first to play in the trick."""
-
-        # Check if this is the very first card of the round
-        if game.current_trick_number == 0:
-            return self._play_opening_card(contract, playable_cards)
-
-        # Subsequent tricks when AI leads
-        return self._play_leading_card(contract, playable_cards)
-
-    def _play_opening_card(self, contract, playable_cards):
+    def _play_opening_card(self, observation: PlayObservation) -> Card:
         """Play the very first card of the round."""
 
-        trump_suit = contract.suit if contract else None
+        contract = observation.contract
+        playable_cards = observation.legal_cards
+        hand = observation.hand
+        trump_suit = observation.trump_suit
 
         if contract and contract.player.team == self.team:
             # Our team has the contract - play the strongest trump
@@ -668,7 +688,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
             aces = [c for c in playable_cards if c.rank == Rank.ACE]
             if aces:
                 # Play ace from the shortest suit
-                return min(aces, key=lambda c: self.hand.count_suit(c.suit))
+                return min(aces, key=lambda c: self._count_suit(hand, c.suit))
 
         # Default: play the lowest value card (excluding trump unless only trumps available)
         non_trump_cards = [c for c in playable_cards if c.suit != trump_suit] if trump_suit else playable_cards
@@ -687,13 +707,18 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
         # If multiple cards with same lowest value, choose randomly
         return lowest_value_cards[0]
 
-    def _play_leading_card(self, contract, playable_cards):
+    def _play_leading_card(
+        self, observation: PlayObservation, fallen: dict[Suit, set], voids: set
+    ) -> Card:
         """Play when leading subsequent tricks."""
 
-        trump_suit = contract.suit if contract else None
+        contract = observation.contract
+        playable_cards = observation.legal_cards
+        hand = observation.hand
+        trump_suit = observation.trump_suit
 
         # If the team has the contract and opponents might still have trump, play the strongest trump
-        if contract and contract.player.team == self.team and self._opponents_might_have_trump(trump_suit):
+        if contract and contract.player.team == self.team and self._opponents_might_have_trump(trump_suit, fallen, voids, hand):
             trump_cards = [c for c in playable_cards if c.suit == trump_suit]
             if trump_cards:
                 return max(trump_cards, key=lambda c: c.get_order(trump_suit))
@@ -702,12 +727,12 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
         # No trump left with opponents - play ace from the longest suit
         aces = [c for c in playable_cards if c.rank == Rank.ACE]
         if aces:
-            return max(aces, key=lambda c: self.hand.count_suit(c.suit))
+            return max(aces, key=lambda c: self._count_suit(hand, c.suit))
 
         # Play master card from the longest suit
-        master_cards = [c for c in playable_cards if self._is_master_card(c, trump_suit)]
+        master_cards = [c for c in playable_cards if self._is_master_card(c, trump_suit, fallen)]
         if master_cards:
-            return max(master_cards, key=lambda c: self.hand.count_suit(c.suit))
+            return max(master_cards, key=lambda c: self._count_suit(hand, c.suit))
 
         # Default: play the lowest value card (excluding trump unless only trumps available)
         non_trump_cards = [c for c in playable_cards if c.suit != trump_suit] if trump_suit else playable_cards
@@ -726,17 +751,19 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
         # If multiple cards with same lowest value, choose randomly
         return lowest_value_cards[0]
 
-    def _play_following_card(self, trick, contract, playable_cards):
+    def _play_following_card(
+        self, observation: PlayObservation, fallen: dict[Suit, set], voids: set
+    ) -> Card:
         """Strategy when not first to play."""
 
-        team_winning = self._is_team_winning_trick(trick)
-
-        if team_winning:
-            return self._play_when_team_winning(trick, contract, playable_cards)
+        if self._is_team_winning_trick(observation.current_trick):
+            return self._play_when_team_winning(observation, fallen)
         else:
-            return self._play_when_team_losing(trick, contract, playable_cards)
+            return self._play_when_team_losing(observation, fallen)
 
-    def _play_when_team_winning(self, trick, contract, playable_cards):
+    def _play_when_team_winning(
+        self, observation: PlayObservation, fallen: dict[Suit, set]
+    ) -> Card:
         """Play when our team is currently winning the trick.
 
         Partner already secures the trick, so the goal is to add value
@@ -752,8 +779,9 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
         3. Hand has nothing but trumps → forced to play one. Use the
            lowest trump so we don't waste the Jack or 9.
         """
-        trump_suit = contract.suit if contract else None
-        led_suit = trick.get_led_suit()
+        trump_suit = observation.trump_suit
+        led_suit = observation.led_suit
+        playable_cards = observation.legal_cards
 
         # 1. Follow suit if able.
         same_suit_cards = [c for c in playable_cards if c.suit == led_suit]
@@ -767,7 +795,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
         if non_trump_cards:
             non_master_non_trump = [
                 c for c in non_trump_cards
-                if not self._is_master_card(c, trump_suit)
+                if not self._is_master_card(c, trump_suit, fallen)
             ]
             candidates = non_master_non_trump or non_trump_cards
             return max(candidates, key=lambda c: c.get_points(trump_suit))
@@ -777,12 +805,16 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
             return min(playable_cards, key=lambda c: c.get_order(trump_suit))
         return playable_cards[0]
 
-    def _play_when_team_losing(self, trick, contract, playable_cards):
+    def _play_when_team_losing(
+        self, observation: PlayObservation, fallen: dict[Suit, set]
+    ) -> Card:
         """Play when opponents are currently winning the trick."""
 
-        trump_suit = contract.suit if contract else None
-        led_suit = trick.get_led_suit()
-        current_best = self._get_strongest_card_in_trick(trick, trump_suit)
+        trump_suit = observation.trump_suit
+        led_suit = observation.led_suit
+        playable_cards = observation.legal_cards
+        plays = observation.current_trick
+        current_best = self._get_strongest_card_in_trick(plays, trump_suit)
 
         # Try to follow suit
         same_suit_cards = [c for c in playable_cards if c.suit == led_suit]
@@ -802,25 +834,42 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
             if trump_cards:
                 # Trump with the lowest trump that can win
                 winning_trumps = [c for c in trump_cards
-                                if self._can_trump_win(c, trick, trump_suit)]
+                                if self._can_trump_win(c, plays, trump_suit)]
                 if winning_trumps:
                     return min(winning_trumps, key=lambda c: c.get_order(trump_suit))
 
 
         # Can't follow or trump - discard lowest from the shortest suit (excluding masters)
-        non_master_cards = [c for c in playable_cards if not self._is_master_card(c, trump_suit)]
+        non_master_cards = [c for c in playable_cards if not self._is_master_card(c, trump_suit, fallen)]
         if non_master_cards:
             return min(non_master_cards, key=lambda c: (
-                self.hand.count_suit(c.suit),
+                self._count_suit(observation.hand, c.suit),
                 c.get_points(trump_suit)
             ))
 
         return playable_cards[0]
 
-    def _opponents_might_have_trump(self, trump_suit):
+    @staticmethod
+    def _count_suit(hand, suit: Suit) -> int:
+        """Count the cards of ``suit`` in the observing seat's own hand.
+
+        Args:
+            hand: The observer's hand, from ``observation.hand``.
+            suit: The suit to count.
+
+        Returns:
+            The number of cards in ``hand`` whose suit is ``suit``.
+        """
+
+        return sum(1 for card in hand if card.suit == suit)
+
+    def _opponents_might_have_trump(
+        self, trump_suit: Suit, fallen: dict[Suit, set], voids: set, hand
+    ) -> bool:
         """Check if opponents might still have trump cards.
 
-        Two knowledge sources, both fed by the engine's tracking calls:
+        Two knowledge sources, both derived from the observation's public
+        trick history:
 
         1. **Counting** — 8 trumps exist; once every trump outside our
            own hand has fallen, nobody else holds one.
@@ -831,14 +880,17 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
 
         Args:
             trump_suit: The current trump suit.
+            fallen: The fallen-card map from :meth:`_derive_tracking`.
+            voids: The set of players known void in trump.
+            hand: The observing seat's own hand (``observation.hand``).
 
         Returns:
             True if at least one opponent might still hold a trump.
         """
 
         # Counting: 8 trumps total; unseen = 8 - fallen - in our hand.
-        trump_fallen = len(self._fallen_cards.get(trump_suit, set()))
-        trump_in_hand = self.hand.count_suit(trump_suit)
+        trump_fallen = len(fallen.get(trump_suit, set()))
+        trump_in_hand = self._count_suit(hand, trump_suit)
         if trump_fallen >= (8 - trump_in_hand):
             return False
 
@@ -846,16 +898,22 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
         # are known void, any unseen trumps sit in partner's hand — pulling
         # them helps nobody. (`is not` — Team has no __eq__, identity is it.)
         opponents_void = {
-            p for p in self._players_without_trump if p.team is not self.team
+            p for p in voids if p.team is not self.team
         }
         return len(opponents_void) < 2
 
     # TODO: replace trump_suit with a boolean is_trump parameter
-    def _is_master_card(self, card, trump_suit):
-        """Check if a card is currently the master (highest remaining) in its suit."""
+    def _is_master_card(self, card, trump_suit, fallen: dict[Suit, set]) -> bool:
+        """Check if a card is currently the master (highest remaining) in its suit.
+
+        Args:
+            card: The candidate card.
+            trump_suit: The current trump suit.
+            fallen: The fallen-card map from :meth:`_derive_tracking`.
+        """
 
         # Get fallen cards in this suit
-        suit_fallen = self._fallen_cards.get(card.suit, set())
+        suit_fallen = fallen.get(card.suit, set())
 
         # Get all ranks higher than this card's rank
         higher_ranks = self._get_higher_ranks(card.rank, card.suit, trump_suit)
@@ -880,18 +938,29 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
         except ValueError:
             return []
 
-    def _is_team_winning_trick(self, trick, trump_suit=None):
-        """Check if our team is currently winning the trick."""
+    def _is_team_winning_trick(self, plays, trump_suit=None) -> bool:
+        """Check if our team is currently winning the trick.
 
-        # TODO: check with trick number from game
-        if len(trick) < 1:
+        The determination is made on the led-suit ranking — the highest
+        card of the led suit and who played it — with ``trump_suit``
+        defaulting to ``None`` (the normal, trump-agnostic ordering). Our
+        team is winning when our partner holds that top led-suit card. The
+        team-losing branch does its own trump-aware comparison, so the
+        cut/over-cut reasoning lives there rather than in this gate.
+
+        Args:
+            plays: The in-progress trick's plays, a ``tuple[Play, ...]``.
+            trump_suit: Ordering to rank by; ``None`` for the normal order.
+        """
+
+        if len(plays) < 1:
             return False
 
         # Find partner's position
         partner_position = self._get_partner_position()
 
         # Check if partner played the strongest card so far
-        strongest_position = self._get_strongest_card_position(trick, trump_suit)
+        strongest_position = self._get_strongest_card_position(plays, trump_suit)
         return strongest_position == partner_position
 
     def _get_partner_position(self):
@@ -900,30 +969,41 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
         position_map = {'North': 'South', 'South': 'North', 'East': 'West', 'West': 'East'}
         return position_map.get(self.position)
 
-    def _get_strongest_card_position(self, trick, trump_suit):
-        """Get the position of the player who played the strongest card."""
+    def _get_strongest_card_position(self, plays, trump_suit):
+        """Get the position of the player who played the strongest card.
 
-        if not trick:
+        Args:
+            plays: The trick's plays, a ``tuple[Play, ...]``.
+            trump_suit: The suit to rank by, or ``None`` for normal order.
+        """
+
+        if not plays:
             return None
 
-        strongest_card = self._get_strongest_card_in_trick(trick, trump_suit)
+        strongest_card = self._get_strongest_card_in_trick(plays, trump_suit)
 
         # Find which player played the strongest card
-        for player, card in trick.get_plays():
+        for player, card in plays:
             if card == strongest_card:
                 return player.position
 
         return None
 
     @staticmethod
-    def _get_strongest_card_in_trick(trick, trump_suit):
-        """Get the strongest card played so far in the trick."""
+    def _get_strongest_card_in_trick(plays, trump_suit):
+        """Get the strongest card played so far in the trick.
 
-        if not trick:
+        Args:
+            plays: The trick's plays, a ``tuple[Play, ...]``. ``Play``
+                unpacks as ``(player, card)``.
+            trump_suit: The suit to rank by, or ``None`` for normal order.
+        """
+
+        if not plays:
             return None
 
-        led_suit = trick.get_led_suit()
-        cards = trick.get_cards()
+        led_suit = plays[0].card.suit
+        cards = [card for _, card in plays]
 
         # Trump cards beat non-trump (unless led suit is trump)
         if led_suit != trump_suit:
@@ -959,8 +1039,14 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
 
         return False
 
-    def _can_trump_win(self, trump_card, trick, trump_suit):
-        """Check if playing this trump card would win the trick."""
+    def _can_trump_win(self, trump_card, plays, trump_suit):
+        """Check if playing this trump card would win the trick.
 
-        current_best = self._get_strongest_card_in_trick(trick, trump_suit)
+        Args:
+            trump_card: The trump card being considered.
+            plays: The in-progress trick's plays, a ``tuple[Play, ...]``.
+            trump_suit: The current trump suit.
+        """
+
+        current_best = self._get_strongest_card_in_trick(plays, trump_suit)
         return self._is_stronger_card(trump_card, current_best, trump_suit)

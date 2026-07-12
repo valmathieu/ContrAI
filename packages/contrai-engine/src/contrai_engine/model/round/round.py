@@ -54,8 +54,9 @@ class Round:
         # cards. Seeded at the start of play (by ``play_all_tricks``, or
         # lazily by ``play_trick`` when driven directly); ``None`` before
         # play begins. The engine mirrors it onto ``current_trick`` and the
-        # players' hands so the view, the AI ``choose_card`` call, and the
-        # card-tracking fan-out keep reading the classic engine objects.
+        # players' hands so the view keeps reading the classic engine
+        # objects. AI seats instead read the frozen ``PlayObservation``
+        # projected from this state.
         self.play_state: PlayState | None = None
         self.tricks: List[Trick] = []
         self.current_trick: Optional[Trick] = None
@@ -97,19 +98,8 @@ class Round:
         """
         Deal cards to all players in the proper order.
         Dealer gets cards last.
-
-        Also resets each AI seat's card-tracking state: Player objects
-        persist across rounds (and across all-pass redeals), so the
-        per-round counters must be zeroed at every deal, not at
-        construction time.
         """
         self.deck.deal(self.players_order)
-
-        # Reset AI card tracking for the new deal. hasattr-gated like
-        # the view hooks — human seats have no tracker.
-        for player in self.players_order:
-            if hasattr(player, 'initialize_card_tracking'):
-                player.initialize_card_tracking()
 
     def manage_bidding(self, view=None) -> Optional[Contract]:
         """Handle the complete bidding phase.
@@ -261,9 +251,8 @@ class Round:
 
         :attr:`play_state` is the single source of truth for each seat's
         remaining cards; the players' :class:`~contrai_core.Hand` objects
-        are mutable mirrors kept in lock-step so the view, the AI
-        ``choose_card`` call, and the card-tracking fan-out — all of which
-        still read ``player.hand`` — stay correct. Clearing and re-extending
+        are mutable mirrors kept in lock-step so the view — which still
+        reads ``player.hand`` — stays correct. Clearing and re-extending
         the same ``Hand`` in place preserves its object identity, the card
         object references, and their relative order.
         """
@@ -279,8 +268,9 @@ class Round:
         active player, the legal cards, and each play's effect on the hands
         all come from it. The engine keeps two mutable mirrors in
         lock-step — :attr:`current_trick` and each ``player.hand`` — for the
-        view, the AI ``choose_card`` call, and the card-tracking fan-out,
-        which still read the classic engine objects.
+        view, which still reads the classic engine objects. Each AI seat is
+        instead handed the frozen :class:`PlayObservation` projected from
+        the play state, and derives its own card tracking from that.
 
         Args:
             view: Optional view for human player interaction
@@ -307,7 +297,7 @@ class Round:
         self.current_trick = Trick()
 
         # Trump is fixed for the whole trick; resolve it once for the
-        # per-play tracking fan-out and the final winner call.
+        # final winner call.
         trump_suit = self.contract.suit if self.contract else None
 
         # Four plays make a trick. The active player and the legal cards
@@ -328,19 +318,19 @@ class Round:
                     player, self.current_trick, self.contract, playable_cards
                 )
             elif hasattr(player, 'choose_card'):
-                # Pass playable cards to help AI make legal moves
-                card = player.choose_card(self.current_trick, self.contract, playable_cards)
+                # Hand the AI a frozen observation projected from the
+                # authoritative play state — its own hand, legal cards, and
+                # the public trick history — attaching the retained
+                # auction's bids (empty until the auction is set).
+                card = player.choose_card(
+                    self.play_state.observe(
+                        player,
+                        bids=self.auction.bids if self.auction else (),
+                    )
+                )
             else:
                 # Simple fallback: play first playable card
                 card = playable_cards[0] if playable_cards else None
-
-            # Snapshot who was master BEFORE this card lands: the void
-            # inference needs the trick state the player decided against,
-            # not the state their own card just created.
-            prior_winner = (
-                self.current_trick.get_current_winner(trump_suit)
-                if len(self.current_trick) else None
-            )
 
             # Advance the authoritative state. The core enforces turn order
             # and legality itself: an out-of-turn, not-held, or
@@ -353,22 +343,6 @@ class Round:
             # onto the trick. Model bookkeeping stays ahead of view pacing.
             self._sync_hands()
             self.current_trick.add_play(player, card)
-
-            # Fan the landing card out to every AI tracker — including
-            # the seat that just played, so each tracker's per-suit
-            # arithmetic stays exact (fallen + own hand + unseen = 8).
-            # hasattr-gated like the view hooks: human seats have no
-            # tracker.
-            led_suit = self.current_trick.get_led_suit()
-            partner_was_master = (
-                prior_winner is not None and prior_winner.team == player.team
-            )
-            for tracker in self.players_order:
-                if hasattr(tracker, 'update_card_tracking'):
-                    tracker.update_card_tracking(
-                        card, player, led_suit, trump_suit,
-                        partner_was_master=partner_was_master,
-                    )
 
             # Notify the view that a card just landed on the table.
             # Lets interactive views render the AI action and pause.

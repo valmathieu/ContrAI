@@ -73,48 +73,26 @@ class BiddingStrategy(ABC):
 class CardPlayStrategy(ABC):
     """Interface for an AI card-play policy.
 
-    Implementations choose which card to play and maintain whatever
-    per-round state they need (e.g. card tracking). The owning
-    :class:`AiPlayer` delegates :meth:`AiPlayer.choose_card`,
-    :meth:`AiPlayer.initialize_card_tracking`, and
-    :meth:`AiPlayer.update_card_tracking` to this object.
+    Implementations choose which card to play from a single frozen
+    :class:`~contrai_core.PlayObservation` — the observing seat's own
+    hand, the public trick history, the contract/auction, and the seat's
+    legal plays. Any card tracking a strategy wants (fallen cards,
+    inferred voids) is derived from that public history; the observation
+    is the only input, so a strategy can never read another seat's hand.
+    The owning :class:`AiPlayer` delegates :meth:`AiPlayer.choose_card`
+    to this object.
     """
 
     @abstractmethod
-    def choose_card(self, trick, contract, playable_cards):
+    def choose_card(self, observation):
         """Choose a card to play in the current trick.
 
         Args:
-            trick: The current :class:`Trick` (cards played so far).
-            contract: The current :class:`Contract`, or ``None``.
-            playable_cards: The cards legally playable this turn.
+            observation: The :class:`~contrai_core.PlayObservation` for
+                the observing seat — its hand, legal cards, the contract,
+                and the public trick history.
 
         Returns:
-            The chosen :class:`Card`.
-        """
-
-    @abstractmethod
-    def initialize_card_tracking(self) -> None:
-        """Reset per-round card-tracking state.
-
-        Called by the engine at every deal (``Round.deal_cards``) —
-        player objects persist across rounds, so the per-round
-        counters must not survive a redeal.
-        """
-
-    @abstractmethod
-    def update_card_tracking(
-        self, card, player, led_suit, trump_suit,
-        partner_was_master: bool = False,
-    ) -> None:
-        """Record a played card. Called by ``Round.play_trick`` on every play.
-
-        Args:
-            card: The card that was played.
-            player: The player who played it.
-            led_suit: The suit led this trick.
-            trump_suit: The current trump suit.
-            partner_was_master: Whether the seat's partner was master
-                when the card was chosen — a voluntary discard behind a
-                master partner proves nothing about trumps.
+            The chosen :class:`Card`, drawn from
+            ``observation.legal_cards``.
         """

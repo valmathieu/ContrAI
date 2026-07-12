@@ -1,11 +1,15 @@
 # Player and HumanPlayer classes
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from contrai_core.auction import Auction
 from contrai_core.bid import Bid
 from contrai_core.player import BasePlayer
+
+if TYPE_CHECKING:
+    from contrai_core.card import Card
+    from contrai_core.play import PlayObservation
 
 
 class Player(BasePlayer, ABC):
@@ -34,22 +38,20 @@ class Player(BasePlayer, ABC):
         pass
 
     @abstractmethod
-    def choose_card(self, trick, contract, playable_cards):
+    def choose_card(self, observation: 'PlayObservation') -> Optional['Card']:
         """Choose a :class:`Card` to play into the current trick.
 
         Args:
-            trick: The :class:`Trick` in progress — the cards already
-                played this trick, in order.
-            contract: The established :class:`Contract`. Carries the
-                trump suit and the declaring side.
-            playable_cards: The legal subset of the player's hand for
-                this turn, precomputed by the engine's legality rules
-                (``SF-09`` / ``SF-10``). The returned card must be one
-                of these — Round raises ``IllegalPlayError`` otherwise.
+            observation: The :class:`~contrai_core.PlayObservation` for
+                this seat — its own hand, the public trick history, the
+                contract/auction, and ``observation.legal_cards`` (the
+                legal subset for this turn). The returned card must be one
+                of the legal cards — Round raises ``IllegalPlayError``
+                otherwise.
 
         Returns:
-            A :class:`Card` drawn from ``playable_cards``, or ``None``
-            to defer to the view (the contract for
+            A :class:`Card` drawn from ``observation.legal_cards``, or
+            ``None`` to defer to the view (the contract for
             :class:`HumanPlayer`).
         """
 
@@ -66,7 +68,7 @@ class HumanPlayer(Player):
 
         return None
 
-    def choose_card(self, trick, contract, playable_cards) -> None:
+    def choose_card(self, observation: 'PlayObservation') -> None:
         """Defer to the view's :meth:`request_card_action`.
 
         Returns ``None`` by design — Round's trick loop drives the
