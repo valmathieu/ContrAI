@@ -29,6 +29,7 @@ skinparam note {
 }
 
 participant "Round" as R <<engine>>
+participant "PlayState" as PS <<from contrai-core>> #E1F0FF
 participant "Trick" as T <<from contrai-core>> #E1F0FF
 participant "Player" as P <<engine>>
 participant "Hand" as H <<from contrai-core>> #E1F0FF
@@ -38,31 +39,35 @@ participant "RichView" as V <<engine>>
 [-> R : play_trick(view)
 activate R
 
-R -> T : new Trick()
-note right of T
-  Note: `Trick()` is a bare container — it stores no trump.
-  Round passes `self.contract.suit` into
-  `Trick.get_current_winner(trump_suit)` (contrai-core)
-  when it needs the winner; see "Winner + bookkeeping".
+note over R, PS
+  Lazy-seed guard: if `play_state` is still None (a
+  caller drove `play_trick` directly, without going
+  through `play_all_tricks`), Round seeds it here
+  from the current contract, seating and hands via
+  the bare (unvalidated) `PlayState` constructor.
 end note
 
-== Leader determination ==
-
-alt last_trick_winner is None  (first trick)
-    R -> R : trick_leader = players_order[0]
-else
-    R -> R : trick_leader = last_trick_winner
-end
-
-R -> R : leader_idx = players_order.index(trick_leader)\ntrick_order = rotate(players_order, leader_idx)
+R -> T : new Trick()
+note right of T
+  `Trick()` is a bare container — it stores no
+  trump. Round passes `self.contract.suit` into
+  `Trick.get_current_winner(trump_suit)` when it
+  needs the winner; see "Winner + bookkeeping".
+  `current_trick` is a **mutable mirror**, kept in
+  lock-step with `play_state` for the view — it is
+  never the source of legality or turn order.
+end note
 
 == Four players play in order ==
 
-loop **for player in trick_order**  (×4)
+loop **for _ in range(4)**
 
-    R -> R : playable_cards = legality.get_playable_cards(\n              player, contract, current_trick)
+    R -> PS : to_act
+    PS --> R : player
+    R -> PS : legal_actions(player)
+    PS --> R : playable_cards
 
-    ref over R : **SF-09 / SF-10** — see legality rules below
+    ref over PS : **SF-09 / SF-10** legality — see note at the foot of the diagram
 
     alt view ≠ None AND player.is_human
         R -->> V : view.request_card_action(player,\n  current_trick, contract, playable_cards)
@@ -77,49 +82,53 @@ loop **for player in trick_order**  (×4)
         end note
         V -->> R : Card
     else player has choose_card (AI)
-        R -> P : choose_card(current_trick,\n                contract, playable_cards)
+        R -> PS : observe(player,\n  bids=auction.bids if auction else ())
+        PS --> R : PlayObservation
+        R -> P : choose_card(observation)
+        note right of P
+          The frozen PlayObservation carries only
+          this seat's own hand, the public trick
+          history, the contract/auction, and its
+          legal cards right now — the sole input a
+          strategy receives, so it can never read
+          another seat's hand by construction.
+          `RuleBasedCardPlayStrategy` derives its
+          fallen-card / trump-void tracking by
+          replaying the observation's public trick
+          history on every call — never carried
+          across calls or rounds.
+        end note
         P --> R : Card
     else fallback
-        R -> R : card = playable_cards[0]
+        R -> R : card = playable_cards[0] if playable_cards else None
     end
 
-    R -> T : prior_winner = current_trick.get_current_winner(trump_suit)
-    note right of T
-      Captured **before** add_play: the void
-      inference below needs the trick state the
-      player decided against, not the state their
-      own card just created. None on a lead.
-    end note
-
-    alt card ∈ playable_cards  (playable ⊆ hand, so in-hand is implied)
-        R -> H : player.hand.remove(card)
-        R -> T : current_trick.add_play(player, card)
-    else card truthy but illegal → loud failure
-        R ->x R : raise IllegalPlayError(card,\n  legality.classify_play_violation(\n    player, card, contract, current_trick),\n  playable_cards)
+    R -> PS : apply(Play(player, card))
+    alt legal play
+        PS --> R : new PlayState\n(card removed from player's hand)
+    else illegal (out-of-turn / not held / obligation broken)
+        PS ->x R : raise IllegalPlayError(card,\n  violation_reason, legal_alternatives)
         note right of R
           No silent correction. ``choose_card`` /
           ``request_card_action`` are contracted to
           return a card from ``playable_cards``; a
           violation here is a wiring bug surfaced
-          loudly, not papered over. (A falsy card —
-          the bare ``playable_cards[0]`` fallback for
-          a player without ``choose_card`` — is left
-          unchanged; out of scope here.)
+          loudly, not papered over.
         end note
     end
 
-    loop **for tracker in players_order**  (×4, hasattr-gated)
-        R -> P : tracker.update_card_tracking(played_card, player,\n  led_suit, trump_suit, partner_was_master)
-        note right of P
-          AI card counting: **every** seat — including
-          the one that just played — records the landing
-          card, so each tracker's per-suit arithmetic
-          stays exact. `partner_was_master` comes from
-          `prior_winner`: a voluntary discard behind a
-          master partner is NOT marked as a trump void.
-          Human seats have no tracker and are skipped.
-        end note
-    end
+    R -> H : _sync_hands()\n(every seat, from the new play_state)
+    note right of H
+      Clears and re-extends each player's `Hand` in
+      place from `play_state.hand_of(player)` —
+      preserves object identity and card references
+      so the view keeps matching cards by identity.
+      `play_state` stays the single source of truth
+      for every seat's remaining cards; `Hand` is a
+      mirror kept in lock-step for the view, never
+      read to decide legality.
+    end note
+    R -> T : current_trick.add_play(player, card)
 
     R -->> V : view.on_card_played(player, played_card,\n                       current_trick)
     note right of V
@@ -185,23 +194,26 @@ end
 [<-- R : return winner  (Player)
 deactivate R
 
-note over R, V
-  **Legality (SF-09 / SF-10) — `legality.get_playable_cards`:**
+note over R, PS
+  **Legality (SF-09 / SF-10) — `PlayState.legal_actions`, contrai-core:**
 
   1. **Empty trick** → any card.
   2. Player has the **lead suit**:
      • lead = trump → must **over-trump** every trump on the table
-       if able (`_higher_trumps_than_played`); else play any trump.
+       if able; else play any trump.
      • lead ≠ trump → must follow suit (no over-trump duty).
   3. No lead-suit cards, **partner is currently master**
-     (`Trick.get_current_winner(trump_suit)`) → any card.
+     (`current_winner(trick, trump_suit)`) → any card.
      A partner who led but has been over-trumped no longer protects you.
   4. No lead-suit cards, partner is not master:
      • no trump suit → any card.
-     • opponent already trumped → must over-trump
-       (`_highest_opponent_trump`) if possible; else play any trump
-       if any; else discard.
+     • opponent already trumped → must over-trump if possible;
+       else play any trump if any; else discard.
      • no opponent trump yet → must trump if any; else discard.
+
+  `apply(Play)` re-checks the same obligations before committing the
+  play — legality is now single-sourced in `contrai_core.play`, with
+  no engine-side duplicate.
 end note
 
 @enduml

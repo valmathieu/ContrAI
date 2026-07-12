@@ -60,16 +60,16 @@ G -> R : new Round(players_order, dealer,\n            deck, round_number)
 activate R
 G -> R : deal_cards()
 R -> D : deal(players_order)\n(dealer gets last cards)
-R -> P : initialize_card_tracking()\n(every seat, hasattr-gated)
-note right of P
-  AI card-tracking counters are
-  reset at **every deal**: Player
-  objects persist across rounds
-  (and all-pass redeals), so the
-  per-round state must not
-  survive into the next deal.
-  Human seats have no tracker
-  and are skipped.
+note right of R
+  `deal_cards` only deals — there is no
+  per-seat tracker to reset any more.
+  `play_state` stays `None` until play
+  begins (seeded by `play_all_tricks`,
+  below); each AI's card tracking is
+  derived fresh from the public trick
+  history on every `choose_card` call
+  instead of persisted counters — see
+  **seq_trick.puml**.
 end note
 return
 
@@ -84,6 +84,7 @@ end note
 
 G -> R : manage_bidding(view)
 ref over R, P : **seq_bidding** — bid loop, validation, termination
+R -> R : self.auction = auction\n(retained for the play phase — attached to\n each AI's PlayObservation via play_state.observe)
 R -> R : _detect_belote_holder()\n(if a contract was made)
 R --> G : Contract | None
 G -> G : current_contract = contract
@@ -100,8 +101,19 @@ end
 == Trick-taking — 8 tricks ==
 
 G -> R : play_all_tricks(view)
+R -> R : play_state = PlayState.start(\n  contract, players_order,\n  tuple(tuple(player.hand) for player in players_order))
+note right of R
+  Validated seeding (contrai-core): exactly
+  4 seats, 8 distinct cards each — the very
+  Card objects held in the dealt hands, so
+  the view keeps matching playable cards by
+  identity. `play_state` becomes the single
+  source of truth for whose turn it is, the
+  legal cards, and each seat's remaining
+  hand for the rest of the trick loop.
+end note
 loop trick_num in 0..7
-    ref over R, P : **seq_trick** — playable cards, choose, winner
+    ref over R, P : **seq_trick** — to_act, legal_actions,\nchoose/request, apply, _sync_hands
 end
 R --> G : team_tricks: dict<str, list<Trick>>
 
