@@ -280,6 +280,92 @@ package "contract.py / trick.py" as p_contract {
       contract's suit for trick-winner
       determination, the partner-master legality
       check, and the view's live winner highlight.
+      The winner rule itself is the module-level
+      `current_winner(plays, trump_suit)` function
+      below — `get_current_winner` delegates to it,
+      and `PlayState` (play.py) calls it directly —
+      one implementation, not two that could drift.
+    end note
+}
+
+' =========================================================
+' Play phase (play.py) — the play-phase rule oracle,
+' Auction's sibling for card play
+' =========================================================
+package "play.py" as p_play {
+    class Play <<namedtuple>> {
+        + player : BasePlayer
+        + card : Card
+    }
+
+    class PlayState <<frozen dataclass>> {
+        + contract : Contract
+        + players : tuple<BasePlayer>
+        + hands : tuple<tuple<Card>>
+        + plays : tuple<Play> = ()
+        --
+        + {static} start(contract, players, hands) : PlayState
+        + hand_of(player: BasePlayer) : tuple<Card>
+        + legal_actions(player: BasePlayer) : tuple<Card>
+        + apply(play: Play) : PlayState        ' raises IllegalPlayError
+        + with_hands(hands: tuple<tuple<Card>>) : PlayState
+        + observe(player, bids=()) : PlayObservation
+        + is_terminal() : bool
+        --
+        + trick_number : int                    <<property>>
+        + current_trick : tuple<Play>            <<property>>
+        + completed_tricks : tuple<tuple<Play>>  <<property>>
+        + trick_winners : tuple<BasePlayer>      <<property>>
+        + to_act : BasePlayer?                   <<property>>
+    }
+
+    class PlayObservation <<frozen dataclass>> {
+        + player : BasePlayer
+        + hand : tuple<Card>
+        + contract : Contract
+        + bids : tuple<Bid>
+        + completed_tricks : tuple<tuple<Play>>
+        + current_trick : tuple<Play>
+        + legal_cards : tuple<Card>
+        --
+        + trick_number : int            <<property>>
+        + trump_suit : Suit?            <<property>>
+        + led_suit : Suit?              <<property>>
+        + played_cards : tuple<Card>    <<property>>
+        + current_winner : BasePlayer?  <<property>>
+    }
+
+    note bottom of PlayState
+      Auction's sibling for the play phase. Bare
+      constructor performs no validation (tests /
+      search forks inject arbitrary mid-round
+      states directly); start() validates a fresh
+      deal (4 players, 4×8 cards, 32 distinct).
+      Derived views (trick_number, current_trick,
+      completed_tricks, trick_winners, to_act,
+      is_terminal()) recompute from plays on every
+      access — slots=True forbids caching them.
+      legal_actions(player) enforces only the
+      follow/trump obligations, deliberately no
+      turn check — mirroring Auction.legal_actions.
+      apply(play) is the single legality-enforcing
+      transition; turn order is checked there.
+      with_hands() forks the public history onto
+      replacement hands — the determinization
+      primitive a future search-based AI would
+      sample from; no search runs on it yet.
+    end note
+
+    note bottom of PlayObservation
+      The imperfect-information projection
+      PlayState.observe(player, bids) builds: own
+      hand + public trick history + own legal
+      cards, never another seat's hand. Caveat:
+      Play.player is a live BasePlayer reference,
+      so a strategy reaching through
+      play.player.hand could still see another
+      seat's cards — sealing that off (e.g. an
+      opaque seat id) is a noted follow-up.
     end note
 }
 
@@ -296,6 +382,8 @@ package "exceptions.py" as p_exc {
         MUST_FOLLOW_SUIT
         MUST_TRUMP
         MUST_OVERTRUMP
+        OUT_OF_TURN
+        CARD_NOT_IN_HAND
     }
 
     class InvalidPlayerCountError {
@@ -397,6 +485,18 @@ Trick "1" *-- "0..4" Card        : (via plays)
 Trick "1" o-- "0..4" BasePlayer  : (via plays)
 Trick ..> Suit                   : get_current_winner(trump_suit)
 
+' Play is a (player, card) pair — same ownership split as Trick's plays
+Play "1" o-- "1" BasePlayer : player
+Play "1" *-- "1" Card       : card
+
+' PlayState references the established contract + seated players,
+' composes the flat play history, and holds per-seat remaining hands
+PlayState "1" o-- "1" Contract    : contract
+PlayState "1" o-- "4" BasePlayer  : players
+PlayState "1" *-- "0..32" Card    : hands
+PlayState "1" *-- "0..32" Play    : plays
+PlayState ..> PlayObservation     : <<observe>>
+
 ' Operations raising exceptions
 Team ..> InvalidPlayerCountError : <<raises>>
 Deck ..> InvalidPlayerCountError : <<raises>>
@@ -404,5 +504,6 @@ Deck ..> InvalidCardCountError   : <<raises>>
 ContractBid ..> InvalidContractError : <<raises (__post_init__)>>
 Contract ..> InvalidContractError    : <<raises (redouble w/o double)>>
 Trick ..> TrickStateError            : <<raises (add_play)>>
+PlayState ..> IllegalPlayError       : <<raises (apply)>>
 
 @enduml

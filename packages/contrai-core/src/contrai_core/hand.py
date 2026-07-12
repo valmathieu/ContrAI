@@ -78,8 +78,8 @@ class Hand:
     def copy(self) -> list[Card]:
         """Return a shallow ``list`` copy of the cards.
 
-        Mirrors ``list.copy`` so legacy engine code that used to treat
-        ``hand`` as a list (e.g. ``Round._get_playable_cards``) keeps
+        Mirrors ``list.copy`` so callers that treat ``hand`` as a list
+        (e.g. legal plays computed by ``PlayState.legal_actions``) keep
         working. Returns a ``list[Card]`` — not another ``Hand`` — to
         match the "list of cards" callers expect.
         """
