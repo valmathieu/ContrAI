@@ -18,17 +18,20 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (core) `PlayObservation` imperfect-information view: the projection of a `PlayState` that
   a single player is allowed to see (own hand, public trick history, legal cards), the
   input surface for AI card-play strategies.
-- (engine) AI card tracking is now live: `Round.play_trick` feeds every played card to
-  each AI seat's tracker and `Round.deal_cards` resets the counters at every deal, so
-  the expert bot's mid-round leads, master-card detection and trump accounting operate
-  on real data — the trackers existed but were never fed by the engine. The trump-void
-  inference is sound: a seat discarding behind its master partner is not marked void.
+- (engine) The expert AI reasons from sound card tracking: it derives which cards have
+  fallen and which seats are void in trump from the public trick history, so its
+  mid-round leads, master-card detection and trump accounting operate on real data. The
+  trump-void inference is careful — a seat discarding behind its master partner is not
+  read as void.
 - (engine) The expert AI stops pulling trumps once both opponents are known void in
   trump (inferred from plays where they were compelled to trump but couldn't), even
   while unseen trumps remain — those can only sit in partner's hand.
 
 ### Changed
 
+- (engine) Card-play strategies now receive a single frozen `PlayObservation` — the
+  seat's own hand, the public trick history, and its legal cards — and derive any card
+  tracking from it, so a strategy can no longer see another seat's hand by construction.
 - (engine) The trick loop is now driven by the core `PlayState`: `Round` seeds an
   immutable play-phase state at the start of play, derives the legal cards from it, and
   mirrors the players' hands and the current trick from it each play; card-play legality
@@ -57,6 +60,12 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
   AI always fell back to Spades — even when Spades never met the bidding table — and
   ignored the belote preference when more than one tied suit held a belote. It now picks
   among the tied suits only, preferring belote holders.
+
+### Removed
+
+- (engine) The `initialize_card_tracking` / `update_card_tracking` hooks on
+  `CardPlayStrategy` / `AiPlayer` (public since 0.1.0) — card tracking is now derived
+  from the observation rather than pushed to per-strategy state each play.
 
 ## [0.1.0] - 2026-06-21
 

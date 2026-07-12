@@ -1,629 +1,756 @@
 # Unit tests for the rule-based AI card-play strategy.
 #
-# These tests exercise the trick-taking logic now living on
-# ``RuleBasedCardPlayStrategy``. ``AiPlayer.choose_card`` /
-# ``initialize_card_tracking`` / ``update_card_tracking`` are public
-# delegators, so they stay on the player, while private helpers and the
-# tracking state (``_fallen_cards`` etc.) are reached through
-# ``ai_player.cardplay.*`` (the injected strategy object).
+# The strategy is handed a single frozen ``PlayObservation`` and derives
+# its own card tracking (fallen cards, inferred trump voids) from the
+# observation's public trick history — there is no mutable per-round state
+# to seed. Every scenario below is therefore expressed by building a real
+# observation (own hand, contract, and completed / in-progress tricks made
+# of genuine ``Play`` records), never by poking attributes on the strategy.
 
 import pytest
-from contrai_engine.model.player import AiPlayer
+
 from contrai_core import (
+    Card,
     Contract,
     ContractBid,
-    Hand,
+    Play,
+    PlayObservation,
+    PlayState,
 )
-from contrai_core.card import Card
-from contrai_core.team import Team
 from contrai_core.types import Suit, Rank
 
 
 def _contract(player, value, suit):
-    """Build a real Contract for the AiPlayer trick-taking tests.
-
-    The engine threads the actual ``Contract`` object from ``Round`` into
-    ``AiPlayer.choose_card``; this helper keeps the test bodies readable
-    while matching the production type.
-    """
+    """Build a real :class:`Contract` (the type the engine threads in)."""
     return Contract(ContractBid(player, value, suit))
 
 
-class TestAiPlayerTrickTaking:
-    """Test AI player trick taking strategy"""
+def _obs(
+    observer,
+    hand,
+    contract,
+    *,
+    current_trick=(),
+    completed_tricks=(),
+    legal_cards=None,
+    bids=(),
+):
+    """Assemble a :class:`PlayObservation` for ``observer``.
 
-    @pytest.fixture
-    def ai_player_with_tracking(self):
-        """Create an AI player with initialized card tracking"""
-        player = AiPlayer("TestBot", "North")
-        # Create a mock team
-        partner = AiPlayer("Partner", "South")
-        team = Team("North-South", [player, partner])
-        player.team = team
-        partner.team = team
-        player.initialize_card_tracking()
-        return player
+    Args:
+        observer: The seat the observation is from the point of view of.
+        hand: The observer's own remaining cards.
+        contract: The established :class:`Contract` (supplies trump).
+        current_trick: Plays made so far in the in-progress trick, a
+            sequence of :class:`Play`.
+        completed_tricks: Sequence of completed tricks, each a sequence of
+            four :class:`Play`.
+        legal_cards: The observer's legal plays; defaults to the whole hand
+            (the observer is leading / everything is legal).
+        bids: The auction history to attach.
+    """
+    hand = tuple(hand)
+    return PlayObservation(
+        player=observer,
+        hand=hand,
+        contract=contract,
+        bids=tuple(bids),
+        completed_tricks=tuple(tuple(trick) for trick in completed_tricks),
+        current_trick=tuple(current_trick),
+        legal_cards=tuple(hand if legal_cards is None else legal_cards),
+    )
 
-    @pytest.fixture
-    def ai_player_opponent(self):
-        """Create an opponent AI player and team"""
-        opponent1 = AiPlayer("Opponent1", "West")
-        opponent2 = AiPlayer("Opponent2", "East")
-        opponent_team = Team("East-West", [opponent1, opponent2])
-        opponent1.team = opponent_team
-        opponent2.team = opponent_team
-        return opponent1
 
-    @pytest.fixture
-    def mock_trick(self):
-        """Create a mock trick object.
+# Shorthand card constructors keep the scenario tables readable.
+def _c(suit, rank):
+    return Card(suit, rank)
 
-        Mirrors the subset of the real Trick API that AiPlayer consumes:
-        ``__len__`` (so empty-check works), ``get_led_suit`` and
-        ``get_cards`` (cards-only convenience for tests that don't care
-        about players), and ``get_plays`` (used by code paths that need
-        player identity — synthetic plays pair each card with ``None``,
-        which is sufficient because the only test exercising that path
-        mocks the methods that look at players).
-        """
-        class MockTrick:
-            def __init__(self):
-                self.cards = []
-                self.leader_position = 0
-                self.trump_suit = None
 
-            def __len__(self):
-                return len(self.cards)
+# ---------------------------------------------------------------------------
+# Opening and leading leads
+# ---------------------------------------------------------------------------
 
-            def get_cards(self):
-                return list(self.cards)
 
-            def get_led_suit(self):
-                return self.cards[0].suit if self.cards else None
+class TestOpeningLead:
+    """The very first card of the round (empty trick, trick 0)."""
 
-            def get_plays(self):
-                return [(None, card) for card in self.cards]
-        return MockTrick()
+    def test_own_contract_plays_strongest_trump(self, players):
+        north = players["N"]
+        hand = [
+            _c(Suit.SPADES, Rank.JACK),
+            _c(Suit.SPADES, Rank.ACE),
+            _c(Suit.HEARTS, Rank.KING),
+            _c(Suit.DIAMONDS, Rank.EIGHT),
+        ]
+        obs = _obs(north, hand, _contract(north, 80, Suit.SPADES))
+        result = north.cardplay.choose_card(obs)
+        assert (result.suit, result.rank) == (Suit.SPADES, Rank.JACK)
 
-    @pytest.fixture
-    def sample_hand_mixed(self):
-        """Create a mixed hand for testing"""
-        return Hand([
-            Card(Suit.SPADES, Rank.JACK),
-            Card(Suit.SPADES, Rank.ACE),
-            Card(Suit.HEARTS, Rank.KING),
-            Card(Suit.HEARTS, Rank.TEN),
-            Card(Suit.DIAMONDS, Rank.ACE),
-            Card(Suit.DIAMONDS, Rank.EIGHT),
-            Card(Suit.DIAMONDS, Rank.SEVEN),
-            Card(Suit.CLUBS, Rank.QUEEN),
-        ])
+    def test_opponents_contract_plays_ace_from_shortest_suit(self, players):
+        north, east = players["N"], players["E"]
+        hand = [
+            _c(Suit.SPADES, Rank.JACK),
+            _c(Suit.SPADES, Rank.ACE),
+            _c(Suit.HEARTS, Rank.KING),
+            _c(Suit.HEARTS, Rank.TEN),
+            _c(Suit.DIAMONDS, Rank.ACE),
+            _c(Suit.DIAMONDS, Rank.EIGHT),
+            _c(Suit.DIAMONDS, Rank.SEVEN),
+            _c(Suit.CLUBS, Rank.QUEEN),
+        ]
+        # Opponent East declares; aces are ♠A (2-card suit) and ♦A (3-card).
+        obs = _obs(north, hand, _contract(east, 100, Suit.HEARTS))
+        result = north.cardplay.choose_card(obs)
+        assert (result.suit, result.rank) == (Suit.SPADES, Rank.ACE)
 
-    def test_play_first_card_opening_round(self, ai_player_with_tracking, mock_trick, sample_hand_mixed):
-        """Test playing the very first card of the round"""
-        ai_player_with_tracking.hand = sample_hand_mixed
-        contract = _contract(ai_player_with_tracking, 80, Suit.SPADES)
 
-        # Should play the strongest trump (Jack of Spades)
-        result = ai_player_with_tracking.choose_card(mock_trick, contract, sample_hand_mixed)
-        assert result.suit == Suit.SPADES
-        assert result.rank == Rank.JACK
+class TestSubsequentLead:
+    """Leading a later trick (empty trick, trick_number > 0)."""
 
-    def test_play_first_card_opponents_contract(self, ai_player_with_tracking, ai_player_opponent, mock_trick, sample_hand_mixed):
-        """Test playing first card when opponents have contract"""
-        ai_player_with_tracking.hand = sample_hand_mixed
-        contract = _contract(ai_player_opponent, 100, Suit.HEARTS)
-
-        # Should play ace from the shortest suit (Diamonds or Spades)
-        result = ai_player_with_tracking.choose_card(mock_trick, contract, sample_hand_mixed)
-        assert result.rank == Rank.ACE
-        assert result.suit == Suit.SPADES
-
-    def test_play_leading_card_with_trump_remaining(self, ai_player_with_tracking, mock_trick):
-        """Test leading subsequent tricks when opponents might have trump"""
-        ai_player_with_tracking.hand = Hand([
-            Card(Suit.SPADES, Rank.JACK),
-            Card(Suit.SPADES, Rank.NINE),
-            Card(Suit.HEARTS, Rank.ACE),
-            Card(Suit.DIAMONDS, Rank.EIGHT)
-        ])
-        contract = _contract(ai_player_with_tracking, 100, Suit.SPADES)
-
-        # Mark some cards as fallen to simulate non-opening trick
-        ai_player_with_tracking.cardplay._fallen_cards[Suit.HEARTS].add(Rank.KING)
-
-        # Mock opponents might have trump
-        ai_player_with_tracking.cardplay._opponents_might_have_trump = lambda s: True
-
-        result = ai_player_with_tracking.choose_card(mock_trick, contract, ai_player_with_tracking.hand)
-        assert result.suit == Suit.SPADES  # Should play trump
-
-    def test_play_leading_card_no_trump_remaining(self, ai_player_with_tracking, mock_trick):
-        """Test leading when opponents have no trump left"""
-        ai_player_with_tracking.hand = Hand([
-            Card(Suit.SPADES, Rank.EIGHT),
-            Card(Suit.HEARTS, Rank.ACE),
-            Card(Suit.DIAMONDS, Rank.ACE),
-            Card(Suit.CLUBS, Rank.SEVEN)
-        ])
-        contract = _contract(ai_player_with_tracking, 100, Suit.SPADES)
-
-        # Mark some cards as fallen
-        ai_player_with_tracking.cardplay._fallen_cards[Suit.HEARTS].add(Rank.KING)
-
-        # Mock opponents have no trump
-        ai_player_with_tracking.cardplay._opponents_might_have_trump = lambda s: False
-
-        result = ai_player_with_tracking.choose_card(mock_trick, contract, ai_player_with_tracking.hand)
-        assert result.rank == Rank.ACE  # Should play ace
-
-    def test_does_not_trump_when_partner_master_non_trump_trick(
-        self, ai_player_with_tracking, mock_trick
-    ):
-        """When the AI cannot follow suit but partner is already master,
-        the AI must NOT waste a trump — even though a trump would add
-        more points to the pile. Picks a non-trump discard instead."""
-        # Hearts trump. Partner led ♠ A and is currently master.
-        # AI hand has high-points trumps PLUS a non-trump option.
-        ai_player_with_tracking.hand = Hand([
-            Card(Suit.HEARTS, Rank.JACK),    # 20 trump points — must NOT play
-            Card(Suit.HEARTS, Rank.NINE),    # 14 trump points — must NOT play
-            Card(Suit.DIAMONDS, Rank.KING),  # 4 points — should play
-        ])
-        mock_trick.cards = [Card(Suit.SPADES, Rank.ACE)]
-        mock_trick.trump_suit = Suit.HEARTS
-        ai_player_with_tracking.cardplay._is_team_winning_trick = lambda t: True
-
-        contract = _contract(ai_player_with_tracking, 100, Suit.HEARTS)
-        result = ai_player_with_tracking.choose_card(
-            mock_trick, contract, list(ai_player_with_tracking.hand)
+    def _prior_trick(self, players):
+        """A clean completed trick — four followed hearts, nobody void."""
+        return (
+            Play(players["N"], _c(Suit.HEARTS, Rank.KING)),
+            Play(players["E"], _c(Suit.HEARTS, Rank.SEVEN)),
+            Play(players["S"], _c(Suit.HEARTS, Rank.QUEEN)),
+            Play(players["W"], _c(Suit.HEARTS, Rank.EIGHT)),
         )
-        assert result.suit == Suit.DIAMONDS
-        assert result.rank == Rank.KING
 
-    def test_dumps_highest_points_non_trump_non_master_when_partner_master(
-        self, ai_player_with_tracking, mock_trick
-    ):
-        """Within the non-trump non-master candidates, pick the highest
-        points to maximize this trick's value."""
-        ai_player_with_tracking.hand = Hand([
-            Card(Suit.HEARTS, Rank.NINE),    # trump — must NOT play
-            Card(Suit.DIAMONDS, Rank.TEN),   # 10 points, non-master if A♦ out
-            Card(Suit.CLUBS, Rank.EIGHT),    # 0 points, non-master
-        ])
-        mock_trick.cards = [Card(Suit.SPADES, Rank.ACE)]
-        mock_trick.trump_suit = Suit.HEARTS
-        ai_player_with_tracking.cardplay._is_team_winning_trick = lambda t: True
-
-        contract = _contract(ai_player_with_tracking, 100, Suit.HEARTS)
-        result = ai_player_with_tracking.choose_card(
-            mock_trick, contract, list(ai_player_with_tracking.hand)
+    def test_leads_strongest_trump_when_opponents_may_hold_trump(self, players):
+        north = players["N"]
+        hand = [
+            _c(Suit.SPADES, Rank.JACK),
+            _c(Suit.SPADES, Rank.NINE),
+            _c(Suit.DIAMONDS, Rank.EIGHT),
+        ]
+        # No trumps fell in the prior trick and nobody is void, so the
+        # opponents may still hold trump — pull it.
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.SPADES),
+            completed_tricks=[self._prior_trick(players)],
         )
-        # 10♦ picked: highest-points non-trump non-master.
-        assert result.suit == Suit.DIAMONDS
-        assert result.rank == Rank.TEN
+        result = north.cardplay.choose_card(obs)
+        assert (result.suit, result.rank) == (Suit.SPADES, Rank.JACK)
 
-    def test_falls_back_to_lowest_trump_when_only_trumps_in_hand(
-        self, ai_player_with_tracking, mock_trick
-    ):
-        """Edge case: AI's entire playable set is trumps. Forced to
-        play one — picks the lowest by trump-order so we don't dump
-        the Jack or 9."""
-        ai_player_with_tracking.hand = Hand([
-            Card(Suit.HEARTS, Rank.JACK),    # top trump (order 7)
-            Card(Suit.HEARTS, Rank.NINE),    # 2nd-best (order 6)
-            Card(Suit.HEARTS, Rank.SEVEN),   # lowest (order 0)
-        ])
-        mock_trick.cards = [Card(Suit.SPADES, Rank.ACE)]
-        mock_trick.trump_suit = Suit.HEARTS
-        ai_player_with_tracking.cardplay._is_team_winning_trick = lambda t: True
-
-        contract = _contract(ai_player_with_tracking, 100, Suit.HEARTS)
-        result = ai_player_with_tracking.choose_card(
-            mock_trick, contract, list(ai_player_with_tracking.hand)
+    def test_leads_ace_when_both_opponents_known_void(self, players):
+        north = players["N"]
+        # A prior trick where East and West were both compelled to discard
+        # off-suit (no trump), proving both void — the pull must stop.
+        both_void = (
+            Play(north, _c(Suit.HEARTS, Rank.ACE)),
+            Play(players["E"], _c(Suit.CLUBS, Rank.SEVEN)),
+            Play(players["S"], _c(Suit.HEARTS, Rank.KING)),
+            Play(players["W"], _c(Suit.DIAMONDS, Rank.SEVEN)),
         )
-        assert result.suit == Suit.HEARTS
-        assert result.rank == Rank.SEVEN
-
-    def test_prefers_non_master_over_master_in_discard(
-        self, ai_player_with_tracking, mock_trick
-    ):
-        """When the AI must discard non-trump, preserve master cards
-        for later wins — pick non-masters first."""
-        ai_player_with_tracking.hand = Hand([
-            # ♣A is master (no higher club exists).
-            Card(Suit.CLUBS, Rank.ACE),
-            # ♦K is non-master (♦A still out — not in fallen set).
-            Card(Suit.DIAMONDS, Rank.KING),
-            Card(Suit.HEARTS, Rank.NINE),    # trump
-        ])
-        mock_trick.cards = [Card(Suit.SPADES, Rank.ACE)]
-        mock_trick.trump_suit = Suit.HEARTS
-        ai_player_with_tracking.cardplay._is_team_winning_trick = lambda t: True
-
-        contract = _contract(ai_player_with_tracking, 100, Suit.HEARTS)
-        result = ai_player_with_tracking.choose_card(
-            mock_trick, contract, list(ai_player_with_tracking.hand)
+        hand = [
+            _c(Suit.SPADES, Rank.JACK),
+            _c(Suit.SPADES, Rank.NINE),
+            _c(Suit.DIAMONDS, Rank.ACE),
+        ]
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.SPADES),
+            completed_tricks=[both_void],
         )
+        result = north.cardplay.choose_card(obs)
+        # Not a trump — the pull stopped; the ace goes out instead.
+        assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.ACE)
+
+
+# ---------------------------------------------------------------------------
+# Following: team currently winning
+# ---------------------------------------------------------------------------
+
+
+class TestFollowingTeamWinning:
+    """Partner is the led-suit master, so the seat adds value cheaply."""
+
+    def _partner_master_spade_lead(self, players):
+        """Partner (South) leads ♠A and stands as led-suit master."""
+        return (
+            Play(players["S"], _c(Suit.SPADES, Rank.ACE)),
+            Play(players["W"], _c(Suit.SPADES, Rank.SEVEN)),
+        )
+
+    def test_does_not_waste_trump_behind_master_partner(self, players):
+        """Cannot follow the led suit but partner is master — discard a
+        non-trump rather than burn a trump, even a points-rich one."""
+        north = players["N"]
+        hand = [
+            _c(Suit.HEARTS, Rank.JACK),   # trump — must NOT play
+            _c(Suit.HEARTS, Rank.NINE),   # trump — must NOT play
+            _c(Suit.DIAMONDS, Rank.KING),
+        ]
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.HEARTS),
+            current_trick=self._partner_master_spade_lead(players),
+        )
+        result = north.cardplay.choose_card(obs)
+        assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.KING)
+
+    def test_dumps_highest_points_non_trump_non_master(self, players):
+        north = players["N"]
+        hand = [
+            _c(Suit.HEARTS, Rank.NINE),   # trump — must NOT play
+            _c(Suit.DIAMONDS, Rank.TEN),  # 10 points, non-master (♦A still out)
+            _c(Suit.CLUBS, Rank.EIGHT),   # 0 points, non-master
+        ]
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.HEARTS),
+            current_trick=self._partner_master_spade_lead(players),
+        )
+        result = north.cardplay.choose_card(obs)
+        # Highest-points non-trump non-master → ♦10.
+        assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.TEN)
+
+    def test_prefers_non_master_over_master_in_discard(self, players):
+        north = players["N"]
+        hand = [
+            _c(Suit.CLUBS, Rank.ACE),      # master (no higher club)
+            _c(Suit.DIAMONDS, Rank.KING),  # non-master (♦A still out)
+            _c(Suit.HEARTS, Rank.NINE),    # trump
+        ]
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.HEARTS),
+            current_trick=self._partner_master_spade_lead(players),
+        )
+        result = north.cardplay.choose_card(obs)
         # ♣A preserved (master), ♥9 preserved (trump), ♦K dumped.
-        assert result.suit == Suit.DIAMONDS
-        assert result.rank == Rank.KING
+        assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.KING)
 
-    def test_does_not_overtrump_partner_who_already_cut(
-        self, ai_player_with_tracking, mock_trick
-    ):
-        """Partner already cut the non-trump-led trick. The AI must
-        NOT cover (over-trump or under-trump) — discard a non-trump."""
-        ai_player_with_tracking.hand = Hand([
-            Card(Suit.HEARTS, Rank.NINE),    # higher trump — would over-trump partner
-            Card(Suit.HEARTS, Rank.SEVEN),   # lower trump — would under-trump partner
-            Card(Suit.DIAMONDS, Rank.EIGHT), # non-trump discard
-        ])
-        # Spades led; partner trumped with ♥ A.
-        mock_trick.cards = [
-            Card(Suit.SPADES, Rank.KING),
-            Card(Suit.HEARTS, Rank.ACE),
+    def test_falls_back_to_lowest_trump_when_only_trumps_left(self, players):
+        north = players["N"]
+        hand = [
+            _c(Suit.HEARTS, Rank.JACK),   # top trump
+            _c(Suit.HEARTS, Rank.NINE),   # 2nd-best
+            _c(Suit.HEARTS, Rank.SEVEN),  # lowest
         ]
-        mock_trick.trump_suit = Suit.HEARTS
-        ai_player_with_tracking.cardplay._is_team_winning_trick = lambda t: True
-
-        contract = _contract(ai_player_with_tracking, 100, Suit.HEARTS)
-        result = ai_player_with_tracking.choose_card(
-            mock_trick, contract, list(ai_player_with_tracking.hand)
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.HEARTS),
+            current_trick=self._partner_master_spade_lead(players),
         )
-        assert result.suit == Suit.DIAMONDS
-        assert result.rank == Rank.EIGHT
+        result = north.cardplay.choose_card(obs)
+        assert (result.suit, result.rank) == (Suit.HEARTS, Rank.SEVEN)
 
-    def test_follow_suit_when_team_winning(self, ai_player_with_tracking, mock_trick):
-        """Test following suit when team is winning"""
-        ai_player_with_tracking.hand = Hand([
-            Card(Suit.HEARTS, Rank.KING),
-            Card(Suit.HEARTS, Rank.TEN),
-            Card(Suit.HEARTS, Rank.EIGHT),
-            Card(Suit.SPADES, Rank.ACE)
-        ])
-
-        # Set up trick where partner is winning
-        mock_trick.cards = [Card(Suit.HEARTS, Rank.QUEEN), Card(Suit.HEARTS, Rank.SEVEN)]
-        mock_trick.trump_suit = Suit.SPADES
-
-        # Mock team is winning
-        ai_player_with_tracking.cardplay._is_team_winning_trick = lambda t: True
-
-        playable_cards = [Card(Suit.HEARTS, Rank.KING), Card(Suit.HEARTS, Rank.TEN), Card(Suit.HEARTS, Rank.EIGHT)]
-        result = ai_player_with_tracking.choose_card(mock_trick, _contract(ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
-
-        # Should play the highest point card (King or 10)
-        assert result.suit == Suit.HEARTS
-        assert result.rank == Rank.TEN
-
-    def test_follow_suit_when_team_losing_can_beat(self, ai_player_with_tracking, mock_trick):
-        """Test following suit when team is losing but can beat current card"""
-        ai_player_with_tracking.hand = Hand([
-            Card(Suit.HEARTS, Rank.ACE),
-            Card(Suit.HEARTS, Rank.EIGHT),
-            Card(Suit.SPADES, Rank.JACK)
-        ])
-
-        # Set up trick where opponent is winning with King
-        mock_trick.cards = [Card(Suit.HEARTS, Rank.KING)]
-        mock_trick.trump_suit = Suit.SPADES
-
-        # Mock team is losing
-        ai_player_with_tracking.cardplay._is_team_winning_trick = lambda t: False
-
-        playable_cards = [Card(Suit.HEARTS, Rank.ACE), Card(Suit.HEARTS, Rank.EIGHT)]
-        result = ai_player_with_tracking.choose_card(mock_trick, _contract(ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
-
-        # Should play Ace to beat King
-        assert result.rank == Rank.ACE
-        assert result.suit == Suit.HEARTS
-
-    def test_follow_suit_when_team_losing_cannot_beat(self, ai_player_with_tracking, mock_trick):
-        """Test following suit when team is losing and cannot beat"""
-        ai_player_with_tracking.hand = Hand([
-            Card(Suit.HEARTS, Rank.JACK),
-            Card(Suit.HEARTS, Rank.EIGHT),
-            Card(Suit.SPADES, Rank.JACK)
-        ])
-
-        # Set up trick where opponent is winning with Ace
-        mock_trick.cards = [Card(Suit.HEARTS, Rank.ACE)]
-        mock_trick.trump_suit = Suit.SPADES
-
-        # Mock team is losing
-        ai_player_with_tracking.cardplay._is_team_winning_trick = lambda t: False
-
-        playable_cards = [Card(Suit.HEARTS, Rank.JACK), Card(Suit.HEARTS, Rank.EIGHT)]
-        result = ai_player_with_tracking.choose_card(mock_trick, _contract(ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
-
-        # Should play the lowest card (8)
-        assert result.rank == Rank.EIGHT
-        assert result.suit == Suit.HEARTS
-
-    def test_trump_when_cannot_follow_suit(self, ai_player_with_tracking, mock_trick):
-        """Test trumping when cannot follow suit and team is losing"""
-        ai_player_with_tracking.hand = Hand([
-            Card(Suit.SPADES, Rank.JACK),
-            Card(Suit.SPADES, Rank.NINE),
-            Card(Suit.DIAMONDS, Rank.EIGHT)
-        ])
-
-        # Set up trick with Hearts led
-        mock_trick.cards = [Card(Suit.HEARTS, Rank.KING)]
-        mock_trick.trump_suit = Suit.SPADES
-
-        # Mock team is losing and can trump win
-        ai_player_with_tracking.cardplay._is_team_winning_trick = lambda t: False
-        ai_player_with_tracking.cardplay._can_trump_win = lambda card, trick, trump: card.rank == Rank.JACK
-
-        playable_cards = [Card(Suit.SPADES, Rank.JACK), Card(Suit.SPADES, Rank.NINE), Card(Suit.DIAMONDS, Rank.EIGHT)]
-        result = ai_player_with_tracking.choose_card(mock_trick, _contract(ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
-
-        # Should trump with Jack (lowest winning trump)
-        assert result.suit == Suit.SPADES
-        assert result.rank == Rank.JACK
-
-    def test_discard_when_cannot_follow_or_trump(self, ai_player_with_tracking, mock_trick):
-        """Test discarding when cannot follow suit or trump effectively"""
-        ai_player_with_tracking.hand = Hand([
-            Card(Suit.DIAMONDS, Rank.SEVEN),
-            Card(Suit.CLUBS, Rank.QUEEN),
-            Card(Suit.CLUBS, Rank.JACK),
-            Card(Suit.CLUBS, Rank.TEN)
-        ])
-
-        # Set up trick with Hearts led and Spades trump
-        mock_trick.cards = [Card(Suit.HEARTS, Rank.KING)]
-        mock_trick.trump_suit = Suit.SPADES
-
-        # Mock team is losing, no trump cards, all cards are not masters
-        ai_player_with_tracking.cardplay._is_team_winning_trick = lambda t: False
-        ai_player_with_tracking.cardplay._is_master_card = lambda card, trump: False
-
-        playable_cards = [Card(Suit.DIAMONDS, Rank.SEVEN), Card(Suit.CLUBS, Rank.QUEEN), Card(Suit.CLUBS, Rank.JACK), Card(Suit.CLUBS, Rank.TEN)]
-        result = ai_player_with_tracking.choose_card(mock_trick, _contract(ai_player_with_tracking, 100, Suit.SPADES), playable_cards)
-
-        # Should discard lowest from the shortest suit
-        assert result.rank == Rank.SEVEN  # Lowest point card
-        assert result.suit == Suit.DIAMONDS  # From shorter suit
-
-    def test_card_tracking_initialization(self, ai_player_with_tracking):
-        """Test that card tracking is properly initialized"""
-        assert hasattr(ai_player_with_tracking.cardplay, '_fallen_cards')
-        assert hasattr(ai_player_with_tracking.cardplay, '_players_without_trump')
-        assert len(ai_player_with_tracking.cardplay._fallen_cards) == 4
-        for suit_cards in ai_player_with_tracking.cardplay._fallen_cards.values():
-            assert isinstance(suit_cards, set)
+    def test_follows_suit_with_highest_points(self, players):
+        north = players["N"]
+        # Partner (South) leads ♥Q and is led-suit master; ♠ is trump.
+        current = (
+            Play(players["S"], _c(Suit.HEARTS, Rank.QUEEN)),
+            Play(players["W"], _c(Suit.HEARTS, Rank.SEVEN)),
+        )
+        hand = [
+            _c(Suit.HEARTS, Rank.KING),
+            _c(Suit.HEARTS, Rank.TEN),
+            _c(Suit.HEARTS, Rank.EIGHT),
+            _c(Suit.SPADES, Rank.ACE),
+        ]
+        playable = [
+            _c(Suit.HEARTS, Rank.KING),
+            _c(Suit.HEARTS, Rank.TEN),
+            _c(Suit.HEARTS, Rank.EIGHT),
+        ]
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.SPADES),
+            current_trick=current,
+            legal_cards=playable,
+        )
+        result = north.cardplay.choose_card(obs)
+        # ♥10 is worth the most points among the followable hearts.
+        assert (result.suit, result.rank) == (Suit.HEARTS, Rank.TEN)
 
 
-    def test_update_card_tracking(self, ai_player_with_tracking, ai_player_opponent):
-        """Test updating card tracking with played cards"""
-        # Test the update_card_tracking method directly
-        card = Card(Suit.HEARTS, Rank.KING)
-        ai_player_with_tracking.update_card_tracking(card, ai_player_opponent, Suit.HEARTS, Suit.SPADES)
+# ---------------------------------------------------------------------------
+# Following: team currently losing
+# ---------------------------------------------------------------------------
 
-        # Players list without trump should be empty
-        assert ai_player_with_tracking.cardplay._players_without_trump == set()
-        assert Rank.KING in ai_player_with_tracking.cardplay._fallen_cards[Suit.HEARTS]
 
-        # Test trump tracking - player couldn't follow suit and didn't trump
-        card2 = Card(Suit.DIAMONDS, Rank.EIGHT)
-        ai_player_with_tracking.update_card_tracking(card2, ai_player_opponent.team.players[1], Suit.HEARTS, Suit.SPADES)
+class TestFollowingTeamLosing:
+    """An opponent holds the led-suit master — try to take the trick."""
 
-        # West should be marked as having no trump (couldn't follow Hearts, didn't trump)
-        assert ai_player_opponent.team.players[1] in ai_player_with_tracking.cardplay._players_without_trump
+    def test_follows_suit_and_beats_when_able(self, players):
+        north = players["N"]
+        # West (opponent) leads ♥K; North is 2nd to act.
+        current = (Play(players["W"], _c(Suit.HEARTS, Rank.KING)),)
+        hand = [
+            _c(Suit.HEARTS, Rank.ACE),
+            _c(Suit.HEARTS, Rank.EIGHT),
+            _c(Suit.SPADES, Rank.JACK),
+        ]
+        playable = [_c(Suit.HEARTS, Rank.ACE), _c(Suit.HEARTS, Rank.EIGHT)]
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.SPADES),
+            current_trick=current,
+            legal_cards=playable,
+        )
+        result = north.cardplay.choose_card(obs)
+        assert (result.suit, result.rank) == (Suit.HEARTS, Rank.ACE)
 
-        # With 2 trump in hand and 2 fallen, opponents might have 4 remaining
-        ai_player_with_tracking.hand = Hand([Card(Suit.SPADES, Rank.JACK), Card(Suit.SPADES, Rank.NINE)])
-        ai_player_with_tracking.cardplay._fallen_cards[Suit.SPADES] = {Rank.KING, Rank.QUEEN}
-        result = ai_player_with_tracking.cardplay._opponents_might_have_trump(Suit.SPADES)
-        assert result is True
+    def test_follows_suit_low_when_cannot_beat(self, players):
+        north = players["N"]
+        current = (Play(players["W"], _c(Suit.HEARTS, Rank.ACE)),)
+        hand = [
+            _c(Suit.HEARTS, Rank.JACK),
+            _c(Suit.HEARTS, Rank.EIGHT),
+            _c(Suit.SPADES, Rank.JACK),
+        ]
+        playable = [_c(Suit.HEARTS, Rank.JACK), _c(Suit.HEARTS, Rank.EIGHT)]
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.SPADES),
+            current_trick=current,
+            legal_cards=playable,
+        )
+        result = north.cardplay.choose_card(obs)
+        # Cannot beat ♥A — throw the lowest heart by points.
+        assert (result.suit, result.rank) == (Suit.HEARTS, Rank.EIGHT)
 
-        # Mark more trump cards as fallen
-        ai_player_with_tracking.cardplay._fallen_cards[Suit.SPADES] = {Rank.KING, Rank.QUEEN, Rank.ACE, Rank.TEN, Rank.EIGHT, Rank.SEVEN}
+    def test_trumps_with_lowest_winning_trump(self, players):
+        north = players["N"]
+        # West leads ♥K; North is void in hearts and can ruff.
+        current = (Play(players["W"], _c(Suit.HEARTS, Rank.KING)),)
+        hand = [
+            _c(Suit.SPADES, Rank.JACK),
+            _c(Suit.SPADES, Rank.NINE),
+            _c(Suit.DIAMONDS, Rank.EIGHT),
+        ]
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.SPADES),
+            current_trick=current,
+        )
+        result = north.cardplay.choose_card(obs)
+        # Both trumps beat a bare heart; the lowest winning trump goes in.
+        assert (result.suit, result.rank) == (Suit.SPADES, Rank.NINE)
 
-        # With 2 trump in hand and 6 fallen, opponents have 0 remaining
-        result = ai_player_with_tracking.cardplay._opponents_might_have_trump(Suit.SPADES)
-        assert result is False
-
-    def test_voluntary_discard_does_not_mark_void(
-        self, ai_player_with_tracking, ai_player_opponent
+    def test_discards_lowest_short_suit_when_cannot_follow_or_trump(
+        self, players
     ):
-        """A discard behind a master partner is voluntary — the card is
-        recorded but the player is NOT marked void in trump."""
-        card = Card(Suit.CLUBS, Rank.SEVEN)
-        ai_player_with_tracking.update_card_tracking(
-            card, ai_player_opponent, Suit.HEARTS, Suit.SPADES,
-            partner_was_master=True,
+        north = players["N"]
+        # West leads ♥K; ♠ trump; North holds neither hearts nor spades.
+        current = (Play(players["W"], _c(Suit.HEARTS, Rank.KING)),)
+        # ♣A would be master — a real ♦7 (shortest suit, non-master) goes.
+        prior = (
+            Play(players["N"], _c(Suit.DIAMONDS, Rank.ACE)),
+            Play(players["E"], _c(Suit.DIAMONDS, Rank.KING)),
+            Play(players["S"], _c(Suit.DIAMONDS, Rank.TEN)),
+            Play(players["W"], _c(Suit.DIAMONDS, Rank.QUEEN)),
         )
-
-        assert Rank.SEVEN in ai_player_with_tracking.cardplay._fallen_cards[Suit.CLUBS]
-        assert ai_player_with_tracking.cardplay._players_without_trump == set()
-
-    def test_trump_lead_void_proof_ignores_partner_master(
-        self, ai_player_with_tracking, ai_player_opponent
-    ):
-        """On a trump lead, holding trump always forces playing it — a
-        non-trump card proves the void regardless of the partner-master
-        flag."""
-        card = Card(Suit.CLUBS, Rank.SEVEN)
-        ai_player_with_tracking.update_card_tracking(
-            card, ai_player_opponent, Suit.SPADES, Suit.SPADES,
-            partner_was_master=True,
+        hand = [
+            _c(Suit.DIAMONDS, Rank.SEVEN),
+            _c(Suit.CLUBS, Rank.QUEEN),
+            _c(Suit.CLUBS, Rank.JACK),
+            _c(Suit.CLUBS, Rank.TEN),
+        ]
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.SPADES),
+            current_trick=current,
+            completed_tricks=[prior],
         )
+        result = north.cardplay.choose_card(obs)
+        # Diamonds is the shortest suit; ♦7 is its lowest non-master card.
+        assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.SEVEN)
 
-        assert (
-            ai_player_opponent
-            in ai_player_with_tracking.cardplay._players_without_trump
-        )
 
-    def test_no_trump_pull_when_both_opponents_void(
-        self, ai_player_with_tracking, ai_player_opponent
-    ):
-        """Counting alone says trumps remain unseen, but both opponents
-        are known void — the unseen trumps can only sit in partner's
-        hand, so the pull stops."""
-        ai_player_with_tracking.hand = Hand([Card(Suit.SPADES, Rank.JACK)])
-        west = ai_player_opponent
-        east = ai_player_opponent.team.players[1]
-        ai_player_with_tracking.cardplay._players_without_trump = {west, east}
+# ---------------------------------------------------------------------------
+# Routing: opening vs leading vs following
+# ---------------------------------------------------------------------------
 
-        result = ai_player_with_tracking.cardplay._opponents_might_have_trump(
-            Suit.SPADES
-        )
-        assert result is False
 
-    def test_trump_pull_continues_when_only_one_opponent_void(
-        self, ai_player_with_tracking, ai_player_opponent
-    ):
-        """One opponent void is not enough — the other might still hold
-        trump, so the pull continues."""
-        ai_player_with_tracking.hand = Hand([Card(Suit.SPADES, Rank.JACK)])
-        ai_player_with_tracking.cardplay._players_without_trump = {
-            ai_player_opponent
-        }
+class TestRouting:
+    """``choose_card`` routes purely on the trick shape, not on tracking."""
 
-        result = ai_player_with_tracking.cardplay._opponents_might_have_trump(
-            Suit.SPADES
-        )
-        assert result is True
-
-    def test_partner_void_does_not_stop_the_trump_pull(
-        self, ai_player_with_tracking
-    ):
-        """A void *partner* says nothing about the opponents — own-team
-        entries are filtered out of the inference."""
-        ai_player_with_tracking.hand = Hand([Card(Suit.SPADES, Rank.JACK)])
-        partner = ai_player_with_tracking.team.players[1]
-        ai_player_with_tracking.cardplay._players_without_trump = {partner}
-
-        result = ai_player_with_tracking.cardplay._opponents_might_have_trump(
-            Suit.SPADES
-        )
-        assert result is True
-
-    def test_counting_alone_still_stops_the_trump_pull(
-        self, ai_player_with_tracking
-    ):
-        """Pre-existing behavior preserved: every trump outside our hand
-        has fallen — no void knowledge needed to stop the pull."""
-        ai_player_with_tracking.hand = Hand([
-            Card(Suit.SPADES, Rank.JACK), Card(Suit.SPADES, Rank.NINE)
-        ])
-        ai_player_with_tracking.cardplay._fallen_cards[Suit.SPADES] = {
-            Rank.KING, Rank.QUEEN, Rank.ACE, Rank.TEN, Rank.EIGHT, Rank.SEVEN
-        }
-        assert ai_player_with_tracking.cardplay._players_without_trump == set()
-
-        result = ai_player_with_tracking.cardplay._opponents_might_have_trump(
-            Suit.SPADES
-        )
-        assert result is False
-
-    def test_is_master_card_detection(self, ai_player_with_tracking):
-        """Test detection of master cards"""
-        # Set up fallen cards
-        ai_player_with_tracking.cardplay._fallen_cards[Suit.HEARTS] = {Rank.ACE, Rank.QUEEN, Rank.EIGHT}
-
-        # Ace should be master now
-        ace_hearts = Card(Suit.HEARTS, Rank.TEN)
-        result = ai_player_with_tracking.cardplay._is_master_card(ace_hearts, Suit.SPADES)
-        assert result is True
-
-        # 10 should not be master (Ace still out)
-        ten_hearts = Card(Suit.HEARTS, Rank.KING)
-        result = ai_player_with_tracking.cardplay._is_master_card(ten_hearts, Suit.SPADES)
-        assert result is False
-
-    def test_trump_order_vs_normal_order(self, ai_player_with_tracking):
-        """Test that trump and normal card orders are handled correctly"""
-        # Normal order: 7, 8, 9, Jack, Queen, King, 10, Ace
-        normal_higher = ai_player_with_tracking.cardplay._get_higher_ranks(Rank.NINE, Suit.HEARTS, Suit.SPADES)
-        assert Rank.JACK in normal_higher
-        assert Rank.ACE in normal_higher
-
-        # Trump order: 7, 8, Queen, King, 10, Ace, 9, Jack
-        trump_higher = ai_player_with_tracking.cardplay._get_higher_ranks(Rank.NINE, Suit.SPADES, Suit.SPADES)
-        assert Rank.JACK in trump_higher
-        assert Rank.ACE not in trump_higher  # 9 is higher than Ace in trump
-
-    def test_team_winning_trick_detection(self, ai_player_with_tracking, mock_trick):
-        """Test detection of whether team is winning current trick"""
-        # Set up mock trick with partner winning
-        mock_trick.cards = [Card(Suit.HEARTS, Rank.KING), Card(Suit.HEARTS, Rank.ACE)]
-        mock_trick.leader_position = 0
-
-        # Mock partner position and strongest card detection
-        ai_player_with_tracking.cardplay._get_partner_position = lambda: 1  # Partner at position 1
-        ai_player_with_tracking.cardplay._get_strongest_card_position = lambda t, ts: 1  # Position 1 winning
-
-        result = ai_player_with_tracking.cardplay._is_team_winning_trick(mock_trick)
-        assert result is True
-
-        # Change winning position to opponent
-        ai_player_with_tracking.cardplay._get_strongest_card_position = lambda t, ts: 2  # Position 2 winning
-
-        result = ai_player_with_tracking.cardplay._is_team_winning_trick(mock_trick)
-        assert result is False
-
-    def test_strongest_card_in_trick_with_trump(self, ai_player_with_tracking, mock_trick):
-        """Test finding strongest card when trump is involved"""
-        mock_trick.cards = [
-            Card(Suit.HEARTS, Rank.ACE),    # Led suit
-            Card(Suit.HEARTS, Rank.KING),   # Following suit
-            Card(Suit.SPADES, Rank.EIGHT)       # Trump beats all
+    def _hand(self):
+        # Aces sit in a 1-card suit (♠) and a 2-card suit (♦): opening picks
+        # the shortest-suit ace, leading picks the longest-suit ace.
+        return [
+            _c(Suit.SPADES, Rank.ACE),
+            _c(Suit.DIAMONDS, Rank.ACE),
+            _c(Suit.DIAMONDS, Rank.EIGHT),
         ]
 
-        result = ai_player_with_tracking.cardplay._get_strongest_card_in_trick(mock_trick, Suit.SPADES)
-        assert result.suit == Suit.SPADES
-        assert result.rank == Rank.EIGHT
+    def test_empty_trick_zero_takes_the_opening_path(self, players):
+        north, east = players["N"], players["E"]
+        obs = _obs(north, self._hand(), _contract(east, 100, Suit.HEARTS))
+        assert obs.trick_number == 0
+        result = north.cardplay.choose_card(obs)
+        # Opening → ace from the shortest suit (♠A).
+        assert (result.suit, result.rank) == (Suit.SPADES, Rank.ACE)
 
-    def test_strongest_card_in_trick_no_trump(self, ai_player_with_tracking, mock_trick):
-        """Test finding strongest card when no trump is played"""
-        mock_trick.cards = [
-            Card(Suit.HEARTS, Rank.KING),   # Led suit
-            Card(Suit.HEARTS, Rank.ACE),    # Higher in led suit
-            Card(Suit.DIAMONDS, Rank.ACE)   # Different suit, doesn't matter
-        ]
+    def test_empty_trick_after_history_takes_the_leading_path(self, players):
+        north, east = players["N"], players["E"]
+        prior = (
+            Play(players["N"], _c(Suit.HEARTS, Rank.KING)),
+            Play(players["E"], _c(Suit.HEARTS, Rank.SEVEN)),
+            Play(players["S"], _c(Suit.HEARTS, Rank.QUEEN)),
+            Play(players["W"], _c(Suit.HEARTS, Rank.EIGHT)),
+        )
+        obs = _obs(
+            north,
+            self._hand(),
+            _contract(east, 100, Suit.HEARTS),
+            completed_tricks=[prior],
+        )
+        assert obs.trick_number == 1
+        result = north.cardplay.choose_card(obs)
+        # Leading → ace from the longest suit (♦A).
+        assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.ACE)
 
-        result = ai_player_with_tracking.cardplay._get_strongest_card_in_trick(mock_trick, Suit.SPADES)
-        assert result.suit == Suit.HEARTS
-        assert result.rank == Rank.ACE
+    def test_non_empty_trick_takes_the_following_path(self, players):
+        north = players["N"]
+        # Opponent West leads ♥A; North can only follow low.
+        current = (Play(players["W"], _c(Suit.HEARTS, Rank.ACE)),)
+        hand = [_c(Suit.HEARTS, Rank.SEVEN), _c(Suit.HEARTS, Rank.EIGHT)]
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.SPADES),
+            current_trick=current,
+        )
+        result = north.cardplay.choose_card(obs)
+        # Following a losing trick it cannot beat → lowest heart.
+        assert (result.suit, result.rank) == (Suit.HEARTS, Rank.SEVEN)
 
-    def test_can_trump_win_logic(self, ai_player_with_tracking, mock_trick):
-        """Test logic for determining if a trump card can win"""
-        mock_trick.cards = [
-            Card(Suit.HEARTS, Rank.ACE),
-            Card(Suit.SPADES, Rank.EIGHT)  # Current trump winning
-        ]
 
-        # Jack of trump should beat 8 of trump
-        trump_jack = Card(Suit.SPADES, Rank.JACK)
-        result = ai_player_with_tracking.cardplay._can_trump_win(trump_jack, mock_trick, Suit.SPADES)
-        assert result is True
+# ---------------------------------------------------------------------------
+# Parity suite: _derive_tracking rebuilds fallen cards and trump voids
+# ---------------------------------------------------------------------------
 
-        # 7 of trump should not beat 8 of trump
-        trump_seven = Card(Suit.SPADES, Rank.SEVEN)
-        result = ai_player_with_tracking.cardplay._can_trump_win(trump_seven, mock_trick, Suit.SPADES)
-        assert result is False
 
-    def test_is_stronger_card_comparison(self, ai_player_with_tracking):
-        """Test card strength comparison logic"""
-        # Trump vs non-trump
-        trump_card = Card(Suit.SPADES, Rank.SEVEN)
-        non_trump = Card(Suit.HEARTS, Rank.ACE)
-        result = ai_player_with_tracking.cardplay._is_stronger_card(trump_card, non_trump, Suit.SPADES)
-        assert result is True
+class TestDeriveTracking:
+    """The replay of the public history must reconstruct exactly the
+    fallen-card map and trump-void set a per-card tracker would accumulate.
+    """
 
-        # Same suit comparison
-        higher_card = Card(Suit.HEARTS, Rank.ACE)
-        lower_card = Card(Suit.HEARTS, Rank.KING)
-        result = ai_player_with_tracking.cardplay._is_stronger_card(higher_card, lower_card, Suit.SPADES)
-        assert result is True
+    def test_fallen_counts_every_card_including_own_plays(self, players):
+        north = players["N"]
+        completed = (
+            Play(players["N"], _c(Suit.HEARTS, Rank.KING)),
+            Play(players["E"], _c(Suit.HEARTS, Rank.SEVEN)),
+            Play(players["S"], _c(Suit.HEARTS, Rank.EIGHT)),
+            Play(players["W"], _c(Suit.HEARTS, Rank.NINE)),
+        )
+        current = (Play(players["N"], _c(Suit.CLUBS, Rank.ACE)),)
+        obs = _obs(
+            north,
+            [_c(Suit.CLUBS, Rank.ACE)],
+            _contract(north, 100, Suit.SPADES),
+            completed_tricks=[completed],
+            current_trick=current,
+        )
+        fallen, voids = north.cardplay._derive_tracking(obs)
+        assert fallen[Suit.HEARTS] == {Rank.KING, Rank.SEVEN, Rank.EIGHT, Rank.NINE}
+        # North's own club is counted just like everyone else's cards.
+        assert fallen[Suit.CLUBS] == {Rank.ACE}
+        assert fallen[Suit.SPADES] == set()
+        assert fallen[Suit.DIAMONDS] == set()
+        assert voids == set()
 
-        # Trump vs trump
-        trump_jack = Card(Suit.SPADES, Rank.JACK)
-        trump_nine = Card(Suit.SPADES, Rank.NINE)
-        result = ai_player_with_tracking.cardplay._is_stronger_card(trump_jack, trump_nine, Suit.SPADES)
-        assert result is True
+    def test_partner_master_discard_proves_no_void(self, players):
+        """East discards behind its master partner West — proves nothing."""
+        north = players["N"]
+        # West leads ♥A (master); East discards a club while West is master.
+        completed = (
+            Play(players["W"], _c(Suit.HEARTS, Rank.ACE)),
+            Play(players["N"], _c(Suit.HEARTS, Rank.SEVEN)),
+            Play(players["E"], _c(Suit.CLUBS, Rank.SEVEN)),
+            Play(players["S"], _c(Suit.HEARTS, Rank.EIGHT)),
+        )
+        obs = _obs(
+            north,
+            [_c(Suit.SPADES, Rank.JACK)],
+            _contract(north, 100, Suit.SPADES),
+            completed_tricks=[completed],
+        )
+        fallen, voids = north.cardplay._derive_tracking(obs)
+        assert Rank.SEVEN in fallen[Suit.CLUBS]
+        assert players["E"] not in voids  # partner-master exemption
+
+    def test_trump_lead_off_suit_always_proves_void(self, players):
+        """On a trump lead the partner-master exemption does not apply."""
+        north = players["N"]
+        # East leads ♠A (trump); West (East's partner) is master, yet East's
+        # partner-master status must NOT excuse a later off-trump card. Here
+        # South discards off-trump on the trump lead → South is void.
+        completed = (
+            Play(players["E"], _c(Suit.SPADES, Rank.ACE)),
+            Play(players["S"], _c(Suit.HEARTS, Rank.SEVEN)),
+            Play(players["W"], _c(Suit.SPADES, Rank.SEVEN)),
+            Play(players["N"], _c(Suit.SPADES, Rank.EIGHT)),
+        )
+        obs = _obs(
+            north,
+            [_c(Suit.CLUBS, Rank.JACK)],
+            _contract(north, 100, Suit.SPADES),
+            completed_tricks=[completed],
+        )
+        _, voids = north.cardplay._derive_tracking(obs)
+        assert players["S"] in voids
+
+    def test_pre_play_winner_is_read_before_the_play_lands(self, players):
+        """The off-by-one case: a seat compelled to discard is void even
+        when its partner becomes master only through a LATER play."""
+        north = players["N"]
+        # ♠ trump, ♥ led by North.
+        #   0 N ♥K   (leads)
+        #   1 E ♣7   → prior master is North (opponent of East) → E void
+        #   2 S ♥Q   (follows)
+        #   3 W ♠7   → West (East's partner) ruffs and becomes master
+        # Judged post-hoc, East's partner ends the trick master and the void
+        # would vanish; judged pre-play (correctly), East was compelled.
+        completed = (
+            Play(players["N"], _c(Suit.HEARTS, Rank.KING)),
+            Play(players["E"], _c(Suit.CLUBS, Rank.SEVEN)),
+            Play(players["S"], _c(Suit.HEARTS, Rank.QUEEN)),
+            Play(players["W"], _c(Suit.SPADES, Rank.SEVEN)),
+        )
+        obs = _obs(
+            north,
+            [_c(Suit.DIAMONDS, Rank.ACE)],
+            _contract(north, 100, Suit.SPADES),
+            completed_tricks=[completed],
+        )
+        fallen, voids = north.cardplay._derive_tracking(obs)
+        assert players["E"] in voids
+        assert fallen[Suit.CLUBS] == {Rank.SEVEN}
+        assert fallen[Suit.SPADES] == {Rank.SEVEN}
+
+    def test_derivation_matches_a_real_play_state_projection(self, players):
+        """A history-seeded observation and one projected from a bare
+        ``PlayState`` derive the same tracking — the two construction
+        routes agree."""
+        north = players["N"]
+        order = (players["N"], players["E"], players["S"], players["W"])
+        # A completed trick with a compelled off-suit discard by East.
+        plays = (
+            Play(players["N"], _c(Suit.HEARTS, Rank.ACE)),
+            Play(players["E"], _c(Suit.CLUBS, Rank.SEVEN)),
+            Play(players["S"], _c(Suit.HEARTS, Rank.KING)),
+            Play(players["W"], _c(Suit.HEARTS, Rank.EIGHT)),
+        )
+        contract = _contract(north, 100, Suit.SPADES)
+        # Remaining hands are irrelevant to derivation; give North a spare.
+        hands = (
+            (_c(Suit.SPADES, Rank.JACK),),
+            (_c(Suit.SPADES, Rank.NINE),),
+            (_c(Suit.SPADES, Rank.SEVEN),),
+            (_c(Suit.SPADES, Rank.EIGHT),),
+        )
+        state = PlayState(contract, order, hands, plays)
+        projected = state.observe(north, bids=())
+
+        seeded = _obs(
+            north,
+            [_c(Suit.SPADES, Rank.JACK)],
+            contract,
+            completed_tricks=[plays],
+        )
+
+        assert north.cardplay._derive_tracking(projected) == (
+            north.cardplay._derive_tracking(seeded)
+        )
+
+
+# ---------------------------------------------------------------------------
+# Parity suite: the trump-pull inference reads derived voids / fallen counts
+# ---------------------------------------------------------------------------
+
+
+class TestTrumpPullInference:
+    """``_opponents_might_have_trump`` fed the tracking the replay derives.
+
+    Each case seeds the inference through real completed-trick history and
+    asserts the pull decision, never by poking a void set onto the strategy.
+    """
+
+    def _derive(self, players, completed, hand):
+        north = players["N"]
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.SPADES),
+            completed_tricks=completed,
+        )
+        return north.cardplay, north.cardplay._derive_tracking(obs), obs.hand
+
+    def test_both_opponents_void_stops_the_pull(self, players):
+        north = players["N"]
+        both_void = (
+            Play(north, _c(Suit.HEARTS, Rank.ACE)),
+            Play(players["E"], _c(Suit.CLUBS, Rank.SEVEN)),   # East void
+            Play(players["S"], _c(Suit.HEARTS, Rank.KING)),
+            Play(players["W"], _c(Suit.DIAMONDS, Rank.SEVEN)),  # West void
+        )
+        hand = [_c(Suit.SPADES, Rank.JACK)]
+        strat, (fallen, voids), obs_hand = self._derive(
+            players, [both_void], hand
+        )
+        assert {players["E"], players["W"]} <= voids
+        assert strat._opponents_might_have_trump(
+            Suit.SPADES, fallen, voids, obs_hand
+        ) is False
+
+    def test_one_opponent_void_keeps_the_pull(self, players):
+        north = players["N"]
+        one_void = (
+            Play(north, _c(Suit.HEARTS, Rank.ACE)),
+            Play(players["E"], _c(Suit.CLUBS, Rank.SEVEN)),  # East void
+            Play(players["S"], _c(Suit.HEARTS, Rank.KING)),
+            Play(players["W"], _c(Suit.HEARTS, Rank.SEVEN)),  # West follows
+        )
+        hand = [_c(Suit.SPADES, Rank.JACK)]
+        strat, (fallen, voids), obs_hand = self._derive(
+            players, [one_void], hand
+        )
+        assert players["E"] in voids and players["W"] not in voids
+        assert strat._opponents_might_have_trump(
+            Suit.SPADES, fallen, voids, obs_hand
+        ) is True
+
+    def test_partner_void_does_not_stop_the_pull(self, players):
+        north = players["N"]
+        # East leads ♥A; South (North's partner) is compelled void; the two
+        # opponents are not — a void partner says nothing about them.
+        partner_void = (
+            Play(players["E"], _c(Suit.HEARTS, Rank.ACE)),
+            Play(players["S"], _c(Suit.CLUBS, Rank.SEVEN)),  # South void
+            Play(players["W"], _c(Suit.HEARTS, Rank.KING)),
+            Play(north, _c(Suit.HEARTS, Rank.SEVEN)),
+        )
+        hand = [_c(Suit.SPADES, Rank.JACK)]
+        strat, (fallen, voids), obs_hand = self._derive(
+            players, [partner_void], hand
+        )
+        assert players["S"] in voids
+        assert strat._opponents_might_have_trump(
+            Suit.SPADES, fallen, voids, obs_hand
+        ) is True
+
+    def test_counting_alone_stops_the_pull(self, players):
+        north = players["N"]
+        # Six spades fall across two tricks; North holds the other two, so
+        # no unseen trump remains even without any void knowledge.
+        trick_a = (
+            Play(players["N"], _c(Suit.SPADES, Rank.KING)),
+            Play(players["E"], _c(Suit.SPADES, Rank.QUEEN)),
+            Play(players["S"], _c(Suit.SPADES, Rank.TEN)),
+            Play(players["W"], _c(Suit.SPADES, Rank.EIGHT)),
+        )
+        trick_b = (
+            Play(players["N"], _c(Suit.SPADES, Rank.ACE)),
+            Play(players["E"], _c(Suit.SPADES, Rank.SEVEN)),
+            Play(players["S"], _c(Suit.HEARTS, Rank.SEVEN)),
+            Play(players["W"], _c(Suit.HEARTS, Rank.EIGHT)),
+        )
+        hand = [_c(Suit.SPADES, Rank.JACK), _c(Suit.SPADES, Rank.NINE)]
+        strat, (fallen, voids), obs_hand = self._derive(
+            players, [trick_a, trick_b], hand
+        )
+        assert len(fallen[Suit.SPADES]) == 6
+        assert strat._opponents_might_have_trump(
+            Suit.SPADES, fallen, voids, obs_hand
+        ) is False
+
+
+# ---------------------------------------------------------------------------
+# Pure helper unit tests (fallen / plays threaded explicitly)
+# ---------------------------------------------------------------------------
+
+
+class TestPureHelpers:
+    """The trick-reading helpers now take their tracking / plays as
+    arguments and are exercised directly."""
+
+    @pytest.fixture
+    def strat(self, players):
+        return players["N"].cardplay
+
+    def _fallen(self, suit=None, ranks=()):
+        base = {s: set() for s in (Suit.SPADES, Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS)}
+        if suit is not None:
+            base[suit] = set(ranks)
+        return base
+
+    def test_is_master_card_reads_the_fallen_map(self, strat):
+        fallen = self._fallen(Suit.HEARTS, {Rank.ACE, Rank.QUEEN, Rank.EIGHT})
+        # ♥10's only higher card (♥A) has fallen → master.
+        assert strat._is_master_card(_c(Suit.HEARTS, Rank.TEN), Suit.SPADES, fallen) is True
+        # ♥K still has ♥10 out → not master.
+        assert strat._is_master_card(_c(Suit.HEARTS, Rank.KING), Suit.SPADES, fallen) is False
+
+    def test_higher_ranks_respect_trump_vs_normal_order(self, strat):
+        normal = strat._get_higher_ranks(Rank.NINE, Suit.HEARTS, Suit.SPADES)
+        assert Rank.JACK in normal and Rank.ACE in normal
+        trump = strat._get_higher_ranks(Rank.NINE, Suit.SPADES, Suit.SPADES)
+        assert Rank.JACK in trump and Rank.ACE not in trump  # 9 outranks A in trump
+
+    def test_team_winning_reads_the_led_suit_master(self, strat, players):
+        partner_master = (
+            Play(players["S"], _c(Suit.HEARTS, Rank.ACE)),
+            Play(players["W"], _c(Suit.HEARTS, Rank.KING)),
+        )
+        assert strat._is_team_winning_trick(partner_master) is True
+        opponent_master = (
+            Play(players["W"], _c(Suit.HEARTS, Rank.ACE)),
+            Play(players["S"], _c(Suit.HEARTS, Rank.KING)),
+        )
+        assert strat._is_team_winning_trick(opponent_master) is False
+
+    def test_strongest_card_with_trump_on_the_table(self, strat, players):
+        plays = (
+            Play(players["N"], _c(Suit.HEARTS, Rank.ACE)),
+            Play(players["E"], _c(Suit.HEARTS, Rank.KING)),
+            Play(players["S"], _c(Suit.SPADES, Rank.EIGHT)),
+        )
+        best = strat._get_strongest_card_in_trick(plays, Suit.SPADES)
+        assert (best.suit, best.rank) == (Suit.SPADES, Rank.EIGHT)
+
+    def test_strongest_card_without_trump(self, strat, players):
+        plays = (
+            Play(players["N"], _c(Suit.HEARTS, Rank.KING)),
+            Play(players["E"], _c(Suit.HEARTS, Rank.ACE)),
+            Play(players["S"], _c(Suit.DIAMONDS, Rank.ACE)),
+        )
+        best = strat._get_strongest_card_in_trick(plays, Suit.SPADES)
+        assert (best.suit, best.rank) == (Suit.HEARTS, Rank.ACE)
+
+    def test_can_trump_win_reads_the_plays(self, strat, players):
+        plays = (
+            Play(players["N"], _c(Suit.HEARTS, Rank.ACE)),
+            Play(players["E"], _c(Suit.SPADES, Rank.EIGHT)),
+        )
+        assert strat._can_trump_win(_c(Suit.SPADES, Rank.JACK), plays, Suit.SPADES) is True
+        assert strat._can_trump_win(_c(Suit.SPADES, Rank.SEVEN), plays, Suit.SPADES) is False
+
+    def test_is_stronger_card_comparison(self, strat):
+        # Trump beats non-trump.
+        assert strat._is_stronger_card(
+            _c(Suit.SPADES, Rank.SEVEN), _c(Suit.HEARTS, Rank.ACE), Suit.SPADES
+        ) is True
+        # Higher of the same suit.
+        assert strat._is_stronger_card(
+            _c(Suit.HEARTS, Rank.ACE), _c(Suit.HEARTS, Rank.KING), Suit.SPADES
+        ) is True
+        # Higher trump beats lower trump.
+        assert strat._is_stronger_card(
+            _c(Suit.SPADES, Rank.JACK), _c(Suit.SPADES, Rank.NINE), Suit.SPADES
+        ) is True

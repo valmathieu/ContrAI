@@ -59,19 +59,19 @@ class TestAiPlayerStrategyInjection:
         assert calls == [auction]
 
     def test_choose_card_delegates_to_cardplay_strategy(self):
-        """AiPlayer.choose_card routes straight to the injected strategy."""
+        """AiPlayer.choose_card routes the observation straight to the strategy."""
         player = AiPlayer("Bot", "South")
         sentinel = object()
         calls = []
 
-        def spy(trick, contract, playable_cards):
-            calls.append((trick, contract, playable_cards))
+        def spy(observation):
+            calls.append(observation)
             return sentinel
 
         player.cardplay.choose_card = spy  # type: ignore[method-assign]
-        result = player.choose_card("trick", "contract", "cards")
+        result = player.choose_card("observation")
         assert result is sentinel
-        assert calls == [("trick", "contract", "cards")]
+        assert calls == ["observation"]
 
     def test_custom_injected_factories_are_used(self):
         """Factories passed at construction replace the defaults."""
