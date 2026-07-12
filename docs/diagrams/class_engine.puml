@@ -38,12 +38,12 @@ package "model/player/ (subpackage)" as p_player {
         + is_human : bool <<property>>
         --
         + {abstract} choose_bid(auction: Auction) : Bid?
-        + {abstract} choose_card(trick, contract, playable_cards) : Card
+        + {abstract} choose_card(observation: PlayObservation) : Card?
     }
 
     class HumanPlayer {
         + choose_bid(auction) : None  <<no-op>>
-        + choose_card(trick, contract, playable_cards) : None  <<no-op>>
+        + choose_card(observation) : None  <<no-op>>
     }
 
     ' --- ai.py: holds + delegates to strategies ---
@@ -53,9 +53,7 @@ package "model/player/ (subpackage)" as p_player {
         --
         + __init__(name, position, bidding=…, cardplay=…)
         + choose_bid(auction) : Bid       <<delegates>>
-        + choose_card(trick, contract, playable) : Card  <<delegates>>
-        + initialize_card_tracking() : None   <<delegates>>
-        + update_card_tracking(…) : None      <<delegates>>
+        + choose_card(observation) : Card  <<delegates>>
     }
 
     ' --- strategy.py: abstract interfaces ---
@@ -63,9 +61,7 @@ package "model/player/ (subpackage)" as p_player {
         + {abstract} choose_bid(auction: Auction) : Bid
     }
     abstract class CardPlayStrategy <<abstract>> {
-        + {abstract} choose_card(trick, contract, playable) : Card
-        + {abstract} initialize_card_tracking() : None
-        + {abstract} update_card_tracking(…) : None
+        + {abstract} choose_card(observation: PlayObservation) : Card
     }
 
     ' --- rule_based.py: the first concrete level (expert) ---
@@ -77,12 +73,8 @@ package "model/player/ (subpackage)" as p_player {
         - _choose_open_bid(auction) : Bid
     }
     class RuleBasedCardPlayStrategy {
-        - _fallen_cards : dict<Suit, set<Rank>>
-        - _players_without_trump : set<Player>
-        --
-        + choose_card(trick, contract, playable) : Card
-        + initialize_card_tracking() : None
-        + update_card_tracking(…) : None
+        + choose_card(observation) : Card
+        - _derive_tracking(observation) : (fallen, voids)
     }
 
     ' --- levels.py: registry + factory ---
@@ -120,12 +112,20 @@ package "model/player/ (subpackage)" as p_player {
     end note
 
     note bottom of RuleBasedCardPlayStrategy
-      First concrete card-play level. Owns the
-      per-round tracking state; ~15 collapsed
-      helpers (_play_opening/leading/following_card,
-      _play_when_team_winning/losing, _is_master_card,
-      _is_stronger_card, _can_trump_win,
-      _opponents_might_have_trump, _get_higher_ranks, …).
+      First concrete card-play level. Stateless
+      between calls — every decision is a pure
+      function of the frozen PlayObservation handed
+      in. ``_derive_tracking`` rebuilds the fallen-
+      card map and the trump-void set by replaying
+      the observation's public trick history each
+      turn (compelled-only void inference: a discard
+      behind a master partner proves nothing; a
+      trump lead's proof is unconditional). ~15
+      collapsed helpers (_play_opening/leading/
+      following_card, _play_when_team_winning/losing,
+      _is_master_card, _is_stronger_card,
+      _can_trump_win, _opponents_might_have_trump,
+      _get_higher_ranks, …).
       A future MCTS / learned level is a new
       strategy class, never an edit to AiPlayer.
     end note
@@ -192,6 +192,8 @@ package "model/round/ package" as p_round {
         + deck : Deck
         + round_number : int
         + contract : Contract?
+        + auction : Auction?
+        + play_state : PlayState?
         + tricks : list<Trick>
         + current_trick : Trick?
         + last_trick_winner : Player?
@@ -214,6 +216,7 @@ package "model/round/ package" as p_round {
         - _detect_belote_holder() : None
         - _is_belote_event(player, card) : bool
         - _transition_belote_state(player) : str?
+        - _sync_hands() : None
     }
 
     ' --- scoring.py: the pure scoring transformation ---
@@ -224,16 +227,7 @@ package "model/round/ package" as p_round {
         RoundScore <<dataclass>>
     }
 
-    ' --- legality.py: the pure card-legality oracle ---
-    class "legality.py" as r_legality <<module>> #FFEFD9 {
-        get_playable_cards(player, contract, trick) : list<Card>
-        classify_play_violation(player, card, contract, trick) : PlayRuleViolation
-        - _higher_trumps_than_played(trumps, plays, trump) : list<Card>
-        - _highest_opponent_trump(plays, team, trump) : Card?
-    }
-
     Round ..> r_scoring : calculate_round_scores()\ndelegates to score_round
-    Round ..> r_legality : play_trick() consults
 
     note right of Round
       ``manage_bidding`` drives an
@@ -252,11 +246,26 @@ package "model/round/ package" as p_round {
       ``Trick.get_current_winner(contract.suit)``
       in contrai-core — no engine-side duplicate.
       ----
-      ``play_trick`` plays only a card in
-      ``legality.get_playable_cards``'s legal
-      set; a truthy-but-illegal card raises
-      :class:`IllegalPlayError` (no silent
-      fallback). ``calculate_round_scores`` is
+      The trick loop is driven by the immutable
+      core ``contrai_core.play.PlayState``:
+      ``play_all_tricks`` seeds it via
+      ``PlayState.start`` (validated — 4 seats, 8
+      distinct cards each); ``play_trick`` reads
+      ``play_state.to_act`` /
+      ``legal_actions(player)`` each turn and
+      advances via
+      ``play_state.apply(Play(player, card))`` —
+      the sole legality-enforcing transition,
+      raising :class:`IllegalPlayError` on an
+      out-of-turn, not-held, or obligation-
+      breaking play (no silent fallback).
+      ``_sync_hands`` then re-mirrors every seat's
+      ``Hand`` from the new ``play_state`` so the
+      view keeps reading ``player.hand``,
+      while AI seats read the frozen
+      ``PlayObservation`` projected by
+      ``play_state.observe(player, bids=...)``.
+      ``calculate_round_scores`` is
       a thin wrapper that publishes
       ``score_round``'s ``RoundScore`` onto
       ``round_scores`` / ``contract_made`` /
@@ -274,21 +283,6 @@ package "model/round/ package" as p_round {
       ``view.on_round_dealt(round_)`` after the deal
       and ``view.on_all_pass_redeal(round_)`` when
       everyone passes.
-    end note
-
-    note bottom of r_legality
-      Pure rule functions — read
-      ``(player, contract, current_trick)``,
-      mutate nothing. ``get_playable_cards``
-      enforces: follow suit if able, over-trump
-      when trump is led, partner-master
-      exemption (current winner, not whoever
-      led), over-trump opponents otherwise.
-      ``classify_play_violation`` mirrors its
-      branch order to name the broken rule and
-      **must stay in sync** with it — the two
-      are co-located here until a future
-      ``Ruleset`` unifies them.
     end note
 
     note bottom of r_scoring
@@ -482,9 +476,11 @@ Game "1" o-- "0..1" Player : dealer
 Game "1" *-- "0..1" Round : current_round
 Game "1" o-- "0..1" "Contract" : current_contract
 
-' Round composes Tricks, references Contract
+' Round composes Tricks, references Contract / Auction / PlayState
 Round "1" *-- "0..8" "Trick" : tricks
 Round "1" o-- "0..1" "Contract" : contract
+Round "1" o-- "0..1" "Auction" : auction
+Round "1" o-- "0..1" "PlayState" : play_state
 Round "1" o-- "1" "Deck" : deck
 Round "1" o-- "4" Player : players_order
 
