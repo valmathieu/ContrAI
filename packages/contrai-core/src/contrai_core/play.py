@@ -595,10 +595,11 @@ class PlayObservation:
     def trump_suit(self) -> Optional["Suit"]:
         """The contract's trump suit, or ``None`` when there is no contract.
 
-        Mirrors :attr:`PlayState._trump_suit`: for a ``NO_TRUMP`` contract
-        this is ``Suit.NO_TRUMP`` itself, not ``None`` — no real card ever
-        carries that suit, so every trump-related rule (and
-        :func:`current_winner`) already degrades correctly when handed it.
+        Same rule as the state this observation was derived from: for a
+        ``NO_TRUMP`` contract this is ``Suit.NO_TRUMP`` itself, not
+        ``None`` — no real card ever carries that suit, so every
+        trump-related rule (and :func:`current_winner`) already degrades
+        correctly when handed it.
         """
 
         return self.contract.suit if self.contract else None

@@ -31,7 +31,8 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 - (engine) Card-play strategies now receive a single frozen `PlayObservation` — the
   seat's own hand, the public trick history, and its legal cards — and derive any card
-  tracking from it, so a strategy can no longer see another seat's hand by construction.
+  tracking from it, so a strategy is sealed off from another seat's hand by construction
+  through what it is handed; sealing the live player refs on `Play` is a noted follow-up.
 - (engine) The trick loop is now driven by the core `PlayState`: `Round` seeds an
   immutable play-phase state at the start of play, derives the legal cards from it, and
   mirrors the players' hands and the current trick from it each play; card-play legality
@@ -43,6 +44,12 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) The expert AI now resolves its best (contract, suit) pair once per bidding
   turn — the duplicated best-contract scans in the overbid check and the initial-bid
   builder are folded into a single helper that also owns the suit tie-break.
+
+### Removed
+
+- (engine) The `initialize_card_tracking` / `update_card_tracking` hooks on
+  `CardPlayStrategy` / `AiPlayer` (public since 0.1.0) — card tracking is now derived
+  from the observation rather than pushed to per-strategy state each play.
 
 ### Fixed
 
@@ -60,12 +67,6 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
   AI always fell back to Spades — even when Spades never met the bidding table — and
   ignored the belote preference when more than one tied suit held a belote. It now picks
   among the tied suits only, preferring belote holders.
-
-### Removed
-
-- (engine) The `initialize_card_tracking` / `update_card_tracking` hooks on
-  `CardPlayStrategy` / `AiPlayer` (public since 0.1.0) — card tracking is now derived
-  from the observation rather than pushed to per-strategy state each play.
 
 ## [0.1.0] - 2026-06-21
 

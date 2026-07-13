@@ -21,7 +21,7 @@ Source lives at `packages/contrai-core/src/contrai_core/`:
 | `play.py`       | `Play`, `PlayState` (play-phase rule oracle — see §below), `PlayObservation`            |
 | `exceptions.py` | `ContraiError` (base), `InvalidPlayerCountError`, `InvalidCardCountError`, `IllegalBidError`, `IllegalPlayError` + `PlayRuleViolation`, `TrickStateError`, `InvalidContractError` |
 
-Everything above is re-exported from `contrai_core/__init__.py` and is part of the public API.
+Everything above is re-exported from `contrai_core/__init__.py` and is part of the public API — except `current_winner`, which stays a module-level import from `contrai_core.trick`.
 
 ## Class structure
 
