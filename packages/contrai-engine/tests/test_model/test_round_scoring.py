@@ -40,7 +40,7 @@ def _contract(player, value, suit):
 #   - ``self.contract``         — drives base / multiplier / family check.
 #   - ``self.team_tricks``      — number of tricks per team (length used).
 #   - ``self.tricks``           — per-trick winners (used by Solo Slam).
-#   - ``self.last_trick_winner``— "dix de der" (irrelevant for Slam family).
+#   - ``self.last_trick_winner``— last-trick bonus (irrelevant for Slam family).
 #
 # Cards inside each Trick only matter when belote / card points are
 # computed; for Slam family they are not — we still seed at least one
@@ -349,7 +349,7 @@ class TestNumericContractScoringRegression:
         round_.team_tricks["East-West"].append(ew_trick)
         round_.last_trick_winner = players["N"]
         scores = round_.calculate_round_scores()
-        # Card points = 20*7 = 140; dix de der = +10 → 150 card pts.
+        # Card points = 20*7 = 140; last-trick bonus = +10 → 150 card pts.
         # Contract made (150 >= 80) → attacker score = 80 + 150 = 230.
         assert round_.unannounced_capot is None
         assert scores["North-South"] == 230
@@ -396,7 +396,7 @@ def _numeric_round(
         team_cards: mapping team-name → list of ``(seat, Card)`` plays.
             Each team's cards are packed into Tricks of up to four cards
             (the Trick capacity), all credited to that team.
-        last_trick_winner: seat letter credited with the dix de der, or
+        last_trick_winner: seat letter credited with the last-trick bonus, or
             None.
         belote_holder: seat letter holding K + Q of trump, or None.
 
@@ -452,7 +452,7 @@ class TestNumericBeloteByHolder:
                 "East-West": self._all_hearts_for("E"),
                 "North-South": [],
             },
-            last_trick_winner="N",  # der to N-S, not the declarer
+            last_trick_winner="N",  # last-trick bonus to N-S, not the declarer
             belote_holder=None,     # pair is split — nobody holds it
         )
         scores = round_.calculate_round_scores()
@@ -512,7 +512,7 @@ class TestNumericDoubledScoring:
     @staticmethod
     def _ns_big_pile():
         """76 trump-aware points for N-S — clears an 80 contract once the
-        dix de der is added."""
+        last-trick bonus is added."""
         return [
             ("N", Card(Suit.HEARTS, Rank.JACK)),  # 20
             ("N", Card(Suit.HEARTS, Rank.NINE)),  # 14
@@ -541,7 +541,7 @@ class TestNumericDoubledScoring:
                     ("E", Card(Suit.CLUBS, Rank.KING)),    # 4
                 ],
             },
-            last_trick_winner="N",  # +10 der → N-S realized 86 ≥ 80
+            last_trick_winner="N",  # +10 bonus → N-S realized 86 ≥ 80
         )
         scores = round_.calculate_round_scores()
         assert round_.contract_made is True
@@ -616,7 +616,7 @@ class TestNumericDoubledScoring:
 #
 # When the declaring team wins all 8 tricks on an *un-doubled* numeric
 # contract without having bid a Slam, the 162-point pile (152 cards + 10
-# dix de der) is replaced by a flat 250 substitute: the declarer scores
+# last-trick bonus) is replaced by a flat 250 substitute: the declarer scores
 # contract value + 250 (+ belote), the defence scores nothing, and the
 # contract is necessarily made. The round is flagged UnannouncedSlam.GRAND_SLAM
 # when the contracting player personally won all 8 tricks, else

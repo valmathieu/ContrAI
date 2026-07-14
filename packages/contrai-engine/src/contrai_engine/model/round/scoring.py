@@ -112,11 +112,12 @@ def score_round(round_: 'Round') -> RoundScore:
       ``C + P_attack`` and the defense keeps its own card points;
       failed → the defense scores ``160 + C`` and the declarer
       scores nothing. ``P_attack`` is the declarer's card points
-      (which already include the *dix de der*) plus the Belote
+      (which already include the last-trick bonus) plus the Belote
       bonus when the declarer holds it.
     - **Unannounced capot (M = 1).** When the declaring team wins
       *all 8 tricks* on a numeric contract without having bid a
-      Slam, the trick pile (152 cards + 10 *dix de der* = 162) is
+      Slam, the trick pile (152 cards + the 10-point last-trick
+      bonus = 162) is
       replaced by a flat **250** substitute: the declarer scores
       ``C + 250`` (+ Belote), the defense scores nothing, and the
       contract is necessarily made. The personal-trick predicate
@@ -177,7 +178,7 @@ def score_round(round_: 'Round') -> RoundScore:
                     points += card.get_points(trump_suit)
         team_card_points[team_name] = points
 
-    # Add "dix de der" (10 points for last trick).
+    # Add the last-trick bonus (10 points for winning the last trick).
     if round_.last_trick_winner and round_.last_trick_winner.team:
         team_card_points[round_.last_trick_winner.team.name] += 10
 
@@ -245,7 +246,8 @@ def score_round(round_: 'Round') -> RoundScore:
     # Unannounced capot: the declaring team swept all 8 tricks on a
     # numeric contract. Recognised only un-doubled — the
     # doubled/redoubled path keeps its winner-takes-all 160 + C×M
-    # shape regardless. The trick pile (152 cards + 10 der) is
+    # shape regardless. The trick pile (152 cards + the 10-point
+    # last-trick bonus) is
     # replaced by a flat 250 substitute and the contract is
     # necessarily made. GRAND_SLAM when the contracting player won all
     # 8 personally (the Solo Slam predicate), else plain SLAM.
@@ -268,7 +270,7 @@ def score_round(round_: 'Round') -> RoundScore:
         )
 
     # The declarer's *realized* points decide made/failed: card
-    # points (already including the dix de der) plus the Belote
+    # points (already including the last-trick bonus) plus the Belote
     # bonus when the declarer holds it (contree-domain.md §7.1-§7.2).
     # A capot is made outright — sweeping every trick can never fail.
     attacker_realized = (
@@ -279,7 +281,8 @@ def score_round(round_: 'Round') -> RoundScore:
     if multiplier == 1:
         # Un-doubled: the two sides share the pile.
         if contract_made:
-            # On an unannounced capot the 162 pile (der included) is
+            # On an unannounced capot the 162 pile (last-trick bonus
+            # included) is
             # swapped for the flat 250 substitute; otherwise the
             # declarer adds its real captured card points.
             attacker_pile = (
@@ -295,7 +298,7 @@ def score_round(round_: 'Round') -> RoundScore:
             for name in defender_names:
                 team_scores[name] = team_card_points[name] + belote_bonus(name)
         else:
-            # Failed (chuté): the defense takes the whole pile plus
+            # Failed: the defense takes the whole pile plus
             # the contract; the declarer keeps only its Belote bonus.
             team_scores[contract_team_name] = belote_bonus(contract_team_name)
             for name in defender_names:

@@ -214,8 +214,9 @@ class TestFullRoundLifecycleHappyPath:
         assert round_.unannounced_capot is None
         # Rule-derived invariant (scoring.py): a made, un-doubled,
         # non-capot numeric contract always has both teams' scores sum to
-        # contract_value + 162 (152 card points + the 10-point dix de
-        # der) - the two teams simply split the one pile, and no belote
+        # contract_value + 162 (152 card points + the 10-point
+        # last-trick bonus) - the two teams simply split the one pile,
+        # and no belote
         # is in play here.
         assert sum(scores.values()) == contract.value + 162
         assert scores["North-South"] > scores["East-West"]
