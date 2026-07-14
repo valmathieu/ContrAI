@@ -24,7 +24,7 @@ Source at `packages/contrai-engine/src/contrai_engine/`:
   - `parsing.py` — human-input parsers (`_parse_bid_input`, `_parse_card_input`)
   - `bidding_rules.py` — the messaging-only `_illegal_bid_reason` mirror of the auction rules (the specific nudge shown when a human types an illegal bid); the adaptive prompt hint is derived directly from `Auction.legal_actions`
   - `state_helpers.py` — small game-state readers (`_current_winner`, `_explain_constraint`, `_sort_hand_for_display`, `_belote_by_position`, `_resolve_delay`)
-  - `layout.py` — cross-screen layout (`_two_column`, the Prompt panel, the event-log panel)
+  - `layout.py` — cross-screen layout (`_two_column`, the Prompt panel, the event-log panel, and the Game-score panel shown in every in-game frame's top-left)
   - `screens/` — one module per screen of the five-screen design: `landing.py`, `bidding.py`, `trick.py`, `recap.py`, `endgame.py`. Each exposes pure `(data) -> Panel/Text` builders; `RichView` composes and prints them.
 - `cli.py` — `contrai` console-script entry point: landing → game-loop → end-game
 - `tests/` — pytest suite (`test_model/`, `test_view/`)

@@ -2,9 +2,10 @@
 
 Building blocks shared by every screen: the two-column grid that places
 panels side by side, the Prompt panel (question + optional rejection
-notice), and the rolling event-log panel. Pure builders — they take the
-data they render as explicit parameters; ``RichView`` owns the state and
-does the printing.
+notice), the rolling event-log panel, and the ``Game score`` panel (the
+running game total shown in every in-game frame's top-left). Pure
+builders — they take the data they render as explicit parameters;
+``RichView`` owns the state and does the printing.
 """
 
 from __future__ import annotations
@@ -17,9 +18,13 @@ from rich.table import Table
 from rich.text import Text
 
 from contrai_engine.view.theme import (
+    BLUE,
     BORDER,
     BORDER_DIM,
     DIM,
+    DOT,
+    FG,
+    ORANGE,
     TITLE,
     YELLOW,
 )
@@ -64,6 +69,29 @@ def _panel_prompt(
         box=ROUNDED,
         width=70,
         height=5 if notice is not None else 4,
+    )
+
+
+def _panel_game_score(scores: dict[str, int], target_score: int) -> Panel:
+    """Top-left panel with both teams' running totals and the target."""
+    body = Text()
+    ns = scores.get("North-South", 0)
+    ew = scores.get("East-West", 0)
+    body.append(f"{'N-S':<8}", style=f"bold {BLUE}")
+    body.append(f"{ns:>10}\n", style=FG)
+    body.append(f"{'E-W':<8}", style=f"bold {ORANGE}")
+    body.append(f"{ew:>10}\n", style=FG)
+    body.append("·" * 18, style=DOT)
+    body.append("\n")
+    body.append(f"{'Target':<8}", style=DIM)
+    body.append(f"{target_score:>10}", style=f"bold {YELLOW}")
+    return Panel(
+        body,
+        title=Text("Game score", style=f"bold {TITLE}"),
+        border_style=BORDER,
+        box=ROUNDED,
+        width=22,
+        height=6,
     )
 
 

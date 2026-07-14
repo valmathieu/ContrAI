@@ -404,7 +404,9 @@ package "view/ package" as p_view {
         `_sort_hand_for_display`,
         `_belote_by_position`, `_resolve_delay`
       • layout — `_two_column`, `_panel_prompt`,
-        `_panel_event_log`
+        `_panel_event_log`, `_panel_game_score`
+        (the top-left panel of every in-game
+        frame)
     end note
 
     note bottom of p_view_screens
