@@ -9,7 +9,11 @@ from __future__ import annotations
 
 from rich.text import Text
 
-from contrai_engine.view.layout import _panel_event_log, _panel_prompt
+from contrai_engine.view.layout import (
+    _panel_event_log,
+    _panel_game_score,
+    _panel_prompt,
+)
 from contrai_engine.view.theme import RED
 
 
@@ -33,6 +37,27 @@ class TestPanelPromptNotice:
         panel = _panel_prompt(Text("Your bid?"), False)
         assert "own side" not in panel.renderable.plain
         assert panel.height == 4
+
+
+class TestPanelGameScore:
+    """The in-game top-left panel: both team totals and the target."""
+
+    def test_renders_scores_and_target(self):
+        panel = _panel_game_score(
+            {"North-South": 120, "East-West": 250}, target_score=1500
+        )
+        text = panel.renderable.plain
+        assert panel.title.plain == "Game score"
+        assert "N-S" in text and "120" in text
+        assert "E-W" in text and "250" in text
+        assert "Target" in text and "1500" in text
+
+    def test_missing_teams_default_to_zero(self):
+        # A fresh game hands over an empty dict before any round scores.
+        panel = _panel_game_score({}, target_score=1000)
+        text = panel.renderable.plain
+        assert text.count("0") >= 2
+        assert "1000" in text
 
 
 class TestPanelEventLog:

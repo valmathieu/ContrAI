@@ -1,9 +1,8 @@
 """Landing screen rendering for the Rich terminal UI.
 
 The pre-game splash: the block-ASCII title and subtitle, the suit
-ribbon, the target-score radio, the seat roster, and the target prompt —
-plus the in-game ``Game score`` panel (the running game total shown in
-every frame's top-left). Pure builders consuming scalars.
+ribbon, the target-score radio, the seat roster, and the target prompt.
+Pure builders consuming scalars.
 """
 
 from __future__ import annotations
@@ -20,7 +19,6 @@ from contrai_engine.view.theme import (
     BORDER,
     DEFAULT_TARGET,
     DIM,
-    DOT,
     FG,
     GOLD,
     GOLD_BG,
@@ -165,25 +163,3 @@ def _landing_prompt_text(selected: int) -> Text:
     t.append(str(selected), style=f"bold {GOLD}")
     t.append(")", style=FG)
     return t
-
-
-def _panel_game_score(scores: dict, target_score: int) -> Panel:
-    body = Text()
-    ns = scores.get("North-South", 0)
-    ew = scores.get("East-West", 0)
-    body.append(f"{'N-S':<8}", style=f"bold {BLUE}")
-    body.append(f"{ns:>10}\n", style=FG)
-    body.append(f"{'E-W':<8}", style=f"bold {ORANGE}")
-    body.append(f"{ew:>10}\n", style=FG)
-    body.append("·" * 18, style=DOT)
-    body.append("\n")
-    body.append(f"{'Target':<8}", style=DIM)
-    body.append(f"{target_score:>10}", style=f"bold {YELLOW}")
-    return Panel(
-        body,
-        title=Text("Game score", style=f"bold {TITLE}"),
-        border_style=BORDER,
-        box=ROUNDED,
-        width=22,
-        height=6,
-    )

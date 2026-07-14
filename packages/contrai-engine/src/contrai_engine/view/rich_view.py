@@ -46,6 +46,7 @@ from contrai_engine.view.formatting import (
 )
 from contrai_engine.view.layout import (
     _panel_event_log,
+    _panel_game_score,
     _panel_prompt,
     _two_column,
 )
@@ -65,7 +66,6 @@ from contrai_engine.view.screens.landing import (
     _landing_subtitle,
     _landing_suit_ribbon,
     _landing_title,
-    _panel_game_score,
     _panel_game_setup,
     _panel_players,
 )
