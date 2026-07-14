@@ -291,6 +291,46 @@ class TestRejections:
             state.apply(Play(east, Card(Suit.HEARTS, Rank.SEVEN)))
         assert excinfo.value.reason == PlayRuleViolation.CARD_NOT_IN_HAND
 
+    def test_errors_name_the_offending_seat(self, players):
+        """Every ``apply`` rejection carries a context naming the seat.
+
+        The three raise sites (out of turn, card not held, obligation
+        violation) each attach ``"<position> card play"`` so diagnostics
+        immediately say who misplayed, and the message is prefixed with it.
+        """
+        contract, seating, hands, by_seat = _deal(players)
+        north, east = seating[0], seating[1]
+        state = PlayState.start(contract, seating, hands)
+
+        # Out of turn: East acts while North is to act.
+        with pytest.raises(IllegalPlayError) as excinfo:
+            state.apply(Play(east, by_seat["E"][0]))
+        assert excinfo.value.context == "East card play"
+        assert str(excinfo.value).startswith("East card play: ")
+
+        # Card not in hand: North holds only spades, tries a heart.
+        with pytest.raises(IllegalPlayError) as excinfo:
+            state.apply(Play(north, Card(Suit.HEARTS, Rank.ACE)))
+        assert excinfo.value.context == "North card play"
+
+        # Obligation violation: East holds the led suit but tries to ruff.
+        # Bare-constructor mini-state — hearts are trump (from ``_deal``).
+        mini = PlayState(
+            contract,
+            seating,
+            (
+                (Card(Suit.SPADES, Rank.ACE),),
+                (Card(Suit.SPADES, Rank.KING), Card(Suit.HEARTS, Rank.ACE)),
+                (Card(Suit.CLUBS, Rank.ACE),),
+                (Card(Suit.CLUBS, Rank.KING),),
+            ),
+        )
+        led = mini.apply(Play(north, mini.hand_of(north)[0]))
+        with pytest.raises(IllegalPlayError) as excinfo:
+            led.apply(Play(east, led.hand_of(east)[1]))
+        assert excinfo.value.reason == PlayRuleViolation.MUST_FOLLOW_SUIT
+        assert excinfo.value.context == "East card play"
+
 
 # ---------------------------------------------------------------------------
 # with_hands determinization fork
