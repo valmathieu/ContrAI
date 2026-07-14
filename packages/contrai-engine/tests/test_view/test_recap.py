@@ -366,10 +366,10 @@ class TestRoundRecapPanel:
         assert "41" in total_line
         assert "+" not in total_line
 
-    def test_recap_scoring_round_points_belote_only_when_contre(
+    def test_recap_scoring_round_points_belote_only_when_doubled(
         self, four_players
     ):
-        """On a chuté/contré round the captured pile stops scoring, so the
+        """On a failed/doubled round the captured pile stops scoring, so the
         Scoring 'Round points' row collapses to the belote the holder keeps
         — while the Outcome 'Total' still reports the full captured tally."""
         view = RichView()
@@ -390,12 +390,12 @@ class TestRoundRecapPanel:
             belote_holder=north,
             contract_made=False,
         )
-        round_.last_trick_winner = east  # der goes to E-W, not N-S
+        round_.last_trick_winner = east  # last trick goes to E-W, not N-S
         text = _panel_round_recap(
             round_, {"North-South": 20, "East-West": 360}
         ).renderable.plain
         outcome, scoring = text.split("Scoring")
-        # Outcome Total = 11 (A♥) + 0 (no der) + 20 (belote) = 31.
+        # Outcome Total = 11 (A♥) + 0 (no last-trick bonus) + 20 (belote) = 31.
         total_line = next(
             line for line in outcome.splitlines() if "Total" in line
         )
@@ -459,7 +459,7 @@ class TestRoundRecapPanel:
         # in the "Belote (K + Q ♥)" label is not a sign and is allowed.
         assert re.search(r"\+\d", text) is None
 
-    def test_recap_unannounced_capot_substitutes_250_and_folds_der(
+    def test_recap_unannounced_capot_substitutes_250_and_folds_last_trick(
         self, four_players
     ):
         """Unannounced capot: the Outcome 'Tricks points' row reads 250
@@ -483,7 +483,7 @@ class TestRoundRecapPanel:
             contract_made=True,
         )
         round_.unannounced_capot = UnannouncedSlam.GRAND_SLAM  # north swept personally
-        round_.last_trick_winner = north  # der would be +10 — must fold in
+        round_.last_trick_winner = north  # bonus would be +10 — must fold in
         breakdown = _recap_breakdown(round_)
         ns = breakdown["North-South"]
         assert ns["trick_points"] == 250
@@ -492,16 +492,21 @@ class TestRoundRecapPanel:
         assert ns["card_points_substituted"] is True
         assert ns["contract"] == 100
         assert ns["round_points"] == 250
-        # Invariant preserved: contract + card_points + dix + belote == score.
+        # Invariant preserved: contract + card_points + last-trick
+        # bonus + belote == score.
         assert (
-            ns["contract"] + ns["card_points"] + ns["dix_de_der"] + ns["belote"]
+            ns["contract"]
+            + ns["card_points"]
+            + ns["last_trick_bonus"]
+            + ns["belote"]
             == 350
         )
         text = _panel_round_recap(
             round_, {"North-South": 350, "East-West": 0}
         ).renderable.plain
         assert "250" in text
-        # The der is folded into the substitute — no stray +10 in the row.
+        # The last-trick bonus is folded into the substitute — no
+        # stray +10 in the row.
         outcome = text.split("Scoring")[0]
         last_trick_line = next(
             line for line in outcome.splitlines() if "Last trick" in line
@@ -542,7 +547,7 @@ class TestRoundRecapPanel:
         assert expected_tag in text
         assert "250" in text
 
-    def test_recap_shows_dix_de_der_for_last_trick_winner(self, four_players):
+    def test_recap_shows_last_trick_bonus_for_last_trick_winner(self, four_players):
         view = RichView()
         north, *_ = four_players
         contract = self._StubContract(100, Suit.HEARTS, "North-South")
@@ -559,7 +564,7 @@ class TestRoundRecapPanel:
             round_, {"North-South": 110, "East-West": 0}
         )
         text = panel.renderable.plain
-        # The Last trick row carries the der's 10, with no leading "+".
+        # The Last trick row carries the bonus's 10, with no leading "+".
         last_trick_line = next(
             line for line in text.splitlines() if "Last trick" in line
         )
@@ -583,15 +588,16 @@ class TestRoundRecapPanel:
         breakdown = _recap_breakdown(round_)
         assert breakdown["North-South"]["contract"] == 100
         assert breakdown["East-West"]["contract"] == 0
-        # Cards / dix / belote DO contribute on a normal-made contract.
+        # Cards / last trick / belote DO contribute on a normal-made
+        # contract.
         assert breakdown["North-South"]["cards_count"] is True
         assert breakdown["East-West"]["cards_count"] is True
 
     def test_recap_contract_row_uses_slam_base_when_made(self, four_players):
         """A made Slam normal: the contract row carries the base (250)
         and the card-points row carries the flat substitute (250),
-        summing to the engine's 500. Dix de der does not contribute;
-        the row label flips to "(subst.)"."""
+        summing to the engine's 500. The last-trick bonus does not
+        contribute; the row label flips to "(subst.)"."""
         view = RichView()
         contract = self._StubContract(SlamLevel.SLAM, Suit.SPADES, "East-West")
         round_ = self._StubRound(
@@ -606,9 +612,9 @@ class TestRoundRecapPanel:
         assert breakdown["East-West"]["card_points"] == 250
         assert breakdown["East-West"]["card_points_substituted"] is True
         assert breakdown["East-West"]["cards_count"] is True
-        # Dix de der is no longer counted on Slam family rounds.
-        assert breakdown["East-West"]["dix_count"] is False
-        assert breakdown["East-West"]["dix_de_der"] == 0
+        # The last-trick bonus is no longer counted on Slam family rounds.
+        assert breakdown["East-West"]["last_trick_counts"] is False
+        assert breakdown["East-West"]["last_trick_bonus"] == 0
         # Losing side: zeros everywhere except belote (not tested here).
         assert breakdown["North-South"]["contract"] == 0
         assert breakdown["North-South"]["card_points"] == 0
@@ -675,7 +681,7 @@ class TestRoundRecapPanel:
     ):
         """When the engine substitutes the flat 160+base*mult bonus
         (doubled or redoubled made), the 'Contract' row carries the
-        full amount and the cards/dix/belote rows are zeroed for the
+        full amount and the cards/last-trick/belote rows are zeroed for the
         attacker so the breakdown sums to round_score."""
         view = RichView()
         contract = self._StubContract(
@@ -690,11 +696,11 @@ class TestRoundRecapPanel:
         breakdown = _recap_breakdown(round_)
         # 160 + 100*2 = 360
         assert breakdown["North-South"]["contract"] == 360
-        # Attacker's cards/dix/belote are ignored by the engine — the
-        # recap reflects that so the addition matches round_score.
+        # Attacker's cards/last-trick/belote are ignored by the engine
+        # — the recap reflects that so the addition matches round_score.
         assert breakdown["North-South"]["cards_count"] is False
         assert breakdown["North-South"]["card_points"] == 0
-        assert breakdown["North-South"]["dix_de_der"] == 0
+        assert breakdown["North-South"]["last_trick_bonus"] == 0
         assert breakdown["North-South"]["belote"] == 0
 
     def test_recap_contract_row_includes_full_bonus_when_redoubled_made(
@@ -719,7 +725,7 @@ class TestRoundRecapPanel:
         self, four_players
     ):
         """100 ♥ failed by N-S → E-W gets (160 + 100) * 1 = 260 in
-        their 'Contract' row; their cards/dix/belote are zeroed."""
+        their 'Contract' row; their cards/last-trick/belote are zeroed."""
         view = RichView()
         contract = self._StubContract(100, Suit.HEARTS, "North-South")
         round_ = self._StubRound(
@@ -731,11 +737,11 @@ class TestRoundRecapPanel:
         breakdown = _recap_breakdown(round_)
         assert breakdown["East-West"]["contract"] == 260
         assert breakdown["North-South"]["contract"] == 0
-        # Defender's cards/dix/belote don't contribute on a failed
-        # contract — the engine pays them a flat bonus instead.
+        # Defender's cards/last-trick/belote don't contribute on a
+        # failed contract — the engine pays them a flat bonus instead.
         assert breakdown["East-West"]["cards_count"] is False
-        # Attacker gets 0 on a failed contract; their cards/dix/belote
-        # also don't contribute (round_score is 0).
+        # Attacker gets 0 on a failed contract; their
+        # cards/last-trick/belote also don't contribute (round_score is 0).
         assert breakdown["North-South"]["cards_count"] is False
 
     def test_recap_contract_row_failed_doubled_winner_takes_160_plus_cm(
@@ -777,7 +783,7 @@ class TestRoundRecapPanel:
         assert ew["contract"] == 0
         assert ew["cards_count"] is False
         assert ew["card_points"] == 0
-        assert ew["dix_de_der"] == 0
+        assert ew["last_trick_bonus"] == 0
         assert ew["belote"] == 0
 
     def test_recap_loser_keeps_belote_when_doubled(self, four_players):
@@ -803,7 +809,10 @@ class TestRoundRecapPanel:
         assert ew["cards_count"] is False
         # The four components still sum to the engine's round score.
         assert (
-            ew["contract"] + ew["card_points"] + ew["dix_de_der"] + ew["belote"]
+            ew["contract"]
+            + ew["card_points"]
+            + ew["last_trick_bonus"]
+            + ew["belote"]
             == 20
         )
 
@@ -854,7 +863,8 @@ class TestRoundRecapPanel:
             (west, Card(Suit.SPADES, Rank.EIGHT)),
         ]:
             ns_trick2.add_play(p, c)
-        # Engine score = 100 (contract) + 49 (cards) + 10 (dix) = 159.
+        # Engine score = 100 (contract) + 49 (cards) + 10 (last trick)
+        # = 159.
         round_ = self._StubRound(
             round_number=3,
             contract=contract,
@@ -870,7 +880,7 @@ class TestRoundRecapPanel:
         sum_ns = (
             ns["contract"]
             + ns["card_points"]
-            + ns["dix_de_der"]
+            + ns["last_trick_bonus"]
             + ns["belote"]
         )
         assert sum_ns == 159
