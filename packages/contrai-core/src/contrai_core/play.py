@@ -363,27 +363,33 @@ class PlayState:
             IllegalPlayError: Carrying the offending :class:`PlayRuleViolation`
                 — ``OUT_OF_TURN`` (wrong player, or the phase is over),
                 ``CARD_NOT_IN_HAND`` (the card is not held), or one of
-                ``MUST_FOLLOW_SUIT`` / ``MUST_TRUMP`` / ``MUST_OVERTRUMP``.
+                ``MUST_FOLLOW_SUIT`` / ``MUST_TRUMP`` / ``MUST_OVERTRUMP`` —
+                and a ``context`` naming the acting player's seat.
         """
 
         player, card = play
+        # Name the seat in every rejection so diagnostics immediately say
+        # who misplayed, not just which card.
+        context = f"{player.position} card play"
 
         actor = self.to_act
         if actor is None or player is not actor:
-            raise IllegalPlayError(card, PlayRuleViolation.OUT_OF_TURN, ())
+            raise IllegalPlayError(
+                card, PlayRuleViolation.OUT_OF_TURN, (), context=context
+            )
 
         hand = self.hand_of(player)
         legal = self.legal_actions(player)
 
         if card not in hand:
             raise IllegalPlayError(
-                card, PlayRuleViolation.CARD_NOT_IN_HAND, legal
+                card, PlayRuleViolation.CARD_NOT_IN_HAND, legal, context=context
             )
         if card not in legal:
             reason = _classify_violation(
                 player, card, self._trump_suit, self.current_trick, hand
             )
-            raise IllegalPlayError(card, reason, legal)
+            raise IllegalPlayError(card, reason, legal, context=context)
 
         seat = self._seat_of(player)
         index = hand.index(card)
