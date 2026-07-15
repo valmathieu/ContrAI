@@ -52,10 +52,12 @@ def _landing_title() -> Text:
 
 
 def _landing_subtitle() -> Text:
+    """Centered dim subtitle line under the block title."""
     return Text("Belote · Contrée · CLI edition".center(70), style=DIM)
 
 
 def _landing_suit_ribbon() -> Text:
+    """Centered decorative ribbon of the four suit glyphs."""
     ribbon = Text()
     glyphs = [(Suit.SPADES, FG), (Suit.HEARTS, RED),
               (Suit.DIAMONDS, RED), (Suit.CLUBS, FG)]
@@ -155,6 +157,7 @@ def _panel_players() -> Panel:
 
 
 def _landing_prompt_text(selected: int) -> Text:
+    """Prompt line asking for the target score, naming the default."""
     t = Text()
     t.append(
         "Target score? [500 / 1000 / 1500 / 2000 / 3000] (default ",

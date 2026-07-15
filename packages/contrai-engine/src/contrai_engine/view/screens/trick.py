@@ -54,7 +54,13 @@ if TYPE_CHECKING:
     from contrai_engine.model.round import Round
 
 
-def _panel_round(round_: Optional["Round"], phase: str) -> Panel:
+def _panel_round(round_: Optional[Round], phase: str) -> Panel:
+    """Top-right Round info panel: contract, trump, and phase status.
+
+    During bidding the third line names the dealer; during play it
+    shows the current trick index and both teams' running card points.
+    The border and title turn gold once a contract (trump) is active.
+    """
     body = Text()
     contract = round_.contract if round_ else None
     trump_active = contract is not None
@@ -111,7 +117,12 @@ def _panel_round(round_: Optional["Round"], phase: str) -> Panel:
     )
 
 
-def _round_running_points(round_: Optional["Round"]) -> tuple[int, int]:
+def _round_running_points(round_: Optional[Round]) -> tuple[int, int]:
+    """Trump-aware card points each team has captured so far this round.
+
+    Returns ``(ns_points, ew_points)``; ``(0, 0)`` before a contract
+    exists (no trump means no point values to sum yet).
+    """
     if not round_ or not round_.contract:
         return 0, 0
     trump = round_.contract.suit
@@ -129,9 +140,14 @@ def _round_running_points(round_: Optional["Round"]) -> tuple[int, int]:
 
 
 def _panel_last_trick(
-    round_: Optional["Round"],
+    round_: Optional[Round],
     last_completed_trick: Optional[tuple[Trick, BasePlayer]],
 ) -> Panel:
+    """Narrow left panel echoing the previous completed trick, dimmed.
+
+    Renders a compact card diamond with the winner highlighted, or a
+    ``(none)`` placeholder before the round's first trick completes.
+    """
     if not last_completed_trick:
         body = Text("(none)", style=DIM, justify="center")
         body = Align.center(body, vertical="middle")
@@ -175,13 +191,21 @@ def _panel_last_trick(
 
 
 def _panel_current_trick(
-    round_: Optional["Round"],
+    round_: Optional[Round],
     trick: Optional[Trick],
     phase: str,
     current_player: Optional[BasePlayer],
     trick_winner: Optional[BasePlayer],
     bidding_history: Optional[list] = None,
 ) -> Panel:
+    """Main table panel: the current trick (or the auction) as a diamond.
+
+    During bidding the slot is reused for the bidding diamond so the
+    auction reads spatially like play. During play it renders the
+    in-progress trick with the acting seat marked ``?``; at the
+    trick-won pause the winner is highlighted instead. A footer line
+    names whose turn it is (or who won).
+    """
     title_suffix = ""
     if round_ and phase in ("playing", "trick_won"):
         trick_idx = len(round_.tricks) + (0 if phase == "trick_won" else 1)
@@ -410,7 +434,7 @@ def _panel_hand(
     trick: Optional[Trick],
     playable_cards: Optional[list[Card]],
     phase: str,
-    round_: Optional["Round"],
+    round_: Optional[Round],
     *,
     interactive: bool = True,
 ) -> Panel:
@@ -508,6 +532,7 @@ def _render_card_cell(
 
 
 def _card_prompt_text(playable_cards: list[Card], hand_size: int) -> Text:
+    """Prompt line asking the human to pick a card by hand index."""
     t = Text()
     t.append("Your turn. ", style=f"bold {YELLOW}")
     if playable_cards and len(playable_cards) == 1:
@@ -527,6 +552,7 @@ def _ai_card_announcement(player: BasePlayer, card: Card) -> Text:
 
 
 def _trick_won_prompt_text(winner: BasePlayer) -> Text:
+    """Prompt line for the trick-won pause; says "You" for the human."""
     t = Text()
     label = _position_short(winner.position)
     if winner.is_human:
