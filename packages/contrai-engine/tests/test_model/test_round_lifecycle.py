@@ -17,7 +17,7 @@ Four :class:`AiPlayer` seats and no view, so every view-dependent branch in
 
 The happy-path and belote scenarios pin the resulting score with a mix of
 a rule-derived invariant (the exact total ``score_round`` guarantees for a
-*made*, un-doubled, non-capot numeric contract: ``contract_value + 162``,
+*made*, un-doubled, non-sweep numeric contract: ``contract_value + 162``,
 plus 20 when a team holds the belote) and a regression pin on the concrete
 per-team split. The bidding table's outcome is derived by hand in the
 docstrings below and asserted exactly; the card-by-card play is a
@@ -211,9 +211,9 @@ class TestFullRoundLifecycleHappyPath:
         scores = round_.calculate_round_scores()
 
         assert round_.contract_made is True
-        assert round_.unannounced_capot is None
-        # Rule-derived invariant (scoring.py): a made, un-doubled,
-        # non-capot numeric contract always has both teams' scores sum to
+        assert round_.unannounced_slam is None
+        # Rule-derived invariant (scoring.py): a made, un-doubled numeric
+        # contract with no unannounced Slam always has both scores sum to
         # contract_value + 162 (152 card points + the 10-point
         # last-trick bonus) - the two teams simply split the one pile,
         # and no belote
@@ -345,7 +345,7 @@ class TestFullRoundLifecycleBelote:
         scores = round_.calculate_round_scores()
 
         assert round_.contract_made is True
-        # Rule-derived invariant: made, un-doubled, non-capot numeric
+        # Rule-derived invariant: made, un-doubled, non-sweep numeric
         # contract sums to contract_value + 162, *plus* the 20-point
         # belote bonus layered on top of the pile split (scoring.py
         # credits it to the holder's team independent of who wins the
@@ -453,6 +453,7 @@ class TestFullRoundLifecycleAllPass:
         assert scores == {"North-South": 0, "East-West": 0}
         assert round_.round_scores == scores
         # calculate_round_scores was never called on this path - the
-        # made/failed and capot signals stay at their pre-round default.
+        # made/failed and unannounced-Slam signals stay at their
+        # pre-round default.
         assert round_.contract_made is None
-        assert round_.unannounced_capot is None
+        assert round_.unannounced_slam is None

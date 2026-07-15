@@ -61,14 +61,14 @@ class RoundScore:
         scores: Per-team round scores, keyed by team name.
         contract_made: The canonical made/failed signal — ``None`` when
             the round was all-passed (no contract), else a bool.
-        unannounced_capot: The :class:`UnannouncedSlam` tag when the
+        unannounced_slam: The :class:`UnannouncedSlam` tag when the
             declaring team swept all 8 tricks on an un-doubled numeric
             contract, else ``None``.
     """
 
     scores: Dict[str, int]
     contract_made: Optional[bool]
-    unannounced_capot: Optional[UnannouncedSlam]
+    unannounced_slam: Optional[UnannouncedSlam]
 
 
 def count_player_tricks(
@@ -114,7 +114,7 @@ def score_round(round_: 'Round') -> RoundScore:
       scores nothing. ``P_attack`` is the declarer's card points
       (which already include the last-trick bonus) plus the Belote
       bonus when the declarer holds it.
-    - **Unannounced capot (M = 1).** When the declaring team wins
+    - **Unannounced Slam (M = 1).** When the declaring team wins
       *all 8 tricks* on a numeric contract without having bid a
       Slam, the trick pile (152 cards + the 10-point last-trick
       bonus = 162) is
@@ -149,7 +149,7 @@ def score_round(round_: 'Round') -> RoundScore:
 
     Returns:
         A :class:`RoundScore` carrying the per-team scores, the
-        made/failed signal, and any unannounced-capot tag.
+        made/failed signal, and any unannounced-Slam tag.
     """
     if not round_.contract:
         # No contract established, return zero scores.
@@ -157,7 +157,7 @@ def score_round(round_: 'Round') -> RoundScore:
         return RoundScore(
             scores={team.name: 0 for team in teams},
             contract_made=None,
-            unannounced_capot=None,
+            unannounced_slam=None,
         )
 
     contract_team = round_.contract.player.team
@@ -237,13 +237,13 @@ def score_round(round_: 'Round') -> RoundScore:
         return RoundScore(
             scores=team_scores,
             contract_made=contract_made,
-            unannounced_capot=None,
+            unannounced_slam=None,
         )
 
     # ----- Numeric contract scoring path (80-180) -----
     defender_names = [t for t in team_scores if t != contract_team_name]
 
-    # Unannounced capot: the declaring team swept all 8 tricks on a
+    # Unannounced Slam: the declaring team swept all 8 tricks on a
     # numeric contract. Recognised only un-doubled — the
     # doubled/redoubled path keeps its winner-takes-all 160 + C×M
     # shape regardless. The trick pile (152 cards + the 10-point
@@ -253,17 +253,17 @@ def score_round(round_: 'Round') -> RoundScore:
     # 8 personally (the Solo Slam predicate), else plain SLAM.
     # The 250 substitute is the same flat amount a *declared* Slam is
     # worth, so it reads from the SlamLevel single source of truth.
-    UNANNOUNCED_CAPOT_SUBSTITUTE = SlamLevel.SLAM.base_value
-    unannounced_capot: Optional[UnannouncedSlam] = None
-    declarer_capot = (
+    UNANNOUNCED_SLAM_SUBSTITUTE = SlamLevel.SLAM.base_value
+    unannounced_slam: Optional[UnannouncedSlam] = None
+    declarer_slam = (
         multiplier == 1
         and len(round_.team_tricks[contract_team_name]) == 8
     )
-    if declarer_capot:
+    if declarer_slam:
         bidder_personal_tricks = count_player_tricks(
             round_.tricks, trump_suit, round_.contract.player
         )
-        unannounced_capot = (
+        unannounced_slam = (
             UnannouncedSlam.GRAND_SLAM
             if bidder_personal_tricks == 8
             else UnannouncedSlam.SLAM
@@ -272,22 +272,23 @@ def score_round(round_: 'Round') -> RoundScore:
     # The declarer's *realized* points decide made/failed: card
     # points (already including the last-trick bonus) plus the Belote
     # bonus when the declarer holds it (contree-domain.md §7.1-§7.2).
-    # A capot is made outright — sweeping every trick can never fail.
+    # An unannounced Slam is made outright — sweeping every trick can
+    # never fail.
     attacker_realized = (
         team_card_points[contract_team_name] + belote_bonus(contract_team_name)
     )
-    contract_made = declarer_capot or attacker_realized >= contract_value
+    contract_made = declarer_slam or attacker_realized >= contract_value
 
     if multiplier == 1:
         # Un-doubled: the two sides share the pile.
         if contract_made:
-            # On an unannounced capot the 162 pile (last-trick bonus
+            # On an unannounced Slam the 162 pile (last-trick bonus
             # included) is
             # swapped for the flat 250 substitute; otherwise the
             # declarer adds its real captured card points.
             attacker_pile = (
-                UNANNOUNCED_CAPOT_SUBSTITUTE
-                if declarer_capot
+                UNANNOUNCED_SLAM_SUBSTITUTE
+                if declarer_slam
                 else team_card_points[contract_team_name]
             )
             team_scores[contract_team_name] = (
@@ -323,5 +324,5 @@ def score_round(round_: 'Round') -> RoundScore:
     return RoundScore(
         scores=team_scores,
         contract_made=contract_made,
-        unannounced_capot=unannounced_capot,
+        unannounced_slam=unannounced_slam,
     )

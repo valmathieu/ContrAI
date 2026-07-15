@@ -101,7 +101,7 @@ def _panel_round_recap(
             breakdown,
             trump=trump,
             all_passed=all_passed,
-            capot_label=getattr(round_, "unannounced_capot", None),
+            slam_label=getattr(round_, "unannounced_slam", None),
         )
     )
     body.append("\n")
@@ -197,11 +197,11 @@ def _recap_breakdown(round_) -> dict:
         contract.team.name if contract is not None else None
     )
     contract_made = contract is not None and _contract_made(round_)
-    # Unannounced-capot marker set by the engine (None or an
+    # Unannounced-Slam marker set by the engine (None or an
     # UnannouncedSlam member). When present, the declaring team's 162
     # pile is shown as the flat 250 substitute with the last-trick
     # bonus folded in.
-    unannounced_capot = getattr(round_, "unannounced_capot", None)
+    unannounced_slam = getattr(round_, "unannounced_slam", None)
     if contract is not None:
         base = contract.get_base_points()
         mult = contract.get_multiplier()
@@ -271,7 +271,7 @@ def _recap_breakdown(round_) -> dict:
                 # bonus, and belote.
                 if is_attacker:
                     contract_row = base
-                if is_attacker and unannounced_capot is not None:
+                if is_attacker and unannounced_slam is not None:
                     # Unannounced slam: the declarer's 162 pile
                     # (last-trick bonus included) is replaced by the
                     # flat 250 substitute, mirroring the
@@ -368,7 +368,7 @@ def _format_outcome_table(
     *,
     trump: Optional[Suit] = None,
     all_passed: bool = False,
-    capot_label: Optional[str] = None,
+    slam_label: Optional[str] = None,
 ) -> Text:
     """Render the per-team play tally — the factual results of play.
 
@@ -385,8 +385,8 @@ def _format_outcome_table(
     were played) every cell renders as an em-dash, so the whole panel
     reads consistently.
 
-    When ``capot_label`` is set (an :class:`UnannouncedSlam` member)
-    the round was an unannounced capot: the Tricks points row already
+    When ``slam_label`` is set (an :class:`UnannouncedSlam` member)
+    the round was an unannounced Slam: the Tricks points row already
     carries the flat 250 substitute, and the label is appended to its
     right (e.g. ``← Grand Slam``) to explain why.
     """
@@ -423,10 +423,10 @@ def _format_outcome_table(
     row_points.append_text(_count_cell(ns.get("trick_points", 0)))
     row_points.append("  ")
     row_points.append_text(_count_cell(ew.get("trick_points", 0)))
-    if capot_label and not all_passed:
+    if slam_label and not all_passed:
         # Explain the flat 250 substitute sitting in this row. The
         # UnannouncedSlam member stringifies to its display label.
-        row_points.append(f"   ← {capot_label}", style=f"bold {GOLD}")
+        row_points.append(f"   ← {slam_label}", style=f"bold {GOLD}")
     row_points.append("\n")
 
     # Last-trick bonus (10 points to the team that wins trick 8).

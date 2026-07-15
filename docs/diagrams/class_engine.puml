@@ -200,7 +200,7 @@ package "model/round/ package" as p_round {
         + team_tricks : dict<str, list<Trick>>
         + round_scores : dict<str, int>
         + contract_made : bool?
-        + unannounced_capot : UnannouncedSlam?
+        + unannounced_slam : UnannouncedSlam?
         + belote_holder : Player?
         + belote_state : dict<Player, str>
         --
@@ -269,7 +269,7 @@ package "model/round/ package" as p_round {
       a thin wrapper that publishes
       ``score_round``'s ``RoundScore`` onto
       ``round_scores`` / ``contract_made`` /
-      ``unannounced_capot``.
+      ``unannounced_slam``.
       ----
       During play Round fires (each ``hasattr``-guarded):
       • ``view.on_bid_made(player, bid, history)``
@@ -288,7 +288,7 @@ package "model/round/ package" as p_round {
     note bottom of r_scoring
       Pure ``round -> RoundScore`` transform.
       Four scoring shapes (numeric share-pile,
-      unannounced-capot 250 substitute, doubled
+      unannounced-Slam 250 substitute, doubled
       winner-takes-all, Slam / Solo Slam grid),
       belote +20 to the K+Q holder layered on
       every shape. ``UnannouncedSlam`` tags an
@@ -417,8 +417,9 @@ package "view/ package" as p_view {
       team: contract bonus (attacker base on
       normal made, 160+base×mult on doubled
       made, (160+base)×mult on failed defender)
-      + card points + dix-de-der + belote →
-      `round_scores[team]`. Card/dix/belote rows
+      + card points + last-trick bonus + belote
+      → `round_scores[team]`. The card /
+      last-trick / belote rows
       em-dash when the engine ignores them so
       the addition matches `round_score`.
       Helpers `_recap_breakdown` /
