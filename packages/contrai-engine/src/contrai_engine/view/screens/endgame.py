@@ -43,6 +43,11 @@ if TYPE_CHECKING:
 
 
 def _panel_game_over_banner(status: GameOverStatus) -> Panel:
+    """Gold double-bordered banner naming the winning team and final score.
+
+    The winner's total is highlighted gold; the loser keeps its team
+    color. Team labels sit under their numbers.
+    """
     winner_name = status.winner or "—"
     winner_abbr = _team_abbr(winner_name) if winner_name != "—" else "—"
     final = status.final_scores
@@ -96,6 +101,11 @@ def _panel_game_over_banner(status: GameOverStatus) -> Panel:
 
 
 def _panel_round_summary(history: list["RoundSummary"]) -> Panel:
+    """Round-by-round table: one row per :class:`RoundSummary`.
+
+    Columns: round number, contract, made/failed mark, per-team round
+    points, and the running game totals after that round.
+    """
     table = Table(
         show_header=True,
         header_style=f"bold {DIM}",
@@ -140,6 +150,10 @@ def _panel_round_summary(history: list["RoundSummary"]) -> Panel:
 
 
 def _format_summary_contract(row: "RoundSummary") -> Text:
+    """Contract cell for a summary row: team, value, suit, double marker.
+
+    Renders a dim ``all passed`` when the round produced no contract.
+    """
     t = Text()
     if row.contract is None:
         t.append("all passed", style=DIM)
@@ -162,6 +176,7 @@ def _format_summary_contract(row: "RoundSummary") -> Text:
 
 
 def _end_game_prompt_text() -> Text:
+    """Prompt line offering the ``[n]`` / ``[r]`` / ``[q]`` end-game choices."""
     t = Text()
     t.append("Game over.  ", style=FG)
     t.append("[n]", style=f"bold {YELLOW}")

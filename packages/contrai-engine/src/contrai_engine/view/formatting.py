@@ -40,22 +40,27 @@ from contrai_engine.view.theme import (
 
 
 def _position_short(position: str) -> str:
+    """Single-letter seat label: ``"North"`` -> ``"N"``."""
     return POSITION_SHORT.get(position, position[:1])
 
 
 def _position_color(position: str) -> str:
+    """Seat color by team: blue for N/S seats, orange for E/W."""
     return BLUE if position in ("North", "South") else ORANGE
 
 
 def _team_color(team_name: str) -> str:
+    """Team color: blue for North-South, orange for East-West."""
     return BLUE if team_name == "North-South" else ORANGE
 
 
 def _team_abbr(team_name: str) -> str:
+    """Scoreboard abbreviation: ``"North-South"`` -> ``"N-S"``."""
     return TEAM_ABBR.get(team_name, team_name)
 
 
 def _suit_glyph(suit: Suit) -> str:
+    """Unicode suit glyph (``♠``/``♥``/``♦``/``♣``), falling back to the enum value."""
     return Card.SUIT_SYMBOLS.get(suit, suit.value)
 
 
@@ -75,14 +80,17 @@ RANK_SHORT = {
 
 
 def _rank_short(rank: Rank) -> str:
+    """Short rank label from ``RANK_SHORT``: ``Rank.JACK`` -> ``"J"``."""
     return RANK_SHORT.get(rank, rank.value)
 
 
 def _suit_color(suit: Suit) -> str:
+    """Suit color: red for hearts/diamonds, plain foreground otherwise."""
     return RED if suit in (Suit.HEARTS, Suit.DIAMONDS) else FG
 
 
 def _suit_color_dim(suit: Suit) -> str:
+    """Dimmed variant of :func:`_suit_color` for de-emphasized cards."""
     return RED_DIM if suit in (Suit.HEARTS, Suit.DIAMONDS) else DIM
 
 

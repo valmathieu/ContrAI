@@ -140,6 +140,7 @@ class RichView:
     LOG_MAX = 5
 
     def __init__(self) -> None:
+        """Create an unattached view: fresh console, empty per-game state."""
         self.console: Console = Console()
         self.target_score: int = DEFAULT_TARGET
         self.history: list[RoundSummary] = []
@@ -631,6 +632,7 @@ class RichView:
         return t
 
     def _format_card_log(self, player: BasePlayer, card: Card) -> Text:
+        """Build the log line for a single card play."""
         label = _position_short(player.position)
         color = _position_color(player.position)
         t = Text()
@@ -643,6 +645,7 @@ class RichView:
     def _format_trick_won_log(
         self, winner: BasePlayer, trick_points: int
     ) -> Text:
+        """Build the log line for a completed trick: winner and points."""
         label = _position_short(winner.position)
         color = _position_color(winner.position)
         t = Text()

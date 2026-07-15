@@ -48,6 +48,11 @@ def _panel_prompt(
     mandatory: bool,
     notice: Optional[Text] = None,
 ) -> Panel:
+    """The Prompt panel: the question plus an optional rejection notice.
+
+    ``mandatory`` styles the question bold yellow (input the player must
+    answer now); ``notice`` carries the previous input's rejection.
+    """
     body = Text()
     # A rejection from the previous input sits above the question, in
     # red, so the player reads *why* the last entry bounced without it
