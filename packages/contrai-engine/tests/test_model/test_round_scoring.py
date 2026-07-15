@@ -2,7 +2,7 @@
 underlying pure :func:`contrai_engine.model.round.scoring.score_round`.
 
 The scoring rules come from ``contree-domain.md`` §6.5, §7: the numeric
-(80-180) share-the-pile path, the unannounced-capot 250 substitute, the
+(80-180) share-the-pile path, the unannounced-Slam 250 substitute, the
 doubled/redoubled winner-takes-all path, and the symmetric Slam / Solo
 Slam grid — with the Belote (+20) bonus layered onto every shape for the
 team *holding* K + Q of trump.
@@ -11,7 +11,7 @@ These build a ``Round`` directly and stuff it with the minimal state the
 scoring path reads (``contract`` / ``team_tricks`` / ``tricks`` /
 ``last_trick_winner`` / ``belote_holder``), then assert on the published
 result attributes (``round_scores`` / ``contract_made`` /
-``unannounced_capot``). The shared ``players`` fixture lives in
+``unannounced_slam``). The shared ``players`` fixture lives in
 ``conftest.py``.
 """
 
@@ -101,7 +101,7 @@ class TestScoreRoundResult:
         assert isinstance(result, RoundScore)
         assert result.scores["North-South"] == 500
         assert result.contract_made is True
-        assert result.unannounced_capot is None
+        assert result.unannounced_slam is None
         # Pure: the round's result attributes are untouched until the
         # wrapper publishes them.
         assert round_.round_scores == {}
@@ -321,11 +321,11 @@ class TestNumericContractScoringRegression:
         return trick
 
     def test_numeric_made_normal_uses_base_plus_card_points(self, players):
-        """80 made by N-S without double, and *not* a capot: attacker =
+        """80 made by N-S without double, and *not* a sweep: attacker =
         80 + card points, defender = its own card points. Trump = clubs;
         the bidder plays the trump Jack (20 pts) in seven tricks while
         E-W steal one 0-point trick — so the plain made formula, not the
-        unannounced-capot substitute, is the path under test."""
+        unannounced-Slam substitute, is the path under test."""
         contract = _contract(players["N"], 80, Suit.CLUBS)
         order = [players[s] for s in ("N", "E", "S", "W")]
         round_ = Round(
@@ -351,7 +351,7 @@ class TestNumericContractScoringRegression:
         scores = round_.calculate_round_scores()
         # Card points = 20*7 = 140; last-trick bonus = +10 → 150 card pts.
         # Contract made (150 >= 80) → attacker score = 80 + 150 = 230.
-        assert round_.unannounced_capot is None
+        assert round_.unannounced_slam is None
         assert scores["North-South"] == 230
         # E-W captured a single 0-point trick → 0 card points.
         assert scores["East-West"] == 0
@@ -611,7 +611,7 @@ class TestNumericDoubledScoring:
 
 
 # ---------------------------------------------------------------------------
-# Unannounced capot scoring (calculate_round_scores)
+# Unannounced Slam scoring (calculate_round_scores)
 # ---------------------------------------------------------------------------
 #
 # When the declaring team wins all 8 tricks on an *un-doubled* numeric
@@ -642,7 +642,7 @@ class TestUnannouncedSlamScoring:
         winners = ["N"] * 5 + ["S"] * 3
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
         scores = round_.calculate_round_scores()
-        assert round_.unannounced_capot is UnannouncedSlam.SLAM
+        assert round_.unannounced_slam is UnannouncedSlam.SLAM
         assert round_.contract_made is True
         assert scores["North-South"] == 350  # 100 + 250
         assert scores["East-West"] == 0
@@ -654,11 +654,11 @@ class TestUnannouncedSlamScoring:
             players, contract=contract, trick_winners=["N"] * 8
         )
         scores = round_.calculate_round_scores()
-        assert round_.unannounced_capot is UnannouncedSlam.GRAND_SLAM
+        assert round_.unannounced_slam is UnannouncedSlam.GRAND_SLAM
         assert scores["North-South"] == 350  # 100 + 250
         assert scores["East-West"] == 0
 
-    def test_capot_forces_made_below_threshold(self, players):
+    def test_unannounced_slam_forces_made_below_threshold(self, players):
         """The filler tricks carry 0 card points, so a 180 contract could
         never clear its threshold on cards — but sweeping every trick
         makes it outright → 180 + 250 = 430."""
@@ -671,7 +671,7 @@ class TestUnannouncedSlamScoring:
         assert scores["North-South"] == 430  # 180 + 250
         assert scores["East-West"] == 0
 
-    def test_capot_layers_belote_on_top(self, players):
+    def test_unannounced_slam_layers_belote_on_top(self, players):
         """Belote (+20) still credits the holder on top of contract + 250."""
         contract = _contract(players["N"], 100, Suit.SPADES)
         winners = ["N"] * 5 + ["S"] * 3
@@ -701,12 +701,12 @@ class TestUnannouncedSlamScoring:
             round_.team_tricks["North-South"].append(trick)
         round_.last_trick_winner = players["N"]
         scores = round_.calculate_round_scores()
-        assert round_.unannounced_capot is None
+        assert round_.unannounced_slam is None
         assert round_.contract_made is True
         assert scores["North-South"] == 360  # 160 + 100*2
         assert scores["East-West"] == 0
 
-    def test_defense_sweep_is_not_a_capot(self, players):
+    def test_defense_sweep_is_not_an_unannounced_slam(self, players):
         """Declaring team only: when the *defence* sweeps, the declarer
         simply fails (160 + C to the defence) — no 250, not flagged."""
         contract = _contract(players["E"], 100, Suit.SPADES)  # E-W declares
@@ -714,7 +714,7 @@ class TestUnannouncedSlamScoring:
             players, contract=contract, trick_winners=["N"] * 8
         )
         scores = round_.calculate_round_scores()
-        assert round_.unannounced_capot is None
+        assert round_.unannounced_slam is None
         assert round_.contract_made is False
         assert scores["East-West"] == 0
         assert scores["North-South"] == 260  # 160 + 100 (normal failed)

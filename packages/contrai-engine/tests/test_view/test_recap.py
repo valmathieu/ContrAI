@@ -459,10 +459,10 @@ class TestRoundRecapPanel:
         # in the "Belote (K + Q ♥)" label is not a sign and is allowed.
         assert re.search(r"\+\d", text) is None
 
-    def test_recap_unannounced_capot_substitutes_250_and_folds_last_trick(
+    def test_recap_unannounced_slam_substitutes_250_and_folds_last_trick(
         self, four_players
     ):
-        """Unannounced capot: the Outcome 'Tricks points' row reads 250
+        """Unannounced Slam: the Outcome 'Tricks points' row reads 250
         (the flat substitute), 'Last trick' is folded in (0), and the
         contract + substitute still sum to the round score."""
         view = RichView()
@@ -482,7 +482,7 @@ class TestRoundRecapPanel:
             team_tricks={"North-South": ns_tricks, "East-West": []},
             contract_made=True,
         )
-        round_.unannounced_capot = UnannouncedSlam.GRAND_SLAM  # north swept personally
+        round_.unannounced_slam = UnannouncedSlam.GRAND_SLAM  # north swept personally
         round_.last_trick_winner = north  # bonus would be +10 — must fold in
         breakdown = _recap_breakdown(round_)
         ns = breakdown["North-South"]
@@ -520,10 +520,10 @@ class TestRoundRecapPanel:
             (UnannouncedSlam.GRAND_SLAM, "Grand Slam"),
         ],
     )
-    def test_recap_capot_tags_the_trick_points_row(
+    def test_recap_unannounced_slam_tags_the_trick_points_row(
         self, four_players, marker, expected_tag
     ):
-        """The unannounced-capot marker surfaces its label on the Trick
+        """The unannounced-Slam marker surfaces its label on the Trick
         points row to explain the 250 substitute."""
         view = RichView()
         north, *_ = four_players
@@ -540,7 +540,7 @@ class TestRoundRecapPanel:
             team_tricks={"North-South": ns_tricks, "East-West": []},
             contract_made=True,
         )
-        round_.unannounced_capot = marker
+        round_.unannounced_slam = marker
         text = _panel_round_recap(
             round_, {"North-South": 340, "East-West": 0}
         ).renderable.plain

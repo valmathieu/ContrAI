@@ -70,15 +70,15 @@ class Round:
         # still score a non-zero Belote bonus, so "round_score > 0" is
         # not a reliable made/failed signal.
         self.contract_made: Optional[bool] = None
-        # Unannounced-capot marker, set by ``calculate_round_scores``.
-        # ``None`` when the round was not an unannounced capot; otherwise
+        # Unannounced-Slam marker, set by ``calculate_round_scores``.
+        # ``None`` when the round was not an unannounced Slam; otherwise
         # the matching :class:`UnannouncedSlam` member — ``SLAM`` (the
         # declaring *team* swept all 8 tricks) or ``GRAND_SLAM`` (the
         # contracting *player personally* won them all). Only set for
         # un-doubled numeric contracts — the path that swaps the
         # 162-point pile for a flat 250 substitute. The view reads this to
         # render the 250 and its explanatory tag.
-        self.unannounced_capot: Optional[UnannouncedSlam] = None
+        self.unannounced_slam: Optional[UnannouncedSlam] = None
 
         # Belote / rebelote announcement state. ``belote_holder`` is the
         # unique player holding both the K and the Q of trump at deal time
@@ -422,8 +422,8 @@ class Round:
         transformation: it runs the scoring rules over the round's final
         state and publishes the three result attributes the view reads —
         :attr:`round_scores`, :attr:`contract_made` (the canonical
-        made/failed signal), and :attr:`unannounced_capot`. The scoring
-        shapes (numeric, unannounced capot, doubled winner-takes-all,
+        made/failed signal), and :attr:`unannounced_slam`. The scoring
+        shapes (numeric, unannounced Slam, doubled winner-takes-all,
         Slam / Solo Slam) and the Belote rule all live in
         :mod:`scoring`.
 
@@ -433,7 +433,7 @@ class Round:
         result = score_round(self)
         self.round_scores = result.scores
         self.contract_made = result.contract_made
-        self.unannounced_capot = result.unannounced_capot
+        self.unannounced_slam = result.unannounced_slam
         return self.round_scores
 
     def handle_failed_contract(self) -> Dict[str, int]:
