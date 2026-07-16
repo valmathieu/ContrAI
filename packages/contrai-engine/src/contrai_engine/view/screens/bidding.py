@@ -10,6 +10,7 @@ brief AI post-bid announcement. Pure builders consuming the chronological
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Optional
 
 from contrai_core import Auction, BasePlayer
@@ -36,6 +37,7 @@ from contrai_engine.view.theme import (
     DIM,
     FG,
     GOLD,
+    RED,
     TITLE,
     YELLOW,
 )
@@ -183,17 +185,9 @@ def _bidding_prompt_text(
     else:
         # The worked contract example tracks the auction: show the
         # cheapest *legal* raise (100 once 90 stands), never the bare
-        # 80 floor. Dropped entirely past 180, where only Slam remains
-        # (its value is a SlamLevel, not an int, so it's filtered out).
+        # 80 floor. Dropped entirely past 180, where only Slam remains.
         options: list[str] = []
-        min_value = min(
-            (
-                b.value
-                for b in legal
-                if isinstance(b, ContractBid) and isinstance(b.value, int)
-            ),
-            default=None,
-        )
+        min_value = _cheapest_legal_raise(legal)
         if min_value is not None:
             options.append(f"'{min_value} H'")
         options.append("'pass'")
@@ -201,6 +195,41 @@ def _bidding_prompt_text(
             options.append("'double'")
         t.append(f"(e.g. {' / '.join(options)})", style=DIM)
     return t
+
+
+def _cheapest_legal_raise(legal: Iterable[Bid]) -> Optional[int]:
+    """Smallest numeric contract value among the given legal actions.
+
+    Returns ``None`` when no numeric raise remains — past 180 only the
+    Slam family is left, and its value is a ``SlamLevel``, not an
+    ``int``, so it is filtered out here.
+    """
+    return min(
+        (
+            b.value
+            for b in legal
+            if isinstance(b, ContractBid) and isinstance(b.value, int)
+        ),
+        default=None,
+    )
+
+
+def _bid_rejection_text(auction: Auction, player: BasePlayer) -> Text:
+    """Notice shown when the human's bid input does not parse.
+
+    The worked contract example tracks the auction exactly like
+    :func:`_bidding_prompt_text`: once 90 stands the notice suggests
+    '100 h', and past 180 — where only the Slam family remains — the
+    numeric example is dropped entirely.
+    """
+    examples = ["'pass'", "'double'", "'redouble'"]
+    min_value = _cheapest_legal_raise(auction.legal_actions(player))
+    if min_value is not None:
+        examples.insert(0, f"'{min_value} h'")
+    return Text(
+        f"✗ Unrecognized bid. Try {', '.join(examples)}.",
+        style=RED,
+    )
 
 
 def _ai_bid_announcement(player: BasePlayer, bid: Bid) -> Text:

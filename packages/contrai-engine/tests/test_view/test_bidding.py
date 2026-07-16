@@ -14,6 +14,7 @@ from contrai_core.bid import ContractBid, DoubleBid, PassBid
 
 from contrai_engine.view.screens.bidding import (
     _ai_bid_announcement,
+    _bid_rejection_text,
     _bidding_prompt_text,
     _panel_bidding_history,
     _render_bidding_diamond,
@@ -144,6 +145,35 @@ class TestBiddingPromptText:
         assert "'pass'" in text
         assert "'double'" in text
         assert " H'" not in text
+
+
+class TestBidRejectionText:
+    """The unparseable-input notice tracks the cheapest legal raise."""
+
+    def test_fresh_auction_suggests_the_80_floor(self, four_players):
+        *_, south, _west = four_players
+        text = _bid_rejection_text(Auction.empty(), south).plain
+        assert "Unrecognized bid" in text
+        assert "'80 h'" in text
+        assert "'pass'" in text
+
+    def test_example_tracks_the_standing_bid(self, four_players):
+        _north, _east, south, west = four_players
+        auction = Auction.empty().apply(ContractBid(south, 90, Suit.HEARTS))
+        text = _bid_rejection_text(auction, west).plain
+        # 90 stands: the example shows 100, never the bare 80 floor.
+        assert "'100 h'" in text
+        assert "'80 h'" not in text
+
+    def test_past_180_drops_the_numeric_example(self, four_players):
+        _north, east, south, _west = four_players
+        auction = Auction.empty().apply(ContractBid(east, 180, Suit.HEARTS))
+        text = _bid_rejection_text(auction, south).plain
+        # Only Slam-family raises remain; the notice falls back to the
+        # word actions alone.
+        assert " h'" not in text
+        assert "'pass'" in text
+        assert "'double'" in text
 
 
 class TestAiBidAnnouncement:

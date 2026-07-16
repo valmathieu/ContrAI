@@ -67,6 +67,9 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
   AI always fell back to Spades — even when Spades never met the bidding table — and
   ignored the belote preference when more than one tied suit held a belote. It now picks
   among the tied suits only, preferring belote holders.
+- (engine) The "Unrecognized bid" notice now suggests the cheapest raise the auction
+  still allows (e.g. `'100 h'` once 90 stands) instead of a fixed `'80 h'`, dropping the
+  numeric example entirely once only Slam-family raises remain.
 
 ## [0.1.0] - 2026-06-21
 

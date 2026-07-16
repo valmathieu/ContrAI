@@ -1,7 +1,6 @@
 """Rich-based terminal UI for the contrée game.
 
-Implements the five-screen design from
-``ContrAI CLI/design_handoff_contrai_tui/`` (landing, bidding,
+Implements the five-screen design (landing, bidding,
 mid-trick, trick-won, game-over). Plugs into the engine through the
 existing view hook points:
 
@@ -53,6 +52,7 @@ from contrai_engine.view.layout import (
 from contrai_engine.view.parsing import _parse_bid_input, _parse_card_input
 from contrai_engine.view.screens.bidding import (
     _ai_bid_announcement,
+    _bid_rejection_text,
     _bidding_prompt_text,
     _panel_bidding_history,
 )
@@ -145,7 +145,7 @@ class RichView:
         self.target_score: int = DEFAULT_TARGET
         self.history: list[RoundSummary] = []
         self.last_completed_trick: Optional[tuple[Trick, BasePlayer]] = None
-        self.game: Optional["Game"] = None
+        self.game: Optional[Game] = None
         # Rolling narrative log shown below the hand. Captures the last
         # ``LOG_MAX`` events (deal, bids, plays, trick winners, redeal,
         # belote announcements). Survives across rounds so the end of
@@ -156,7 +156,7 @@ class RichView:
     # Lifecycle wiring (called by the CLI)
     # ------------------------------------------------------------------
 
-    def attach(self, game: "Game", target_score: int) -> None:
+    def attach(self, game: Game, target_score: int) -> None:
         """Bind a new game session. Resets per-game state."""
         self.game = game
         self.target_score = target_score
@@ -213,11 +213,7 @@ class RichView:
             )
             bid = _parse_bid_input(raw, player)
             if bid is None:
-                notice = Text(
-                    "✗ Unrecognized bid. Try '80 h', 'pass', "
-                    "'double', 'redouble'.",
-                    style=RED,
-                )
+                notice = _bid_rejection_text(auction, player)
                 continue
             # Syntactic parsing only checks the *shape* of the input;
             # the auction owns the rules (precedence, the Double freeze,
