@@ -455,7 +455,7 @@ class TestEventLog:
 
         view.on_contract_established(_StubRound())
         line = view.event_log[-1].plain
-        # Multiplier plus the coincheur's seat letter.
+        # Multiplier plus the double caller's seat letter.
         assert "×2 by W" in line
         # Taker is still named.
         assert "by E" in line
