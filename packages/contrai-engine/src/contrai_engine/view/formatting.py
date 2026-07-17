@@ -106,7 +106,7 @@ def _seat_letter(player: Optional[BasePlayer]) -> Optional[Text]:
     """Single-letter seat label colored by the player's team, or ``None``.
 
     Used to name the players behind a contract: the taker whose bid set
-    it, and the Coinche / Surcoinche caller. Each letter keeps the
+    it, and the double / redouble caller. Each letter keeps the
     seat's team color (blue for N-S, orange for E-W).
     """
     if player is None or getattr(player, "position", None) is None:
@@ -121,13 +121,13 @@ def _format_contract_short(contract: Contract, *, verbose: bool = False) -> Text
     """Short label: ``"100 by E  ×2 by S"``.
 
     Names the players, not just the team: the contract-setter follows
-    ``by`` as a single team-colored seat letter, and any Coinche /
-    Surcoinche shows its multiplier with the caller's seat
+    ``by`` as a single team-colored seat letter, and any double / redouble
+    shows its multiplier with the caller's seat
     (``×2 by S`` / ``×4 by N``).
 
     Args:
         contract: The materialized contract to render.
-        verbose: When ``True``, spell the Coinche / Surcoinche markers
+        verbose: When ``True``, spell the double / redouble markers
             out as ``doubled`` / ``redoubled`` instead of the compact
             ``×2`` / ``×4`` glyphs. The recap panel uses this so the
             after-round summary reads in full prose; the in-game panel
@@ -148,7 +148,7 @@ def _format_contract_short(contract: Contract, *, verbose: bool = False) -> Text
         # Defensive fallback: name the team if the player is missing.
         t.append(_team_abbr(contract.team.name),
                  style=f"bold {_team_color(contract.team.name)}")
-    # Coinche / Surcoinche: multiplier plus the player who called it.
+    # Double / redouble: multiplier plus the player who called it.
     if contract.redouble:
         caller = _seat_letter(getattr(contract, "redouble_player", None))
         t.append(f"  {double_label}", style=GOLD)
@@ -190,7 +190,7 @@ def _bid_label(bid: Bid) -> Text:
 
     Renders a :class:`~contrai_core.bid.Bid` to the short glyphs the
     auction panels use: ``Pass`` for a pass, ``×2`` / ``×4`` for a
-    Coinche / Surcoinche, and ``"<value> <suit-glyph>"`` for a numeric
+    double / redouble, and ``"<value> <suit-glyph>"`` for a numeric
     or Slam-family contract.
     """
     if isinstance(bid, PassBid):
