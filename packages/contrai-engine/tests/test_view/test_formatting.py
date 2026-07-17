@@ -1,7 +1,7 @@
 """Tests for the stateless formatters in :mod:`contrai_engine.view.formatting`.
 
 Covers the shared labels with real branching: the contract label
-(taker seat + Coinche caller, compact vs verbose) and the trump label
+(taker seat + double caller, compact vs verbose) and the trump label
 (glyph/label plus the optional ★ flourish).
 """
 
@@ -17,7 +17,7 @@ from contrai_engine.view.formatting import (
 
 
 class TestFormatContractShort:
-    """The shared contract label: value + taker seat + Coinche caller.
+    """The shared contract label: value + taker seat + double caller.
 
     Used by the in-game round panel, the after-round recap, and the
     event-log 'Contract set' line — all three render through this.
@@ -31,7 +31,7 @@ class TestFormatContractShort:
         # No multiplier marker on an un-doubled contract.
         assert "×2" not in text and "×4" not in text
 
-    def test_doubled_contract_names_coincheur(self, four_players):
+    def test_doubled_contract_names_double_caller(self, four_players):
         north, east, _south, west = four_players
         contract = Contract(
             ContractBid(north, 110, Suit.SPADES),
@@ -41,7 +41,7 @@ class TestFormatContractShort:
         assert "110 by N" in text
         assert "×2 by E" in text
 
-    def test_redoubled_contract_names_surcoincheur(self, four_players):
+    def test_redoubled_contract_names_redouble_caller(self, four_players):
         north, east, _south, west = four_players
         contract = Contract(
             ContractBid(north, 120, Suit.CLUBS),
