@@ -191,7 +191,7 @@ alt view ≠ None AND hasattr(view, 'on_trick_complete')
     V -->> R : (returns)
 end
 
-[<-- R : return winner  (Player)
+[<-- R : return  (None — winner published on last_trick_winner)
 deactivate R
 
 note over R, PS

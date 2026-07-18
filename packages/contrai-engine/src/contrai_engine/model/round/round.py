@@ -27,7 +27,7 @@ class Round:
     trick sequence management, and round score calculation.
     """
 
-    def __init__(self, players_order: List['Player'], dealer: 'Player', deck: 'Deck', round_number: int):
+    def __init__(self, players_order: List[Player], dealer: Player, deck: Deck, round_number: int):
         """
         Initialize a round with the given parameters.
 
@@ -60,7 +60,7 @@ class Round:
         self.play_state: PlayState | None = None
         self.tricks: List[Trick] = []
         self.current_trick: Optional[Trick] = None
-        self.last_trick_winner: Optional['Player'] = None
+        self.last_trick_winner: Optional[Player] = None
         self.team_tricks: Dict[str, List[Trick]] = {}
         self.round_scores: Dict[str, int] = {}
         # Single source of truth for the contract outcome, set by
@@ -86,8 +86,8 @@ class Round:
         # passed). ``belote_state`` tracks which of the two cards they
         # have already played: missing → not yet announced; "belote" →
         # one played; "rebelote" → both played.
-        self.belote_holder: Optional['Player'] = None
-        self.belote_state: Dict['Player', str] = {}
+        self.belote_holder: Optional[Player] = None
+        self.belote_state: Dict[Player, str] = {}
 
         # Initialize team tricks dictionary
         if players_order:
@@ -162,7 +162,7 @@ class Round:
 
     def _gather_bid(
         self,
-        player: 'Player',
+        player: Player,
         auction: Auction,
         view,
     ) -> Bid:
@@ -200,7 +200,7 @@ class Round:
             )
         return bid
 
-    def _is_belote_event(self, player: 'Player', card) -> bool:
+    def _is_belote_event(self, player: Player, card) -> bool:
         """True if *player* playing *card* counts toward a belote announcement."""
         if self.belote_holder is None or self.contract is None:
             return False
@@ -209,7 +209,7 @@ class Round:
         trump = self.contract.suit
         return card.suit == trump and card.rank in (Rank.KING, Rank.QUEEN)
 
-    def _transition_belote_state(self, player: 'Player') -> Optional[str]:
+    def _transition_belote_state(self, player: Player) -> Optional[str]:
         """Advance the belote_state machine and return the new state name.
 
         Returns ``"belote"`` if this is the first of the K+Q pair played,
@@ -260,9 +260,9 @@ class Round:
             player.hand.clear()
             player.hand.extend(self.play_state.hand_of(player))
 
-    def play_trick(self, view=None) -> Optional['Player']:
+    def play_trick(self, view=None) -> None:
         """
-        Play a single trick and return its winner.
+        Play a single trick.
 
         The trick is driven by the immutable core :class:`PlayState`: the
         active player, the legal cards, and each play's effect on the hands
@@ -274,9 +274,6 @@ class Round:
 
         Args:
             view: Optional view for human player interaction
-
-        Returns:
-            Player: The winner of the trick or None if no winner
         """
         # Lazy-seed guard: tests drive ``play_trick`` directly without going
         # through ``play_all_tricks``. Seed from the current contract,
@@ -383,7 +380,7 @@ class Round:
         if view is not None and hasattr(view, 'on_trick_complete'):
             view.on_trick_complete(self.current_trick, winner, self)
 
-        return winner
+        return
 
     def play_all_tricks(self, view=None) -> Dict[str, List[Trick]]:
         """
@@ -409,8 +406,8 @@ class Round:
         )
 
         # Play 8 tricks
-        for trick_num in range(8):
-            winner = self.play_trick(view)
+        for _ in range(8):
+            self.play_trick(view)
 
         return self.team_tricks
 

@@ -302,12 +302,12 @@ class RichView:
         line.append(f"{dealer} deals.", style=FG)
         self._log(line)
 
-    def on_all_pass_redeal(self, round_: "Round") -> None:
+    def on_all_pass_redeal(self) -> None:
         """Engine hook: every bid was a pass, the deal will be repeated."""
         line = Text("All passed — redealing.", style=f"bold {YELLOW}")
         self._log(line)
 
-    def on_contract_established(self, round_: "Round") -> None:
+    def on_contract_established(self, round_: Round) -> None:
         """Engine hook: bidding ended on a contract — bookmark it in the log."""
         contract = getattr(round_, "contract", None)
         if contract is None:
