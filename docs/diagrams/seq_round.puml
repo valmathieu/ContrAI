@@ -71,7 +71,10 @@ note right of R
   instead of persisted counters — see
   **seq_trick.puml**.
 end note
-return
+' Plain reply arrow — a bare `return` here would close Round's
+' activation (opened at `new Round`) and leave its lifeline
+' inactive for the bidding/trick/scoring phases below.
+R --> G
 
 G -->> V : on_round_dealt(current_round)
 note right of V
@@ -95,7 +98,10 @@ alt all players passed (contract is None)
     R --> G : {team: 0}
     G -->> V : on_all_pass_redeal(current_round)
     G --> C : returns None\n(current_contract = None,\n cards redistributed)
-    return
+    ' No deactivate here: PlantUML applies activations linearly across
+    ' alt branches, so closing Game/Round in this early-exit branch
+    ' would blank their bars for the trick-taking and scoring phases
+    ' drawn below. The explicit return arrow above marks the early exit.
 end
 
 == Trick-taking — 8 tricks ==
