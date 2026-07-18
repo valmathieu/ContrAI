@@ -207,7 +207,7 @@ package "model/round/ package" as p_round {
         + __init__(players_order, dealer, deck, round_number)
         + deal_cards() : None
         + manage_bidding(view=None) : Contract?
-        + play_trick(view=None) : Player?
+        + play_trick(view=None) : None
         + play_all_tricks(view=None) : dict<str, list<Trick>>
         + calculate_round_scores() : dict<str, int>
         + handle_failed_contract() : dict<str, int>
@@ -281,7 +281,7 @@ package "model/round/ package" as p_round {
       • ``view.on_trick_complete(trick, winner, self)``
       ``Game.manage_round`` additionally fires
       ``view.on_round_dealt(round_)`` after the deal
-      and ``view.on_all_pass_redeal(round_)`` when
+      and ``view.on_all_pass_redeal()`` when
       everyone passes.
     end note
 
@@ -328,7 +328,7 @@ package "view/ package" as p_view {
         + request_bid_action(player, auction: Auction) : Bid
         + request_card_action(player, trick, contract, playable) : Card
         + on_round_dealt(round_) : None
-        + on_all_pass_redeal(round_) : None
+        + on_all_pass_redeal() : None
         + on_bid_made(player, bid, history) : None
         + on_contract_established(round_) : None
         + on_card_played(player, card, trick) : None

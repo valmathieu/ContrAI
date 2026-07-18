@@ -96,7 +96,7 @@ alt all players passed (contract is None)
     G -> R : handle_failed_contract()
     R -> D : add_cards(all hands)
     R --> G : {team: 0}
-    G -->> V : on_all_pass_redeal(current_round)
+    G -->> V : on_all_pass_redeal()
     G --> C : returns None\n(current_contract = None,\n cards redistributed)
     ' No deactivate here: PlantUML applies activations linearly across
     ' alt branches, so closing Game/Round in this early-exit branch

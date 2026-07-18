@@ -6,7 +6,7 @@
 # result; it mutates nothing. The thin ``Round.calculate_round_scores``
 # wrapper unpacks that result onto the round's public result attributes.
 # Keeping the maths side-effect-free here isolates ~250 lines of scoring
-# rules from the lifecycle orchestrator (see contree-domain.md §6.5, §7).
+# rules from the lifecycle orchestrator.
 
 from dataclasses import dataclass
 from enum import Enum
@@ -105,8 +105,7 @@ def count_player_tricks(
 def score_round(round_: 'Round') -> RoundScore:
     """Score a played-out round into a :class:`RoundScore`.
 
-    Three scoring shapes, all sharing the same Belote rule (see
-    contree-domain.md §6.5, §7):
+    Three scoring shapes, all sharing the same Belote rule:
 
     - **Numeric, un-doubled (M = 1).** Made → declarer scores
       ``C + P_attack`` and the defense keeps its own card points;
@@ -182,10 +181,10 @@ def score_round(round_: 'Round') -> RoundScore:
     if round_.last_trick_winner and round_.last_trick_winner.team:
         team_card_points[round_.last_trick_winner.team.name] += 10
 
-    # Belote (+20) belongs to the team *holding* K + Q of trump
-    # (contree-domain.md §6.5), not to whoever wins the trick those
-    # cards land in. ``belote_holder`` is the single player holding
-    # both at deal time (None when split, or at No-Trump).
+    # Belote (+20) belongs to the team *holding* K + Q of trump, not
+    # to whoever wins the trick those cards land in. ``belote_holder``
+    # is the single player holding both at deal time (None when split,
+    # or at No-Trump).
     belote_team: Optional[str] = None
     if round_.belote_holder is not None and round_.belote_holder.team is not None:
         belote_team = round_.belote_holder.team.name
@@ -206,7 +205,6 @@ def score_round(round_: 'Round') -> RoundScore:
     # giving 500 / 1000 / 2000 for Slam and 1000 / 2000 / 4000 for
     # Solo Slam at normal / doubled / redoubled. The grid is symmetric:
     # whichever side wins the contract scores the at-risk amount.
-    # See contree-domain.md §7.2.
     if round_.contract.is_slam_family():
         contract_team_trick_count = len(round_.team_tricks[contract_team_name])
         contract_made = contract_team_trick_count == 8
@@ -247,12 +245,11 @@ def score_round(round_: 'Round') -> RoundScore:
     # numeric contract. Recognised only un-doubled — the
     # doubled/redoubled path keeps its winner-takes-all 160 + C×M
     # shape regardless. The trick pile (152 cards + the 10-point
-    # last-trick bonus) is
-    # replaced by a flat 250 substitute and the contract is
-    # necessarily made. GRAND_SLAM when the contracting player won all
-    # 8 personally (the Solo Slam predicate), else plain SLAM.
-    # The 250 substitute is the same flat amount a *declared* Slam is
-    # worth, so it reads from the SlamLevel single source of truth.
+    # last-trick bonus) is replaced by a flat 250 substitute and the
+    # contract is necessarily made. GRAND_SLAM when the contracting
+    # player won all 8 personally (the Solo Slam predicate), else plain
+    # SLAM. The 250 substitute is the same flat amount a *declared* Slam
+    # is worth, so it reads from the SlamLevel single source of truth.
     UNANNOUNCED_SLAM_SUBSTITUTE = SlamLevel.SLAM.base_value
     unannounced_slam: Optional[UnannouncedSlam] = None
     declarer_slam = (
@@ -271,9 +268,8 @@ def score_round(round_: 'Round') -> RoundScore:
 
     # The declarer's *realized* points decide made/failed: card
     # points (already including the last-trick bonus) plus the Belote
-    # bonus when the declarer holds it (contree-domain.md §7.1-§7.2).
-    # An unannounced Slam is made outright — sweeping every trick can
-    # never fail.
+    # bonus when the declarer holds it. An unannounced Slam is made
+    # outright — sweeping every trick can never fail.
     attacker_realized = (
         team_card_points[contract_team_name] + belote_bonus(contract_team_name)
     )
@@ -283,8 +279,7 @@ def score_round(round_: 'Round') -> RoundScore:
         # Un-doubled: the two sides share the pile.
         if contract_made:
             # On an unannounced Slam the 162 pile (last-trick bonus
-            # included) is
-            # swapped for the flat 250 substitute; otherwise the
+            # included) is swapped for the flat 250 substitute; otherwise the
             # declarer adds its real captured card points.
             attacker_pile = (
                 UNANNOUNCED_SLAM_SUBSTITUTE

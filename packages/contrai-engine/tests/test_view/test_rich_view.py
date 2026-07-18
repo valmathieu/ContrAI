@@ -407,7 +407,7 @@ class TestEventLog:
 
     def test_on_all_pass_redeal_logs(self, monkeypatch):
         view = self._make_view(monkeypatch)
-        view.on_all_pass_redeal(round_=None)
+        view.on_all_pass_redeal()
         assert any("redealing" in line.plain for line in view.event_log)
 
     def test_on_contract_established_logs(self, monkeypatch, four_players):

@@ -59,13 +59,13 @@ class RecordingView:
 
     def __init__(self):
         self.dealt = []
-        self.redealt = []
+        self.redeal_count = 0
 
     def on_round_dealt(self, round_obj):
         self.dealt.append(round_obj)
 
-    def on_all_pass_redeal(self, round_obj):
-        self.redealt.append(round_obj)
+    def on_all_pass_redeal(self):
+        self.redeal_count += 1
 
 @pytest.fixture
 def players():
@@ -344,7 +344,7 @@ def test_manage_round_completed(game, monkeypatch):
     ]
     # The view was told a fresh round was dealt, and never asked to redeal.
     assert view.dealt == [game.current_round]
-    assert view.redealt == []
+    assert view.redeal_count == 0
 
 
 def test_manage_round_accumulates_scores_across_rounds(game, monkeypatch):
@@ -382,5 +382,5 @@ def test_manage_round_all_pass_redeals(game, monkeypatch):
     assert 'play_all_tricks' not in game.current_round.calls
     assert 'handle_failed_contract' in game.current_round.calls
     # The view was asked to redeal, and the totals were left untouched.
-    assert view.redealt == [game.current_round]
+    assert view.redeal_count == 1
     assert game.scores == {'North-South': 0, 'East-West': 0}

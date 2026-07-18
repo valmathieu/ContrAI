@@ -153,9 +153,10 @@ class Game:
         # If no contract (all passed), handle failed contract (redistributes cards).
         if not contract:
             self.current_round.handle_failed_contract()
-            # Notify the view that the round will be redealt.
+            # Notify the view that the round will be redealt. The hook is a
+            # pure announcement — it carries no round payload.
             if view is not None and hasattr(view, 'on_all_pass_redeal'):
-                view.on_all_pass_redeal(self.current_round)
+                view.on_all_pass_redeal()
             return
 
         # Play all tricks - delegate to Round
