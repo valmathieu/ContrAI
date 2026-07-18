@@ -4,7 +4,7 @@
 # Instead it holds two strategy objects behind the abstract interfaces
 # defined here, injected at construction (see :mod:`.ai`). Today's expert
 # rules are the first concrete implementation (see :mod:`.rule_based`);
-# future AI levels (MCTS, learned policies — AI roadmap §6) are new
+# future AI levels (MCTS, learned policies) are new
 # strategy classes, never edits to ``AiPlayer``.
 
 from abc import ABC, abstractmethod
@@ -13,7 +13,7 @@ from contrai_core.auction import Auction
 from contrai_core.bid import Bid
 
 
-class _PlayerStrategy:
+class PlayerStateMixin:
     """Mix-in giving a strategy live read access to its owning player.
 
     A strategy needs to read the player's table state (``hand``,
