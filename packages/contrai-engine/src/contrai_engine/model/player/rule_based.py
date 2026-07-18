@@ -20,12 +20,12 @@ from contrai_core.play import PlayObservation
 from contrai_core.trick import current_winner
 from contrai_core.types import CARD_SUITS, Rank, Suit
 
-from .strategy import BiddingStrategy, CardPlayStrategy, _PlayerStrategy
+from .strategy import BiddingStrategy, CardPlayStrategy, PlayerStateMixin
 
 SUITS = CARD_SUITS
 
 
-class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
+class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
     """Expert bidding policy driven by the SF-09 bidding table.
 
     Bidding strategy:
@@ -546,7 +546,7 @@ class RuleBasedBiddingStrategy(BiddingStrategy, _PlayerStrategy):
         return expected_won_tricks
 
 
-class RuleBasedCardPlayStrategy(CardPlayStrategy, _PlayerStrategy):
+class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
     """Expert card-play policy (SF-10).
 
     Stateless between calls: every decision is a pure function of the
