@@ -32,6 +32,12 @@ contrai-engine = { workspace = true }
 contrai-analyzer = { workspace = true }
 contrai-scraper = { workspace = true }
 
+[tool.pylint.basic]
+# Docstrings are required on public API (see CLAUDE.md), but a pytest test's
+# name *is* its documentation — exempt ``test_*`` functions and ``Test*``
+# classes alongside the default private-helper exemption (``_*``).
+no-docstring-rgx = "^_|^test_|^Test"
+
 [tool.pytest.ini_options]
 # Both contrai-core and contrai-engine ship a top-level ``tests`` package
 # (each with its own ``__init__.py``). Under pytest's default ``prepend``
