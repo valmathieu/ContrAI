@@ -1,4 +1,4 @@
-# Unit tests for the Player classes (Player, HumanPlayer, AiPlayer)
+"""Unit tests for the Player classes (Player, HumanPlayer, AiPlayer)."""
 
 from contrai_engine.model.player import (
     AiPlayer,
@@ -77,10 +77,10 @@ class TestAiPlayerStrategyInjection:
         """Factories passed at construction replace the defaults."""
 
         class StubBidding(RuleBasedBiddingStrategy):
-            pass
+            """Marker subclass to prove the factory was honored."""
 
         class StubCardPlay(RuleBasedCardPlayStrategy):
-            pass
+            """Marker subclass to prove the factory was honored."""
 
         player = AiPlayer("Bot", "South", bidding=StubBidding, cardplay=StubCardPlay)
         assert type(player.bidding) is StubBidding

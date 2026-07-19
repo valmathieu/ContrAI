@@ -35,25 +35,31 @@ class TestRoundRecapPanel:
             self.redouble = redouble
 
         def is_slam_family(self) -> bool:
+            """Mirror ``Contract.is_slam_family`` on the stubbed value."""
             return isinstance(self.value, SlamLevel)
 
         def is_slam(self) -> bool:
+            """Mirror ``Contract.is_slam`` on the stubbed value."""
             return self.value is SlamLevel.SLAM
 
         def is_solo_slam(self) -> bool:
+            """Mirror ``Contract.is_solo_slam`` on the stubbed value."""
             return self.value is SlamLevel.SOLO_SLAM
 
         def get_base_points(self) -> int:
+            """Mirror ``Contract.get_base_points`` on the stubbed value."""
             if isinstance(self.value, SlamLevel):
                 return self.value.base_value
             return self.value
 
         def get_slam_card_substitute(self) -> int:
+            """Mirror ``Contract.get_slam_card_substitute``."""
             if isinstance(self.value, SlamLevel):
                 return self.value.base_value
             return 0
 
         def get_multiplier(self) -> int:
+            """Mirror ``Contract.get_multiplier`` from the double flags."""
             if self.redouble:
                 return 4
             if self.double:

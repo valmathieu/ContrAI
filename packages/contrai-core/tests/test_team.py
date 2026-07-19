@@ -1,3 +1,9 @@
+"""Tests for the ``Team`` class.
+
+Covers construction (incl. the two-player guard), partner lookup,
+membership queries, score accumulation, and the string representations.
+"""
+
 import pytest
 
 from contrai_core import InvalidPlayerCountError, Team

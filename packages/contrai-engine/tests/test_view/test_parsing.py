@@ -168,6 +168,7 @@ class TestParseCardInput:
 
     @pytest.fixture
     def hand(self):
+        """Four-card display hand the parser indexes into."""
         return [
             Card(Suit.HEARTS, Rank.JACK),
             Card(Suit.HEARTS, Rank.ACE),

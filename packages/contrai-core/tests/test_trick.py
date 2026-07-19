@@ -14,21 +14,25 @@ from contrai_core.trick import current_winner
 
 @pytest.fixture
 def north():
+    """North-seat player."""
     return BasePlayer("North", "North")
 
 
 @pytest.fixture
 def east():
+    """East-seat player."""
     return BasePlayer("East", "East")
 
 
 @pytest.fixture
 def south():
+    """South-seat player."""
     return BasePlayer("South", "South")
 
 
 @pytest.fixture
 def west():
+    """West-seat player."""
     return BasePlayer("West", "West")
 
 

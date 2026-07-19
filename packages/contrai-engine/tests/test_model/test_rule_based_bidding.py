@@ -1,10 +1,11 @@
-# Unit tests for the rule-based AI bidding strategy.
-#
-# These tests exercise the expert bidding table now living on
-# ``RuleBasedBiddingStrategy``. ``AiPlayer.choose_bid`` is a public
-# delegator, so high-level ``choose_bid(...)`` calls stay on the player,
-# while private helpers and constants are reached through
-# ``ai_player.bidding.*`` (the injected strategy object).
+"""Unit tests for the rule-based AI bidding strategy.
+
+These tests exercise the expert bidding table now living on
+``RuleBasedBiddingStrategy``. ``AiPlayer.choose_bid`` is a public
+delegator, so high-level ``choose_bid(...)`` calls stay on the player,
+while private helpers and constants are reached through
+``ai_player.bidding.*`` (the injected strategy object).
+"""
 
 import itertools
 
@@ -381,6 +382,7 @@ class TestAiPlayerBidding:
 
     @pytest.fixture
     def sample_cards_slam_spades(self):
+        """Five-trump Spades hand plus the three external aces."""
         return Hand([
             Card(Suit.SPADES, Rank.JACK),
             Card(Suit.SPADES, Rank.NINE),

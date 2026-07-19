@@ -25,16 +25,19 @@ from contrai_core import (
 
 @pytest.fixture
 def north():
+    """North-seat declarer-to-be, initially without a team."""
     return BasePlayer("North", "North")
 
 
 @pytest.fixture
 def south():
+    """South-seat partner, initially without a team."""
     return BasePlayer("South", "South")
 
 
 @pytest.fixture
 def team_ns(north, south):
+    """North-South team, wired onto both seats."""
     team = Team("North-South", [north, south])
     north.team = team
     south.team = team
@@ -43,16 +46,19 @@ def team_ns(north, south):
 
 @pytest.fixture
 def numeric_contract(north):
+    """100-in-Spades contract declared by North."""
     return Contract(ContractBid(north, 100, Suit.SPADES))
 
 
 @pytest.fixture
 def slam_contract(north):
+    """Slam-in-Hearts contract declared by North."""
     return Contract(ContractBid(north, SlamLevel.SLAM, Suit.HEARTS))
 
 
 @pytest.fixture
 def solo_slam_contract(north):
+    """Solo-Slam-in-Hearts contract declared by North."""
     return Contract(ContractBid(north, SlamLevel.SOLO_SLAM, Suit.HEARTS))
 
 

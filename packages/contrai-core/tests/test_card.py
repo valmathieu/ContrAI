@@ -1,3 +1,9 @@
+"""Tests for the ``Card`` value object.
+
+Covers trump vs non-trump point values, ordering strength, equality /
+hashing, immutability, and the string representations.
+"""
+
 import dataclasses
 
 import pytest
