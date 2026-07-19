@@ -249,7 +249,11 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         (high-points cards) to the pile WITHOUT wasting trumps:
 
         1. Follow suit if able — pile the highest-points lead-suit card
-           on partner's win.
+           on partner's win, but never a master: a card partner's own
+           play just promoted (their Ace makes our Ten the new suit
+           master) can still win a later trick, so keep it and give the
+           next-highest instead. When the only followable card IS the
+           master, the play is forced and it goes anyway.
         2. Cannot follow suit → discard a NON-TRUMP card. Don't dump
            trumps onto a trick the partner has already locked down.
            Prefer non-master cards (preserve cards that can still win
@@ -262,10 +266,15 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         led_suit = observation.led_suit
         playable_cards = observation.legal_cards
 
-        # 1. Follow suit if able.
+        # 1. Follow suit if able, preserving the suit's current master.
         same_suit_cards = [c for c in playable_cards if c.suit == led_suit]
         if same_suit_cards:
-            return max(same_suit_cards, key=lambda c: c.get_points(trump_suit))
+            non_master = [
+                c for c in same_suit_cards
+                if not self._is_master_card(c, trump_suit, fallen)
+            ]
+            candidates = non_master or same_suit_cards
+            return max(candidates, key=lambda c: c.get_points(trump_suit))
 
         # 2. Discard a non-trump card.
         non_trump_cards = [

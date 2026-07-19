@@ -354,7 +354,7 @@ class TestFullRoundLifecycleBelote:
         assert scores["North-South"] > scores["East-West"]
         # Regression pin: the concrete split observed from this exact
         # stacked deal (deterministic - no RNG is reachable).
-        assert scores == {"North-South": 261, "East-West": 31}
+        assert scores == {"North-South": 278, "East-West": 14}
 
 
 # ---------------------------------------------------------------------------

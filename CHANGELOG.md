@@ -26,6 +26,9 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) The expert AI stops pulling trumps once both opponents are known void in
   trump (inferred from plays where they were compelled to trump but couldn't), even
   while unseen trumps remain — those can only sit in partner's hand.
+- (engine) The expert AI preserves master cards when following suit behind a winning
+  partner: it gives the next-highest card instead (partner's Ace promotes its Ten to
+  suit master — the Ten is kept to win a later trick), in trump-led tricks included.
 
 ### Changed
 

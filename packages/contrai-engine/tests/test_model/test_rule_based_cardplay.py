@@ -273,6 +273,98 @@ class TestFollowingTeamWinning:
         # ♥10 is worth the most points among the followable hearts.
         assert (result.suit, result.rank) == (Suit.HEARTS, Rank.TEN)
 
+    def test_follow_suit_keeps_new_master_gives_next_highest(self, players):
+        """Partner's ♠A makes the seat's ♠10 master — keep it, give ♠K."""
+        north = players["N"]
+        hand = [
+            _c(Suit.SPADES, Rank.TEN),   # new master once ♠A falls — keep
+            _c(Suit.SPADES, Rank.KING),
+            _c(Suit.DIAMONDS, Rank.EIGHT),
+        ]
+        playable = [
+            _c(Suit.SPADES, Rank.TEN),
+            _c(Suit.SPADES, Rank.KING),
+        ]
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.HEARTS),
+            current_trick=self._partner_master_spade_lead(players),
+            legal_cards=playable,
+        )
+        result = north.cardplay.choose_card(obs)
+        # ♠10 preserved to win a later spade trick; ♠K piles 4 points.
+        assert (result.suit, result.rank) == (Suit.SPADES, Rank.KING)
+
+    def test_follow_suit_preserves_master_even_at_zero_points(self, players):
+        """The master is kept even when the only alternative adds nothing."""
+        north = players["N"]
+        hand = [
+            _c(Suit.SPADES, Rank.TEN),    # new master once ♠A falls — keep
+            _c(Suit.SPADES, Rank.SEVEN),  # 0 points — given anyway
+            _c(Suit.DIAMONDS, Rank.EIGHT),
+        ]
+        playable = [
+            _c(Suit.SPADES, Rank.TEN),
+            _c(Suit.SPADES, Rank.SEVEN),
+        ]
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.HEARTS),
+            current_trick=self._partner_master_spade_lead(players),
+            legal_cards=playable,
+        )
+        result = north.cardplay.choose_card(obs)
+        assert (result.suit, result.rank) == (Suit.SPADES, Rank.SEVEN)
+
+    def test_follow_suit_forced_master_when_only_suit_card(self, players):
+        """Sole card of the led suit is the master — forced fallback plays it."""
+        north = players["N"]
+        hand = [
+            _c(Suit.SPADES, Rank.TEN),
+            _c(Suit.DIAMONDS, Rank.EIGHT),
+            _c(Suit.CLUBS, Rank.SEVEN),
+        ]
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.HEARTS),
+            current_trick=self._partner_master_spade_lead(players),
+            legal_cards=[_c(Suit.SPADES, Rank.TEN)],
+        )
+        result = north.cardplay.choose_card(obs)
+        assert (result.suit, result.rank) == (Suit.SPADES, Rank.TEN)
+
+    def test_trump_led_follow_preserves_new_trump_master(self, players):
+        """Partner's trump Jack makes the seat's 9 master — pile the Ace."""
+        north = players["N"]
+        # Partner (South) leads the trump Jack; West follows low.
+        current = (
+            Play(players["S"], _c(Suit.HEARTS, Rank.JACK)),
+            Play(players["W"], _c(Suit.HEARTS, Rank.SEVEN)),
+        )
+        hand = [
+            _c(Suit.HEARTS, Rank.NINE),  # new trump master once ♥J falls — keep
+            _c(Suit.HEARTS, Rank.ACE),
+            _c(Suit.DIAMONDS, Rank.EIGHT),
+        ]
+        playable = [
+            _c(Suit.HEARTS, Rank.NINE),
+            _c(Suit.HEARTS, Rank.ACE),
+        ]
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.HEARTS),
+            current_trick=current,
+            legal_cards=playable,
+        )
+        result = north.cardplay.choose_card(obs)
+        # ♥9 (14 trump points) outscores ♥A (11) but is the new master —
+        # the Ace goes onto partner's locked trick instead.
+        assert (result.suit, result.rank) == (Suit.HEARTS, Rank.ACE)
+
 
 # ---------------------------------------------------------------------------
 # Following: team currently losing
