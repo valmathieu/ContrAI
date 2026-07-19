@@ -21,7 +21,7 @@ a rule-derived invariant (the exact total ``score_round`` guarantees for a
 plus 20 when a team holds the belote) and a regression pin on the concrete
 per-team split. The bidding table's outcome is derived by hand in the
 docstrings below and asserted exactly; the card-by-card play is a
-deterministic function of the stacked hands (see ``rule_based.py``'s
+deterministic function of the stacked hands (see ``rule_based/card_play.py``'s
 ``RuleBasedCardPlayStrategy``), but tracing that decision tree by hand
 across 8 tricks is impractical — the concrete numbers are pinned from an
 actual (deterministic, reproducible) run and guarded by the invariant, so
@@ -86,7 +86,7 @@ def _stack_deck(hands: dict[str, list[Card]]) -> Deck:
 # ---------------------------------------------------------------------------
 #
 # Hand design (worked by hand against ``RuleBasedBiddingStrategy``'s
-# ``BIDDING_TABLE`` in ``rule_based.py``):
+# ``BIDDING_TABLE`` in ``rule_based/bidding.py``):
 #
 #   N: Spade J, 9, 7 (3 trumps, both J and 9 - the two best trumps);
 #      Hearts A, 10 and Diamonds A, 10 (2 external aces, each with a
