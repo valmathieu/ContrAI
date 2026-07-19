@@ -1,10 +1,11 @@
-# AiPlayer — holds pluggable strategies and delegates to them.
-#
-# ``AiPlayer`` owns no strategic logic of its own. It holds a bidding
-# strategy and a card-play strategy behind the :mod:`.strategy`
-# interfaces, injected at construction, and routes the engine's calls to
-# them. The defaults are the expert rule-based strategies, so
-# ``AiPlayer("Bot", "South")`` keeps producing today's bot.
+"""AiPlayer — holds pluggable strategies and delegates to them.
+
+``AiPlayer`` owns no strategic logic of its own. It holds a bidding
+strategy and a card-play strategy behind the :mod:`.strategy`
+interfaces, injected at construction, and routes the engine's calls to
+them. The defaults are the expert rule-based strategies, so
+``AiPlayer("Bot", "South")`` keeps producing today's bot.
+"""
 
 from contrai_core.auction import Auction
 from contrai_core.bid import Bid

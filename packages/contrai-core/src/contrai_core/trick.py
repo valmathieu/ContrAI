@@ -1,5 +1,7 @@
-# Trick class for the contrée card game.
-# This class represents a single trick in the game.
+"""Trick class for the contrée card game.
+
+This class represents a single trick in the game.
+"""
 
 from __future__ import annotations
 from typing import List, Tuple, Optional, TYPE_CHECKING

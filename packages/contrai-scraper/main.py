@@ -1,3 +1,10 @@
+"""Playwright spectator-mode scraper for app.belote-rebelote.fr (v1).
+
+Logs in, navigates to a Contrée tournament table in spectator mode,
+identifies the four seated players, and polls for new rounds. Bidding
+and card-play observation are still ``# FUTURE LOGIC`` placeholders.
+"""
+
 import asyncio
 import sys
 import re

@@ -1,4 +1,4 @@
-# Card class: represents a playing card
+"""Card class: represents a playing card."""
 
 from __future__ import annotations
 

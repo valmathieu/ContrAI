@@ -1,4 +1,9 @@
-# Player and HumanPlayer classes
+"""Engine-side player abstractions built on :class:`contrai_core.BasePlayer`.
+
+Defines :class:`Player`, the abstract seat contract the engine's
+:class:`Round` drives (``choose_bid`` / ``choose_card``), and
+:class:`HumanPlayer`, whose choices are deferred to the view.
+"""
 
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Optional
@@ -13,6 +18,15 @@ if TYPE_CHECKING:
 
 
 class Player(BasePlayer, ABC):
+    """Abstract engine player: a :class:`BasePlayer` that can make decisions.
+
+    Concrete subclasses implement the two decision hooks the engine
+    calls during a round — :meth:`choose_bid` during the auction and
+    :meth:`choose_card` during trick play. Returning ``None`` from
+    either hook signals that the decision is delegated to the view
+    (the human-input path).
+    """
+
     @property
     def is_human(self):
         """Returns True if this is a human player."""
@@ -35,8 +49,6 @@ class Player(BasePlayer, ABC):
             (the contract for :class:`HumanPlayer`).
         """
 
-        pass
-
     @abstractmethod
     def choose_card(self, observation: 'PlayObservation') -> Optional['Card']:
         """Choose a :class:`Card` to play into the current trick.
@@ -55,10 +67,14 @@ class Player(BasePlayer, ABC):
             :class:`HumanPlayer`).
         """
 
-        pass
-
 
 class HumanPlayer(Player):
+    """A human-controlled seat whose decisions come from the view.
+
+    Both hooks return ``None`` so the engine routes the actual input
+    through the view's ``request_*_action`` methods.
+    """
+
     def choose_bid(self, auction: Auction) -> None:
         """Defer to the view's :meth:`request_bid_action`.
 

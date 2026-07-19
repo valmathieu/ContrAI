@@ -1,11 +1,12 @@
-# AI difficulty levels — registry + factory over the strategy seam.
-#
-# A thin convenience layer mapping a human-readable level name to a
-# (bidding, card-play) strategy pair. This is the seam for a future CLI
-# ``--difficulty`` flag, a web-app difficulty picker, and eval-by-name
-# match protocols (AI roadmap §6). The raw
-# ``AiPlayer(..., bidding=…, cardplay=…)`` form stays available for
-# mix-and-match (e.g. rule-based bidding + a learned card-play).
+"""AI difficulty levels — registry + factory over the strategy seam.
+
+A thin convenience layer mapping a human-readable level name to a
+(bidding, card-play) strategy pair. This is the seam for a future CLI
+``--difficulty`` flag, a web-app difficulty picker, and eval-by-name
+match protocols (AI roadmap §6). The raw
+``AiPlayer(..., bidding=…, cardplay=…)`` form stays available for
+mix-and-match (e.g. rule-based bidding + a learned card-play).
+"""
 
 from .ai import AiPlayer
 from .rule_based import RuleBasedBiddingStrategy, RuleBasedCardPlayStrategy

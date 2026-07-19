@@ -1,12 +1,13 @@
-# Round scoring — the pure transformation from a played-out round to
-# its team scores.
-#
-# ``score_round`` reads the final round state (contract, captured tricks,
-# last-trick winner, belote holder) and returns a :class:`RoundScore`
-# result; it mutates nothing. The thin ``Round.calculate_round_scores``
-# wrapper unpacks that result onto the round's public result attributes.
-# Keeping the maths side-effect-free here isolates ~250 lines of scoring
-# rules from the lifecycle orchestrator.
+"""Round scoring — the pure transformation from a played-out round to
+its team scores.
+
+``score_round`` reads the final round state (contract, captured tricks,
+last-trick winner, belote holder) and returns a :class:`RoundScore`
+result; it mutates nothing. The thin ``Round.calculate_round_scores``
+wrapper unpacks that result onto the round's public result attributes.
+Keeping the maths side-effect-free here isolates ~250 lines of scoring
+rules from the lifecycle orchestrator.
+"""
 
 from dataclasses import dataclass
 from enum import Enum
