@@ -1,5 +1,7 @@
-# Contract class for the contrée card game.
-# This class represents a contract established during bidding.
+"""Contract class for the contrée card game.
+
+This class represents a contract established during bidding.
+"""
 
 from __future__ import annotations
 from typing import Optional, TYPE_CHECKING

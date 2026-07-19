@@ -1,5 +1,8 @@
-# Round class for the contrée card game.
-# This class represents a complete round of the card game from dealing to scoring.
+"""Round class for the contrée card game.
+
+This class represents a complete round of the card game from dealing to
+scoring.
+"""
 
 import itertools
 from typing import Optional, Dict, List, TYPE_CHECKING

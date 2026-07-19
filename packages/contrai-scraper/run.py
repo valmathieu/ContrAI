@@ -1,3 +1,5 @@
+"""Early Playwright login experiment against belote.com (Google auth flow)."""
+
 from playwright.async_api import async_playwright
 
 # Configuration

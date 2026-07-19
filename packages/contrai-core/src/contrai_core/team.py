@@ -1,4 +1,4 @@
-# Team class for the contrée game, representing a team of two players.
+"""Team class for the contrée game, representing a team of two players."""
 
 from __future__ import annotations
 

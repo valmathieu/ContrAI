@@ -1,5 +1,7 @@
-# Game class for the contrée card game.
-# This class manages the game state, players, teams, deck, and game logic.
+"""Game class for the contrée card game.
+
+This class manages the game state, players, teams, deck, and game logic.
+"""
 
 from __future__ import annotations
 

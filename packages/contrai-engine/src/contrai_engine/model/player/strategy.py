@@ -1,11 +1,12 @@
-# Pluggable AI strategy interfaces + shared player-state access.
-#
-# ``AiPlayer`` no longer owns its bidding and card-play logic directly.
-# Instead it holds two strategy objects behind the abstract interfaces
-# defined here, injected at construction (see :mod:`.ai`). Today's expert
-# rules are the first concrete implementation (see :mod:`.rule_based`);
-# future AI levels (MCTS, learned policies) are new
-# strategy classes, never edits to ``AiPlayer``.
+"""Pluggable AI strategy interfaces + shared player-state access.
+
+``AiPlayer`` no longer owns its bidding and card-play logic directly.
+Instead it holds two strategy objects behind the abstract interfaces
+defined here, injected at construction (see :mod:`.ai`). Today's expert
+rules are the first concrete implementation (see :mod:`.rule_based`);
+future AI levels (MCTS, learned policies) are new
+strategy classes, never edits to ``AiPlayer``.
+"""
 
 from abc import ABC, abstractmethod
 

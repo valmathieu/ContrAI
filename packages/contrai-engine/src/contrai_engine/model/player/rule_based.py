@@ -1,10 +1,11 @@
-# Rule-based AI strategies — the expert table of SF-09/SF-10.
-#
-# These are the *first* concrete rung of the AI ladder (AI roadmap §6),
-# registered as ``AI_LEVELS["expert"]`` (see :mod:`.levels`). They are the
-# logic that used to live inline on ``AiPlayer``; injecting them behind the
-# :mod:`.strategy` interfaces means future levels are new classes, not
-# edits to ``AiPlayer``.
+"""Rule-based AI strategies.
+
+These are the *first* concrete rung of the AI ladder (AI roadmap §6),
+registered as ``AI_LEVELS["expert"]`` (see :mod:`.levels`). They are the
+logic that used to live inline on ``AiPlayer``; injecting them behind the
+:mod:`.strategy` interfaces means future levels are new classes, not
+edits to ``AiPlayer``.
+"""
 
 from contrai_core.auction import Auction
 from contrai_core.bid import (
@@ -26,7 +27,7 @@ SUITS = CARD_SUITS
 
 
 class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
-    """Expert bidding policy driven by the SF-09 bidding table.
+    """Expert bidding policy driven by a bidding table.
 
     Bidding strategy:
     1. Evaluate hand according to bidding table (80-160 points + Slam / Solo Slam)
@@ -93,16 +94,16 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
             A :class:`Bid` instance the engine will validate.
         """
 
-        # A standing Coinche (Double) freezes the auction: no further
-        # numeric contract bids are legal — only Pass, or a Surcoinche
-        # (Redouble) from the team that owns the contract (see
-        # ``Auction._is_contract_value_legal`` / ``contree-domain.md
-        # §5.3``). The expert bidding table below has no model of this
-        # freeze and would happily try to raise — including raising its
-        # *own* partner's contract — producing an illegal ContractBid.
-        # Resolve the frozen states here before delegating.
+        # A standing Double freezes the auction: no further
+        # numeric contract bids are legal — only Pass, or a Redouble
+        #  from the team that owns the contract (see
+        #  ``Auction._is_contract_value_legal``). The expert bidding 
+        # table below has no model of this freeze and would happily try 
+        # to raise — including raising its *own* partner's contract — 
+        # producing an illegal ContractBid. Resolve the frozen states 
+        # here before delegating.
         if auction.has_redouble:
-            # Already surcoinched; nothing legal remains but to pass.
+            # Already redoubled; nothing legal remains but to pass.
             return PassBid(self._player)
         if auction.has_double:
             return self._choose_under_double(auction)
@@ -120,12 +121,12 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
         return bid
 
     def _choose_under_double(self, auction: Auction) -> Bid:
-        """Pick a bid when a Coinche (Double) has frozen the auction.
+        """Pick a bid when a Double has frozen the auction.
 
         With a Double standing, the only legal actions are :class:`PassBid`
         and — for the side that owns the contract — a :class:`RedoubleBid`
-        (Surcoinche). Numeric raises are illegal, so the expert bidding
-        table must not run. We offer a Surcoinche only when we are on the
+        (Redouble). Numeric raises are illegal, so the expert bidding
+        table must not run. We offer a Redouble only when we are on the
         contracting team and :meth:`_should_redouble` approves; otherwise
         we pass.
 
@@ -167,7 +168,7 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
         last_bid = auction.last_contract_bid
         partner_bid = self._get_partner_bid(bids)
 
-        # Check if we can Coinche (Double) the opponents' standing contract
+        # Check if we can Double the opponents' standing contract
         double_action = self._check_double(last_bid)
         if double_action is not None:
             return double_action
@@ -203,10 +204,10 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
         return None
 
     def _check_double(self, last_bid):
-        """Return a :class:`DoubleBid` if we should Coinche, else ``None``.
+        """Return a :class:`DoubleBid` if we should Double, else ``None``.
 
-        Only the Coinche (Double) decision lives here — the Surcoinche
-        (Redouble) is a defence of our *own* contract and is handled on
+        Only the Double decision lives here — the Redouble
+        is a defence of our *own* contract and is handled on
         the frozen-auction path in :meth:`_choose_under_double`.
 
         Args:
@@ -332,6 +333,33 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
                     tricks += 1
 
         return min(tricks, 8)  # Maximum 8 tricks in a round
+    
+    def _evaluate_trump_tricks(self, suit):
+        """Evaluate potential tricks won with trump suit."""
+
+        trump_cards = self.hand.cards_of_suit(suit)
+        expected_won_tricks = 0
+
+        has_jack = False
+        has_nine = False
+        has_ace = False
+
+        if len(trump_cards) > 0:
+            has_jack = any(card.rank == Rank.JACK for card in trump_cards)
+            has_nine = any(card.rank == Rank.NINE for card in trump_cards)
+            has_ace = any(card.rank == Rank.ACE for card in trump_cards)
+
+            if has_jack and has_nine:
+                expected_won_tricks = 2  # Both Jack and 9
+            elif has_jack:
+                expected_won_tricks = 1 # Only Jack
+            elif has_nine and len(trump_cards) > 1:
+                expected_won_tricks = 1 # Only 9 but with support
+
+            if len(trump_cards) >= 3:
+                expected_won_tricks += len(trump_cards) - 3 + has_ace
+
+        return expected_won_tricks
 
     def _find_best_contract(self, suit_evaluations: dict) -> tuple[int, Suit | None]:
         """Resolve the suit evaluations to the single best (contract, suit).
@@ -518,36 +546,9 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
             return PassBid(self._player)
         return ContractBid(self._player, value, suit)
 
-    def _evaluate_trump_tricks(self, suit):
-        """Evaluate potential tricks won with trump suit."""
-
-        trump_cards = self.hand.cards_of_suit(suit)
-        expected_won_tricks = 0
-
-        has_jack = False
-        has_nine = False
-        has_ace = False
-
-        if len(trump_cards) > 0:
-            has_jack = any(card.rank == Rank.JACK for card in trump_cards)
-            has_nine = any(card.rank == Rank.NINE for card in trump_cards)
-            has_ace = any(card.rank == Rank.ACE for card in trump_cards)
-
-            if has_jack and has_nine:
-                expected_won_tricks = 2  # Both Jack and 9
-            elif has_jack:
-                expected_won_tricks = 1 # Only Jack
-            elif has_nine and len(trump_cards) > 1:
-                expected_won_tricks = 1 # Only 9 but with support
-
-            if len(trump_cards) >= 3:
-                expected_won_tricks += len(trump_cards) - 3 + has_ace
-
-        return expected_won_tricks
-
 
 class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
-    """Expert card-play policy (SF-10).
+    """Expert card-play policy.
 
     Stateless between calls: every decision is a pure function of the
     frozen :class:`~contrai_core.PlayObservation` it is handed. The card

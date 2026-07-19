@@ -1,11 +1,10 @@
-# Player subpackage — public API re-exports.
-#
-# The single ``player.py`` module was split into a ``player/`` subpackage
-# (base classes, the pluggable strategies, the AiPlayer that injects
-# them, and the AI-level registry). This ``__init__`` re-exports the
-# historical public names so external imports
-# (``from contrai_engine.model.player import Player, AiPlayer, …``) keep
-# working byte-for-byte, plus the strategy seam.
+"""Player subpackage — public API re-exports.
+
+Re-exports the subpackage's public names (players, strategies, and the
+AI-level registry) so callers import them directly from
+``contrai_engine.model.player`` without knowing the internal module
+layout.
+"""
 
 from .ai import AiPlayer
 from .base import HumanPlayer, Player
