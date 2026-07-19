@@ -58,26 +58,31 @@ from contrai_core import (
 
 @pytest.fixture
 def north():
+    """North-seat player, initially without a team."""
     return BasePlayer("North", "North")
 
 
 @pytest.fixture
 def west():
+    """West-seat player, initially without a team."""
     return BasePlayer("West", "West")
 
 
 @pytest.fixture
 def south():
+    """South-seat player, initially without a team."""
     return BasePlayer("South", "South")
 
 
 @pytest.fixture
 def east():
+    """East-seat player, initially without a team."""
     return BasePlayer("East", "East")
 
 
 @pytest.fixture
 def team_ns(north, south):
+    """North-South team, wired onto both seats."""
     team = Team("North-South", [north, south])
     north.team = team
     south.team = team
@@ -86,6 +91,7 @@ def team_ns(north, south):
 
 @pytest.fixture
 def team_ew(east, west):
+    """East-West team, wired onto both seats."""
     team = Team("East-West", [east, west])
     east.team = team
     west.team = team

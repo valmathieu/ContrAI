@@ -1,3 +1,10 @@
+"""Tests for the ``Deck`` class.
+
+Covers the 32-card initial composition, shuffling and cutting, dealing
+(eight unique cards per player, player-count and card-count guards),
+card return via ``add_cards``, and the string representations.
+"""
+
 import copy
 from collections import Counter
 
@@ -21,6 +28,8 @@ def deck():
     return Deck()
 
 class DummyPlayer:
+    """Minimal player stand-in: just the ``hand`` list ``deal`` fills."""
+
     def __init__(self):
         self.hand = []
 

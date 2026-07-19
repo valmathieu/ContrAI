@@ -1,4 +1,4 @@
-# Unit tests for the AI level registry + factory.
+"""Unit tests for the AI level registry + factory."""
 
 from contrai_engine.model.player import (
     AI_LEVELS,

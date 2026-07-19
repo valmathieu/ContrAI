@@ -52,7 +52,7 @@ class _StubDeck:
     """
 
     def add_cards(self, cards):
-        pass
+        """Swallow the returned trick cards."""
 
 
 def _make_round(players_dict, hands, contract, plays, deck=None):
@@ -166,6 +166,7 @@ class TestPlayTrickHumanUsesView:
 
         class _SpyView:
             def request_card_action(self, player, trick, contract, playable):
+                """Record who was prompted and return the scripted card."""
                 view_calls.append(player)
                 return cards[player]
 
@@ -290,6 +291,7 @@ class TestAuctionRetention:
 
         class _CaptureView:
             def on_contract_established(self, round_):
+                """Capture the auction object live at contract time."""
                 captured["auction"] = round_.auction
 
         round_ = _empty_round(players)  # order N, E, S, W
@@ -667,6 +669,7 @@ class TestManageBiddingAutoPasses:
 
         class _View:
             def request_bid_action(self, player, auction):
+                """Record the prompt (the test asserts none ever happens)."""
                 prompts.append((player, list(auction.bids)))
                 return PassBid(player)
 

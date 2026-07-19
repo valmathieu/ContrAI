@@ -1,11 +1,12 @@
-# Unit tests for the rule-based AI card-play strategy.
-#
-# The strategy is handed a single frozen ``PlayObservation`` and derives
-# its own card tracking (fallen cards, inferred trump voids) from the
-# observation's public trick history — there is no mutable per-round state
-# to seed. Every scenario below is therefore expressed by building a real
-# observation (own hand, contract, and completed / in-progress tricks made
-# of genuine ``Play`` records), never by poking attributes on the strategy.
+"""Unit tests for the rule-based AI card-play strategy.
+
+The strategy is handed a single frozen ``PlayObservation`` and derives
+its own card tracking (fallen cards, inferred trump voids) from the
+observation's public trick history — there is no mutable per-round state
+to seed. Every scenario below is therefore expressed by building a real
+observation (own hand, contract, and completed / in-progress tricks made
+of genuine ``Play`` records), never by poking attributes on the strategy.
+"""
 
 import pytest
 
@@ -682,6 +683,7 @@ class TestPureHelpers:
 
     @pytest.fixture
     def strat(self, players):
+        """North's card-play strategy, host of the helpers under test."""
         return players["N"].cardplay
 
     def _fallen(self, suit=None, ranks=()):

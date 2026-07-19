@@ -1,3 +1,12 @@
+"""Tests for the ``Game`` orchestrator.
+
+Covers construction (player count/position guards, team formation,
+seat sorting), anticlockwise dealer rotation, playing-order derivation,
+round start (shuffle-then-cut policy, dealing), game-over detection,
+and the ``manage_round`` lifecycle driven through a ``Round`` double
+(completed contract, score accumulation, all-pass redeal).
+"""
+
 import pytest
 from contrai_engine.model import game as game_module
 from contrai_engine.model.game import Game
@@ -6,6 +15,8 @@ from contrai_core.exceptions import InvalidPlayerCountError
 from contrai_core.card import Card
 
 class DummyPlayer:
+    """Minimal player stand-in: name, seat position, and an empty hand."""
+
     def __init__(self, name, position):
         self.name = name
         self.position = position
@@ -35,21 +46,26 @@ class FakeRound:
         self.calls: list[str] = []
 
     def deal_cards(self):
+        """Record the call; no cards actually move."""
         self.calls.append("deal_cards")
 
     def manage_bidding(self, view=None):
+        """Record the call and resolve to the scripted contract."""
         self.calls.append("manage_bidding")
         return self.bidding_contract
 
     def play_all_tricks(self, view=None):
+        """Record the call; no tricks are actually played."""
         self.calls.append("play_all_tricks")
         return {}
 
     def calculate_round_scores(self):
+        """Record the call and report the scripted completed-round scores."""
         self.calls.append("calculate_round_scores")
         return dict(self.play_scores)
 
     def handle_failed_contract(self):
+        """Record the call and report the scripted all-pass scores."""
         self.calls.append("handle_failed_contract")
         return dict(self.failed_scores)
 
@@ -62,9 +78,11 @@ class RecordingView:
         self.redeal_count = 0
 
     def on_round_dealt(self, round_obj):
+        """Record which round object the deal callback announced."""
         self.dealt.append(round_obj)
 
     def on_all_pass_redeal(self):
+        """Count how many times the redeal callback fired."""
         self.redeal_count += 1
 
 @pytest.fixture
