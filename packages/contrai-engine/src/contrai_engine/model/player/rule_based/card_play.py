@@ -2,6 +2,7 @@
 
 from contrai_core.card import Card
 from contrai_core.play import PlayObservation
+from contrai_core.player import BasePlayer
 from contrai_core.trick import current_winner
 from contrai_core.types import Rank, Suit
 
@@ -13,11 +14,11 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
 
     Stateless between calls: every decision is a pure function of the
     frozen :class:`~contrai_core.PlayObservation` it is handed. The card
-    tracking the rules need — which cards have fallen and which seats are
-    known void in trump — is *derived* from the observation's public trick
-    history on each turn (see :meth:`_derive_tracking`), never carried
-    across calls or rounds. Decides which card to play from the trick
-    state, the contract, and what has fallen.
+    tracking the rules need — which cards have fallen and which suits
+    each seat is proven void in — is *derived* from the observation's
+    public trick history on each turn (see :meth:`_derive_tracking`),
+    never carried across calls or rounds. Decides which card to play
+    from the trick state, the contract, and what has fallen.
     """
 
     def choose_card(self, observation: PlayObservation) -> Card:
@@ -33,9 +34,9 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             ``observation.legal_cards``.
         """
 
-        # Rebuild the fallen-card map and the trump-void set from the
-        # public history before deciding; the trick-reading helpers below
-        # consume them.
+        # Rebuild the fallen-card map and the per-player void suits from
+        # the public history before deciding; the trick-reading helpers
+        # below consume them.
         fallen, voids = self._derive_tracking(observation)
 
         if not observation.current_trick:
@@ -47,12 +48,12 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             return self._play_leading_card(observation, fallen, voids)
 
         # Someone has already played this trick — we are following.
-        return self._play_following_card(observation, fallen)
+        return self._play_following_card(observation, fallen, voids)
 
     def _derive_tracking(
         self, observation: PlayObservation
-    ) -> tuple[dict[Suit, set], set]:
-        """Rebuild fallen-card and trump-void tracking from public history.
+    ) -> tuple[dict[Suit, set], dict[BasePlayer, set[Suit]]]:
+        """Rebuild fallen-card and per-player void tracking from history.
 
         Replays every play in ``(*completed_tricks, current_trick)``
         chronologically and reconstructs, for each play, exactly the
@@ -61,6 +62,9 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         - **Fallen cards**: every played card is recorded under its suit —
           own plays included — so ``fallen[suit]`` plus the seat's own
           holding plus the still-unseen cards always sum to 8 per suit.
+        - **Led-suit voids**: following suit is never optional, so *any*
+          card off the led suit — ruff and discard alike — proves the
+          seat holds none of that suit. No exemption applies here.
         - **Voids in trump**: a seat that fails to follow the led suit and
           does not trump has proven it holds no trump, but only when it was
           *compelled* to. The compulsion is judged against the trick state
@@ -69,7 +73,8 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
           partner is already master was free to (the partner-master
           exemption), so that discard proves nothing. On a trump lead there
           is no exemption: holding trump forces playing it, so any
-          off-trump card there is always a void.
+          off-trump card there is always a void (the led-suit rule above
+          already records it — led suit and trump are the same suit).
 
         The pre-play winner must be read from the plays *before* this one,
         not after: a discard whose partner becomes master only through a
@@ -83,8 +88,8 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
 
         Returns:
             A ``(fallen, voids)`` pair — ``fallen`` maps each card suit to
-            its set of fallen ranks; ``voids`` is the set of players known
-            to hold no trump.
+            its set of fallen ranks; ``voids`` maps each player to the set
+            of suits that player is proven to hold no card of.
         """
 
         trump_suit = observation.trump_suit
@@ -94,7 +99,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             Suit.DIAMONDS: set(),
             Suit.CLUBS: set(),
         }
-        voids: set = set()
+        voids: dict[BasePlayer, set[Suit]] = {}
 
         for trick in (*observation.completed_tricks, observation.current_trick):
             for index, (player, card) in enumerate(trick):
@@ -102,28 +107,34 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
                 # it proves about voids.
                 fallen[card.suit].add(card.rank)
 
+                # Not following the led suit is always proof of a led-suit
+                # void — following is mandatory whenever possible.
+                led_suit = trick[0].card.suit
+                if card.suit != led_suit:
+                    voids.setdefault(player, set()).add(led_suit)
+
+                # Trump led: the led-suit rule above already recorded the
+                # trump void, and no further inference exists.
+                if led_suit == trump_suit:
+                    continue
+
                 # Reconstruct the pre-play master: the winner among the
                 # plays strictly earlier in this trick — the state the seat
                 # decided against.
                 prior = current_winner(list(trick[:index]), trump_suit)
-                led_suit = trick[0].card.suit
                 partner_was_master = (
                     prior is not None and prior.team == player.team
                 )
 
-                # Trump led: holding trump forces playing it (no
-                # partner-master exemption), so a non-trump card always
-                # proves the void.
-                if led_suit == trump_suit:
-                    if card.suit != trump_suit:
-                        voids.add(player)
-                    continue
                 # Non-trump led: a discard behind a master partner is
-                # voluntary and proves nothing.
+                # voluntary and proves nothing about trump.
                 if partner_was_master:
                     continue
-                if card.suit not in (led_suit, trump_suit):
-                    voids.add(player)
+                if trump_suit is not None and card.suit not in (
+                    led_suit,
+                    trump_suit,
+                ):
+                    voids.setdefault(player, set()).add(trump_suit)
 
         return fallen, voids
 
@@ -177,7 +188,10 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         return lowest_value_cards[0]
 
     def _play_leading_card(
-        self, observation: PlayObservation, fallen: dict[Suit, set], voids: set
+        self,
+        observation: PlayObservation,
+        fallen: dict[Suit, set],
+        voids: dict[BasePlayer, set[Suit]],
     ) -> Card:
         """Play when leading subsequent tricks."""
 
@@ -232,35 +246,65 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         return lowest_value_cards[0]
 
     def _play_following_card(
-        self, observation: PlayObservation, fallen: dict[Suit, set]
+        self,
+        observation: PlayObservation,
+        fallen: dict[Suit, set],
+        voids: dict[BasePlayer, set[Suit]],
     ) -> Card:
-        """Strategy when not first to play."""
+        """Strategy when not first to play.
 
+        Both follow branches receive the anticipated-ruff flag — whether
+        an opponent still to play in this trick is expected to cut it
+        (see :meth:`_opponent_cut_expected`) — which turns their usual
+        point-piling plays into damage control.
+
+        Args:
+            observation: The frozen play-phase view for this seat.
+            fallen: The fallen-card map from :meth:`_derive_tracking`.
+            voids: The per-player proven-void suits from
+                :meth:`_derive_tracking`.
+        """
+
+        cut_expected = self._opponent_cut_expected(observation, fallen, voids)
         if self._is_team_winning_trick(observation.current_trick):
-            return self._play_when_team_winning(observation, fallen)
-        return self._play_when_team_losing(observation, fallen)
+            return self._play_when_team_winning(observation, fallen, cut_expected)
+        return self._play_when_team_losing(observation, fallen, cut_expected)
 
     def _play_when_team_winning(
-        self, observation: PlayObservation, fallen: dict[Suit, set]
+        self,
+        observation: PlayObservation,
+        fallen: dict[Suit, set],
+        cut_expected: bool,
     ) -> Card:
         """Play when our team is currently winning the trick.
 
         Partner already secures the trick, so the goal is to add value
-        (high-points cards) to the pile WITHOUT wasting trumps:
+        (high-points cards) to the pile WITHOUT wasting trumps — unless
+        an opponent still to play is expected to ruff (``cut_expected``),
+        in which case the trick is presumed lost and every pile-on rule
+        flips to conceding as little as possible:
 
         1. Follow suit if able — pile the highest-points lead-suit card
            on partner's win, but never a master: a card partner's own
            play just promoted (their Ace makes our Ten the new suit
            master) can still win a later trick, so keep it and give the
            next-highest instead. When the only followable card IS the
-           master, the play is forced and it goes anyway.
+           master, the play is forced and it goes anyway. Ruff expected
+           → concede the lowest-points card instead of piling on.
         2. Cannot follow suit → discard a NON-TRUMP card. Don't dump
            trumps onto a trick the partner has already locked down.
            Prefer non-master cards (preserve cards that can still win
            their suit later); within the candidate set, pick the
-           highest-points to maximize this trick's value.
+           highest-points to maximize this trick's value — or the
+           lowest-points when the ruff is expected to capture it.
         3. Hand has nothing but trumps → forced to play one. Use the
            lowest trump so we don't waste the Jack or 9.
+
+        Args:
+            observation: The frozen play-phase view for this seat.
+            fallen: The fallen-card map from :meth:`_derive_tracking`.
+            cut_expected: Whether :meth:`_opponent_cut_expected` predicts
+                an opponent still to play will ruff this trick.
         """
         trump_suit = observation.trump_suit
         led_suit = observation.led_suit
@@ -269,6 +313,10 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         # 1. Follow suit if able, preserving the suit's current master.
         same_suit_cards = [c for c in playable_cards if c.suit == led_suit]
         if same_suit_cards:
+            if cut_expected:
+                # The trick is presumed lost to the ruff — concede the
+                # cheapest card instead of feeding the cutter.
+                return min(same_suit_cards, key=lambda c: c.get_points(trump_suit))
             non_master = [
                 c for c in same_suit_cards
                 if not self._is_master_card(c, trump_suit, fallen)
@@ -286,6 +334,10 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
                 if not self._is_master_card(c, trump_suit, fallen)
             ]
             candidates = non_master_non_trump or non_trump_cards
+            if cut_expected:
+                # Same logic as above: a discard onto a ruffed trick is
+                # captured too, so it turns cheap.
+                return min(candidates, key=lambda c: c.get_points(trump_suit))
             return max(candidates, key=lambda c: c.get_points(trump_suit))
 
         # 3. Only trumps in hand — dump the lowest one.
@@ -294,9 +346,44 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         return playable_cards[0]
 
     def _play_when_team_losing(
-        self, observation: PlayObservation, fallen: dict[Suit, set]
+        self,
+        observation: PlayObservation,
+        fallen: dict[Suit, set],
+        cut_expected: bool,
     ) -> Card:
-        """Play when opponents are currently winning the trick."""
+        """Play when an opponent is currently winning the trick.
+
+        The goal flips from adding value to contesting the trick: win it
+        when a card can, concede as cheaply as possible when none can.
+        The rules cascade in order:
+
+        1. Follow suit and beat if able — among the led-suit cards that
+           beat the current best, play the highest-points one: it takes
+           the trick AND banks the most points. When an opponent still
+           to play is expected to ruff (``cut_expected``), whatever we
+           invest is likely captured — so beat with the *smallest*
+           stronger card instead. That hedge keeps the loss minimal and
+           still pays off when we sit second: our partner plays after
+           the predicted cutter and may over-ruff, turning the cheap
+           investment into a won trick.
+        2. Follow suit but cannot beat → the trick is gone; concede the
+           lowest-points card of the led suit rather than feed it.
+        3. Cannot follow suit → ruff if it wins: play the lowest trump
+           that beats the current best (over-ruffing a trump already
+           played works the same way — the comparison is trump-aware).
+           No trump wins → fall through rather than waste one that
+           would be over-ruffed.
+        4. Cannot follow or usefully ruff → discard the lowest-points
+           card from the shortest suit, excluding masters (a master can
+           still win its suit later). Nothing but masters left → the
+           first legal card goes.
+
+        Args:
+            observation: The frozen play-phase view for this seat.
+            fallen: The fallen-card map from :meth:`_derive_tracking`.
+            cut_expected: Whether :meth:`_opponent_cut_expected` predicts
+                an opponent still to play will ruff this trick.
+        """
 
         trump_suit = observation.trump_suit
         led_suit = observation.led_suit
@@ -304,28 +391,34 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         plays = observation.current_trick
         current_best = self._get_strongest_card_in_trick(plays, trump_suit)
 
-        # Try to follow suit
+        # 1./2. Try to follow suit.
         same_suit_cards = [c for c in playable_cards if c.suit == led_suit]
         if same_suit_cards:
-            # Try to beat the current best card
+            # 1. Beat the current best if able.
             stronger_cards = [c for c in same_suit_cards
                              if self._is_stronger_card(c, current_best, trump_suit)]
             if stronger_cards:
+                if cut_expected:
+                    # A ruff is coming — invest the smallest card that
+                    # still beats the current best. (The predicate is
+                    # False on trump leads, so the led suit is plain here
+                    # and the normal order applies.)
+                    return min(stronger_cards, key=lambda c: c.get_order(None))
                 return max(stronger_cards, key=lambda c: c.get_points(trump_suit))
-            # Can't beat - play the lowest card
+            # 2. Can't beat — concede the lowest card.
             return min(same_suit_cards, key=lambda c: c.get_points(trump_suit))
 
-        # Can't follow suit - try to trump
+        # 3. Can't follow suit — ruff if it wins the trick.
         if trump_suit and led_suit != trump_suit:
             trump_cards = [c for c in playable_cards if c.suit == trump_suit]
             if trump_cards:
-                # Trump with the lowest trump that can win
                 winning_trumps = [c for c in trump_cards
                                 if self._can_trump_win(c, plays, trump_suit)]
                 if winning_trumps:
                     return min(winning_trumps, key=lambda c: c.get_order(trump_suit))
 
-        # Can't follow or trump - discard lowest from the shortest suit (excluding masters)
+        # 4. Can't follow or usefully ruff — discard lowest from the
+        # shortest suit (excluding masters).
         non_master_cards = [
             c for c in playable_cards if not self._is_master_card(c, trump_suit, fallen)
         ]
@@ -352,7 +445,11 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         return sum(1 for card in hand if card.suit == suit)
 
     def _opponents_might_have_trump(
-        self, trump_suit: Suit, fallen: dict[Suit, set], voids: set, hand
+        self,
+        trump_suit: Suit,
+        fallen: dict[Suit, set],
+        voids: dict[BasePlayer, set[Suit]],
+        hand,
     ) -> bool:
         """Check if opponents might still have trump cards.
 
@@ -369,7 +466,8 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         Args:
             trump_suit: The current trump suit.
             fallen: The fallen-card map from :meth:`_derive_tracking`.
-            voids: The set of players known void in trump.
+            voids: The per-player proven-void suits from
+                :meth:`_derive_tracking`.
             hand: The observing seat's own hand (``observation.hand``).
 
         Returns:
@@ -386,9 +484,72 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         # are known void, any unseen trumps sit in partner's hand — pulling
         # them helps nobody. (`is not` — Team has no __eq__, identity is it.)
         opponents_void = {
-            p for p in voids if p.team is not self.team
+            p
+            for p, void_suits in voids.items()
+            if trump_suit in void_suits and p.team is not self.team
         }
         return len(opponents_void) < 2
+
+    def _opponent_cut_expected(
+        self,
+        observation: PlayObservation,
+        fallen: dict[Suit, set],
+        voids: dict[BasePlayer, set[Suit]],
+    ) -> bool:
+        """Predict whether an opponent still to play will ruff this trick.
+
+        Pure inference from the public history: an opponent seen unable
+        to follow the led suit earlier in the round cannot hold it now,
+        so if that opponent can still hold a trump, the expert assumption
+        is that the trick will be cut. All three legs must hold for some
+        opponent who has not played in the current trick yet:
+
+        1. **Led-suit void** — the opponent is proven void in the suit
+           led right now.
+        2. **Trump plausible** — that same opponent is *not* proven void
+           in trump.
+        3. **A trump is unseen** — at least one of the 8 trumps sits
+           outside our own hand and the fallen cards; with none left,
+           nobody can ruff anything.
+
+        Trump leads and ``NO_TRUMP`` contracts have no ruff concept, and
+        a void seat that already played this trick is no longer a threat
+        — both come back ``False``. Being last to play also naturally
+        returns ``False``: no opponent is left behind us.
+
+        Args:
+            observation: The frozen play-phase view for this seat.
+            fallen: The fallen-card map from :meth:`_derive_tracking`.
+            voids: The per-player proven-void suits from
+                :meth:`_derive_tracking`.
+
+        Returns:
+            True when some opponent yet to play in the current trick is
+            proven void in the led suit and may still hold a trump.
+        """
+
+        trump_suit = observation.trump_suit
+        led_suit = observation.led_suit
+        if trump_suit is None or led_suit is None:
+            return False
+        if led_suit == trump_suit or trump_suit == Suit.NO_TRUMP:
+            return False
+
+        # Leg 3 — counting: any unseen trump at all?
+        trump_fallen = len(fallen.get(trump_suit, set()))
+        trump_in_hand = self._count_suit(observation.hand, trump_suit)
+        if trump_fallen + trump_in_hand >= 8:
+            return False
+
+        # Legs 1 and 2, restricted to opponents still to play.
+        already_played = {play.player for play in observation.current_trick}
+        return any(
+            player.team is not self.team
+            and player not in already_played
+            and led_suit in void_suits
+            and trump_suit not in void_suits
+            for player, void_suits in voids.items()
+        )
 
     # TODO: replace trump_suit with a boolean is_trump parameter
     def _is_master_card(self, card, trump_suit, fallen: dict[Suit, set]) -> bool:

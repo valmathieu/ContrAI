@@ -29,6 +29,12 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) The expert AI preserves master cards when following suit behind a winning
   partner: it gives the next-highest card instead (partner's Ace promotes its Ten to
   suit master — the Ten is kept to win a later trick), in trump-led tricks included.
+- (engine) The expert AI anticipates opponent ruffs: when an opponent still to play in
+  the trick is proven void in the led suit and may still hold trump, it stops piling
+  points behind a winning partner (follows or discards its cheapest card instead) and
+  contests a losing trick with the smallest card that beats the current best rather
+  than the fattest. Built on widened void tracking — any failure to follow now records
+  a per-suit void for that seat, alongside the existing trump-void inference.
 
 ### Changed
 
