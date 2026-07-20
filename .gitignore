@@ -39,3 +39,8 @@ Thumbs.db
 # personal preferences).
 .claude/settings.local.json
 CLAUDE.md
+
+# Superpowers planning documents (brainstorm specs, implementation plans) are
+# session artifacts, not repo docs - keep them local.
+docs/superpowers/
+docs/plans/
