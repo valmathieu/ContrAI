@@ -73,14 +73,17 @@ loop while True
           for the end-game scoreboard.
         end note
 
-        M -> G : is_final = check_game_over(target).game_over
-        M -> V : show_round_recap(current_round, scores,\n              is_final=is_final)
+        M -> G : status = check_game_over(target)
+        M -> V : show_round_recap(current_round, scores,\n              is_final=status.game_over,\n              is_tiebreaker=status.tied_teams is not None)
         note right of V
           Between-round recap (contract, made/failed,
           per-team round points, running totals). Blocks
           on Enter. When ``is_final`` the prompt flips to
           "see the final score…" so the next screen is
-          the end-game banner, not a fresh deal.
+          the end-game banner, not a fresh deal. When
+          ``is_tiebreaker`` (teams level at/above the
+          target) the panel announces sudden death and
+          the prompt deals the tiebreaker round.
         end note
     end
 

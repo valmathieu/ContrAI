@@ -253,18 +253,54 @@ def test_check_game_over_winner(game):
     assert result.tied_teams is None
     assert result.final_scores == {'North-South': 1600, 'East-West': 1200}
 
-def test_check_game_over_tie(game):
+def test_check_game_over_tie_continues_game(game):
     """
-    Test check_game_over when teams are tied above target score.
+    Test that a tie at/above the target does not end the game.
+
+    Both teams level at or above the target means sudden death: the
+    game continues with tiebreaker rounds until one team leads, so
+    ``game_over`` stays False while ``tied_teams`` flags the state.
     """
     game.scores = {'North-South': 1600, 'East-West': 1600}
 
     result = game.check_game_over(target_score=1500)
 
-    assert result.game_over is True
+    assert result.game_over is False
     assert result.winner is None
     assert result.tied_teams == ['North-South', 'East-West']
     assert result.final_scores == {'North-South': 1600, 'East-West': 1600}
+
+
+def test_check_game_over_tie_below_target_not_flagged(game):
+    """
+    Test that a tie below the target is not reported as a tiebreaker.
+
+    ``tied_teams`` only signals the sudden-death state — equal scores
+    short of the target are just an unfinished game.
+    """
+    game.scores = {'North-South': 1200, 'East-West': 1200}
+
+    result = game.check_game_over(target_score=1500)
+
+    assert result.game_over is False
+    assert result.winner is None
+    assert result.tied_teams is None
+
+
+def test_check_game_over_tie_resolved_by_next_round(game):
+    """
+    Test that the game ends once a tiebreaker round breaks the tie.
+
+    After sudden death, both teams sit above the target but one now
+    leads — that team wins.
+    """
+    game.scores = {'North-South': 1760, 'East-West': 1600}
+
+    result = game.check_game_over(target_score=1500)
+
+    assert result.game_over is True
+    assert result.winner == 'North-South'
+    assert result.tied_teams is None
 
 
 def test_check_game_over_default_target_score(game):

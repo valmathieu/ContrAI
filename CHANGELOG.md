@@ -79,6 +79,10 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) The "Unrecognized bid" notice now suggests the cheapest raise the auction
   still allows (e.g. `'100 h'` once 90 stands) instead of a fixed `'80 h'`, dropping the
   numeric example entirely once only Slam-family raises remain.
+- (engine) A game no longer ends without a winner when both teams finish a round level
+  at or above the target score: the tie is sudden death — tiebreaker rounds are dealt
+  until one team leads, the round recap announcing each one — so the game-over banner
+  always names a winning team.
 
 ## [0.1.0] - 2026-06-21
 

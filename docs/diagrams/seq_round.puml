@@ -157,7 +157,7 @@ note right of V
   `history` for the end-game
   scoreboard table.
 end note
-C -->> V : show_round_recap(round_, scores,\n              is_final=check_game_over(target))
+C -->> V : show_round_recap(round_, scores,\n              is_final=status.game_over,\n              is_tiebreaker=status.tied_teams is not None)
 note right of V
   Full-screen recap panel:
   contract, made/failed, per-team
@@ -166,12 +166,17 @@ note right of V
   When `is_final` is true the prompt
   switches to "see the final score…"
   so the next screen is the EndGame
-  banner, not another deal.
+  banner, not another deal. When
+  `is_tiebreaker` is true (both teams
+  level at/above the target) the panel
+  announces sudden death and the
+  prompt deals the tiebreaker round.
 end note
 
 note over C, P
   Caller typically loops `manage_round` then `check_game_over(target)`
-  until a team crosses the target. Game ↔ Round delegation:
+  until one team strictly leads at/above the target (a tie there is
+  sudden death — more rounds follow). Game ↔ Round delegation:
   Game owns the loop; Round owns one round's lifecycle. The CLI
   (`cli.py`) owns the between-rounds choreography: `on_round_complete`
   feeds the end-game scoreboard, then `show_round_recap` blocks for

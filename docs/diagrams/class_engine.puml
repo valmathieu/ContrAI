@@ -175,11 +175,15 @@ package "model/game.py" as p_game {
     note bottom of GameOverStatus
       Frozen verdict returned by
       ``Game.check_game_over(target)``.
-      ``winner`` is the sole leader, or
-      ``None`` on a tie / unfinished game;
-      ``tied_teams`` carries the level
-      leaders instead. ``cli.py`` loops
-      on ``.game_over`` and the end-game
+      Over only when one team strictly
+      leads at/above the target —
+      ``winner`` is then always set.
+      A tie at/above the target keeps
+      ``game_over`` False and fills
+      ``tied_teams``: sudden death,
+      tiebreaker rounds until one team
+      leads. ``cli.py`` loops on
+      ``.game_over`` and the end-game
       banner reads off the rest.
     end note
 }
