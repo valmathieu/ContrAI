@@ -59,10 +59,14 @@ def main() -> None:
                 # round points, running totals). Always shown, including
                 # before the end-game banner so the player can read the
                 # final round's breakdown before the scoreboard takes
-                # over — the prompt adapts to the final-round case.
-                is_final = game.check_game_over(target).game_over
+                # over — the prompt adapts to the final-round and
+                # sudden-death (tie at/above target) cases.
+                status = game.check_game_over(target)
                 view.show_round_recap(
-                    game.current_round, game.scores, is_final=is_final
+                    game.current_round,
+                    game.scores,
+                    is_final=status.game_over,
+                    is_tiebreaker=status.tied_teams is not None,
                 )
             choice = view.show_end_game(game.check_game_over(target))
             if choice == "q":

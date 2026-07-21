@@ -42,6 +42,8 @@ def _panel_round_recap(
     round_: Round,
     running_scores: dict,
     target_score: int = DEFAULT_TARGET,
+    *,
+    tiebreaker: bool = False,
 ) -> Panel:
     """Between-rounds recap panel — what just happened, in one read.
 
@@ -53,7 +55,8 @@ def _panel_round_recap(
     bonus / penalty, round points (the score-contributing part of the
     tally — belote only on a failed/doubled round), then the round-score
     total. A final Running line carries the game-level totals and the
-    target.
+    target. When ``tiebreaker`` is set (both teams level at/above the
+    target) a sudden-death notice closes the panel.
     """
     body = Text()
     body.append("\n")
@@ -121,6 +124,15 @@ def _panel_round_recap(
     body.append(f"{running_ns:>6}", style=f"bold {BLUE}")
     body.append(f"  {running_ew:>6}", style=f"bold {ORANGE}")
     body.append(f"     target {target_score}", style=DIM)
+
+    if tiebreaker:
+        # Sudden death: both teams sit level at/above the target, so
+        # the game continues until one of them leads.
+        body.append("\n\n")
+        body.append(
+            "  Scores level at the target — tiebreaker round follows",
+            style=f"bold {GOLD}",
+        )
 
     return Panel(
         body,

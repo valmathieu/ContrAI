@@ -25,9 +25,12 @@ class GameOverStatus:
     """Structured verdict returned by :meth:`Game.check_game_over`.
 
     Attributes:
-        game_over: Whether a team has reached the target score.
-        winner: The sole winning team name, or ``None`` on a tie / unfinished game.
-        tied_teams: The teams sharing the lead when the game ends level, else ``None``.
+        game_over: Whether a team strictly leads at or above the target score.
+        winner: The winning team name — always set when ``game_over`` is True,
+            ``None`` otherwise.
+        tied_teams: The teams sharing the lead at or above the target — the
+            sudden-death signal: the game continues with tiebreaker rounds
+            until one team leads. ``None`` when no such tie exists.
         final_scores: Snapshot of every team's score at the moment of the check.
     """
 
@@ -173,26 +176,41 @@ class Game:
 
     def check_game_over(self, target_score: int = 1500) -> GameOverStatus:
         """
-        Checks if any team has reached the target score to end the game.
+        Checks if a team strictly leads at the target score, ending the game.
+
+        A tie at or above the target does not end the game: the teams are in
+        sudden death and keep playing tiebreaker rounds until one of them
+        leads. The tie is surfaced through ``tied_teams`` so callers (e.g.
+        the view) can announce the tiebreaker.
 
         Args:
             target_score: Score required to win the game.
 
         Returns:
-            GameOverStatus: Whether the game is over, the sole winner (if any),
-                any tied teams, and a snapshot of the final scores.
+            GameOverStatus: Whether the game is over, the winner (always set
+                when over), any teams tied at/above the target, and a
+                snapshot of the final scores.
         """
         max_score = max(self.scores.values())
 
         if max_score >= target_score:
-            # Find winning team(s)
-            winning_teams = [team.name for team in self.teams
-                           if self.scores[team.name] == max_score]
+            # Find the team(s) sharing the top score.
+            leading_teams = [team.name for team in self.teams
+                             if self.scores[team.name] == max_score]
 
+            if len(leading_teams) == 1:
+                return GameOverStatus(
+                    game_over=True,
+                    winner=leading_teams[0],
+                    tied_teams=None,
+                    final_scores=self.scores.copy(),
+                )
+
+            # Sudden death: level at/above the target — play another round.
             return GameOverStatus(
-                game_over=True,
-                winner=winning_teams[0] if len(winning_teams) == 1 else None,
-                tied_teams=winning_teams if len(winning_teams) > 1 else None,
+                game_over=False,
+                winner=None,
+                tied_teams=leading_teams,
                 final_scores=self.scores.copy(),
             )
 

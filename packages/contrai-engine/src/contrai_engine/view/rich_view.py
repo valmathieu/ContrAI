@@ -386,7 +386,12 @@ class RichView:
         time.sleep(_resolve_delay("CONTRAI_AI_CARD_DELAY", default=0.9))
 
     def show_round_recap(
-        self, round_: "Round", running_scores: dict, *, is_final: bool = False
+        self,
+        round_: "Round",
+        running_scores: dict,
+        *,
+        is_final: bool = False,
+        is_tiebreaker: bool = False,
     ) -> None:
         """Full-screen recap shown after each round; waits for Enter.
 
@@ -396,14 +401,26 @@ class RichView:
         that just clinched the game. When ``is_final`` is true the
         prompt switches to "see the final score" so the user knows the
         next screen is the game-over scoreboard, not another deal.
+        When ``is_tiebreaker`` is true (both teams level at/above the
+        target) the panel carries a sudden-death notice and the prompt
+        deals the tiebreaker round.
         """
         self.console.clear()
         self.console.print(
-            _panel_round_recap(round_, running_scores, self.target_score)
+            _panel_round_recap(
+                round_,
+                running_scores,
+                self.target_score,
+                tiebreaker=is_tiebreaker,
+            )
         )
         if is_final:
             prompt_text = Text(
                 "Press [Enter] to see the final score…", style=FG
+            )
+        elif is_tiebreaker:
+            prompt_text = Text(
+                "Press [Enter] to deal the tiebreaker round…", style=FG
             )
         else:
             prompt_text = Text(

@@ -946,6 +946,52 @@ class TestRoundRecapPanel:
         assert "deal the next round" in output
         assert "final score" not in output
 
+    def test_recap_panel_shows_tiebreaker_notice(self):
+        """With ``tiebreaker=True`` the panel announces sudden death."""
+        view = RichView()
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        round_ = self._StubRound(
+            round_number=12,
+            contract=contract,
+            round_scores={"North-South": 162, "East-West": 0},
+        )
+        panel = _panel_round_recap(
+            round_, {"North-South": 1600, "East-West": 1600},
+            tiebreaker=True,
+        )
+        text = panel.renderable.plain
+        assert "tiebreaker round" in text
+
+    def test_recap_panel_omits_tiebreaker_notice_by_default(self):
+        """A normal round recap carries no tiebreaker copy."""
+        view = RichView()
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        round_ = self._StubRound(
+            round_number=3,
+            contract=contract,
+            round_scores={"North-South": 162, "East-West": 0},
+        )
+        panel = _panel_round_recap(round_, {"North-South": 500, "East-West": 0})
+        text = panel.renderable.plain
+        assert "tiebreaker" not in text.lower()
+
+    def test_show_round_recap_tiebreaker_prompt(self):
+        """With ``is_tiebreaker=True`` the prompt deals the tiebreaker."""
+        view = RichView()
+        contract = self._StubContract(100, Suit.HEARTS, "North-South")
+        round_ = self._StubRound(
+            round_number=12,
+            contract=contract,
+            round_scores={"North-South": 162, "East-West": 0},
+        )
+        output = self._capture_recap_prompt(
+            view, round_, {"North-South": 1600, "East-West": 1600},
+            is_tiebreaker=True,
+        )
+        assert "deal the tiebreaker round" in output
+        assert "deal the next round" not in output
+        assert "final score" not in output
+
     def test_show_round_recap_final_prompt(self):
         """With ``is_final=True`` the prompt points at the final score."""
         view = RichView()
