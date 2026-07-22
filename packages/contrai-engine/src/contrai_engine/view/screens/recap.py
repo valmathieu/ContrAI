@@ -477,9 +477,9 @@ def _format_outcome_table(
     out = Text()
     out.append_text(header)
     out.append_text(row_tricks)
-    # Blank line sets the trick *count* apart from the point rows that
-    # follow (a column rule here would wrongly read as a sub-total).
-    out.append("\n")
+    # Column rule sets the trick *count* apart from the point rows
+    # that follow, mirroring the rule drawn before the Total row.
+    out.append_text(_column_divider())
     out.append_text(row_points)
     out.append_text(row_last)
     out.append_text(row_bel)
