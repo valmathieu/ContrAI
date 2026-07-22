@@ -1,8 +1,8 @@
 """Tests for the stateless formatters in :mod:`contrai_engine.view.formatting`.
 
 Covers the shared labels with real branching: the contract label
-(taker seat + double caller, compact vs verbose) and the trump label
-(glyph/label plus the optional ★ flourish).
+(taker seat + double caller, compact vs verbose, optional suit glyph)
+and the trump label (glyph/label rendering).
 """
 
 from __future__ import annotations
@@ -54,6 +54,17 @@ class TestFormatContractShort:
         assert "×4 by N" in text
         assert "×2" not in text
 
+    def test_suit_glyph_opt_in(self, four_players):
+        """suit_glyph=True slots the trump glyph between value and taker."""
+        north, *_ = four_players
+        contract = Contract(ContractBid(north, 110, Suit.SPADES))
+        assert "110 ♠ by N" in _format_contract_short(
+            contract, suit_glyph=True
+        ).plain
+        # Default stays glyph-free: the round panel and recap already
+        # carry the trump on their own line.
+        assert "♠" not in _format_contract_short(contract).plain
+
     def test_slam_value_label(self, four_players):
         _north, east, *_ = four_players
         contract = Contract(ContractBid(east, SlamLevel.SLAM, Suit.HEARTS))
@@ -87,20 +98,15 @@ class TestFormatContractShort:
 
 
 class TestFormatTrumpLabel:
-    """`_format_trump_label` glyph/label plus the optional ★ flourish."""
+    """`_format_trump_label` glyph/label rendering."""
 
-    def test_default_includes_star(self):
+    def test_suit_label_has_no_star(self):
         text = _format_trump_label(Suit.HEARTS).plain
-        assert "♥ Hearts" in text
-        assert "★" in text
-
-    def test_star_false_omits_star(self):
-        text = _format_trump_label(Suit.HEARTS, star=False).plain
         assert "♥ Hearts" in text
         assert "★" not in text
 
     def test_no_trump_label(self):
-        text = _format_trump_label(Suit.NO_TRUMP, star=False).plain
+        text = _format_trump_label(Suit.NO_TRUMP).plain
         assert "No Trump" in text
         assert "★" not in text
 

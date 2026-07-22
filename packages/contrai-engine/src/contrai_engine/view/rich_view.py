@@ -314,7 +314,7 @@ class RichView:
             return
         line = Text()
         line.append("Contract set: ", style=f"bold {GOLD}")
-        line.append_text(_format_contract_short(contract))
+        line.append_text(_format_contract_short(contract, suit_glyph=True))
         line.append(".", style=DIM)
         self._log(line)
 

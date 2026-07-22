@@ -75,10 +75,9 @@ def _panel_round_recap(
         body.append_text(_format_contract_short(contract, verbose=True))
         body.append("\n")
         # Trump recall — the contract label omits the suit, so spell
-        # it out here the same way the in-game Round panel does, but
-        # without the ★ flourish (the recap keeps this line plain).
+        # it out here the same way the in-game Round panel does.
         body.append("  Trump:     ", style=DIM)
-        body.append_text(_format_trump_label(contract.suit, star=False))
+        body.append_text(_format_trump_label(contract.suit))
         body.append("\n")
         # Made/failed badge
         made = _contract_made(round_)
