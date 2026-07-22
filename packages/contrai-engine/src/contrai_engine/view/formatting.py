@@ -117,7 +117,9 @@ def _seat_letter(player: Optional[BasePlayer]) -> Optional[Text]:
     )
 
 
-def _format_contract_short(contract: Contract, *, verbose: bool = False) -> Text:
+def _format_contract_short(
+    contract: Contract, *, verbose: bool = False, suit_glyph: bool = False
+) -> Text:
     """Short label: ``"100 by E  ×2 by S"``.
 
     Names the players, not just the team: the contract-setter follows
@@ -132,6 +134,11 @@ def _format_contract_short(contract: Contract, *, verbose: bool = False) -> Text
             ``×2`` / ``×4`` glyphs. The recap panel uses this so the
             after-round summary reads in full prose; the in-game panel
             and event log keep the compact form.
+        suit_glyph: When ``True``, slot the trump glyph right after the
+            value (``"100 ♥ by E"``). The event-log 'Contract set' line
+            uses this because it carries no other trump hint; the round
+            panel and recap keep the default — they already show the
+            trump on a dedicated line.
     """
     double_label = "redoubled" if verbose else "×4"
     single_label = "doubled" if verbose else "×2"
@@ -140,6 +147,12 @@ def _format_contract_short(contract: Contract, *, verbose: bool = False) -> Text
     # stringify to "80" … "180".
     value_str = str(contract.value)
     t.append(value_str, style="bold")
+    if suit_glyph:
+        t.append(" ", style=FG)
+        t.append(
+            _suit_glyph(contract.suit),
+            style=f"bold {_suit_color(contract.suit)}",
+        )
     t.append(" by ", style=DIM)
     taker = _seat_letter(getattr(contract, "player", None))
     if taker is not None:
@@ -164,14 +177,11 @@ def _format_contract_short(contract: Contract, *, verbose: bool = False) -> Text
     return t
 
 
-def _format_trump_label(suit: Optional[Suit], *, star: bool = True) -> Text:
-    """``"♥ Hearts ★"`` with red glyph and gold star.
+def _format_trump_label(suit: Optional[Suit]) -> Text:
+    """``"♥ Hearts"`` with the glyph in suit color.
 
     Args:
         suit: The trump suit to render, or ``None`` for an em-dash.
-        star: When ``True`` (default) append the gold ``★`` flourish.
-            The after-round recap passes ``star=False`` so its Trump
-            line reads plain; the in-game Round panel keeps the star.
     """
     if suit is None:
         return Text("—", style=DIM)
@@ -180,8 +190,6 @@ def _format_trump_label(suit: Optional[Suit], *, star: bool = True) -> Text:
     t.append(" ", style=FG)
     label = "No Trump" if suit == Suit.NO_TRUMP else suit.value
     t.append(label, style="bold")
-    if star:
-        t.append(" ★", style=GOLD)
     return t
 
 

@@ -430,8 +430,9 @@ class TestEventLog:
         view.on_contract_established(_StubRound())
         line = view.event_log[-1].plain
         assert "Contract set:" in line
-        # The contract short label embeds value + the taker's seat letter.
-        assert "100" in line
+        # The contract short label embeds value + trump glyph + the
+        # taker's seat letter.
+        assert "100 ♥" in line
         assert "by N" in line
 
     def test_on_contract_established_includes_double_multiplier(
