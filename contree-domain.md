@@ -342,6 +342,9 @@ defense.
 - A target score is agreed before the game (typical: **1500** or **2000**).
 - The first team to reach or exceed the target at the end of a round wins.
 - If both teams cross the target in the same round, the higher score wins.
+- If both teams sit at the **same score** at or above the target, nobody has
+  won yet: play continues with additional rounds (sudden death) until one
+  team leads.
 
 ---
 
@@ -487,7 +490,8 @@ threshold; details live alongside the AI implementation.*
 [Scoring]   → sum cards + dix de der (+ belote if applicable)
               apply contract success/failure + multiplier
    ↓
-[Check]     → if any team ≥ target (1500/2000): end game
+[Check]     → if one team strictly leads at ≥ target (1500/2000): end game
+              tie at ≥ target: sudden death, keep playing until one team leads
               else next round, dealer rotates right
 ```
 
