@@ -287,6 +287,28 @@ Slam grid below:
 always credited to the team **holding** K + Q of trump (not whoever captures
 those cards in a trick — see §6.5), on top of everything else, win or lose.
 
+#### Unannounced capot
+
+If the declaring team wins **all 8 tricks** on a numeric contract *without
+having bid a Slam*, the trick pile (152 cards + 10 *dix de der* = 162) is
+replaced by a flat **250** substitute: the declarer scores `C + 250`, the
+defense scores nothing, and the contract is necessarily **made** (sweeping
+every trick cannot fail). This mirrors the announced-Slam shape but keeps the
+numeric contract value `C` as the base.
+
+- Whether the contracting player took all 8 tricks **personally** (a *grand
+  slam*) or the team split them (a plain *slam*), the substitute is the same
+  250 — the distinction is only descriptive.
+- **Un-doubled only.** A doubled / redoubled sweep keeps the winner-takes-all
+  `160 + C × M` shape above; the 250 substitute does **not** apply.
+- **Declaring team only.** If the *defense* takes all 8 tricks the declarer
+  has simply *chuté* — score it as an ordinary failed contract (`160 + C`),
+  not as a capot.
+- **Belote (+20)** still layers on top for the holding team, as everywhere.
+
+> Worked example: contract `100 ♠`, declarer sweeps all 8 → declarer
+> 350 (`100 + 250`), defense 0.
+
 #### Slam and Solo Slam
 
 Slam-family contracts keep the same shape as numeric contracts — the at-risk
