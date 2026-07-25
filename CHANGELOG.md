@@ -29,7 +29,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 - (engine) Card-play strategies now receive a single frozen `PlayObservation` — the
   seat's own hand, the public trick history, and its legal cards — and derive any card
-  tracking from it, so a strategy is sealed off from another seat's hand by  construction through what it is handed; sealing the live player refs on `Play` is a noted follow-up.
+  tracking from it, so a strategy is sealed off from another seat's hand by construction through what it is handed; sealing the live player refs on `Play` is a noted follow-up.
 - (engine) The trick loop is now driven by the core `PlayState`: `Round` seeds an
   immutable play-phase state at the start of play, derives the legal cards from it, and
   mirrors the players' hands and the current trick from it each play; card-play legality
@@ -50,10 +50,12 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 ### Fixed
 
 - (engine) Expert AI partner-support escalation: every supporting turn re-added the seat's full complement (+10 per external ace, +10 for the trump complement) on top of the *standing* contract, so partners alternately raised each other far past their combined strength (an 80 opening ratcheting to 160+, at which point the opponents' double heuristic armed itself on the inflated value), and a seat could even "support" its own bid after an opponent overbid. Support is now capped at a team ceiling — partner's opening bid plus the supporter's complement, announced once — and a seat never supports a suit it opened itself.
+- (engine) Landing screen now labels the three AI seats `AI · expert` instead of `AI · medium` — the bots play the expert strategy, which is the only level wired today.
 - (engine) Expert AI suit tie-break: with several suits tied for the best contract, the
   AI always fell back to Spades — even when Spades never met the bidding table — and ignored the belote preference when more than one tied suit held a belote. It now picks among the tied suits only, preferring belote holders.
 - (engine) The "Unrecognized bid" notice now suggests the cheapest raise the auction still allows (e.g. `'100 h'` once 90 stands) instead of a fixed `'80 h'`, dropping the numeric example entirely once only Slam-family raises remain.
 - (engine) A game no longer ends without a winner when both teams finish a round level at or above the target score: the tie is sudden death — tiebreaker rounds are dealt until one team leads, the round recap announcing each one — so the game-over banner always names a winning team.
+- (core) Illegal-play errors now name the acting seat: `PlayState.apply` attaches a `<position> card play` context to every `IllegalPlayError`, so rejection diagnostics say who misplayed as well as which card and why.
 
 ## [0.1.0] - 2026-06-21
 
