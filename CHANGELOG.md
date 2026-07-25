@@ -8,6 +8,10 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-25
+
+Hardening release: the play phase moves into the core as an immutable `PlayState` state machine with an imperfect-information `PlayObservation` for AI strategies, the expert AI bids and plays from sounder rules, and the whole TUI took a review pass.
+
 ### Added
 
 - (core) `PlayState` play-phase state machine, the play-side sibling of `Auction`: an
@@ -79,5 +83,6 @@ First playable release: a complete CLI Contrée engine backed by a shared domain
   Online → Spectator → Contree → Tournament navigation, seat identification, and `#tour`
   round polling.
 
-[Unreleased]: https://github.com/valmathieu/ContrAI/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/valmathieu/ContrAI/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/valmathieu/ContrAI/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/valmathieu/ContrAI/releases/tag/v0.1.0
