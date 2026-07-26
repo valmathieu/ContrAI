@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import pytest
 
-from contrai_core import Hand
+from contrai_core import Hand, Position
 from contrai_core.auction import Auction
 from contrai_core.bid import ContractBid, DoubleBid, PassBid
 from contrai_core.card import Card
@@ -125,10 +125,10 @@ class TestPlayTrickHumanUsesView:
     ``HumanPlayer.choose_card`` (which only returns None by design)."""
 
     def test_human_card_comes_from_view_not_choose_card(self):
-        human = HumanPlayer("H", "North")
-        east = AiPlayer("E", "East")
-        south = AiPlayer("S", "South")
-        west = AiPlayer("W", "West")
+        human = HumanPlayer("H", Position.NORTH)
+        east = AiPlayer("E", Position.EAST)
+        south = AiPlayer("S", Position.SOUTH)
+        west = AiPlayer("W", Position.WEST)
         order = [human, east, south, west]
         ns = Team("North-South", [human, south])
         ew = Team("East-West", [east, west])
@@ -643,7 +643,7 @@ class TestManageBiddingAutoPasses:
           5. W: pass    (now passes_count = 3 → bidding ends)
         """
         # Make S a HumanPlayer so the view path is exercised.
-        human = HumanPlayer("You", "South")
+        human = HumanPlayer("You", Position.SOUTH)
         human.team = players["S"].team  # same N-S team
         players["S"] = human
 

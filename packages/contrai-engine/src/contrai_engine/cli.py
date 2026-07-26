@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 
+from contrai_core.position import Position
 from contrai_engine.model.game import Game
 from contrai_engine.model.player import AiPlayer, HumanPlayer
 from contrai_engine.view.rich_view import RichView
@@ -17,18 +18,17 @@ from contrai_engine.view.rich_view import RichView
 # TODO: replace with a seat picker on the landing screen. For now the
 # layout matches the design handoff exactly: South is the human, the
 # other three seats are AI (expert — the default strategies).
-HUMAN_SEAT = "South"
-SEATS = ("North", "East", "South", "West")
+HUMAN_SEAT = Position.SOUTH
 
 
 def _build_game() -> Game:
     """Instantiate a fresh Game with one HumanPlayer (South) + 3 AiPlayers."""
     players = []
-    for seat in SEATS:
-        if seat == HUMAN_SEAT:
+    for seat in Position:
+        if seat is HUMAN_SEAT:
             players.append(HumanPlayer("You", position=seat))
         else:
-            players.append(AiPlayer(seat, position=seat))
+            players.append(AiPlayer(seat.value, position=seat))
     return Game(players)
 
 

@@ -12,6 +12,10 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 - (core) **BREAKING:** Position seat enum — anticlockwise next, partner, opponents, strict parsing, French seat-name mapping (french_name/from_french). BasePlayer.position is now a Position, not a free-form string.
 
+### Changed
+
+- (engine) **BREAKING:** Seating, dealer/turn rotation, team formation, and the AI's partner reasoning now flow through core Position — the seat-order list, hardcoded partner map, and position-string scans are gone.
+
 ## [0.2.0] - 2026-07-25
 
 Hardening release: the play phase moves into the core as an immutable `PlayState` state machine with an imperfect-information `PlayObservation` for AI strategies, the expert AI bids and plays from sounder rules, and the whole TUI took a review pass.

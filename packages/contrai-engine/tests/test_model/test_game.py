@@ -13,6 +13,7 @@ from contrai_engine.model.game import Game
 from contrai_core.deck import Deck
 from contrai_core.exceptions import InvalidPlayerCountError
 from contrai_core.card import Card
+from contrai_core.position import Position
 
 class DummyPlayer:
     """Minimal player stand-in: name, seat position, and an empty hand."""
@@ -91,10 +92,10 @@ def players():
     Fixture that returns 4 positioned players for testing.
     """
     return [
-        DummyPlayer("North Player", "North"),
-        DummyPlayer("East Player", "East"), 
-        DummyPlayer("South Player", "South"),
-        DummyPlayer("West Player", "West")
+        DummyPlayer("North Player", Position.NORTH),
+        DummyPlayer("East Player", Position.EAST),
+        DummyPlayer("South Player", Position.SOUTH),
+        DummyPlayer("West Player", Position.WEST)
     ]
 
 @pytest.fixture
@@ -124,12 +125,12 @@ def test_game_requires_exactly_four_players():
     Test that creating a game with wrong number of players raises InvalidPlayerCountError.
     """
     # Test with too few players
-    players = [DummyPlayer("Player1", "North")]
+    players = [DummyPlayer("Player1", Position.NORTH)]
     with pytest.raises(InvalidPlayerCountError):
         Game(players) # type: ignore
-    
+
     # Test with too many players
-    players = [DummyPlayer(f"Player{i}", "North") for i in range(5)]
+    players = [DummyPlayer(f"Player{i}", Position.NORTH) for i in range(5)]
     with pytest.raises(InvalidPlayerCountError):
         Game(players) # type: ignore
 
@@ -139,10 +140,10 @@ def test_game_requires_correct_positions():
     """
     # Missing West position
     players = [
-        DummyPlayer("Player1", "North"),
-        DummyPlayer("Player2", "East"),
-        DummyPlayer("Player3", "South"),
-        DummyPlayer("Player4", "South")  # Duplicate South, missing West
+        DummyPlayer("Player1", Position.NORTH),
+        DummyPlayer("Player2", Position.EAST),
+        DummyPlayer("Player3", Position.SOUTH),
+        DummyPlayer("Player4", Position.SOUTH)  # Duplicate South, missing West
     ]
     
     with pytest.raises(ValueError, match="Players must have positions"):
@@ -156,7 +157,7 @@ def test_players_are_sorted_by_position(players):
     shuffled_players = [players[2], players[0], players[3], players[1]]  # Different order
     game = Game(shuffled_players) # type: ignore
     
-    expected_positions = ["North", "West", "South", "East"]
+    expected_positions = list(Position)
     actual_positions = [player.position for player in game.players]
     assert actual_positions == expected_positions
 
@@ -169,11 +170,23 @@ def test_teams_are_created_correctly(game):
 
     # Check North-South team
     ns_positions = {player.position for player in ns_team.players}
-    assert ns_positions == {"North", "South"}
+    assert ns_positions == {Position.NORTH, Position.SOUTH}
 
     # Check East-West team
     ew_positions = {player.position for player in ew_team.players}
-    assert ew_positions == {"East", "West"}
+    assert ew_positions == {Position.EAST, Position.WEST}
+
+def test_players_by_position_maps_each_seat_to_its_player(game, players):
+    """
+    Test that players_by_position exposes an O(1) lookup from each seat
+    to the player occupying it.
+    """
+    assert game.players_by_position == {
+        Position.NORTH: players[0],
+        Position.EAST: players[1],
+        Position.SOUTH: players[2],
+        Position.WEST: players[3],
+    }
 
 def test_next_dealer_anticlockwise_rotation(game):
     """
@@ -181,10 +194,10 @@ def test_next_dealer_anticlockwise_rotation(game):
     """
     # Set initial dealer manually to North
     game.dealer = game.players[0]  # North (index 0)
-    assert game.dealer.position == "North"
-    
+    assert game.dealer.position == Position.NORTH
+
     # Test the rotation sequence
-    expected_sequence = ["West", "South", "East", "North"]
+    expected_sequence = [Position.WEST, Position.SOUTH, Position.EAST, Position.NORTH]
     
     for expected_position in expected_sequence:
         game.next_dealer()
@@ -340,7 +353,7 @@ def test_set_players_order_starts_after_dealer(game):
     game.set_players_order()
 
     positions = [player.position for player in game.players_order]
-    assert positions == ["West", "South", "East", "North"]
+    assert positions == [Position.WEST, Position.SOUTH, Position.EAST, Position.NORTH]
 
 
 def test_set_players_order_wraps_around(game):
@@ -354,7 +367,7 @@ def test_set_players_order_wraps_around(game):
     game.set_players_order()
 
     positions = [player.position for player in game.players_order]
-    assert positions == ["North", "West", "South", "East"]
+    assert positions == [Position.NORTH, Position.WEST, Position.SOUTH, Position.EAST]
 
 
 def test_start_new_round_shuffles_first_round_then_cuts(game, monkeypatch):
