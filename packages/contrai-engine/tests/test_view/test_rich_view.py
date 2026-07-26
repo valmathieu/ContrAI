@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 from rich.text import Text
 
-from contrai_core import Auction, Card, Rank, Suit, Trick
+from contrai_core import Auction, Card, Position, Rank, Suit, Trick
 from contrai_core.bid import ContractBid, DoubleBid, PassBid
 from contrai_engine.view.rich_view import RichView
 from contrai_engine.view.screens.bidding import (
@@ -283,7 +283,7 @@ class TestOnBidMadePacing:
         monkeypatch.setattr(rich_view.time, "sleep",
                             lambda s: sleep_calls.append(s))
 
-        human = HumanPlayer("You", "South")
+        human = HumanPlayer("You", Position.SOUTH)
         human.team = four_players[0].team  # any team
         view = RichView()
         bid = PassBid(human)
@@ -316,7 +316,7 @@ class TestOnCardPlayedPacing:
         monkeypatch.setattr(rich_view.time, "sleep",
                             lambda s: sleep_calls.append(s))
 
-        human = HumanPlayer("You", "South")
+        human = HumanPlayer("You", Position.SOUTH)
         human.team = four_players[0].team
         view = RichView()
         view.on_card_played(human, Card(Suit.HEARTS, Rank.ACE), Trick())
@@ -553,7 +553,7 @@ class TestBeloteAnnouncement:
             winner_position=None,
             dimmed=False,
             width=42,
-            belote_by_position={"North": "belote"},
+            belote_by_position={Position.NORTH: "belote"},
         )
         text = diamond.plain
         assert "★ Belote" in text
@@ -575,7 +575,7 @@ class TestBeloteAnnouncement:
             winner_position=None,
             dimmed=False,
             width=42,
-            belote_by_position={"South": "rebelote"},
+            belote_by_position={Position.SOUTH: "rebelote"},
         )
         assert "★ Belote" in diamond.plain
         assert "Rebelote" not in diamond.plain
@@ -626,7 +626,7 @@ class TestBiddingDiamond:
         north, east, south, west = four_players
         diamond = _render_bidding_diamond(
             [ContractBid(west, 80, Suit.HEARTS)],
-            pending_position="North",
+            pending_position=Position.NORTH,
             width=42,
         )
         # North is on the move → "N ?"; West shows its standing bid.
@@ -765,7 +765,7 @@ class TestPanelHandPersistence:
         """RichView wired to a minimal Game-like stub holding one human."""
         from contrai_engine.model.player import HumanPlayer
 
-        human = HumanPlayer("You", "South")
+        human = HumanPlayer("You", Position.SOUTH)
         human.team = None  # not exercised by these tests
 
         class _StubGame:
@@ -836,7 +836,7 @@ class TestPanelHandPersistence:
         ])
         from contrai_core.trick import Trick as _Trick
 
-        west_stub = type("_W", (), {"position": "West", "team": None})()
+        west_stub = type("_W", (), {"position": Position.WEST, "team": None})()
         trick = _Trick()
         trick.add_play(west_stub, Card(Suit.CLUBS, Rank.KING))
         # Stub a round with hearts trump so the explain helper knows
@@ -859,7 +859,7 @@ class TestRenderInGameHandSlot:
         from contrai_engine.model.player import HumanPlayer
 
         monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
-        human = HumanPlayer("You", "South")
+        human = HumanPlayer("You", Position.SOUTH)
         human.team = None
         human.hand.clear()
         human.hand.extend([

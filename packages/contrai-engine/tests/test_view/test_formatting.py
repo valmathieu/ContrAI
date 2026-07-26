@@ -1,19 +1,25 @@
 """Tests for the stateless formatters in :mod:`contrai_engine.view.formatting`.
 
 Covers the shared labels with real branching: the contract label
-(taker seat + double caller, compact vs verbose, optional suit glyph)
-and the trump label (glyph/label rendering).
+(taker seat + double caller, compact vs verbose, optional suit glyph),
+the trump label (glyph/label rendering), and the seat letter/color
+lookups (closed-set ``Position`` keys, no string fallback).
 """
 
 from __future__ import annotations
 
-from contrai_core import Suit
+import pytest
+
+from contrai_core import Position, Suit
 from contrai_core.bid import ContractBid, SlamLevel
 from contrai_core.contract import Contract
 from contrai_engine.view.formatting import (
     _format_contract_short,
     _format_trump_label,
+    _position_color,
+    _position_short,
 )
+from contrai_engine.view.theme import BLUE, ORANGE
 
 
 class TestFormatContractShort:
@@ -112,3 +118,38 @@ class TestFormatTrumpLabel:
 
     def test_none_suit_is_em_dash(self):
         assert _format_trump_label(None).plain == "—"
+
+
+class TestPositionShort:
+    """`_position_short` — a closed-set lookup, no string-slice fallback."""
+
+    @pytest.mark.parametrize(
+        "position, letter",
+        [
+            (Position.NORTH, "N"),
+            (Position.EAST, "E"),
+            (Position.SOUTH, "S"),
+            (Position.WEST, "W"),
+        ],
+    )
+    def test_maps_each_position_to_its_letter(self, position, letter):
+        assert _position_short(position) == letter
+
+    def test_key_outside_the_closed_set_raises_key_error(self):
+        """``Position`` is a closed set of four members — a caller that
+        slips in anything else (e.g. a raw seat string) hits a
+        ``KeyError`` instead of silently degrading to a sliced guess."""
+        with pytest.raises(KeyError):
+            _position_short("North")
+
+
+class TestPositionColor:
+    """`_position_color` — team color by seat, membership test on `Position`."""
+
+    @pytest.mark.parametrize("position", [Position.NORTH, Position.SOUTH])
+    def test_north_south_are_blue(self, position):
+        assert _position_color(position) == BLUE
+
+    @pytest.mark.parametrize("position", [Position.EAST, Position.WEST])
+    def test_east_west_are_orange(self, position):
+        assert _position_color(position) == ORANGE

@@ -7,13 +7,13 @@ Pure builders consuming scalars.
 
 from __future__ import annotations
 
-from contrai_core import Suit
+from contrai_core import Position, Suit
 from rich.box import ROUNDED
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from contrai_engine.view.formatting import _suit_glyph
+from contrai_engine.view.formatting import _position_short, _suit_glyph
 from contrai_engine.view.theme import (
     BLUE,
     BORDER,
@@ -124,29 +124,37 @@ def _panel_players() -> Panel:
     TODO: replace with a configurable seat picker when we expose
     difficulty / player config on the landing screen.
     """
-    seats = [
-        ("N", "North", "AI · expert", BLUE, False),
-        ("E", "East", "AI · expert", ORANGE, False),
-        ("S", "You", "human", GREEN_FG, True),
-        ("W", "West", "AI · expert", ORANGE, False),
-    ]
-    # Two columns of two: render as a 2-row, 2-col Table.
+    # Per-seat role metadata, keyed by Position rather than a parallel
+    # string roster — the letter and seat name rendered below both
+    # derive from the enum member itself.
+    roles: dict[Position, tuple[str, str, bool]] = {
+        Position.NORTH: ("AI · expert", BLUE, False),
+        Position.EAST: ("AI · expert", ORANGE, False),
+        Position.SOUTH: ("human", GREEN_FG, True),
+        Position.WEST: ("AI · expert", ORANGE, False),
+    }
+    # Two columns of two: render as a 2-row, 2-col Table. The on-screen
+    # grouping (N, E / S, W) is independent of Position's anticlockwise
+    # definition order, so it is spelled out explicitly here.
+    layout = (
+        (Position.NORTH, Position.EAST),
+        (Position.SOUTH, Position.WEST),
+    )
     table = Table.grid(expand=True, padding=(0, 2))
     table.add_column(ratio=1)
     table.add_column(ratio=1)
-    rows = []
-    for label, name, role, color, is_human in seats:
-        cell = Text()
-        cell.append(label, style=f"bold {color}")
-        cell.append(" ", style=FG)
-        if is_human:
-            cell.append(name, style=f"bold {color}")
-        else:
-            cell.append(name, style=FG)
-        cell.append(f" ({role})", style=DIM)
-        rows.append(cell)
-    table.add_row(rows[0], rows[1])  # N, E
-    table.add_row(rows[2], rows[3])  # S, W
+    for row_seats in layout:
+        cells = []
+        for seat in row_seats:
+            role, color, is_human = roles[seat]
+            cell = Text()
+            cell.append(_position_short(seat), style=f"bold {color}")
+            cell.append(" ", style=FG)
+            name = "You" if is_human else str(seat)
+            cell.append(name, style=f"bold {color}" if is_human else FG)
+            cell.append(f" ({role})", style=DIM)
+            cells.append(cell)
+        table.add_row(*cells)
     return Panel(
         table,
         title=Text("Players", style=f"bold {TITLE}"),

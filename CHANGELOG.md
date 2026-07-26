@@ -14,7 +14,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 ### Changed
 
-- (engine) **BREAKING:** Seating, dealer/turn rotation, team formation, and the AI's partner reasoning now flow through core Position — the seat-order list, hardcoded partner map, and position-string scans are gone.
+- (engine) **BREAKING:** Seating, dealer/turn rotation, team formation, and the AI's partner reasoning now flow through core Position — the seat-order list, hardcoded partner map, and position-string scans are gone, and the terminal UI keys its seat labels, diamond slots, and belote badges on Position.
 
 ## [0.2.0] - 2026-07-25
 

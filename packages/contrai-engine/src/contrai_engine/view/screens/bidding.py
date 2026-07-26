@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Optional
 
-from contrai_core import Auction, BasePlayer
+from contrai_core import Auction, BasePlayer, Position
 from contrai_core.bid import (
     Bid,
     ContractBid,
@@ -46,7 +46,7 @@ from contrai_engine.view.theme import (
 def _render_bidding_diamond(
     bidding_history: list,
     *,
-    pending_position: Optional[str],
+    pending_position: Optional[Position],
     width: int,
 ) -> Text:
     """Render the 4-seat diamond with each player's latest bid.
@@ -62,11 +62,11 @@ def _render_bidding_diamond(
     """
     # Collapse the history to the latest bid standing at each seat;
     # a later bid by the same player overwrites the earlier one.
-    latest_by_pos: dict[str, Bid] = {}
+    latest_by_pos: dict[Position, Bid] = {}
     for bid in bidding_history:
         latest_by_pos[bid.player.position] = bid
 
-    def slot(pos: str) -> Text:
+    def slot(pos: Position) -> Text:
         t = Text()
         label = _position_short(pos)
         pcolor = _position_color(pos)
@@ -83,20 +83,20 @@ def _render_bidding_diamond(
     # the belote badges — those belong to the play phase.
     out = Text()
     out.append("\n")
-    n = slot("North")
+    n = slot(Position.NORTH)
     pad_left = max(0, (width - n.cell_len) // 2)
     out.append(" " * pad_left)
     out.append_text(n)
     out.append("\n")
-    w = slot("West")
-    e = slot("East")
+    w = slot(Position.WEST)
+    e = slot(Position.EAST)
     used = w.cell_len + e.cell_len
     gap = max(2, width - used)
     out.append_text(w)
     out.append(" " * gap)
     out.append_text(e)
     out.append("\n")
-    s = slot("South")
+    s = slot(Position.SOUTH)
     pad_left = max(0, (width - s.cell_len) // 2)
     out.append(" " * pad_left)
     out.append_text(s)
