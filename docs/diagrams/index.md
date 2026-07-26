@@ -20,9 +20,18 @@ Colour encodes **which package owns the element**, reused consistently across ev
 | `contrai-analyzer`   | `#7AC178`   | `#E8F5E9`   | `#3F8C3D` |
 | `contrai-scraper`    | `#9B7FCC`   | `#EDE7F6`   | `#5E4495` |
 | Stub / unimplemented | `#9E9E9E`   | `#EEEEEE`   | `#616161` |
+| External / stdlib    | `#9E9E9E`   | `#EEEEEE`   | `#616161` |
 | `<<future>>`         | greyed      | greyed      | dashed    |
 
-Stubbed elements — code that exists but isn't wired in — use the grey palette plus a `<<stub>>` stereotype (the engine carries none today). Planned-but-unwired elements (e.g. SQLite persistence in the scraper) use dashed arrows and the `<<future>>` stereotype.
+Stubbed elements — code that exists but isn't wired in — use the grey palette plus a `<<stub>>` stereotype (the engine carries none today). Planned-but-unwired elements (e.g. SQLite persistence in the scraper) use dashed arrows and the `<<future>>` stereotype. Types the workspace does not own (Python's `Exception` / `ValueError` in `class_core.puml`) reuse the same grey with a `<<stdlib>>` stereotype.
+
+A **boundary element owned by another package** keeps its owner's body fill inline plus a `<<from …>>` stereotype, so a core type drawn inside an engine diagram still reads blue:
+
+```plantuml
+class Trick <<from contrai-core>> #E1F0FF
+```
+
+This matters for association targets: PlantUML auto-creates any class named only in a relationship line, and the auto-created box inherits the diagram's default `skinparam class` fill — the owning package's colour, not the type's. Declare such types explicitly.
 
 ## Rendering
 
@@ -39,6 +48,27 @@ A **rendered PNG is committed alongside each `.puml`** in `docs/diagrams/` so th
 plantuml -tpng docs/diagrams/file.puml         # → docs/diagrams/file.png
 mmdc      -i docs/diagrams/file.mmd -o docs/diagrams/file.png
 ```
+
+**PlantUML silently clips large PNGs at 4096 px** — no error, no warning, just a
+truncated image. `class_core.puml` and `class_engine.puml` both exceed it today,
+so render them with the limit raised, then check the result's pixel dimensions (a
+side landing at exactly 4096 means it was clipped):
+
+```bash
+PLANTUML_LIMIT_SIZE=8192 plantuml -tpng docs/diagrams/class_core.puml
+```
+
+Only the raster export is affected; the MkDocs site renders SVG and is not
+subject to the limit.
+
+### Writing note text
+
+PlantUML parses note bodies as **Creole**, not Markdown. Backticks and Sphinx
+roles (`` `x` ``, `:class:`X``) render literally — use `""x""` for inline code.
+Emphasis and monospace markers must **open and close on the same line**: a `**`
+or `""` left open at a line break is read as a nested-bullet marker (or leaves a
+stray delimiter) instead of spanning to the next line. Likewise, `<<label>>`
+arrow stereotypes only become guillemets when the `<<…>>` pair contains no `\n`.
 
 VS Code: install the *PlantUML* (`jebbs.plantuml`) and *Markdown Preview Mermaid Support* extensions for in-editor previews.
 
