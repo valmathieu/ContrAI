@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .hand import Hand
+from .position import Position
 
 if TYPE_CHECKING:
     from .team import Team
@@ -19,12 +20,12 @@ class BasePlayer:
 
     Attributes:
         name: The player's display name.
-        position: Table position ('North', 'South', 'East', 'West').
+        position: The seat this player occupies.
         hand: Cards currently held (a :class:`Hand` instance).
         team: The team this player belongs to (assigned by Game).
     """
 
-    def __init__(self, name: str, position: str):
+    def __init__(self, name: str, position: Position):
         self.name = name
         self.position = position
         self.hand: Hand = Hand()

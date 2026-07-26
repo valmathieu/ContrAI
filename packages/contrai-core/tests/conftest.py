@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from contrai_core import BasePlayer, Team
+from contrai_core import BasePlayer, Position, Team
 
 
 @pytest.fixture
@@ -23,10 +23,10 @@ def players() -> dict[str, BasePlayer]:
         :class:`BasePlayer` seated there. North-South and East-West are the
         two teams, matching the physical seating where partners sit opposite.
     """
-    north = BasePlayer("N", "North")
-    east = BasePlayer("E", "East")
-    south = BasePlayer("S", "South")
-    west = BasePlayer("W", "West")
+    north = BasePlayer("N", Position.NORTH)
+    east = BasePlayer("E", Position.EAST)
+    south = BasePlayer("S", Position.SOUTH)
+    west = BasePlayer("W", Position.WEST)
     ns = Team("North-South", [north, south])
     ew = Team("East-West", [east, west])
     for p in (north, south):
