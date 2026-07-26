@@ -6,7 +6,7 @@ membership queries, score accumulation, and the string representations.
 
 import pytest
 
-from contrai_core import InvalidPlayerCountError, Team
+from contrai_core import InvalidPlayerCountError, Position, Team
 
 class DummyPlayer:
     """Dummy player class for testing purposes."""
@@ -22,8 +22,8 @@ class DummyPlayer:
 def players():
     """Fixture that returns two dummy players."""
     return [
-        DummyPlayer("Player1", "North"),  # type: ignore
-        DummyPlayer("Player2", "South")   # type: ignore
+        DummyPlayer("Player1", Position.NORTH),  # type: ignore
+        DummyPlayer("Player2", Position.SOUTH)   # type: ignore
     ]
 
 @pytest.fixture
@@ -46,14 +46,14 @@ def test_team_requires_exactly_two_players():
     """
     # Test with one player
     with pytest.raises(InvalidPlayerCountError, match="Expected 2 players, got 1"):
-        Team("Invalid Team", [DummyPlayer("Player1", "North")])  # type: ignore
+        Team("Invalid Team", [DummyPlayer("Player1", Position.NORTH)])  # type: ignore
 
     # Test with three players
     with pytest.raises(InvalidPlayerCountError, match="Expected 2 players, got 3"):
         Team("Invalid Team", [  # type: ignore
-            DummyPlayer("Player1", "North"),
-            DummyPlayer("Player2", "South"),
-            DummyPlayer("Player3", "East")
+            DummyPlayer("Player1", Position.NORTH),
+            DummyPlayer("Player2", Position.SOUTH),
+            DummyPlayer("Player3", Position.EAST)
         ])
 
     # Test with empty list
@@ -87,7 +87,7 @@ def test_get_partner(team, players):
     assert partner == player1
 
     # Test with player not in team
-    outside_player = DummyPlayer("Outside Player", "East")  # type: ignore
+    outside_player = DummyPlayer("Outside Player", Position.EAST)  # type: ignore
     partner = team.get_partner(outside_player)  # type: ignore
     assert partner is None
 
@@ -102,7 +102,7 @@ def test_contains_player(team):
     assert team.contains_player(player2) is True  # type: ignore
 
     # Test with player not in team
-    outside_player = DummyPlayer("Outside Player", "East")  # type: ignore
+    outside_player = DummyPlayer("Outside Player", Position.EAST)  # type: ignore
     assert team.contains_player(outside_player) is False  # type: ignore
 
 def test_team_string_representation(team):
@@ -134,8 +134,8 @@ def test_team_score_accumulation():
     Test that team scores accumulate correctly over multiple rounds.
     """
     players = [
-        DummyPlayer("Player A", "North"),
-        DummyPlayer("Player B", "South")
+        DummyPlayer("Player A", Position.NORTH),
+        DummyPlayer("Player B", Position.SOUTH)
     ]
     team = Team("Team Test", players) # type: ignore
 

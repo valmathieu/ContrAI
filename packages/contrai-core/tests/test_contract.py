@@ -17,6 +17,7 @@ from contrai_core import (
     ContractBid,
     InvalidContractError,
     PassBid,
+    Position,
     SlamLevel,
     Suit,
     Team,
@@ -26,13 +27,13 @@ from contrai_core import (
 @pytest.fixture
 def north():
     """North-seat declarer-to-be, initially without a team."""
-    return BasePlayer("North", "North")
+    return BasePlayer("North", Position.NORTH)
 
 
 @pytest.fixture
 def south():
     """South-seat partner, initially without a team."""
-    return BasePlayer("South", "South")
+    return BasePlayer("South", Position.SOUTH)
 
 
 @pytest.fixture

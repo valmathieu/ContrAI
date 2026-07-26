@@ -14,6 +14,7 @@ from contrai_core import (
     BasePlayer,
     Card,
     Contract,
+    Position,
     Rank,
     Suit,
 )
@@ -39,14 +40,14 @@ from contrai_engine.view.theme import (
 )
 
 
-def _position_short(position: str) -> str:
-    """Single-letter seat label: ``"North"`` -> ``"N"``."""
-    return POSITION_SHORT.get(position, position[:1])
+def _position_short(position: Position) -> str:
+    """Single-letter seat label: ``Position.NORTH`` -> ``"N"``."""
+    return POSITION_SHORT[position]
 
 
-def _position_color(position: str) -> str:
+def _position_color(position: Position) -> str:
     """Seat color by team: blue for N/S seats, orange for E/W."""
-    return BLUE if position in ("North", "South") else ORANGE
+    return BLUE if position in (Position.NORTH, Position.SOUTH) else ORANGE
 
 
 def _team_color(team_name: str) -> str:

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from contrai_core import BasePlayer, Card, Suit, Trick
+from contrai_core import BasePlayer, Card, Position, Suit, Trick
 from rich.align import Align
 from rich.box import ROUNDED
 from rich.panel import Panel
@@ -79,7 +79,9 @@ def _panel_round(round_: Optional[Round], phase: str) -> Panel:
     if phase == "bidding":
         body.append("Phase:    ", style=DIM)
         body.append("Bidding in progress\n", style=f"bold {YELLOW}")
-        dealer_name = round_.dealer.position if round_ and round_.dealer else "—"
+        dealer_name = (
+            str(round_.dealer.position) if round_ and round_.dealer else "—"
+        )
         body.append("Dealer:   ", style=DIM)
         body.append(dealer_name, style=FG)
     else:
@@ -290,21 +292,21 @@ def _render_diamond(
     trick: Trick,
     trump: Optional[Suit],
     *,
-    pending_position: Optional[str],
-    winner_position: Optional[str],
+    pending_position: Optional[Position],
+    winner_position: Optional[Position],
     dimmed: bool,
     width: int,
-    belote_by_position: Optional[dict[str, str]] = None,
+    belote_by_position: Optional[dict[Position, str]] = None,
 ) -> Text:
     """Render the 4-player diamond: N top, E right, S bottom, W left.
 
-    ``belote_by_position`` maps a position string (``"North"`` etc.)
+    ``belote_by_position`` maps a :class:`~contrai_core.Position` member
     to either ``"belote"`` or ``"rebelote"`` for seats that have
     announced. The badge persists for the rest of the round.
     """
     belote_by_position = belote_by_position or {}
 
-    def _belote_badge(pos: str) -> Optional[Text]:
+    def _belote_badge(pos: Position) -> Optional[Text]:
         # The seat badge always reads "★ Belote" once the holder
         # has played either the K or the Q of trump. The belote /
         # rebelote distinction is narrative-only and lives in the
@@ -318,8 +320,8 @@ def _render_diamond(
         return t
 
     plays = trick.get_plays() if trick else []
-    plays_by_pos: dict[str, tuple[BasePlayer, Card]] = {}
-    led_position: Optional[str] = None
+    plays_by_pos: dict[Position, tuple[BasePlayer, Card]] = {}
+    led_position: Optional[Position] = None
     for i, (player, card) in enumerate(plays):
         plays_by_pos[player.position] = (player, card)
         if i == 0:
@@ -332,7 +334,7 @@ def _render_diamond(
         if lw is not None:
             live_winner_pos = lw.position
 
-    def slot(pos: str) -> Text:
+    def slot(pos: Position) -> Text:
         t = Text()
         label = _position_short(pos)
         pcolor = _position_color(pos)
@@ -378,21 +380,21 @@ def _render_diamond(
     # Row 1: blank
     out.append("\n")
     # Row 2: N centered
-    n = slot("North")
+    n = slot(Position.NORTH)
     pad_left = max(0, (width - n.cell_len) // 2)
     out.append(" " * pad_left)
     out.append_text(n)
     out.append("\n")
     # N's belote badge (centered)
-    n_badge = _belote_badge("North")
+    n_badge = _belote_badge(Position.NORTH)
     if n_badge is not None:
         pad = max(0, (width - n_badge.cell_len) // 2)
         out.append(" " * pad)
         out.append_text(n_badge)
         out.append("\n")
     # Row 3: W left, E right
-    w = slot("West")
-    e = slot("East")
+    w = slot(Position.WEST)
+    e = slot(Position.EAST)
     used = w.cell_len + e.cell_len
     gap = max(2, width - used)
     out.append_text(w)
@@ -400,8 +402,8 @@ def _render_diamond(
     out.append_text(e)
     out.append("\n")
     # W/E badges share a row (left-aligned for W, right-aligned for E).
-    w_badge = _belote_badge("West")
-    e_badge = _belote_badge("East")
+    w_badge = _belote_badge(Position.WEST)
+    e_badge = _belote_badge(Position.EAST)
     if w_badge is not None or e_badge is not None:
         wb_len = w_badge.cell_len if w_badge else 0
         eb_len = e_badge.cell_len if e_badge else 0
@@ -415,12 +417,12 @@ def _render_diamond(
             out.append_text(e_badge)
         out.append("\n")
     # Row 4: S centered
-    s = slot("South")
+    s = slot(Position.SOUTH)
     pad_left = max(0, (width - s.cell_len) // 2)
     out.append(" " * pad_left)
     out.append_text(s)
     # S's belote badge (centered)
-    s_badge = _belote_badge("South")
+    s_badge = _belote_badge(Position.SOUTH)
     if s_badge is not None:
         out.append("\n")
         pad = max(0, (width - s_badge.cell_len) // 2)

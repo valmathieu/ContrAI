@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from contrai_core.deck import Deck
+from contrai_core.position import Position
 from contrai_core.team import Team
 from .player import Player
 from contrai_core.trick import Trick
@@ -46,6 +47,8 @@ class Game:
     Attributes:
         teams (list[Team]): The two teams playing the game.
         players (list[Player]): The four players (flattened from teams).
+        players_by_position (dict[Position, Player]): Each player, keyed by
+            the seat it occupies.
         deck (Deck): The deck of cards for the game.
         dealer (Player): The current dealer.
         players_order (list[Player]): The order of players for the current round.
@@ -73,20 +76,27 @@ class Game:
         #TODO: Accept no position and assign positions automatically
 
         # Validate positions
-        required_positions = {'North', 'West', 'South', 'East'}
+        required_positions = set(Position)
         player_positions = {player.position for player in players}
         if player_positions != required_positions:
-            raise ValueError(f"Players must have positions: {required_positions}")
+            required = ", ".join(str(p) for p in Position)
+            raise ValueError(f"Players must have positions: {required}")
 
-        # Sort players by position (North, West, South, East)
-        position_order = ['North', 'West', 'South', 'East']
-        self.players = sorted(players, key=lambda p: position_order.index(p.position))
+        # Sort players by position (the canonical anticlockwise seating).
+        canonical_seating = list(Position)
+        self.players = sorted(players, key=lambda p: canonical_seating.index(p.position))
+
+        # Index players by seat once, so team formation (and any future
+        # seat-based lookup) never re-scans the player list.
+        self.players_by_position: dict[Position, Player] = {
+            player.position: player for player in self.players
+        }
 
         # Create teams automatically: North-South vs East-West
-        north_player = next(p for p in players if p.position == 'North')
-        south_player = next(p for p in players if p.position == 'South')
-        east_player = next(p for p in players if p.position == 'East')
-        west_player = next(p for p in players if p.position == 'West')
+        north_player = self.players_by_position[Position.NORTH]
+        south_player = self.players_by_position[Position.SOUTH]
+        east_player = self.players_by_position[Position.EAST]
+        west_player = self.players_by_position[Position.WEST]
 
         team_ns = Team("North-South", [north_player, south_player])
         team_ew = Team("East-West", [east_player, west_player])

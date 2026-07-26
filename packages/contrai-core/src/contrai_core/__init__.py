@@ -5,6 +5,7 @@ without knowing the internal module layout.
 """
 
 from .types import Suit, Rank, CARD_SUITS
+from .position import Position
 from .card import Card
 from .deck import Deck
 from .hand import Hand
@@ -30,6 +31,7 @@ __all__ = [
     "Suit",
     "Rank",
     "CARD_SUITS",
+    "Position",
     "Card",
     "Deck",
     "Hand",

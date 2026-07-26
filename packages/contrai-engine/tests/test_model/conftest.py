@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pytest
 
+from contrai_core.position import Position
 from contrai_core.team import Team
 
 from contrai_engine.model.player import AiPlayer
@@ -22,10 +23,10 @@ from contrai_engine.model.player import AiPlayer
 @pytest.fixture
 def players():
     """Four positioned players wired into N-S and E-W teams."""
-    north = AiPlayer("N", "North")
-    east = AiPlayer("E", "East")
-    south = AiPlayer("S", "South")
-    west = AiPlayer("W", "West")
+    north = AiPlayer("N", Position.NORTH)
+    east = AiPlayer("E", Position.EAST)
+    south = AiPlayer("S", Position.SOUTH)
+    west = AiPlayer("W", Position.WEST)
     ns = Team("North-South", [north, south])
     ew = Team("East-West", [east, west])
     for p in (north, south):

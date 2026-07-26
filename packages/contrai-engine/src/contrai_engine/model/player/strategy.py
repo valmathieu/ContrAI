@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 
 from contrai_core.auction import Auction
 from contrai_core.bid import Bid
+from contrai_core.position import Position
 
 
 class PlayerStateMixin:
@@ -46,7 +47,7 @@ class PlayerStateMixin:
         return self._player.team
 
     @property
-    def position(self):
+    def position(self) -> Position:
         """The owning player's seat position."""
         return self._player.position
 

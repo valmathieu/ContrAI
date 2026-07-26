@@ -9,7 +9,7 @@ playable-pill styling, and the per-play prompt texts.
 
 from __future__ import annotations
 
-from contrai_core import Card, Rank, Suit, Trick
+from contrai_core import Card, Position, Rank, Suit, Trick
 from contrai_engine.model.player import HumanPlayer
 from contrai_engine.view.screens.trick import (
     _ai_card_announcement,
@@ -120,7 +120,7 @@ class TestRenderDiamond:
         trick.add_play(east, Card(Suit.HEARTS, Rank.SEVEN))  # trump cut
         text = _render_diamond(
             trick, Suit.HEARTS,
-            pending_position="South", winner_position=None,
+            pending_position=Position.SOUTH, winner_position=None,
             dimmed=False, width=42,
         ).plain
         assert "E 7♥ ★" in text  # the low trump beats the off-suit ace
@@ -137,7 +137,7 @@ class TestRenderDiamond:
         trick.add_play(east, Card(Suit.HEARTS, Rank.SEVEN))
         text = _render_diamond(
             trick, Suit.HEARTS,
-            pending_position=None, winner_position="North",
+            pending_position=None, winner_position=Position.NORTH,
             dimmed=True, width=18,
         ).plain
         assert "N A♠ ★" in text
@@ -149,7 +149,7 @@ class TestRenderDiamond:
         trick.add_play(north, Card(Suit.SPADES, Rank.ACE))
         text = _render_diamond(
             trick, Suit.HEARTS,
-            pending_position=None, winner_position="North",
+            pending_position=None, winner_position=Position.NORTH,
             dimmed=True, width=18,
         ).plain
         assert "(led)" not in text
@@ -159,16 +159,16 @@ class TestRenderDiamond:
     ):
         text = _render_diamond(
             Trick(), Suit.HEARTS,
-            pending_position="North", winner_position=None,
+            pending_position=Position.NORTH, winner_position=None,
             dimmed=False, width=42,
-            belote_by_position={"South": "belote"},
+            belote_by_position={Position.SOUTH: "belote"},
         ).plain
         assert "★ Belote" in text
 
     def test_no_badge_without_announcements(self, four_players):
         text = _render_diamond(
             Trick(), Suit.HEARTS,
-            pending_position="North", winner_position=None,
+            pending_position=Position.NORTH, winner_position=None,
             dimmed=False, width=42,
         ).plain
         assert "Belote" not in text
@@ -178,7 +178,7 @@ class TestPanelCurrentTrick:
     """Phase routing and the trick-number suffix in the title."""
 
     def test_bidding_phase_flags_the_human_turn(self, four_players):
-        human = HumanPlayer("You", "South")
+        human = HumanPlayer("You", Position.SOUTH)
         panel = _panel_current_trick(
             None, None, "bidding", human, None, bidding_history=[]
         )
@@ -362,7 +362,7 @@ class TestPromptTexts:
         assert text == "N plays A♠."
 
     def test_trick_won_prompt_congratulates_the_human(self):
-        human = HumanPlayer("You", "South")
+        human = HumanPlayer("You", Position.SOUTH)
         text = _trick_won_prompt_text(human).plain
         assert "You won the trick." in text
 

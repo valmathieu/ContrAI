@@ -8,32 +8,32 @@ scenarios.
 
 import pytest
 
-from contrai_core import BasePlayer, Card, Rank, Suit, TrickStateError, Trick
+from contrai_core import BasePlayer, Card, Position, Rank, Suit, TrickStateError, Trick
 from contrai_core.trick import current_winner
 
 
 @pytest.fixture
 def north():
     """North-seat player."""
-    return BasePlayer("North", "North")
+    return BasePlayer("North", Position.NORTH)
 
 
 @pytest.fixture
 def east():
     """East-seat player."""
-    return BasePlayer("East", "East")
+    return BasePlayer("East", Position.EAST)
 
 
 @pytest.fixture
 def south():
     """South-seat player."""
-    return BasePlayer("South", "South")
+    return BasePlayer("South", Position.SOUTH)
 
 
 @pytest.fixture
 def west():
     """West-seat player."""
-    return BasePlayer("West", "West")
+    return BasePlayer("West", Position.WEST)
 
 
 # ---------------------------------------------------------------------------

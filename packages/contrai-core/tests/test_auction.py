@@ -42,6 +42,7 @@ from contrai_core import (
     DoubleBid,
     IllegalBidError,
     PassBid,
+    Position,
     RedoubleBid,
     SlamLevel,
     Suit,
@@ -59,25 +60,25 @@ from contrai_core import (
 @pytest.fixture
 def north():
     """North-seat player, initially without a team."""
-    return BasePlayer("North", "North")
+    return BasePlayer("North", Position.NORTH)
 
 
 @pytest.fixture
 def west():
     """West-seat player, initially without a team."""
-    return BasePlayer("West", "West")
+    return BasePlayer("West", Position.WEST)
 
 
 @pytest.fixture
 def south():
     """South-seat player, initially without a team."""
-    return BasePlayer("South", "South")
+    return BasePlayer("South", Position.SOUTH)
 
 
 @pytest.fixture
 def east():
     """East-seat player, initially without a team."""
-    return BasePlayer("East", "East")
+    return BasePlayer("East", Position.EAST)
 
 
 @pytest.fixture

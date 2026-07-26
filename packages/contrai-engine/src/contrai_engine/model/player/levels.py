@@ -8,6 +8,8 @@ match protocols (AI roadmap §6). The raw
 mix-and-match (e.g. rule-based bidding + a learned card-play).
 """
 
+from contrai_core.position import Position
+
 from .ai import AiPlayer
 from .rule_based import RuleBasedBiddingStrategy, RuleBasedCardPlayStrategy
 
@@ -17,12 +19,12 @@ AI_LEVELS = {
 }
 
 
-def make_ai_player(name, position, level="expert"):
+def make_ai_player(name, position: Position, level="expert"):
     """Build an :class:`AiPlayer` wired to a named difficulty level.
 
     Args:
         name: Display name.
-        position: Seat position (``'North'`` / ``'South'`` / …).
+        position: The seat this player occupies.
         level: A key of :data:`AI_LEVELS`. Defaults to ``"expert"``.
 
     Returns:

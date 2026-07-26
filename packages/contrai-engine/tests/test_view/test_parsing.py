@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from contrai_core import Card, Rank, Suit
+from contrai_core import Card, Position, Rank, Suit
 from contrai_core.bid import (
     ContractBid,
     DoubleBid,
@@ -36,7 +36,7 @@ class TestParseBidInput:
     @pytest.fixture
     def player(self):
         """A player to attach the parsed bid to."""
-        return AiPlayer("Bot", "South")
+        return AiPlayer("Bot", Position.SOUTH)
 
     @pytest.mark.parametrize("raw", ["pass", "PASS", "Pass", "p", " pass "])
     def test_pass_variants(self, raw, player):

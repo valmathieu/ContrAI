@@ -9,7 +9,7 @@ rendering or game logic lives here.
 
 from __future__ import annotations
 
-from contrai_core import Suit
+from contrai_core import Position, Suit
 from contrai_core.bid import ContractBid
 
 # ---------------------------------------------------------------------------
@@ -46,8 +46,13 @@ TARGET_OPTIONS = [
 ]
 DEFAULT_TARGET = 1500
 
-# Position label mapping: full engine name -> single-letter UI label.
-POSITION_SHORT = {"North": "N", "East": "E", "South": "S", "West": "W"}
+# Position label mapping: seat -> single-letter UI label.
+POSITION_SHORT: dict[Position, str] = {
+    Position.NORTH: "N",
+    Position.EAST: "E",
+    Position.SOUTH: "S",
+    Position.WEST: "W",
+}
 
 # Team -> abbreviation used in scoreboards.
 TEAM_ABBR = {"North-South": "N-S", "East-West": "E-W"}

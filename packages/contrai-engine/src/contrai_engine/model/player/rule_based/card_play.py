@@ -3,6 +3,7 @@
 from contrai_core.card import Card
 from contrai_core.play import PlayObservation
 from contrai_core.player import BasePlayer
+from contrai_core.position import Position
 from contrai_core.trick import current_winner
 from contrai_core.types import Rank, Suit
 
@@ -611,25 +612,20 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         if len(plays) < 1:
             return False
 
-        # Find partner's position
-        partner_position = self._get_partner_position()
-
-        # Check if partner played the strongest card so far
+        # Our team is winning when partner played the strongest card so far.
         strongest_position = self._get_strongest_card_position(plays, trump_suit)
-        return strongest_position == partner_position
+        return strongest_position == self.position.partner
 
-    def _get_partner_position(self):
-        """Get partner's position."""
-
-        position_map = {'North': 'South', 'South': 'North', 'East': 'West', 'West': 'East'}
-        return position_map.get(self.position)
-
-    def _get_strongest_card_position(self, plays, trump_suit):
+    def _get_strongest_card_position(self, plays, trump_suit) -> Position | None:
         """Get the position of the player who played the strongest card.
 
         Args:
             plays: The trick's plays, a ``tuple[Play, ...]``.
             trump_suit: The suit to rank by, or ``None`` for normal order.
+
+        Returns:
+            The position of the player who played the strongest card, or
+            ``None`` when ``plays`` is empty.
         """
 
         if not plays:

@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from contrai_core import BasePlayer, Card, Suit, Trick
+from contrai_core import BasePlayer, Card, Position, Suit, Trick
 from rich.text import Text
 
 from contrai_engine.view.formatting import (
@@ -99,7 +99,7 @@ def _explain_constraint(
     return hint
 
 
-def _belote_by_position(round_) -> dict[str, str]:
+def _belote_by_position(round_) -> dict[Position, str]:
     """Project ``round_.belote_state`` (player → kind) onto positions.
 
     Returns an empty dict when no round is active, the round has no
