@@ -140,7 +140,9 @@ note right of R
 end note
 R -> R : round_scores, contract_made,\nunannounced_slam = RoundScore
 R --> G : round_scores: dict<str, int>
-deactivate R
+' No deactivate here: Round outlives manage_round — cli.py keeps
+' handing ``game.current_round`` to the between-round view hooks
+' below, so its bar runs on to the end of the diagram.
 
 loop team_name, points in round_scores
     G -> G : scores[team_name] += points
@@ -172,6 +174,11 @@ note right of V
   announces sudden death and the
   prompt deals the tiebreaker round.
 end note
+
+' Round's bar closes here because the diagram scope ends, not because
+' the object is destroyed — it lives on as ``game.current_round``
+' until the next deal replaces it.
+deactivate R
 
 note over C, P
   Caller typically loops `manage_round` then `check_game_over(target)`

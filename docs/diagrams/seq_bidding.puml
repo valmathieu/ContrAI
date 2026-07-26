@@ -38,6 +38,7 @@ participant "RichView" as V <<engine>>
 activate R
 
 R -> A : Auction.empty()
+activate A
 A --> R : auction
 R -> R : player_iter = itertools.cycle(\n  players_order\n)
 
@@ -146,14 +147,19 @@ end
 == Build the Contract ==
 
 R -> A : auction.contract()
-A --> R : Contract | None
+A -> CT : new Contract(value, suit, team,\n  doubled / redoubled)\n(skipped when no ContractBid)
+activate CT
 note right of A
   ``Auction.contract()`` walks the
   bids backwards for the last
   ``ContractBid`` and folds in
   ``has_double`` / ``has_redouble``
-  to build the final Contract.
+  to build the final Contract. On
+  an all-pass auction there is no
+  ContractBid — nothing is built
+  and ``None`` is returned.
 end note
+A --> R : Contract | None
 
 alt no ContractBid (all-pass wipe)
     R -> R : self.contract = None
@@ -168,6 +174,12 @@ else
       the start of play is visible.
     end note
 end
+
+' The auction and contract are retained on Round (``self.auction`` /
+' ``self.contract``) — their bars close here because the diagram
+' scope ends, not because the objects are destroyed.
+deactivate A
+deactivate CT
 
 [<-- R : return self.contract  (Contract | None)
 deactivate R

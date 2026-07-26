@@ -48,6 +48,7 @@ note over R, PS
 end note
 
 R -> T : new Trick()
+activate T
 note right of T
   `Trick()` is a bare container — it stores no
   trump. Round passes `self.contract.suit` into
@@ -190,6 +191,11 @@ alt view ≠ None AND hasattr(view, 'on_trick_complete')
     end note
     V -->> R : (returns)
 end
+
+' current_trick is retained in ``tricks`` / ``team_tricks`` — its bar
+' closes here because the diagram scope ends, not because the Trick
+' is destroyed.
+deactivate T
 
 [<-- R : return  (None — winner published on last_trick_winner)
 deactivate R

@@ -38,6 +38,7 @@ participant "Round\n(per round)" as R <<engine>>
 activate M
 
 M -> V : new RichView()
+activate V
 M -> V : show_landing()
 note right of V
   Target-score picker
@@ -50,6 +51,7 @@ V --> M : target : int
 
 loop while True
     M -> M : game = _build_game()
+    activate G
     note right of M
       Hardcoded seating: South = ``HumanPlayer``,
       N/E/W = ``AiPlayer`` (expert — the default
@@ -62,10 +64,8 @@ loop while True
 
     loop while not game.check_game_over(target).game_over
         M -> G : manage_round(view=view)
-        activate G
         ref over G, R : **seq_round** — setup → bidding → 8 tricks → scoring
         G --> M : (mutates current_round / scores in place)
-        deactivate G
 
         M -> V : on_round_complete(game.current_round, game.scores)
         note right of V
@@ -96,6 +96,7 @@ loop while True
       table. Returns the user's choice.
     end note
     V --> M : choice : 'n' | 'r' | 'q'
+    deactivate G
 
     alt choice == 'q'
         M ->x M : break  (leave the loop)
@@ -110,6 +111,7 @@ loop while True
     end
 end
 
+deactivate V
 [<- M : return  (clean exit)
 
 note over M, V
