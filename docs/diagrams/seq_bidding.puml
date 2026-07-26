@@ -53,7 +53,7 @@ loop **while not auction.is_terminal()**
       ""player"": always a PassBid first,
       then every ContractBid that beats
       the current contract without
-      crossing a Double/Redouble freeze,
+      crossing a double/redouble freeze,
       plus the DoubleBid / RedoubleBid
       candidates if their team-and-timing
       rules pass.

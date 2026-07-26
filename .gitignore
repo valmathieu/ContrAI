@@ -34,10 +34,8 @@ htmlcov/
 Thumbs.db
 
 # ─── AI assistants ────────────────────────────────────────────────────────
-# Track shared Claude Code project config (.claude/settings.json, slash
-# commands, hooks) but NOT per-user local overrides (machine-specific paths,
-# personal preferences).
-.claude/settings.local.json
+# The whole Claude Code workspace (settings, skills, worktrees) stays local.
+.claude/
 CLAUDE.md
 
 # Superpowers planning documents (brainstorm specs, implementation plans) are
