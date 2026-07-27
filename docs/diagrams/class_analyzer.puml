@@ -141,9 +141,9 @@ BiddingEvaluator ..> BidSuggestion : <<returns>>
 ' Banner note — deliberate independence
 ' =========================================================
 note as N_independence
-  **Deliberately independent of `contrai-core`.**
-  Zero imports from `contrai_core` across all files.
-  `SuitSlot` (TRUMP / BLUE / GREEN / PURPLE) is a
+  **Deliberately independent of ""contrai-core"".**
+  Zero imports from ""contrai_core"" across all files.
+  ""SuitSlot"" (TRUMP / BLUE / GREEN / PURPLE) is a
   **suit-agnostic** probability abstraction — what matters
   for combinatorial math is whether a slot is trump,
   not which French suit it represents.
