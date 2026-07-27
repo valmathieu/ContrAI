@@ -64,7 +64,7 @@ subject to the limit.
 ### Writing note text
 
 PlantUML parses note bodies as **Creole**, not Markdown. Backticks and Sphinx
-roles (`` `x` ``, `:class:`X``) render literally — use `""x""` for inline code.
+roles such as `:class:` render literally — use `""x""` for inline code.
 Emphasis and monospace markers must **open and close on the same line**: a `**`
 or `""` left open at a line break is read as a nested-bullet marker (or leaves a
 stray delimiter) instead of spanning to the next line. Likewise, `<<label>>`
