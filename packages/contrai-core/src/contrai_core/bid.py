@@ -89,7 +89,7 @@ class Bid:
         player: The player who made the bid.
     """
 
-    player: "BasePlayer" = field(compare=False)
+    player: BasePlayer = field(compare=False)
 
 
 @dataclass(frozen=True, slots=True)

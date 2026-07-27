@@ -58,8 +58,8 @@ class Play(NamedTuple):
         card: The card that was played.
     """
 
-    player: "BasePlayer"
-    card: "Card"
+    player: BasePlayer
+    card: Card
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,9 +101,9 @@ class PlayState:
             one trick. Defaults to empty — a fresh play phase.
     """
 
-    contract: "Contract"
-    players: tuple["BasePlayer", ...]
-    hands: tuple[tuple["Card", ...], ...]
+    contract: Contract
+    players: tuple[BasePlayer, ...]
+    hands: tuple[tuple[Card, ...], ...]
     plays: tuple[Play, ...] = field(default=())
 
     # ------------------------------------------------------------------
@@ -113,9 +113,9 @@ class PlayState:
     @classmethod
     def start(
         cls,
-        contract: "Contract",
-        players: tuple["BasePlayer", ...],
-        hands: tuple[tuple["Card", ...], ...],
+        contract: Contract,
+        players: tuple[BasePlayer, ...],
+        hands: tuple[tuple[Card, ...], ...],
     ) -> "PlayState":
         """Seed a validated play phase from a fresh deal.
 
@@ -194,7 +194,7 @@ class PlayState:
         )
 
     @property
-    def trick_winners(self) -> tuple["BasePlayer", ...]:
+    def trick_winners(self) -> tuple[BasePlayer, ...]:
         """The winning player of each completed trick, in trick order."""
 
         trump_suit = self._trump_suit
@@ -204,7 +204,7 @@ class PlayState:
         )
 
     @property
-    def to_act(self) -> Optional["BasePlayer"]:
+    def to_act(self) -> Optional[BasePlayer]:
         """The player whose turn it is, or ``None`` once the phase is over.
 
         Within a trick the turn rotates in seating order from that trick's
@@ -228,7 +228,7 @@ class PlayState:
     # Hand lookup
     # ------------------------------------------------------------------
 
-    def hand_of(self, player: "BasePlayer") -> tuple["Card", ...]:
+    def hand_of(self, player: BasePlayer) -> tuple[Card, ...]:
         """Return ``player``'s remaining cards.
 
         Args:
@@ -247,7 +247,7 @@ class PlayState:
     # Legality
     # ------------------------------------------------------------------
 
-    def legal_actions(self, player: "BasePlayer") -> tuple["Card", ...]:
+    def legal_actions(self, player: BasePlayer) -> tuple[Card, ...]:
         """Enumerate every card ``player`` may legally play right now.
 
         This is player-parametric and enforces **no** turn order — it
@@ -407,7 +407,7 @@ class PlayState:
     # ------------------------------------------------------------------
 
     def with_hands(
-        self, hands: tuple[tuple["Card", ...], ...]
+        self, hands: tuple[tuple[Card, ...], ...]
     ) -> "PlayState":
         """Fork this state onto replacement hands.
 
@@ -460,7 +460,7 @@ class PlayState:
     # ------------------------------------------------------------------
 
     def observe(
-        self, player: "BasePlayer", bids: tuple["Bid", ...] = ()
+        self, player: BasePlayer, bids: tuple[Bid, ...] = ()
     ) -> "PlayObservation":
         """Project this state down to what ``player`` is allowed to see.
 
@@ -501,12 +501,12 @@ class PlayState:
     # ------------------------------------------------------------------
 
     @property
-    def _trump_suit(self) -> Optional["Suit"]:
+    def _trump_suit(self) -> Optional[Suit]:
         """The contract's trump suit, or ``None`` when there is no contract."""
 
         return self.contract.suit if self.contract else None
 
-    def _seat_of(self, player: "BasePlayer") -> int:
+    def _seat_of(self, player: BasePlayer) -> int:
         """Return the seat index of ``player`` by identity.
 
         Args:
@@ -524,7 +524,7 @@ class PlayState:
                 return seat
         raise ValueError(f"Player {player!r} is not seated in this state.")
 
-    def _leader_of_current_trick(self) -> "BasePlayer":
+    def _leader_of_current_trick(self) -> BasePlayer:
         """Return the player who led the in-progress trick.
 
         Trick 0 is led by ``players[0]``; every later trick is led by the
@@ -578,13 +578,13 @@ class PlayObservation:
             ``hand``.
     """
 
-    player: "BasePlayer"
-    hand: tuple["Card", ...]
-    contract: "Contract"
-    bids: tuple["Bid", ...]
+    player: BasePlayer
+    hand: tuple[Card, ...]
+    contract: Contract
+    bids: tuple[Bid, ...]
     completed_tricks: tuple[tuple[Play, ...], ...]
     current_trick: tuple[Play, ...]
-    legal_cards: tuple["Card", ...]
+    legal_cards: tuple[Card, ...]
 
     @property
     def trick_number(self) -> int:
@@ -598,7 +598,7 @@ class PlayObservation:
         return len(self.completed_tricks)
 
     @property
-    def trump_suit(self) -> Optional["Suit"]:
+    def trump_suit(self) -> Optional[Suit]:
         """The contract's trump suit, or ``None`` when there is no contract.
 
         Same rule as the state this observation was derived from: for a
@@ -611,7 +611,7 @@ class PlayObservation:
         return self.contract.suit if self.contract else None
 
     @property
-    def led_suit(self) -> Optional["Suit"]:
+    def led_suit(self) -> Optional[Suit]:
         """The suit led in the in-progress trick, or ``None`` if it is empty."""
 
         if not self.current_trick:
@@ -619,7 +619,7 @@ class PlayObservation:
         return self.current_trick[0].card.suit
 
     @property
-    def played_cards(self) -> tuple["Card", ...]:
+    def played_cards(self) -> tuple[Card, ...]:
         """Every publicly seen card, flattened in chronological play order.
 
         Completed tricks first (in trick order), then the in-progress
@@ -631,7 +631,7 @@ class PlayObservation:
         ) + tuple(play.card for play in self.current_trick)
 
     @property
-    def current_winner(self) -> Optional["BasePlayer"]:
+    def current_winner(self) -> Optional[BasePlayer]:
         """The player currently winning the in-progress trick.
 
         ``None`` while the trick is empty. Computed the same way
@@ -645,10 +645,10 @@ class PlayObservation:
 
 
 def _higher_trumps_than_played(
-    trumps_in_hand: tuple["Card", ...],
+    trumps_in_hand: tuple[Card, ...],
     plays: tuple[Play, ...],
-    trump_suit: "Suit",
-) -> tuple["Card", ...]:
+    trump_suit: Suit,
+) -> tuple[Card, ...]:
     """Return the held trumps that beat every trump already in ``plays``.
 
     Used by the over-trump rule when the led suit is itself trump. Returns
@@ -683,8 +683,8 @@ def _higher_trumps_than_played(
 
 
 def _highest_opponent_trump(
-    plays: tuple[Play, ...], player_team: "Team", trump_suit: Optional["Suit"]
-) -> Optional["Card"]:
+    plays: tuple[Play, ...], player_team: Team, trump_suit: Optional[Suit]
+) -> Optional[Card]:
     """Return the highest trump an opponent of ``player_team`` has played.
 
     Args:
@@ -709,11 +709,11 @@ def _highest_opponent_trump(
 
 
 def _classify_violation(
-    player: "BasePlayer",
-    card: "Card",
-    trump_suit: Optional["Suit"],
+    player: BasePlayer,
+    card: Card,
+    trump_suit: Optional[Suit],
     trick: tuple[Play, ...],
-    hand: tuple["Card", ...],
+    hand: tuple[Card, ...],
 ) -> PlayRuleViolation:
     """Classify *why* an in-hand card is an illegal play.
 
