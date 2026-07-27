@@ -1,7 +1,7 @@
 @startuml class_engine
 title contrai-engine — model + view + cli (current state, honest portrayal)
 
-' --- Palette: engine orange (model), grey (stubs), core blue (boundary) ---
+' --- Palette: engine orange (own types), core blue (boundary types) ---
 skinparam shadowing false
 skinparam class {
     BackgroundColor #FFEFD9
@@ -19,14 +19,24 @@ skinparam note {
 skinparam ArrowColor #B26A28
 
 ' =========================================================
-' Boundary element from contrai-core (blue palette)
+' Boundary elements from contrai-core (blue palette).
+' Declared explicitly so the association targets below do
+' not get auto-created in the engine's orange.
 ' =========================================================
 class BasePlayer <<from contrai-core>> #E1F0FF {
     + name : str
-    + position : str
+    + position : Position
     + hand : Hand
     + team : Team?
 }
+
+class Position  <<from contrai-core>> #E1F0FF
+class Team      <<from contrai-core>> #E1F0FF
+class Deck      <<from contrai-core>> #E1F0FF
+class Contract  <<from contrai-core>> #E1F0FF
+class Auction   <<from contrai-core>> #E1F0FF
+class Trick     <<from contrai-core>> #E1F0FF
+class PlayState <<from contrai-core>> #E1F0FF
 
 ' =========================================================
 ' model/player/ — Player hierarchy + pluggable AI strategies
@@ -51,12 +61,21 @@ package "model/player/ (subpackage)" as p_player {
         + bidding : BiddingStrategy
         + cardplay : CardPlayStrategy
         --
-        + __init__(name, position, bidding=…, cardplay=…)
+        + __init__(name, position: Position, bidding=…, cardplay=…)
         + choose_bid(auction) : Bid       <<delegates>>
         + choose_card(observation) : Card  <<delegates>>
     }
 
-    ' --- strategy.py: abstract interfaces ---
+    ' --- strategy.py: shared player access + abstract interfaces ---
+    class PlayerStateMixin <<mixin>> {
+        - _player : AiPlayer
+        --
+        + __init__(player)
+        + hand : Hand         <<property>>
+        + team : Team?        <<property>>
+        + position : Position <<property>>
+    }
+
     abstract class BiddingStrategy <<abstract>> {
         + {abstract} choose_bid(auction: Auction) : Bid
     }
@@ -64,12 +83,15 @@ package "model/player/ (subpackage)" as p_player {
         + {abstract} choose_card(observation: PlayObservation) : Card
     }
 
-    ' --- rule_based.py: the first concrete level (expert) ---
+    ' --- rule_based/ : the first concrete level (expert) ---
     class RuleBasedBiddingStrategy {
         + {static} BIDDING_TABLE : list<tuple>
         + {static} SUIT_PREFERENCE : tuple<Suit>
+        + {static} SLAM_NUMERIC : int
+        + {static} SOLO_SLAM_NUMERIC : int
         --
         + choose_bid(auction) : Bid
+        - _choose_under_double(auction) : Bid
         - _choose_open_bid(auction) : Bid
     }
     class RuleBasedCardPlayStrategy {
@@ -80,42 +102,49 @@ package "model/player/ (subpackage)" as p_player {
     ' --- levels.py: registry + factory ---
     class "levels.py" as p_levels <<module>> #FFEFD9 {
         AI_LEVELS : dict<str, (Bidding, CardPlay)>
-        make_ai_player(name, position, level="expert") : AiPlayer
+        make_ai_player(name, position: Position, level="expert") : AiPlayer
     }
 
     note right of AiPlayer
-      ``AiPlayer`` owns no strategy logic. It
-      holds an injected ``bidding`` and
-      ``cardplay`` strategy and delegates to
+      ""AiPlayer"" owns no strategy logic. It
+      holds an injected ""bidding"" and
+      ""cardplay"" strategy and delegates to
       them. Strategies are passed as factories
-      (``player -> strategy``) so each can take
+      (""player -> strategy"") so each can take
       a back-reference to the player while the
-      player is still being built. Defaults
-      reproduce today's expert bot.
+      player is still being built — that
+      back-reference is what
+      ""PlayerStateMixin"" reads through.
+      Defaults reproduce today's expert bot.
     end note
 
     note bottom of RuleBasedBiddingStrategy
-      First concrete level (``AI_LEVELS["expert"]``).
-      ``choose_bid`` resolves the Double/Redouble freeze,
-      then ``_choose_open_bid`` walks ``auction.bids``
+      First concrete level, in
+      ""rule_based/bidding.py""
+      (""AI_LEVELS["expert"]"").
+      ""choose_bid"" resolves the Double/Redouble
+      freeze via ""_choose_under_double"", then
+      ""_choose_open_bid"" walks ""auction.bids""
       directly, resolves the hand once to a single
-      (contract, suit) pair via ``_find_best_contract``
+      (contract, suit) pair via ""_find_best_contract""
       (belote first, then preference-order tie-break)
       and returns a typed Bid (PassBid / ContractBid /
       DoubleBid) — no wire format.
-      ~13 collapsed strategy helpers (_evaluate_suits,
+      ~15 collapsed strategy helpers (_evaluate_suits,
+      _evaluate_suit_as_trump, _estimate_tricks,
       _find_best_contract, _make_initial_bid,
-      _check_double, …).
+      _support_partner_bid, _check_double, …).
       **BIDDING_TABLE** rows (11 levels: 80–160 + Slam
       + Solo Slam): (contract, trump_req, trump_min,
       aces, tricks_min, belote_required).
     end note
 
     note bottom of RuleBasedCardPlayStrategy
-      First concrete card-play level. Stateless
+      First concrete card-play level, in
+      ""rule_based/card_play.py"". Stateless
       between calls — every decision is a pure
       function of the frozen PlayObservation handed
-      in. ``_derive_tracking`` rebuilds the fallen-
+      in. ""_derive_tracking"" rebuilds the fallen-
       card map and the trump-void set by replaying
       the observation's public trick history each
       turn (compelled-only void inference: a discard
@@ -125,17 +154,19 @@ package "model/player/ (subpackage)" as p_player {
       following_card, _play_when_team_winning/losing,
       _is_master_card, _is_stronger_card,
       _can_trump_win, _opponents_might_have_trump,
-      _get_higher_ranks, …).
+      _opponent_cut_expected, _get_higher_ranks, …).
+      Partner / opponent seats come from
+      ""Position.partner"", not a local seat map.
       A future MCTS / learned level is a new
       strategy class, never an edit to AiPlayer.
     end note
 
     note bottom of HumanPlayer
-      ``choose_bid`` / ``choose_card`` return
+      ""choose_bid"" / ""choose_card"" return
       **None** by design. Human input is
       serviced by **RichView** through the
-      ``view.request_*_action`` hooks Round
-      calls when ``player.is_human``.
+      ""view.request_*_action"" hooks Round
+      calls when ""player.is_human"".
     end note
 
 }
@@ -147,6 +178,7 @@ package "model/game.py" as p_game {
     class Game {
         + teams : list<Team>
         + players : list<Player>
+        + players_by_position : dict<Position, Player>
         + deck : Deck
         + dealer : Player?
         + players_order : list<Player>
@@ -170,20 +202,31 @@ package "model/game.py" as p_game {
         + final_scores : dict<str, int>
     }
 
-    Game ..> GameOverStatus : check_game_over()\nreturns
+    Game ..> GameOverStatus : <<check_game_over>>
+
+    note bottom of Game
+      Seating is enum-driven: the constructor
+      requires exactly the four ""Position""
+      members, sorts ""players"" into
+      ""list(Position)"" order (the canonical
+      anticlockwise seating), and indexes them
+      once into ""players_by_position"" so team
+      formation and any later seat lookup never
+      re-scan the player list.
+    end note
 
     note bottom of GameOverStatus
       Frozen verdict returned by
-      ``Game.check_game_over(target)``.
+      ""Game.check_game_over(target)"".
       Over only when one team strictly
       leads at/above the target —
-      ``winner`` is then always set.
+      ""winner"" is then always set.
       A tie at/above the target keeps
-      ``game_over`` False and fills
-      ``tied_teams``: sudden death,
+      ""game_over"" False and fills
+      ""tied_teams"": sudden death,
       tiebreaker rounds until one team
-      leads. ``cli.py`` loops on
-      ``.game_over`` and the end-game
+      leads. ""cli.py"" loops on
+      ""game_over"" and the end-game
       banner reads off the rest.
     end note
 }
@@ -231,71 +274,71 @@ package "model/round/ package" as p_round {
         RoundScore <<dataclass>>
     }
 
-    Round ..> r_scoring : calculate_round_scores()\ndelegates to score_round
+    Round ..> r_scoring : <<delegates scoring>>
 
     note right of Round
-      ``manage_bidding`` drives an
-      :class:`contrai_core.Auction` through
-      the cyclic ``players_order``. Each
-      turn: query ``legal_actions(player)``;
-      if the only legal action is Pass
-      (partner just doubled / redoubled),
-      auto-apply it without prompting;
-      otherwise gather a Bid from the
-      player and the view. ``auction.apply``
-      raises :class:`IllegalBidError` on an
-      illegal bid — no silent force-Pass.
+      ""manage_bidding"" drives a core
+      ""Auction"" through the cyclic
+      ""players_order"". Each turn: query
+      ""legal_actions(player)""; if the only
+      legal action is Pass (partner just
+      doubled / redoubled), auto-apply it
+      without prompting; otherwise gather a
+      Bid from the player and the view.
+      ""auction.apply"" raises
+      ""IllegalBidError"" on an illegal bid —
+      no silent force-Pass.
       ----
       Trick-winner determination delegates to
-      ``Trick.get_current_winner(contract.suit)``
+      ""Trick.get_current_winner(contract.suit)""
       in contrai-core — no engine-side duplicate.
       ----
       The trick loop is driven by the immutable
-      core ``contrai_core.play.PlayState``:
-      ``play_all_tricks`` seeds it via
-      ``PlayState.start`` (validated — 4 seats, 8
-      distinct cards each); ``play_trick`` reads
-      ``play_state.to_act`` /
-      ``legal_actions(player)`` each turn and
+      core ""contrai_core.play.PlayState"":
+      ""play_all_tricks"" seeds it via
+      ""PlayState.start"" (validated — 4 seats, 8
+      distinct cards each); ""play_trick"" reads
+      ""play_state.to_act"" /
+      ""legal_actions(player)"" each turn and
       advances via
-      ``play_state.apply(Play(player, card))`` —
+      ""play_state.apply(Play(player, card))"" —
       the sole legality-enforcing transition,
-      raising :class:`IllegalPlayError` on an
+      raising ""IllegalPlayError"" on an
       out-of-turn, not-held, or obligation-
       breaking play (no silent fallback).
-      ``_sync_hands`` then re-mirrors every seat's
-      ``Hand`` from the new ``play_state`` so the
-      view keeps reading ``player.hand``,
+      ""_sync_hands"" then re-mirrors every seat's
+      ""Hand"" from the new ""play_state"" so the
+      view keeps reading ""player.hand"",
       while AI seats read the frozen
-      ``PlayObservation`` projected by
-      ``play_state.observe(player, bids=...)``.
-      ``calculate_round_scores`` is
+      ""PlayObservation"" projected by
+      ""play_state.observe(player, bids=...)"".
+      ""calculate_round_scores"" is
       a thin wrapper that publishes
-      ``score_round``'s ``RoundScore`` onto
-      ``round_scores`` / ``contract_made`` /
-      ``unannounced_slam``.
+      ""score_round""'s ""RoundScore"" onto
+      ""round_scores"" / ""contract_made"" /
+      ""unannounced_slam"".
       ----
-      During play Round fires (each ``hasattr``-guarded):
-      • ``view.on_bid_made(player, bid, history)``
-      • ``view.on_contract_established(self)``
+      During play Round fires (each hasattr-guarded):
+      * ""view.on_bid_made(player, bid, history)""
+      * ""view.on_contract_established(self)""
         (once, immediately after the final
         Contract is built)
-      • ``view.on_card_played(player, card, trick)``
-      • ``view.on_belote_announced(player, kind, self)``
-      • ``view.on_trick_complete(trick, winner, self)``
-      ``Game.manage_round`` additionally fires
-      ``view.on_round_dealt(round_)`` after the deal
-      and ``view.on_all_pass_redeal()`` when
+      * ""view.on_card_played(player, card, trick)""
+      * ""view.on_belote_announced(player, kind, self)""
+      * ""view.on_trick_complete(trick, winner, self)""
+      ""Game.manage_round"" additionally fires
+      ""view.on_round_dealt(round_)"" after the deal
+      and ""view.on_all_pass_redeal()"" when
       everyone passes.
     end note
 
     note bottom of r_scoring
-      Pure ``round -> RoundScore`` transform.
+      Pure ""round -> RoundScore"" transform.
       Four scoring shapes (numeric share-pile,
       unannounced-Slam 250 substitute, doubled
       winner-takes-all, Slam / Solo Slam grid),
       belote +20 to the K+Q holder layered on
-      every shape. ``UnannouncedSlam`` tags an
+      every shape. ""UnannouncedSlam"" tags an
       undeclared all-trick sweep on a numeric
       contract.
     end note
@@ -321,16 +364,15 @@ package "view/ package" as p_view {
         + console : rich.Console
         + target_score : int
         + history : list<RoundSummary>
-        + last_completed_trick : (Trick, Player)?
+        + last_completed_trick : (Trick, BasePlayer)?
         + game : Game?
         + event_log : list<Text>
         --
         + attach(game, target_score) : None
         + reset_for_rematch() : None
-        --
-        ' Engine hooks
+        ..  engine hooks ..
         + request_bid_action(player, auction: Auction) : Bid
-        + request_card_action(player, trick, contract, playable) : Card
+        + request_card_action(player, trick, contract, playable_cards) : Card
         + on_round_dealt(round_) : None
         + on_all_pass_redeal() : None
         + on_bid_made(player, bid, history) : None
@@ -339,14 +381,17 @@ package "view/ package" as p_view {
         + on_belote_announced(player, kind, round_) : None
         + on_trick_complete(trick, winner, round_) : None
         + on_round_complete(round_, running_scores) : None
-        --
-        ' CLI flow screens
+        ..  CLI flow screens ..
         + show_landing(selected_target=1500) : int
         + show_round_recap(round_, running_scores, *, is_final=False) : None
-        + show_end_game(status) : str  ('n' | 'r' | 'q')
-        --
-        ' Orchestration seam (private)
+        + show_end_game(status) : str <<'n' | 'r' | 'q'>>
+        ..  orchestration seam + log helpers (private) ..
         - _render_in_game(*, phase, …) : None
+        - _find_human_player() : BasePlayer?
+        - _log(line: Text) : None
+        - _format_bid_log(player, bid) : Text
+        - _format_card_log(player, card) : Text
+        - _format_trick_won_log(winner, points) : Text
     }
 
     class "view helpers\n(pure functions)" as p_view_helpers <<modules>> #FFEFD9 {
@@ -367,78 +412,84 @@ package "view/ package" as p_view {
     }
 
     note right of RichView
-      Stateful orchestrator (in `rich_view.py`).
+      Stateful orchestrator (in ""rich_view.py"").
       Six-screen UI: landing, bidding, mid-trick,
       trick-won, round-recap, end-game. Per-round
-      summaries tracked here (`history`) so Game
-      stays UI-free. A rolling 5-line `event_log`
+      summaries tracked here (""history"") so Game
+      stays UI-free. A rolling 5-line ""event_log""
       is shown below the hand in every in-game
       state. Round / trick / recap panel titles
-      use the `#N` format (e.g. `Round #2`,
-      `Last trick (#7)`, `Current trick (#8)`).
+      use the #N format (e.g. Round #2,
+      Last trick (#7), Current trick (#8)).
       ----
       Rendering is the pure-function modules' job.
-      `_render_in_game` is the single seam that
-      pulls state off `self` and feeds the screen
+      ""_render_in_game"" is the single seam that
+      pulls state off ""self"" and feeds the screen
       builders; the hooks and input loops own all
       console I/O. Re-exported from
-      `view/__init__.py` (so both
-      `view.RichView` and
-      `view.rich_view.RichView` resolve).
+      ""view/~__init~__.py"" (so both
+      ""view.RichView"" and
+      ""view.rich_view.RichView"" resolve).
       ----
       AI pacing is tunable per-hook via the env
-      vars `CONTRAI_AI_BID_DELAY` (1.4s) and
-      `CONTRAI_AI_CARD_DELAY` (0.9s). The belote
+      vars ""CONTRAI_AI_BID_DELAY"" (1.4s) and
+      ""CONTRAI_AI_CARD_DELAY"" (0.9s). The belote
       hook reuses the card delay.
     end note
 
     note bottom of p_view_helpers
-      Stateless, `self`-free helpers, each in
+      Stateless, self-free helpers, each in
       its own module:
-      • theme — colour tokens + lookup tables
-      • formatting — seat / suit / contract /
-        trump labels + the compact `_bid_label`
-      • parsing — `_parse_bid_input`,
-        `_parse_card_input`
-      • bidding_rules — `_illegal_bid_reason`
+      * theme — colour tokens + lookup tables
+        (""POSITION_SHORT"" and friends are
+        keyed by ""Position"")
+      * formatting — seat / suit / contract /
+        trump labels + the compact ""_bid_label""
+      * parsing — ""_parse_bid_input"",
+        ""_parse_card_input""
+      * bidding_rules — ""_illegal_bid_reason""
         (the prompt hint reads
-        `Auction.legal_actions` directly)
-      • state_helpers — `_current_winner`,
-        `_explain_constraint`,
-        `_sort_hand_for_display`,
-        `_belote_by_position`, `_resolve_delay`
-      • layout — `_two_column`, `_panel_prompt`,
-        `_panel_event_log`, `_panel_game_score`
+        ""Auction.legal_actions"" directly)
+      * state_helpers — ""_current_winner"",
+        ""_explain_constraint"",
+        ""_sort_hand_for_display"",
+        ""_belote_by_position"", ""_resolve_delay""
+      * layout — ""_two_column"", ""_panel_prompt"",
+        ""_panel_event_log"", ""_panel_game_score""
         (the top-left panel of every in-game
         frame)
     end note
 
     note bottom of p_view_screens
-      Pure `(data) -> Panel/Text` builders — no
+      Pure (data) -> Panel/Text builders — no
       state, no I/O. RichView composes + prints
       them; screens reuse the helpers above.
+      Seat-indexed layouts (the bidding and trick
+      diamonds, the landing roster) key off
+      ""Position"" members rather than seat
+      strings.
       The round-recap breakdown credits each
       team: contract bonus (attacker base on
       normal made, 160+base×mult on doubled
       made, (160+base)×mult on failed defender)
       + card points + last-trick bonus + belote
-      → `round_scores[team]`. The card /
+      → ""round_scores[team]"". The card /
       last-trick / belote rows
       em-dash when the engine ignores them so
-      the addition matches `round_score`.
-      Helpers `_recap_breakdown` /
-      `_format_recap_table` /
-      `_belote_team_in_round` live in
-      `screens/recap.py`.
+      the addition matches ""round_score"".
+      Helpers ""_recap_breakdown"" /
+      ""_format_recap_table"" /
+      ""_belote_team_in_round"" live in
+      ""screens/recap.py"".
       ----
       Tested per-module in
-      `tests/test_view/test_*.py`; the deepest
-      layouts are validated by `uv run contrai`.
+      ""tests/test_view/test_*.py""; the deepest
+      layouts are validated by ""uv run contrai"".
     end note
 }
 
 ' =========================================================
-' cli.py — `contrai` console-script entry point
+' cli.py — the "contrai" console-script entry point
 ' =========================================================
 package "cli.py" as p_cli {
     class "main()" as Cli <<module>> #FFEFD9 {
@@ -447,13 +498,16 @@ package "cli.py" as p_cli {
         - _build_game() : Game
         --
         Drives landing → game loop →
-        end-game; routes `n`/`r`/`q`.
+        end-game; routes 'n' / 'r' / 'q'.
     }
 
     note right of Cli
-      Hardcoded seating: South =
-      `HumanPlayer`, N/E/W = `AiPlayer`
-      (expert — the AiPlayer default).
+      Hardcoded seating:
+      ""HUMAN_SEAT = Position.SOUTH""
+      is the ""HumanPlayer"";
+      the loop over ""Position"" fills the other
+      three seats with ""AiPlayer"" (expert —
+      the AiPlayer default).
       TODO marker for a future seat
       picker on the landing screen.
     end note
@@ -467,36 +521,40 @@ package "cli.py" as p_cli {
 BasePlayer <|-- Player
 Player <|-- HumanPlayer
 Player <|-- AiPlayer
+BasePlayer --> Position : position
 
 ' Pluggable AI strategies (injected into AiPlayer)
 BiddingStrategy <|-- RuleBasedBiddingStrategy
 CardPlayStrategy <|-- RuleBasedCardPlayStrategy
+PlayerStateMixin <|-- RuleBasedBiddingStrategy
+PlayerStateMixin <|-- RuleBasedCardPlayStrategy
+PlayerStateMixin ..> AiPlayer : <<reads live state>>
 AiPlayer o-- "1" BiddingStrategy : bidding
 AiPlayer o-- "1" CardPlayStrategy : cardplay
 p_levels ..> AiPlayer : <<builds>>
 
 ' Game composes / aggregates engine + core types
-Game "1" *-- "2" "Team" : teams
+Game "1" *-- "2" Team : teams
 Game "1" *-- "4" Player : players
-Game "1" *-- "1" "Deck" : deck
+Game "1" *-- "1" Deck : deck
 Game "1" o-- "0..1" Player : dealer
 Game "1" *-- "0..1" Round : current_round
-Game "1" o-- "0..1" "Contract" : current_contract
+Game "1" o-- "0..1" Contract : current_contract
 
 ' Round composes Tricks, references Contract / Auction / PlayState
-Round "1" *-- "0..8" "Trick" : tricks
-Round "1" o-- "0..1" "Contract" : contract
-Round "1" o-- "0..1" "Auction" : auction
-Round "1" o-- "0..1" "PlayState" : play_state
-Round "1" o-- "1" "Deck" : deck
+Round "1" *-- "0..8" Trick : tricks
+Round "1" o-- "0..1" Contract : contract
+Round "1" o-- "0..1" Auction : auction
+Round "1" o-- "0..1" PlayState : play_state
+Round "1" o-- "1" Deck : deck
 Round "1" o-- "4" Player : players_order
 
 ' View + CLI wiring (the controller role today = cli.py loop + view hooks)
-Round ..> RichView : <<consults for\nhuman input + hooks>>
+Round ..> RichView : <<human input + hooks>>
 Cli ..> Game : <<owns game loop>>
-Cli ..> RichView : <<owns view\n+ screens>>
+Cli ..> RichView : <<owns view + screens>>
 RichView "1" *-- "0..N" RoundSummary : history
-RichView ..> p_view_screens : <<composes\n+ prints>>
+RichView ..> p_view_screens : <<composes + prints>>
 RichView ..> p_view_helpers : <<uses>>
 p_view_screens ..> p_view_helpers : <<uses>>
 

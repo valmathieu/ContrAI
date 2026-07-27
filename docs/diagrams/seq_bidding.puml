@@ -38,6 +38,7 @@ participant "RichView" as V <<engine>>
 activate R
 
 R -> A : Auction.empty()
+activate A
 A --> R : auction
 R -> R : player_iter = itertools.cycle(\n  players_order\n)
 
@@ -49,10 +50,10 @@ loop **while not auction.is_terminal()**
     A --> R : tuple<Bid>
     note right of A
       Enumerates every legal Bid for
-      ``player``: always a PassBid first,
+      ""player"": always a PassBid first,
       then every ContractBid that beats
       the current contract without
-      crossing a Double/Redouble freeze,
+      crossing a double/redouble freeze,
       plus the DoubleBid / RedoubleBid
       candidates if their team-and-timing
       rules pass.
@@ -69,11 +70,10 @@ loop **while not auction.is_terminal()**
 
           Intervening passes do NOT
           collapse the action set: the
-          Coinche / Surcoinche window
+          Double / Redouble window
           stays open until the auction
           terminates on three consecutive
-          passes (contree-domain.md
-          §5.3 / §5.4).
+          passes.
         end note
     else normal turn
         R -> R : bid = _gather_bid(\n  player, auction, view\n)
@@ -81,7 +81,7 @@ loop **while not auction.is_terminal()**
         alt player has choose_bid (AI / Human)
             R -> P : player.choose_bid(auction)
             note right of P
-              AiPlayer walks ``auction.bids``
+              AiPlayer walks ""auction.bids""
               directly: its expert table
               reads the standing contract
               and partner bid off the typed
@@ -96,31 +96,33 @@ loop **while not auction.is_terminal()**
         end
 
         alt view ≠ None AND player.is_human
-            R -->> V : view.request_bid_action(\n  player, auction\n)
-            note right of V
-              RichView feeds ``auction.bids``
-              straight to its renderer
-              (now a plain list<Bid>) and
-              derives the prompt hint from
-              ``auction.legal_actions``. It
-              parses the human's input
-              (``pass``, ``80 h``,
-              ``double``, ``redouble``,
-              …) into a Bid, loops on parse
-              errors, and re-prompts on any
-              bid ``Auction.is_legal``
-              rejects before returning.
-            end note
-            V -->> R : Bid
+          R -> V : view.request_bid_action(\n  player, auction\n)
+          activate V
+          note right of V
+            RichView feeds ""auction.bids""
+            straight to its renderer
+            (now a plain ""list<Bid>"") and
+            derives the prompt hint from
+            ""auction.legal_actions"". It
+            parses the human's input
+            (""pass"", ""80 h"",
+            ""double"", ""redouble"",
+            …) into a Bid, loops on parse
+            errors, and re-prompts on any
+            bid ""Auction.is_legal""
+            rejects before returning.
+          end note
+          V --> R : Bid
+          deactivate V
         end
     end
 
     R -> A : auction.apply(bid)
     A -> A : is_legal(bid) ?
     note right of A
-      ``apply`` raises
-      :class:`IllegalBidError` if the
-      bid is illegal — *no* silent
+      ""apply"" raises
+      ""IllegalBidError"" if the
+      bid is illegal — **no** silent
       downgrade to a Pass any more. A
       raised IllegalBidError is an
       engine-wiring bug (e.g. an AI
@@ -135,9 +137,9 @@ loop **while not auction.is_terminal()**
       rolling event log. For AI bidders
       it re-renders the bidding screen
       with the new action visible and
-      sleeps ``CONTRAI_AI_BID_DELAY``
+      sleeps ""CONTRAI_AI_BID_DELAY""
       (1.4 s default). Humans skip the
-      pause — ``request_bid_action``
+      pause — ""request_bid_action""
       already drove their frame.
     end note
 
@@ -146,14 +148,19 @@ end
 == Build the Contract ==
 
 R -> A : auction.contract()
-A --> R : Contract | None
+A -> CT : new Contract(value, suit, team,\n  doubled / redoubled)\n(skipped when no ContractBid)
+activate CT
 note right of A
-  ``Auction.contract()`` walks the
+  ""Auction.contract()"" walks the
   bids backwards for the last
-  ``ContractBid`` and folds in
-  ``has_double`` / ``has_redouble``
-  to build the final Contract.
+  ""ContractBid"" and folds in
+  ""has_double"" / ""has_redouble""
+  to build the final Contract. On
+  an all-pass auction there is no
+  ContractBid — nothing is built
+  and ""None"" is returned.
 end note
+A --> R : Contract | None
 
 alt no ContractBid (all-pass wipe)
     R -> R : self.contract = None
@@ -169,17 +176,23 @@ else
     end note
 end
 
+' The auction and contract are retained on Round (``self.auction`` /
+' ``self.contract``) — their bars close here because the diagram
+' scope ends, not because the objects are destroyed.
+deactivate A
+deactivate CT
+
 [<-- R : return self.contract  (Contract | None)
 deactivate R
 
 note over R, V
   **Typed Bid objects end to end.** Bidding flows through real
-  :class:`Bid` subclass instances at every boundary
-  (``Player.choose_bid``, ``view.request_bid_action``,
-  ``Auction.apply``, ``view.on_bid_made``) — and now *inside*
+  ""Bid"" subclass instances at every boundary
+  (""Player.choose_bid"", ""view.request_bid_action"",
+  ""Auction.apply"", ""view.on_bid_made"") — and now **inside**
   AiPlayer's expert table and RichView's renderer as well. The legacy
-  ``'Pass'`` / ``'Double'`` / ``'Redouble'`` / ``(value, suit)`` wire
-  format and its ``wire_to_bid`` / ``bid_to_wire`` bridge have been
+  ""Pass"" / ""Double"" / ""Redouble"" / ""(value, suit)"" wire
+  format and its ""wire_to_bid"" / ""bid_to_wire"" bridge have been
   retired.
 end note
 

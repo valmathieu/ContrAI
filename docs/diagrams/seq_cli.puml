@@ -38,6 +38,7 @@ participant "Round\n(per round)" as R <<engine>>
 activate M
 
 M -> V : new RichView()
+activate V
 M -> V : show_landing()
 note right of V
   Target-score picker
@@ -50,9 +51,10 @@ V --> M : target : int
 
 loop while True
     M -> M : game = _build_game()
+    activate G
     note right of M
-      Hardcoded seating: South = ``HumanPlayer``,
-      N/E/W = ``AiPlayer`` (expert — the default
+      Hardcoded seating: South = ""HumanPlayer"",
+      N/E/W = ""AiPlayer"" (expert — the default
       strategies). TODO: a seat picker on the
       landing screen.
     end note
@@ -62,14 +64,12 @@ loop while True
 
     loop while not game.check_game_over(target).game_over
         M -> G : manage_round(view=view)
-        activate G
         ref over G, R : **seq_round** — setup → bidding → 8 tricks → scoring
         G --> M : (mutates current_round / scores in place)
-        deactivate G
 
-        M -> V : on_round_complete(game.current_round, game.scores)
+        M -->> V : on_round_complete(game.current_round, game.scores)
         note right of V
-          Append a RoundSummary to ``history``
+          Append a RoundSummary to ""history""
           for the end-game scoreboard.
         end note
 
@@ -78,10 +78,10 @@ loop while True
         note right of V
           Between-round recap (contract, made/failed,
           per-team round points, running totals). Blocks
-          on Enter. When ``is_final`` the prompt flips to
+          on Enter. When ""is_final"" the prompt flips to
           "see the final score…" so the next screen is
           the end-game banner, not a fresh deal. When
-          ``is_tiebreaker`` (teams level at/above the
+          ""is_tiebreaker"" (teams level at/above the
           target) the panel announces sudden death and
           the prompt deals the tiebreaker round.
         end note
@@ -96,6 +96,7 @@ loop while True
       table. Returns the user's choice.
     end note
     V --> M : choice : 'n' | 'r' | 'q'
+    deactivate G
 
     alt choice == 'q'
         M ->x M : break  (leave the loop)
@@ -104,19 +105,20 @@ loop while True
         V --> M : target  (fresh pick)
     else choice == 'r'  (rematch)
         note right of M
-          Same target; a fresh ``_build_game``
+          Same target; a fresh ""_build_game""
           starts on the next loop tick.
         end note
     end
 end
 
+deactivate V
 [<- M : return  (clean exit)
 
 note over M, V
-  ``KeyboardInterrupt`` / ``EOFError`` anywhere in the
+  ""KeyboardInterrupt"" / ""EOFError"" anywhere in the
   loop is caught at the top level and prints "Goodbye." —
   a Ctrl-C / Ctrl-D quits gracefully rather than dumping a
-  traceback. ``main`` first reconfigures stdout/stderr to
+  traceback. ""main"" first reconfigures stdout/stderr to
   UTF-8 so the suit glyphs render on legacy Windows consoles.
 end note
 

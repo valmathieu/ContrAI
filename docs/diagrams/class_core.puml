@@ -58,6 +58,48 @@ package "types.py" as p_types {
 }
 
 ' =========================================================
+' Seats (position.py)
+' =========================================================
+package "position.py" as p_position {
+    enum Position <<enum>> {
+        NORTH = "North"
+        WEST  = "West"
+        SOUTH = "South"
+        EAST  = "East"
+        --
+        + next : Position                   <<property>>
+        + partner : Position                <<property>>
+        + opponents : tuple<Position,Position> <<property>>
+        + french_name : str                 <<property>>
+        --
+        + {static} from_french(name: str) : Position
+        + __str__() : str
+    }
+
+    note bottom of Position
+      The four table seats as a strict enum.
+      Definition order **is** the anticlockwise
+      turn order (N → W → S → E), so
+      ""list(Position)"" is the canonical
+      seating and ""next"" / ""partner"" /
+      ""opponents"" all derive from that one
+      ordering instead of each re-encoding
+      seat arithmetic.
+      Deliberately a plain Enum, **not** a
+      StrEnum: a Position member never compares
+      equal to a bare seat string, so a stray
+      string comparison can never silently pass.
+      ""french_name"" / ""from_french"" map to
+      the scraper's DOM ids (nord / ouest /
+      sud / est) via the module-level
+      ""~_TO~_FRENCH"" / ""~_FROM~_FRENCH""
+      tables — kept outside the class body
+      because Enum would turn a class-level
+      dict into a fifth member.
+    end note
+}
+
+' =========================================================
 ' Card & deck (card.py, deck.py)
 ' =========================================================
 package "card.py / deck.py" as p_card {
@@ -65,17 +107,27 @@ package "card.py / deck.py" as p_card {
         + suit : Suit
         + rank : Rank
         --
+        + {static} NORMAL_POINTS : dict<Rank, int>
+        + {static} TRUMP_POINTS  : dict<Rank, int>
+        + {static} NORMAL_ORDER  : dict<Rank, int>
+        + {static} TRUMP_ORDER   : dict<Rank, int>
+        + {static} SUIT_SYMBOLS  : dict<Suit, str>
+        --
         + get_points(trump_suit: Suit? = None) : int
         + get_order(trump_suit: Suit? = None)  : int
+        + __str__() : str
     }
 
     note bottom of Card
       Immutable value object: equality and
-      hashing are by ``(suit, rank)``, so
+      hashing are by ""(suit, rank)"", so
       distinct instances of the same physical
-      card are equal and hashable. No ``__lt__`` —
-      strength is parametric via
-      ``get_order(trump_suit)``.
+      card are equal and hashable. No
+      ""~__lt~__"" — strength is parametric via
+      ""get_order(trump_suit)"", and the four
+      class-level tables above are the single
+      source of truth for points and ordering
+      (trump vs plain).
     end note
 
     class Deck {
@@ -96,11 +148,13 @@ package "hand.py" as p_hand {
     class Hand {
         + cards : list<Card>
         --
+        + __init__(cards: Iterable<Card>? = None)
         .. list-compatible API ..
         + append(card: Card) : None
         + extend(cards: Iterable<Card>) : None
         + remove(card: Card) : None
         + clear() : None
+        + copy() : list<Card>
         + __contains__(card) : bool
         + __iter__() : Iterator<Card>
         + __len__() : int
@@ -108,10 +162,22 @@ package "hand.py" as p_hand {
         .. query helpers ..
         + count_suit(suit: Suit) : int
         + count_rank(rank: Rank) : int
+        + has_suit(suit: Suit) : bool
         + has_card(suit: Suit, rank: Rank) : bool
         + cards_of_suit(suit: Suit) : list<Card>
         + is_complete() : bool
     }
+
+    note bottom of Hand
+      Wraps a ""list[Card]"" and forwards the
+      list operations the engine relies on, so
+      call sites can keep treating a hand like
+      a list. ""copy()"" returns a plain
+      ""list[Card]"", not another Hand.
+      No size invariant is enforced anywhere —
+      ""is_complete()"" is the opt-in check for
+      a fully dealt 8-card hand.
+    end note
 }
 
 ' =========================================================
@@ -131,12 +197,19 @@ package "team.py / player.py" as p_team {
 
     class BasePlayer {
         + name : str
-        + position : str
+        + position : Position
         + hand : Hand
         + team : Team?
         --
-        + __init__(name: str, position: str)
+        + __init__(name: str, position: Position)
     }
+
+    note bottom of BasePlayer
+      Identity and table state only — pure
+      data. The decision hooks
+      (""choose_bid"" / ""choose_card"") live
+      on the engine-side subclasses.
+    end note
 }
 
 ' =========================================================
@@ -144,20 +217,20 @@ package "team.py / player.py" as p_team {
 ' =========================================================
 package "bid.py" as p_bid {
     class Bid <<frozen dataclass>> {
-        + player : BasePlayer  ' field(compare=False)
+        + player : BasePlayer <<compare=False>>
     }
 
     class PassBid <<frozen dataclass>> {
-        + __str__() : str  ' "Pass"
+        + __str__() : str <<"Pass">>
     }
 
     enum SlamLevel {
-        SLAM       ' (250, "Slam")
-        SOLO_SLAM  ' (500, "Solo Slam")
+        SLAM      = (250, "Slam")
+        SOLO_SLAM = (500, "Solo Slam")
         --
-        + base_value : int  ' single source of truth for 250 / 500
+        + base_value : int <<250 / 500>>
         + label : str
-        + __str__() : str   ' the label
+        + __str__() : str <<the label>>
     }
 
     class ContractBid <<frozen dataclass>> {
@@ -166,28 +239,30 @@ package "bid.py" as p_bid {
         + value : int | SlamLevel
         + suit : Suit
         --
-        + __post_init__() : None  ' validates value + suit
-        + get_numeric_value() : int   ' SlamLevel → base_value
-        + __gt__(other) : bool         ' strict numeric ordering
+        + __post_init__() : None <<validates value + suit>>
+        + get_numeric_value() : int <<SlamLevel → base_value>>
+        + __gt__(other) : bool <<strict numeric ordering>>
         + __str__() : str
     }
 
     class DoubleBid <<frozen dataclass>> {
-        + __str__() : str  ' "Double"
+        + __str__() : str <<"Double">>
     }
 
     class RedoubleBid <<frozen dataclass>> {
-        + __str__() : str  ' "Redouble"
+        + __str__() : str <<"Redouble">>
     }
 
     note bottom of Bid
       Pure value carriers — no auction-state
-      behaviour. ``player`` is excluded from
-      ``__eq__`` and ``__hash__`` (matching
-      bid equality on *what was announced*,
+      behaviour. ""player"" is excluded from
+      ""~__eq~__"" and ""~__hash~__"" (matching
+      bid equality on //what was announced//,
       not who announced it). All four
-      variants are ``@dataclass(frozen=True,
-      slots=True)``.
+      variants are frozen, slotted dataclasses.
+      ""SlamLevel"" owns the 250 / 500 base
+      values as data, so nothing downstream
+      re-derives them from a string.
     end note
 }
 
@@ -201,7 +276,7 @@ package "auction.py" as p_auction {
         + {static} empty() : Auction
         + is_legal(bid: Bid) : bool
         + legal_actions(player: BasePlayer) : tuple<Bid>
-        + apply(bid: Bid) : Auction    ' raises IllegalBidError
+        + apply(bid: Bid) : Auction <<raises IllegalBidError>>
         + is_terminal() : bool
         + contract() : Contract?
         --
@@ -218,15 +293,18 @@ package "auction.py" as p_auction {
       Immutable bidding-phase state.
       Owns the chronological bid history
       and the contrée rules (see
-      ``contree-domain.md §5.2`` and §5.3).
-      ``is_legal`` / ``legal_actions``
-      replace ``Bid.is_valid_after`` and
-      ``BidValidator``; ``apply`` raises
-      :class:`IllegalBidError` rather than
-      silently downgrading an illegal bid
-      to a Pass.
-      The shape (``legal_actions`` +
-      ``apply``) mirrors MCTS / RL game-state
+      ""contree-domain.md §5.2"" and §5.3):
+      value precedence, the Double / Redouble
+      freeze, and the Slam-blocks-Solo-Slam
+      asymmetry.
+      Bids themselves stay dumb value
+      carriers: every legality question is
+      answered here, by ""is_legal"" /
+      ""legal_actions"", and ""apply"" raises
+      ""IllegalBidError"" rather than silently
+      downgrading an illegal bid to a Pass.
+      The shape (""legal_actions"" +
+      ""apply"") mirrors MCTS / RL game-state
       interfaces, so the auction phase is
       ready to drop into a future
       imperfect-information state object.
@@ -243,19 +321,37 @@ package "contract.py / trick.py" as p_contract {
         + team : Team
         + value : int | SlamLevel
         + suit : Suit
-        + double : bool
-        + redouble : bool
-        + double_player : BasePlayer?     ' who called Coinche
-        + redouble_player : BasePlayer?   ' who called Surcoinche
+        + double_player : BasePlayer?   <<who called Coinche>>
+        + redouble_player : BasePlayer? <<who called Surcoinche>>
         --
-        + __init__(contract_bid, double=False, redouble=False, double_player=None, redouble_player=None)
-        + get_multiplier() : int           ' 1, 2, or 4
+        + double : bool    <<property>>
+        + redouble : bool  <<property>>
+        --
+        + __init__(contract_bid, double_player=None, redouble_player=None)
+        + get_multiplier() : int <<1, 2, or 4>>
         + is_slam() : bool
         + is_solo_slam() : bool
         + is_slam_family() : bool
-        + get_base_points() : int           ' Slam → 250, SoloSlam → 500
-        + get_slam_card_substitute() : int  ' Slam → 250, SoloSlam → 500, else 0
+        + get_base_points() : int <<Slam → 250, Solo Slam → 500>>
+        + get_slam_card_substitute() : int <<250 / 500, else 0>>
+        + __str__() : str
+        + __eq__(other) : bool
     }
+
+    note bottom of Contract
+      The doubled / redoubled state is
+      **derived**, not stored: ""double"" and
+      ""redouble"" are properties reading
+      ""double_player"" / ""redouble_player"",
+      so an "anonymous double" is
+      unrepresentable and there is no boolean
+      flag to keep in sync. The constructor
+      rejects a redouble without a double.
+      ""~__eq~__"" is defined without
+      ""~__hash~__"", so a Contract — and
+      anything holding one, e.g. PlayState —
+      is unhashable by design.
+    end note
 
     class Trick {
         + plays : list<(BasePlayer, Card)>
@@ -270,21 +366,26 @@ package "contract.py / trick.py" as p_contract {
         + __len__() : int
     }
 
+    class "trick.py" as p_trick_fn <<module>> {
+        current_winner(plays, trump_suit) : BasePlayer?
+    }
+
     note bottom of Trick
       A dumb container of plays — it does **not**
-      store trump. `get_current_winner(trump_suit)`
+      store trump. ""get_current_winner(trump_suit)""
       takes trump as a **required** argument
-      (like `Card.get_order`/`get_points`) and
+      (like ""Card.get_order"" / ""get_points"") and
       works on **partial** tricks. The engine
-      builds `Trick()` bare and passes the
+      builds ""Trick()"" bare and passes the
       contract's suit for trick-winner
       determination, the partner-master legality
       check, and the view's live winner highlight.
       The winner rule itself is the module-level
-      `current_winner(plays, trump_suit)` function
-      below — `get_current_winner` delegates to it,
-      and `PlayState` (play.py) calls it directly —
-      one implementation, not two that could drift.
+      ""current_winner(plays, trump_suit)""
+      function — ""get_current_winner"" delegates
+      to it and ""PlayState"" (play.py) calls it
+      directly — one implementation, not two
+      that could drift.
     end note
 }
 
@@ -307,7 +408,7 @@ package "play.py" as p_play {
         + {static} start(contract, players, hands) : PlayState
         + hand_of(player: BasePlayer) : tuple<Card>
         + legal_actions(player: BasePlayer) : tuple<Card>
-        + apply(play: Play) : PlayState        ' raises IllegalPlayError
+        + apply(play: Play) : PlayState <<raises IllegalPlayError>>
         + with_hands(hands: tuple<tuple<Card>>) : PlayState
         + observe(player, bids=()) : PlayObservation
         + is_terminal() : bool
@@ -341,6 +442,9 @@ package "play.py" as p_play {
       search forks inject arbitrary mid-round
       states directly); start() validates a fresh
       deal (4 players, 4×8 cards, 32 distinct).
+      Per-seat state is parallel tuples (players
+      alongside hands), not a player-keyed map —
+      BasePlayer hashing is identity-based.
       Derived views (trick_number, current_trick,
       completed_tricks, trick_winners, to_act,
       is_terminal()) recompute from plays on every
@@ -373,8 +477,8 @@ package "play.py" as p_play {
 ' Exceptions (exceptions.py)
 ' =========================================================
 package "exceptions.py" as p_exc {
-    class "Exception" as Exception <<stdlib>> #DDDDDD
-    class "ValueError" as ValueError <<stdlib>> #DDDDDD
+    class "Exception" as Exception <<stdlib>> #EEEEEE
+    class "ValueError" as ValueError <<stdlib>> #EEEEEE
 
     class ContraiError <<base>>
 
@@ -420,7 +524,8 @@ package "exceptions.py" as p_exc {
     }
 
     ' Every domain error dual-inherits (ContraiError, ValueError);
-    ' ValueError stays in the MRO so legacy except-ValueError keeps working.
+    ' ValueError stays in the MRO so an except-ValueError handler
+    ' keeps catching the whole family.
     ContraiError            --|> Exception
     InvalidPlayerCountError --|> ContraiError
     InvalidPlayerCountError --|> ValueError
@@ -457,9 +562,10 @@ Hand "1" *-- "0..8" Card : cards
 ' Deck owns the full 32-card set
 Deck "1" *-- "32" Card : cards
 
-' Player owns its Hand, references Team
+' Player owns its Hand, references Team, is seated at a Position
 BasePlayer "1" *-- "1" Hand : hand
 BasePlayer "1" o-- "0..1" Team : team
+BasePlayer --> Position : position
 
 ' Team aggregates exactly 2 players
 Team "1" o-- "2" BasePlayer : players
@@ -472,7 +578,7 @@ ContractBid ..> SlamLevel : value (all-tricks bids)
 ' Auction composes a tuple of Bids and materialises a Contract
 Auction "1" *-- "0..N" Bid       : bids
 Auction ..> Contract             : <<materialises>>
-Auction ..> IllegalBidError      : <<raises (apply)>>
+Auction ..> IllegalBidError      : <<raises on apply>>
 
 ' Contract references ContractBid + BasePlayer + Team
 Contract "1" o-- "1" ContractBid : contract_bid
@@ -484,6 +590,7 @@ Contract --> Suit                : suit
 Trick "1" *-- "0..4" Card        : (via plays)
 Trick "1" o-- "0..4" BasePlayer  : (via plays)
 Trick ..> Suit                   : get_current_winner(trump_suit)
+Trick ..> p_trick_fn             : <<delegates>>
 
 ' Play is a (player, card) pair — same ownership split as Trick's plays
 Play "1" o-- "1" BasePlayer : player
@@ -496,14 +603,15 @@ PlayState "1" o-- "4" BasePlayer  : players
 PlayState "1" *-- "0..32" Card    : hands
 PlayState "1" *-- "0..32" Play    : plays
 PlayState ..> PlayObservation     : <<observe>>
+PlayState ..> p_trick_fn          : <<winner rule>>
 
 ' Operations raising exceptions
 Team ..> InvalidPlayerCountError : <<raises>>
 Deck ..> InvalidPlayerCountError : <<raises>>
 Deck ..> InvalidCardCountError   : <<raises>>
-ContractBid ..> InvalidContractError : <<raises (__post_init__)>>
-Contract ..> InvalidContractError    : <<raises (redouble w/o double)>>
-Trick ..> TrickStateError            : <<raises (add_play)>>
-PlayState ..> IllegalPlayError       : <<raises (apply)>>
+ContractBid ..> InvalidContractError : <<raises in post-init>>
+Contract ..> InvalidContractError    : <<redouble w/o double>>
+Trick ..> TrickStateError            : <<raises on add_play>>
+PlayState ..> IllegalPlayError       : <<raises on apply>>
 
 @enduml

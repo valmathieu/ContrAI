@@ -37,11 +37,11 @@ participant "RichView" as V <<engine>>
 
 C -> G : manage_round(view)
 note right of G
-  `view` is typically a **RichView**
-  (passed by `cli.py`); tests and
-  headless callers can pass `None`.
+  ""view"" is typically a **RichView**
+  (passed by ""cli.py""); tests and
+  headless callers can pass ""None"".
   Every view hook below is gated on
-  `hasattr(view, …)`.
+  ""hasattr(view, …)"".
 end note
 activate G
 
@@ -61,13 +61,13 @@ activate R
 G -> R : deal_cards()
 R -> D : deal(players_order)\n(dealer gets last cards)
 note right of R
-  `deal_cards` only deals — there is no
+  ""deal_cards"" only deals — there is no
   per-seat tracker to reset any more.
-  `play_state` stays `None` until play
-  begins (seeded by `play_all_tricks`,
+  ""play_state"" stays ""None"" until play
+  begins (seeded by ""play_all_tricks"",
   below); each AI's card tracking is
   derived fresh from the public trick
-  history on every `choose_card` call
+  history on every ""choose_card"" call
   instead of persisted counters — see
   **seq_trick.puml**.
 end note
@@ -113,7 +113,7 @@ note right of R
   4 seats, 8 distinct cards each — the very
   Card objects held in the dealt hands, so
   the view keeps matching playable cards by
-  identity. `play_state` becomes the single
+  identity. ""play_state"" becomes the single
   source of truth for whose turn it is, the
   legal cards, and each seat's remaining
   hand for the rest of the trick loop.
@@ -128,11 +128,11 @@ R --> G : team_tricks: dict<str, list<Trick>>
 G -> R : calculate_round_scores()
 R -> R : score_round(self)\n(scoring.py — pure round → RoundScore)
 note right of R
-  ``calculate_round_scores`` is a thin
-  wrapper: it calls ``scoring.score_round``
-  and publishes the returned ``RoundScore``
-  onto ``round_scores`` / ``contract_made`` /
-  ``unannounced_slam``. The branch detail
+  ""calculate_round_scores"" is a thin
+  wrapper: it calls ""scoring.score_round""
+  and publishes the returned ""RoundScore""
+  onto ""round_scores"" / ""contract_made"" /
+  ""unannounced_slam"". The branch detail
   (numeric share-pile vs. unannounced-Slam
   vs. doubled winner-takes-all vs. Slam /
   Solo Slam, belote +20 on every shape) lives
@@ -140,7 +140,9 @@ note right of R
 end note
 R -> R : round_scores, contract_made,\nunannounced_slam = RoundScore
 R --> G : round_scores: dict<str, int>
-deactivate R
+' No deactivate here: Round outlives manage_round — cli.py keeps
+' handing ``game.current_round`` to the between-round view hooks
+' below, so its bar runs on to the end of the diagram.
 
 loop team_name, points in round_scores
     G -> G : scores[team_name] += points
@@ -154,32 +156,40 @@ deactivate G
 C -->> V : on_round_complete(round_, scores)
 note right of V
   Append a RoundSummary to
-  `history` for the end-game
+  ""history"" for the end-game
   scoreboard table.
 end note
-C -->> V : show_round_recap(round_, scores,\n              is_final=status.game_over,\n              is_tiebreaker=status.tied_teams is not None)
+C -> V : show_round_recap(round_, scores,\n  is_final=status.game_over,\n  is_tiebreaker=status.tied_teams is not None)
+activate V
 note right of V
   Full-screen recap panel:
   contract, made/failed, per-team
   round points, running totals,
   belote advisory. Blocks on Enter.
-  When `is_final` is true the prompt
+  When ""is_final"" is true the prompt
   switches to "see the final score…"
   so the next screen is the EndGame
   banner, not another deal. When
-  `is_tiebreaker` is true (both teams
+  ""is_tiebreaker"" is true (both teams
   level at/above the target) the panel
   announces sudden death and the
   prompt deals the tiebreaker round.
 end note
+V --> C : (Enter pressed)
+deactivate V
+
+' Round's bar closes here because the diagram scope ends, not because
+' the object is destroyed — it lives on as ``game.current_round``
+' until the next deal replaces it.
+deactivate R
 
 note over C, P
-  Caller typically loops `manage_round` then `check_game_over(target)`
+  Caller typically loops ""manage_round"" then ""check_game_over(target)""
   until one team strictly leads at/above the target (a tie there is
   sudden death — more rounds follow). Game ↔ Round delegation:
   Game owns the loop; Round owns one round's lifecycle. The CLI
-  (`cli.py`) owns the between-rounds choreography: `on_round_complete`
-  feeds the end-game scoreboard, then `show_round_recap` blocks for
+  (""cli.py"") owns the between-rounds choreography: ""on_round_complete""
+  feeds the end-game scoreboard, then ""show_round_recap"" blocks for
   the user to take stock — on every round, including the final one
   before the game-over banner appears.
 end note
