@@ -16,6 +16,19 @@ class TestSuit:
         assert Suit.NO_TRUMP.value == "NoTrump"
         assert Suit.ALL_TRUMP.value == "AllTrump"
 
+    def test_str_is_the_display_name(self):
+        # Pinned against literals, never against str(Suit.X): the default
+        # Enum.__str__ would render "Suit.SPADES", which is what leaked into
+        # Contract.__str__ before this override existed.
+        assert str(Suit.SPADES) == "Spades"
+        assert str(Suit.NO_TRUMP) == "NoTrump"
+
+    def test_format_delegates_to_str(self):
+        # __format__ falls through to __str__, which is what every f-string
+        # embedding a suit depends on.
+        assert f"{Suit.HEARTS}" == "Hearts"
+        assert f"100 {Suit.CLUBS}" == "100 Clubs"
+
 
 class TestRank:
     def test_expected_members(self):

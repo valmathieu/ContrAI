@@ -24,6 +24,19 @@ class Suit(Enum):
     NO_TRUMP = "NoTrump"
     ALL_TRUMP = "AllTrump"
 
+    def __str__(self) -> str:
+        """Render as the plain display name, e.g. ``"Spades"``.
+
+        Load-bearing for every f-string and panel label that embeds a suit
+        directly: ``f"{bid.value} {bid.suit}"`` reads ``"100 Spades"``
+        (``__format__`` delegates to ``__str__`` by default). Without this
+        override, the default ``Enum.__str__`` would print
+        ``"Suit.SPADES"``, which leaked into ``Contract.__str__`` and every
+        message built from it.
+        """
+
+        return self.value
+
 
 #: The four card-bearing suits (excludes ``Suit.NO_TRUMP``).
 CARD_SUITS = (Suit.SPADES, Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS)

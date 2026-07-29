@@ -193,18 +193,21 @@ class TestContractBidComparison:
 
 
 class TestContractBidDunders:
+    # Suits are spelled out as literals rather than interpolated as
+    # f"{Suit.SPADES}": interpolating puts the same __str__ on both sides of
+    # the assertion, so it would hold whatever __str__ returned.
     def test_str(self, north):
         bid = ContractBid(north, 100, Suit.SPADES)
-        assert str(bid) == f"100 {Suit.SPADES}"
+        assert str(bid) == "100 Spades"
 
     def test_str_slam(self, north):
         bid = ContractBid(north, SlamLevel.SLAM, Suit.SPADES)
-        assert str(bid) == f"Slam {Suit.SPADES}"
+        assert str(bid) == "Slam Spades"
 
     def test_str_solo_slam(self, north):
         # SlamLevel.__str__ uses the human label "Solo Slam" (spaced).
         bid = ContractBid(north, SlamLevel.SOLO_SLAM, Suit.SPADES)
-        assert str(bid) == f"Solo Slam {Suit.SPADES}"
+        assert str(bid) == "Solo Slam Spades"
 
     def test_equality_ignores_player(self, north, south):
         # Player is excluded from comparison; two ContractBids with

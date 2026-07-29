@@ -236,7 +236,9 @@ class TestContractDunders:
     def test_str_normal(self, north):
         contract = Contract(ContractBid(north, 100, Suit.SPADES))
         assert "100" in str(contract)
-        assert str(Suit.SPADES) in str(contract)
+        # Literal, not str(Suit.SPADES): comparing the rendering against
+        # itself would pass no matter what __str__ returned.
+        assert "Spades" in str(contract)
         assert north.name in str(contract)
         assert "Doubled" not in str(contract)
         assert "Redoubled" not in str(contract)
