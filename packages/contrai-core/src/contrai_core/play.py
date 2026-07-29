@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, NamedTuple, Optional
 
 from .exceptions import IllegalPlayError, PlayRuleViolation
 from .trick import current_winner
+from .types import is_trump, trump_suits
 
 if TYPE_CHECKING:
     from .bid import Bid
@@ -292,17 +293,19 @@ class PlayState:
 
         lead_suit = trick[0].card.suit
         lead_suit_cards = tuple(card for card in hand if card.suit == lead_suit)
-        trump_cards = (
-            tuple(card for card in hand if card.suit == trump_suit)
-            if trump_suit
-            else ()
-        )
+        # No ``if trump_suit`` guard needed: ``is_trump`` already answers
+        # False for every card when there is no trump suit.
+        trump_cards = tuple(card for card in hand if card.is_trump(trump_suit))
 
         # Rule 1/2 — follow suit, over-trumping when the led suit is trump.
         if lead_suit_cards:
-            if trump_suit and lead_suit == trump_suit:
+            if is_trump(lead_suit, trump_suit):
+                # Inside this branch the led suit *is* the trump suit, so
+                # ``lead_suit`` is the same member as ``trump_suit`` — and it
+                # is the one already known to be a real card suit, which is
+                # all the ranking helper needs.
                 higher = _higher_trumps_than_played(
-                    lead_suit_cards, trick, trump_suit
+                    lead_suit_cards, trick, lead_suit
                 )
                 return higher if higher else lead_suit_cards
             return lead_suit_cards
@@ -315,8 +318,11 @@ class PlayState:
             return tuple(hand)
 
         # No trump suit (or the led suit is trump and we are void in it):
-        # nothing to over-trump, free discard.
-        if not trump_suit or lead_suit == trump_suit:
+        # nothing to over-trump, free discard. The first test has to enumerate
+        # rather than lean on truthiness — every enum member is truthy, so a
+        # bare ``if not trump_suit`` never fired for a NO_TRUMP contract even
+        # though that is precisely the case it was written for.
+        if not trump_suits(trump_suit) or is_trump(lead_suit, trump_suit):
             return tuple(hand)
 
         # Rule 3 — trump obligation. If an opponent has ruffed, beat them.
@@ -659,7 +665,10 @@ def _higher_trumps_than_played(
     Args:
         trumps_in_hand: The candidate trumps from the player's hand.
         plays: The plays of the current trick.
-        trump_suit: The trump suit to rank by.
+        trump_suit: The trump suit to rank by. A real card suit, not a
+            contract's trump option — the caller has already established
+            that some suit is trump, so there is nothing left to decide
+            here.
 
     Returns:
         The subset of ``trumps_in_hand`` outranking the best trump played.
@@ -667,7 +676,7 @@ def _higher_trumps_than_played(
 
     best_so_far = None
     for _, card in plays:
-        if card.suit != trump_suit:
+        if not card.is_trump(trump_suit):
             continue
         if best_so_far is None or card.get_order(trump_suit) > best_so_far.get_order(
             trump_suit
@@ -699,7 +708,7 @@ def _highest_opponent_trump(
 
     highest = None
     for trick_player, card in plays:
-        if card.suit != trump_suit or trick_player.team == player_team:
+        if not card.is_trump(trump_suit) or trick_player.team == player_team:
             continue
         if highest is None or card.get_order(trump_suit) > highest.get_order(
             trump_suit
@@ -739,7 +748,7 @@ def _classify_violation(
     # Held the led suit. Trump led + a too-low trump is an over-trump
     # failure; anything else off-suit is a follow failure.
     if lead_suit_cards:
-        if trump_suit and lead_suit == trump_suit and card.suit == trump_suit:
+        if is_trump(lead_suit, trump_suit) and card.is_trump(trump_suit):
             return PlayRuleViolation.MUST_OVERTRUMP
         return PlayRuleViolation.MUST_FOLLOW_SUIT
 
@@ -749,6 +758,6 @@ def _classify_violation(
     highest_opponent_trump = _highest_opponent_trump(
         trick, player.team, trump_suit
     )
-    if highest_opponent_trump is not None and card.suit == trump_suit:
+    if highest_opponent_trump is not None and card.is_trump(trump_suit):
         return PlayRuleViolation.MUST_OVERTRUMP
     return PlayRuleViolation.MUST_TRUMP

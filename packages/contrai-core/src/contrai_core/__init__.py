@@ -4,7 +4,7 @@ Public API — consumers can ``from contrai_core import Card, Suit, Rank, …``
 without knowing the internal module layout.
 """
 
-from .types import Suit, Rank, CARD_SUITS
+from .types import Suit, Rank, CARD_SUITS, is_trump, trump_suits
 from .position import Position
 from .card import Card
 from .deck import Deck
@@ -31,6 +31,8 @@ __all__ = [
     "Suit",
     "Rank",
     "CARD_SUITS",
+    "is_trump",
+    "trump_suits",
     "Position",
     "Card",
     "Deck",

@@ -26,6 +26,39 @@ def sample_cards():
     }
 
 
+class TestCardIsTrump:
+    """Test the is_trump sugar and that get_points/get_order agree with it."""
+
+    def test_own_suit(self, sample_cards):
+        assert sample_cards['spade_jack'].is_trump(Suit.SPADES) is True
+
+    def test_other_suit(self, sample_cards):
+        assert sample_cards['spade_jack'].is_trump(Suit.HEARTS) is False
+
+    def test_no_trump_contract(self, sample_cards):
+        assert sample_cards['spade_jack'].is_trump(Suit.NO_TRUMP) is False
+
+    def test_defaults_to_no_trump(self, sample_cards):
+        # The default matches get_points()/get_order() called bare.
+        assert sample_cards['spade_jack'].is_trump() is False
+
+    def test_all_trump_raises(self, sample_cards):
+        with pytest.raises(NotImplementedError, match="All-trump"):
+            sample_cards['spade_jack'].is_trump(Suit.ALL_TRUMP)
+
+    def test_points_and_order_follow_is_trump(self, sample_cards):
+        # is_trump is the single question both value lookups branch on, so
+        # the trump tables must be selected exactly when it answers True.
+        card = sample_cards['spade_jack']
+        assert card.is_trump(Suit.SPADES)
+        assert card.get_points(Suit.SPADES) == Card.TRUMP_POINTS[Rank.JACK]
+        assert card.get_order(Suit.SPADES) == Card.TRUMP_ORDER[Rank.JACK]
+
+        assert not card.is_trump(Suit.NO_TRUMP)
+        assert card.get_points(Suit.NO_TRUMP) == Card.NORMAL_POINTS[Rank.JACK]
+        assert card.get_order(Suit.NO_TRUMP) == Card.NORMAL_ORDER[Rank.JACK]
+
+
 class TestCardGetPoints:
     """Test the get_points method of the Card class."""
 

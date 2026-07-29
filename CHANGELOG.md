@@ -11,6 +11,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 ### Added
 
 - (core) **BREAKING:** Position seat enum — anticlockwise next, partner, opponents, strict parsing, French seat-name mapping (french_name/from_french). BasePlayer.position is now a Position, not a free-form string.
+- (core) `is_trump(card_suit, contract_suit)` and `trump_suits(contract_suit)` — the one place that answers "is this card trump under this contract", plus `Card.is_trump(trump_suit)` sugar. Every trick-taking rule now asks through them instead of spelling out `card.suit == trump_suit` at each boundary.
 
 ### Changed
 
@@ -19,6 +20,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 ### Fixed
 
 - (core) Suits now render as their display name wherever one is embedded in text — a contract reads `100 Spades by North` instead of `100 Suit.SPADES by North`.
+- (core) An all-trump contract now raises instead of quietly playing out as a no-trump one. The variant is still unimplemented; it just no longer answers "no card is trump" when the right answer is "every card is".
 
 ## [0.2.0] - 2026-07-25
 

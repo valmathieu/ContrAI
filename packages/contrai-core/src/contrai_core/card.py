@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .types import Suit, Rank
+# Aliased on import: the module-level predicate and the ``Card.is_trump``
+# method below would otherwise share a name, and while Python resolves the
+# call inside the method body to this global, the alias spares the reader
+# from having to know that.
+from .types import is_trump as suit_is_trump
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -30,6 +35,7 @@ class Card:
     Methods:
         __str__(): Returns a string representation of the card with suit symbol.
         __repr__(): Returns a string representation for debugging.
+        is_trump(trump_suit=None): Whether this card plays as trump.
         get_points(trump_suit=None): Returns the point value of the card, considering trump.
         get_order(trump_suit=None): Returns the order of the card, considering trump.
     """
@@ -94,12 +100,31 @@ class Card:
     def __repr__(self) -> str:
         return f"Card({self.suit!r}, {self.rank!r})"
 
+    def is_trump(self, trump_suit: Suit | None = None) -> bool:
+        """Whether this card plays as trump under ``trump_suit``.
+
+        Sugar over :func:`contrai_core.is_trump` for the common case of
+        asking about a card in hand or on the table. Prefer it to
+        ``card.suit == trump_suit``: the bare comparison type-checks for
+        every trump option but is only accidentally correct for the ones
+        that name no suit.
+
+        Args:
+            trump_suit: The trump the round's contract settled on, or
+                ``None`` when no contract is established yet.
+
+        Returns:
+            ``True`` if this card is trump.
+        """
+
+        return suit_is_trump(self.suit, trump_suit)
+
     def get_points(self, trump_suit: Suit | None = None) -> int:
-        if trump_suit and self.suit == trump_suit:
+        if self.is_trump(trump_suit):
             return Card.TRUMP_POINTS[self.rank]
         return Card.NORMAL_POINTS[self.rank]
 
     def get_order(self, trump_suit: Suit | None = None) -> int:
-        if trump_suit and self.suit == trump_suit:
+        if self.is_trump(trump_suit):
             return Card.TRUMP_ORDER[self.rank]
         return Card.NORMAL_ORDER[self.rank]

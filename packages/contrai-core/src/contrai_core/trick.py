@@ -52,7 +52,7 @@ class Trick:
         """Get all cards played in this trick."""
         return [card for _, card in self.plays]
 
-    def get_led_suit(self) -> Optional[str]:
+    def get_led_suit(self) -> Optional[Suit]:
         """Get the suit of the first card played, or None if no cards played."""
         if not self.plays:
             return None
@@ -139,10 +139,10 @@ def current_winner(
     lead_suit = plays[0][1].suit
     best_player = plays[0][0]
     best_card = plays[0][1]
-    best_is_trump = trump_suit is not None and best_card.suit == trump_suit
+    best_is_trump = best_card.is_trump(trump_suit)
 
     for player, card in plays[1:]:
-        card_is_trump = trump_suit is not None and card.suit == trump_suit
+        card_is_trump = card.is_trump(trump_suit)
 
         if card_is_trump and not best_is_trump:
             # Trump beats non-trump

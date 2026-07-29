@@ -11,6 +11,7 @@ from .exceptions import InvalidContractError
 
 if TYPE_CHECKING:
     from .player import BasePlayer as Player
+    from .types import Suit
 
 class Contract:
     """
@@ -52,7 +53,7 @@ class Contract:
         self.player = contract_bid.player
         self.team = contract_bid.player.team
         self.value = contract_bid.value
-        self.suit = contract_bid.suit
+        self.suit: Suit = contract_bid.suit
         self.double_player = double_player
         self.redouble_player = redouble_player
 
