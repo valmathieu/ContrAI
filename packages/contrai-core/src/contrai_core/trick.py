@@ -11,7 +11,7 @@ from .exceptions import TrickStateError
 if TYPE_CHECKING:
     from .card import Card
     from .player import BasePlayer as Player
-    from .types import Suit
+    from .types import ContractSuit, Suit
 
 class Trick:
     """
@@ -85,7 +85,9 @@ class Trick:
         """
         return len(self.plays) == 4
 
-    def get_current_winner(self, trump_suit: Optional[Suit]) -> Optional[Player]:
+    def get_current_winner(
+        self, trump_suit: Optional[ContractSuit]
+    ) -> Optional[Player]:
         """
         Return the player currently winning this (possibly partial) trick.
 
@@ -95,7 +97,8 @@ class Trick:
 
         Args:
             trump_suit: The trump suit to evaluate against, taken from the
-                round's contract. Pass ``None`` (or ``Suit.NO_TRUMP``) when
+                round's contract. Pass ``None`` (or
+                ``TrumpVariant.NO_TRUMP``) when
                 no suit is trump — every trump-related branch then reduces
                 to the follow-suit rule. The argument is required: there is
                 no construction-time trump to fall back to, so callers must
@@ -110,7 +113,7 @@ class Trick:
 
 
 def current_winner(
-    plays: List[Tuple[Player, Card]], trump_suit: Optional[Suit]
+    plays: List[Tuple[Player, Card]], trump_suit: Optional[ContractSuit]
 ) -> Optional[Player]:
     """
     Determine who currently wins a (possibly partial) trick.
@@ -123,7 +126,8 @@ def current_winner(
         plays: The ordered (player, card) pairs played so far, in play
             order. The first entry sets the led suit.
         trump_suit: The trump suit to evaluate against, taken from the
-            round's contract. Pass ``None`` (or ``Suit.NO_TRUMP``) when no
+            round's contract. Pass ``None`` (or
+            ``TrumpVariant.NO_TRUMP``) when no
             suit is trump — every trump-related branch then reduces to the
             follow-suit rule. The argument is required: there is no
             construction-time trump to fall back to, so callers must state

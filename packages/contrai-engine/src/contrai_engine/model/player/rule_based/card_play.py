@@ -98,12 +98,9 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         # ``voids`` below maps seats to sets of *card* suits, so a round with
         # nothing trump must contribute no trump-void entry at all.
         round_trumps = trump_suits(trump_suit)
-        fallen: dict[Suit, set] = {
-            Suit.SPADES: set(),
-            Suit.HEARTS: set(),
-            Suit.DIAMONDS: set(),
-            Suit.CLUBS: set(),
-        }
+        # One bucket per card suit — every Suit member is one, so the map
+        # derives from the enum rather than restating the four.
+        fallen: dict[Suit, set] = {suit: set() for suit in Suit}
         voids: dict[BasePlayer, set[Suit]] = {}
 
         for trick in (*observation.completed_tricks, observation.current_trick):

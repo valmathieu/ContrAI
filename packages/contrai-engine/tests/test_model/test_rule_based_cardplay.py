@@ -18,7 +18,7 @@ from contrai_core import (
     PlayObservation,
     PlayState,
 )
-from contrai_core.types import Suit, Rank
+from contrai_core.types import Suit, Rank, TrumpVariant
 
 
 def _contract(player, value, suit):
@@ -1002,7 +1002,7 @@ class TestNoTrumpContract:
         obs = _obs(
             north,
             [_c(Suit.CLUBS, Rank.ACE)],
-            _contract(north, 100, Suit.NO_TRUMP),
+            _contract(north, 100, TrumpVariant.NO_TRUMP),
             completed_tricks=[self._east_compelled_discard(players)],
         )
         _, voids = north.cardplay._derive_tracking(obs)
@@ -1010,7 +1010,7 @@ class TestNoTrumpContract:
         assert Suit.HEARTS in voids[players["E"]]
         # voids maps seats to sets of *card* suits. NO_TRUMP is not one, so
         # no entry for it may appear — the whole set must be card suits.
-        assert Suit.NO_TRUMP not in voids[players["E"]]
+        assert TrumpVariant.NO_TRUMP not in voids[players["E"]]
         assert all(
             suit in (Suit.SPADES, Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS)
             for void_suits in voids.values()
@@ -1037,7 +1037,7 @@ class TestNoTrumpContract:
         obs = _obs(
             north,
             [_c(Suit.HEARTS, Rank.QUEEN)],
-            _contract(north, 100, Suit.NO_TRUMP),
+            _contract(north, 100, TrumpVariant.NO_TRUMP),
             completed_tricks=[self._east_compelled_discard(players)],
             current_trick=(Play(players["W"], _c(Suit.HEARTS, Rank.NINE)),),
         )
@@ -1050,13 +1050,13 @@ class TestNoTrumpContract:
         obs = _obs(
             north,
             [_c(Suit.HEARTS, Rank.QUEEN)],
-            _contract(north, 100, Suit.NO_TRUMP),
+            _contract(north, 100, TrumpVariant.NO_TRUMP),
             completed_tricks=[self._east_compelled_discard(players)],
         )
         strat = north.cardplay
         fallen, voids = strat._derive_tracking(obs)
         assert strat._opponents_might_have_trump(
-            Suit.NO_TRUMP, fallen, voids, obs.hand
+            TrumpVariant.NO_TRUMP, fallen, voids, obs.hand
         ) is False
 
 

@@ -30,7 +30,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, ClassVar
 
 from .exceptions import InvalidContractError
-from .types import Suit
+from .types import CONTRACT_SUITS, ContractSuit, TrumpVariant
 
 if TYPE_CHECKING:
     from .player import BasePlayer
@@ -108,8 +108,8 @@ class ContractBid(Bid):
     """A numeric contract or *Slam* / *Solo Slam* announcement.
 
     Validated at construction via ``__post_init__``: the value must be
-    one of the table-defined steps and the suit must be a known
-    :class:`Suit`.
+    one of the table-defined steps and the suit must be a bookable trump
+    (see :attr:`VALID_SUITS`).
 
     The two all-tricks contracts are the :class:`SlamLevel` enum members:
 
@@ -124,32 +124,45 @@ class ContractBid(Bid):
     Attributes:
         value: A numeric step (80, 90, 100, …, 180), or a
             :class:`SlamLevel` member for the all-tricks contracts.
-        suit: The trump suit — any :class:`Suit`, including
-            ``Suit.NO_TRUMP``.
+        suit: The trump — one of the four :class:`Suit` members or
+            ``TrumpVariant.NO_TRUMP``. See :attr:`VALID_SUITS`.
     """
 
     VALID_VALUES: ClassVar[list] = [
         80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180,
         SlamLevel.SLAM, SlamLevel.SOLO_SLAM,
     ]
-    VALID_SUITS: ClassVar[list] = list(Suit)
+    #: The bookable trumps: every contract suit except ``ALL_TRUMP``, which
+    #: is unimplemented. Keeping the exclusion here rather than in the
+    #: auction is what keeps it out of the action space by construction —
+    #: :meth:`contrai_core.Auction.legal_actions` iterates this list.
+    VALID_SUITS: ClassVar[list] = [
+        suit for suit in CONTRACT_SUITS if suit is not TrumpVariant.ALL_TRUMP
+    ]
 
     value: int | SlamLevel
-    suit: Suit
+    suit: ContractSuit
 
     def __post_init__(self) -> None:
         """Reject unknown values / suits at construction time.
 
         Raises:
             InvalidContractError: If ``value`` is not on
-                :attr:`VALID_VALUES` or ``suit`` is not a :class:`Suit`
-                member.
+                :attr:`VALID_VALUES`, or ``suit`` is not a bookable trump.
+                ``TrumpVariant.ALL_TRUMP`` is rejected by its own branch so
+                the message can say why it is refused rather than merely
+                listing what is allowed.
         """
 
         if self.value not in self.VALID_VALUES:
             raise InvalidContractError(
                 f"Invalid contract value: {self.value}. "
                 f"Must be one of {self.VALID_VALUES}"
+            )
+        if self.suit is TrumpVariant.ALL_TRUMP:
+            raise InvalidContractError(
+                "All-trump contracts are not implemented and cannot be "
+                "bid. Bid a suit or no-trump instead."
             )
         if self.suit not in self.VALID_SUITS:
             raise InvalidContractError(

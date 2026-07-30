@@ -1,28 +1,48 @@
-"""Enum types for card suits and ranks.
+"""Enum types for card suits, contract trump options, and ranks.
 
 Shared across all ContrAI packages. Enum values are the human-readable display
 strings (``Rank.JACK.value == "Jack"``, ``Suit.SPADES.value == "Spades"``) so
 ``str(card)`` renders as e.g. ``"Jack ♠"`` directly from ``rank.value`` plus the
 suit glyph — no separate display map needed.
+
+Two different questions get two different types. "What suit is this card?" has
+exactly four answers and is :class:`Suit`. "What did the auction settle on?" has
+six — those four plus the options that name no suit — and is
+:data:`ContractSuit`, the union of :class:`Suit` and :class:`TrumpVariant`.
+Keeping them apart is what makes :func:`is_trump` the only place that has to
+know how a suitless trump option behaves; a single wide enum let
+``card.suit == trump_suit`` type-check everywhere while being merely
+*accidentally* right.
+
+:data:`ContractSuit` is a plain ``Suit | TrumpVariant`` assignment, not a
+PEP 695 ``type ContractSuit = …`` alias, on purpose: ``isinstance(x,
+ContractSuit)`` works on the plain form and raises ``TypeError: isinstance()
+arg 2 must be a type…`` on the alias form. This workspace configures no type
+checker, so ``isinstance`` narrowing is the only guardrail there is, and a
+spelling that breaks it is disqualifying. Both forms read identically to
+mypy/pyright should one be added later.
 """
 
 from enum import Enum
 
 
 class Suit(Enum):
-    """Card suits in contrée.
+    """The four card-bearing suits. A physical card always has one of these.
 
-    ``NO_TRUMP`` is a contract trump option only — no physical card has it.
-    Use :data:`CARD_SUITS` (or compare against ``Suit.NO_TRUMP``) when
-    iterating only over real card suits.
+    Deliberately narrower than what a contract can name: ``NO_TRUMP`` and
+    ``ALL_TRUMP`` live on :class:`TrumpVariant` instead, because no card
+    carries them. ``tuple(Suit)`` is therefore safe to iterate anywhere a
+    real card suit is meant.
+
+    Definition order is the documented suit preference — spades, hearts,
+    diamonds, clubs — which display sorting and the AI's suit choice both
+    read.
     """
 
     SPADES = "Spades"
     HEARTS = "Hearts"
     DIAMONDS = "Diamonds"
     CLUBS = "Clubs"
-    NO_TRUMP = "NoTrump"
-    ALL_TRUMP = "AllTrump"
 
     def __str__(self) -> str:
         """Render as the plain display name, e.g. ``"Spades"``.
@@ -38,23 +58,58 @@ class Suit(Enum):
         return self.value
 
 
-#: The four card-bearing suits (excludes ``Suit.NO_TRUMP``).
-CARD_SUITS = (Suit.SPADES, Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS)
+class TrumpVariant(Enum):
+    """Contract trump options that name no suit.
+
+    A separate enum rather than two more :class:`Suit` members: these are
+    answers to "what is trump this round", never to "what suit is this
+    card", and the type is what keeps them out of ``Card.suit``, out of the
+    deck, and out of the void/fallen maps that are keyed by card suit.
+
+    Only ``NO_TRUMP`` is bookable — see
+    :attr:`contrai_core.ContractBid.VALID_SUITS`. ``ALL_TRUMP`` is declared
+    because the contract vocabulary has it, but every path that would have
+    to interpret it raises rather than guess (:func:`is_trump`).
+    """
+
+    NO_TRUMP = "NoTrump"
+    ALL_TRUMP = "AllTrump"
+
+    def __str__(self) -> str:
+        """Render as the plain display name, e.g. ``"NoTrump"``.
+
+        Same reason as :meth:`Suit.__str__`: a contract embeds its trump
+        directly in text, and these members flow through the very same
+        f-strings as the four card suits.
+        """
+
+        return self.value
 
 
-def is_trump(card_suit: Suit, contract_suit: Suit | None) -> bool:
+#: Everything a contract's trump can be — the four card suits plus the two
+#: suitless options. Plain union assignment, not a PEP 695 ``type`` alias, so
+#: that ``isinstance(x, ContractSuit)`` keeps working (see module docstring).
+ContractSuit = Suit | TrumpVariant
+
+#: Every trump a contract could name, card suits first. Not every member is
+#: bookable — :attr:`contrai_core.ContractBid.VALID_SUITS` is the subset the
+#: auction accepts.
+CONTRACT_SUITS: tuple[ContractSuit, ...] = (*Suit, *TrumpVariant)
+
+
+def is_trump(card_suit: Suit, contract_suit: ContractSuit | None) -> bool:
     """Whether ``card_suit`` is trump under ``contract_suit``.
 
     The single spelling of the question the whole trick-taking rulebook
-    rests on. It used to be written out inline as ``card.suit ==
-    trump_suit`` at every boundary, which is only *accidentally* right for
-    the trump options that name no suit: it happens to answer correctly
-    for ``NO_TRUMP`` (no physical card carries that suit, so every trump
-    branch collapses to plain follow-suit — which is what a no-trump
-    contract wants) and it silently answers *the same way* for
-    ``ALL_TRUMP``, where every card should be trump instead. Funnelling
-    the comparison through here turns that spread-out coincidence into one
-    explicit decision.
+    rests on, and the one place the two suit types meet. It used to be
+    written out inline as ``card.suit == trump_suit`` at every boundary,
+    which is only *accidentally* right for the trump options that name no
+    suit: it happens to answer correctly for ``NO_TRUMP`` (no physical card
+    carries that suit, so every trump branch collapses to plain
+    follow-suit — which is what a no-trump contract wants) and it silently
+    answers *the same way* for ``ALL_TRUMP``, where every card should be
+    trump instead. Funnelling the comparison through here turns that
+    spread-out coincidence into one explicit decision.
 
     Args:
         card_suit: The suit of a physical card.
@@ -65,14 +120,17 @@ def is_trump(card_suit: Suit, contract_suit: Suit | None) -> bool:
         ``True`` if a card of ``card_suit`` plays as trump.
 
     Raises:
-        NotImplementedError: If ``contract_suit`` is ``Suit.ALL_TRUMP``.
-            All-trump is not implemented; raising here is what keeps it
-            from quietly playing out as a no-trump round.
+        NotImplementedError: If ``contract_suit`` is
+            ``TrumpVariant.ALL_TRUMP``. All-trump is not implemented;
+            raising here is what keeps it from quietly playing out as a
+            no-trump round. The auction does not offer it
+            (:attr:`contrai_core.ContractBid.VALID_SUITS`), so reaching
+            this means a caller built the contract by hand.
     """
 
-    if contract_suit is None or contract_suit is Suit.NO_TRUMP:
+    if contract_suit is None or contract_suit is TrumpVariant.NO_TRUMP:
         return False
-    if contract_suit is Suit.ALL_TRUMP:
+    if contract_suit is TrumpVariant.ALL_TRUMP:
         raise NotImplementedError(
             "All-trump contracts are not implemented: every suit would be "
             "trump, which changes card ordering, point values and the "
@@ -81,7 +139,7 @@ def is_trump(card_suit: Suit, contract_suit: Suit | None) -> bool:
     return card_suit is contract_suit
 
 
-def trump_suits(contract_suit: Suit | None) -> tuple[Suit, ...]:
+def trump_suits(contract_suit: ContractSuit | None) -> tuple[Suit, ...]:
     """The card suits that are trump under ``contract_suit``.
 
     The enumerating sibling of :func:`is_trump`, for the callers that need
@@ -98,14 +156,15 @@ def trump_suits(contract_suit: Suit | None) -> tuple[Suit, ...]:
 
     Returns:
         The trump card suits: empty for ``None``/``NO_TRUMP``, a single
-        suit for a suit contract.
+        suit for a suit contract. Always real card suits, which is what
+        makes it safe to key the void and fallen maps by the result.
 
     Raises:
-        NotImplementedError: If ``contract_suit`` is ``Suit.ALL_TRUMP``,
-            propagated from :func:`is_trump`.
+        NotImplementedError: If ``contract_suit`` is
+            ``TrumpVariant.ALL_TRUMP``, propagated from :func:`is_trump`.
     """
 
-    return tuple(suit for suit in CARD_SUITS if is_trump(suit, contract_suit))
+    return tuple(suit for suit in Suit if is_trump(suit, contract_suit))
 
 
 class Rank(Enum):

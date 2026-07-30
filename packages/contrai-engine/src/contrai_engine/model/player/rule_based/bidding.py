@@ -9,11 +9,13 @@ from contrai_core.bid import (
     RedoubleBid,
     SlamLevel,
 )
-from contrai_core.types import CARD_SUITS, Rank, Suit
+from contrai_core.types import Rank, Suit
 
 from ..strategy import BiddingStrategy, PlayerStateMixin
 
-SUITS = CARD_SUITS
+#: The suits the bidding table searches. Every Suit member is a real
+#: card suit, so no filtering is needed.
+SUITS = tuple(Suit)
 
 
 class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):

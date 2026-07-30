@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from .contract import Contract
     from .player import BasePlayer
     from .team import Team
-    from .types import Suit
+    from .types import ContractSuit, Suit
 
 
 class Play(NamedTuple):
@@ -507,7 +507,7 @@ class PlayState:
     # ------------------------------------------------------------------
 
     @property
-    def _trump_suit(self) -> Optional["Suit"]:
+    def _trump_suit(self) -> Optional["ContractSuit"]:
         """The contract's trump suit, or ``None`` when there is no contract."""
 
         return self.contract.suit if self.contract else None
@@ -604,11 +604,11 @@ class PlayObservation:
         return len(self.completed_tricks)
 
     @property
-    def trump_suit(self) -> Optional["Suit"]:
+    def trump_suit(self) -> Optional["ContractSuit"]:
         """The contract's trump suit, or ``None`` when there is no contract.
 
         Same rule as the state this observation was derived from: for a
-        ``NO_TRUMP`` contract this is ``Suit.NO_TRUMP`` itself, not
+        ``NO_TRUMP`` contract this is ``TrumpVariant.NO_TRUMP`` itself, not
         ``None`` — no real card ever carries that suit, so every
         trump-related rule (and :func:`current_winner`) already degrades
         correctly when handed it.
@@ -692,7 +692,9 @@ def _higher_trumps_than_played(
 
 
 def _highest_opponent_trump(
-    plays: tuple[Play, ...], player_team: "Team", trump_suit: Optional["Suit"]
+    plays: tuple[Play, ...],
+    player_team: "Team",
+    trump_suit: Optional["ContractSuit"],
 ) -> Optional["Card"]:
     """Return the highest trump an opponent of ``player_team`` has played.
 
@@ -720,7 +722,7 @@ def _highest_opponent_trump(
 def _classify_violation(
     player: "BasePlayer",
     card: "Card",
-    trump_suit: Optional["Suit"],
+    trump_suit: Optional["ContractSuit"],
     trick: tuple[Play, ...],
     hand: tuple["Card", ...],
 ) -> PlayRuleViolation:

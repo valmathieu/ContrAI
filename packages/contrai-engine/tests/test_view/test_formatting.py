@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from contrai_core import Position, Suit
+from contrai_core import Position, Suit, TrumpVariant
 from contrai_core.bid import ContractBid, SlamLevel
 from contrai_core.contract import Contract
 from contrai_engine.view.formatting import (
@@ -112,7 +112,7 @@ class TestFormatTrumpLabel:
         assert "★" not in text
 
     def test_no_trump_label(self):
-        text = _format_trump_label(Suit.NO_TRUMP).plain
+        text = _format_trump_label(TrumpVariant.NO_TRUMP).plain
         assert "No Trump" in text
         assert "★" not in text
 

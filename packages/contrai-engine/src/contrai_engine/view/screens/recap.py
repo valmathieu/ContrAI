@@ -452,7 +452,9 @@ def _format_outcome_table(
     # is hand-built so the trump glyph slots into the 24-char gutter.
     row_bel = Text()
     row_bel.append("  Belote (K + Q ", style=FG)
-    if trump is not None and trump != Suit.NO_TRUMP:
+    # A glyph exists only for a real card suit — None (no contract) and
+    # the suitless trump options all fall through to the em-dash.
+    if isinstance(trump, Suit):
         row_bel.append(_suit_glyph(trump), style=_suit_color(trump))
     else:
         row_bel.append("—", style=DIM)

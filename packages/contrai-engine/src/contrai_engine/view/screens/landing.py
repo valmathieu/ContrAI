@@ -13,7 +13,11 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from contrai_engine.view.formatting import _position_short, _suit_glyph
+from contrai_engine.view.formatting import (
+    _position_short,
+    _suit_color,
+    _suit_glyph,
+)
 from contrai_engine.view.theme import (
     BLUE,
     BORDER,
@@ -25,7 +29,6 @@ from contrai_engine.view.theme import (
     GOLD_FG,
     GREEN_FG,
     ORANGE,
-    RED,
     TARGET_OPTIONS,
     TITLE,
     YELLOW,
@@ -59,8 +62,8 @@ def _landing_subtitle() -> Text:
 def _landing_suit_ribbon() -> Text:
     """Centered decorative ribbon of the four suit glyphs."""
     ribbon = Text()
-    glyphs = [(Suit.SPADES, FG), (Suit.HEARTS, RED),
-              (Suit.DIAMONDS, RED), (Suit.CLUBS, FG)]
+    # One glyph per card suit, in Suit's own order.
+    glyphs = [(suit, _suit_color(suit)) for suit in Suit]
     # Build "  ♠   ♥   ♦   ♣  " then center it.
     segments = []
     for suit, color in glyphs:

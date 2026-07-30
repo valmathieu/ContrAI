@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .types import Suit, Rank
+from .exceptions import InvalidCardError
+from .types import ContractSuit, Suit, Rank
 # Aliased on import: the module-level predicate and the ``Card.is_trump``
 # method below would otherwise share a name, and while Python resolves the
 # call inside the method body to this global, the alias spares the reader
@@ -94,20 +95,45 @@ class Card:
         Suit.CLUBS: "♣",
     }
 
+    def __post_init__(self) -> None:
+        """Reject a suit no physical card can carry, at construction time.
+
+        Mirrors :meth:`contrai_core.ContractBid.__post_init__`: the type is
+        checked where the object is built, not where it later misbehaves.
+        The path this closes is real rather than hypothetical —
+        ``Hand.has_card(suit, rank)`` is implemented as ``Card(suit, rank)
+        in self``, and the round's belote detection feeds it
+        ``contract.suit`` directly. A no-trump contract reaching that call
+        would otherwise mint a ``Card`` in a suit no deck contains and
+        quietly find nothing.
+
+        Raises:
+            InvalidCardError: If ``suit`` is not a :class:`Suit` member —
+                typically a :class:`TrumpVariant` that belongs on a
+                contract rather than on a card.
+        """
+
+        if not isinstance(self.suit, Suit):
+            raise InvalidCardError(
+                f"Invalid card suit: {self.suit!r}. A card must carry one "
+                f"of the four Suit members; NO_TRUMP / ALL_TRUMP are "
+                f"contract trump options (TrumpVariant), not card suits."
+            )
+
     def __str__(self) -> str:
         return f"{self.rank.value} {Card.SUIT_SYMBOLS[self.suit]}"
 
     def __repr__(self) -> str:
         return f"Card({self.suit!r}, {self.rank!r})"
 
-    def is_trump(self, trump_suit: Suit | None = None) -> bool:
+    def is_trump(self, trump_suit: ContractSuit | None = None) -> bool:
         """Whether this card plays as trump under ``trump_suit``.
 
         Sugar over :func:`contrai_core.is_trump` for the common case of
         asking about a card in hand or on the table. Prefer it to
-        ``card.suit == trump_suit``: the bare comparison type-checks for
-        every trump option but is only accidentally correct for the ones
-        that name no suit.
+        ``card.suit == trump_suit``: the bare comparison is now a
+        cross-type one that is always ``False`` for a suitless contract
+        trump, which is the right answer only by coincidence.
 
         Args:
             trump_suit: The trump the round's contract settled on, or
@@ -119,12 +145,12 @@ class Card:
 
         return suit_is_trump(self.suit, trump_suit)
 
-    def get_points(self, trump_suit: Suit | None = None) -> int:
+    def get_points(self, trump_suit: ContractSuit | None = None) -> int:
         if self.is_trump(trump_suit):
             return Card.TRUMP_POINTS[self.rank]
         return Card.NORMAL_POINTS[self.rank]
 
-    def get_order(self, trump_suit: Suit | None = None) -> int:
+    def get_order(self, trump_suit: ContractSuit | None = None) -> int:
         if self.is_trump(trump_suit):
             return Card.TRUMP_ORDER[self.rank]
         return Card.NORMAL_ORDER[self.rank]

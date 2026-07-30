@@ -8,7 +8,16 @@ scenarios.
 
 import pytest
 
-from contrai_core import BasePlayer, Card, Position, Rank, Suit, TrickStateError, Trick
+from contrai_core import (
+    BasePlayer,
+    Card,
+    Position,
+    Rank,
+    Suit,
+    TrickStateError,
+    Trick,
+    TrumpVariant,
+)
 from contrai_core.trick import current_winner
 
 
@@ -242,13 +251,13 @@ class TestTrickCurrentWinner:
         assert trick.get_current_winner(None) is north
 
     def test_no_trump_enum_treated_as_non_trump(self, north, east):
-        """``Suit.NO_TRUMP`` is what the engine passes for a no-trump
+        """``TrumpVariant.NO_TRUMP`` is what the engine passes for a no-trump
         contract; no card carries that suit, so play reduces to the
         follow-suit rule exactly as passing ``None`` does."""
         trick = Trick()
         trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
         trick.add_play(east, Card(Suit.SPADES, Rank.SEVEN))
-        assert trick.get_current_winner(Suit.NO_TRUMP) is north
+        assert trick.get_current_winner(TrumpVariant.NO_TRUMP) is north
 
     def test_higher_trump_takes_over(self, north, east, south):
         trick = Trick()

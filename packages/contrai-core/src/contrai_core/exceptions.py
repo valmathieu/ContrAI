@@ -92,6 +92,27 @@ class InvalidCardCountError(ContraiError, ValueError):
         self.context = context
 
 
+class InvalidCardError(ContraiError, ValueError):
+    """Raised when a :class:`Card` is built from something that is not a card.
+
+    A physical card carries one of the four :class:`~contrai_core.Suit`
+    members. A contract's trump may also be a
+    :class:`~contrai_core.TrumpVariant` — those name no suit, so they can
+    reach a card constructor only by mistake, and the mistake is worth
+    catching where it is made rather than several tricks later.
+    """
+
+    def __init__(self, message: str, context: str = "") -> None:
+        """Initialize the InvalidCardError.
+
+        Args:
+            message: Human-readable description of the invalid card data.
+            context: Optional free-form context appended to the message.
+        """
+        super().__init__(f"{context}: {message}" if context else message)
+        self.context = context
+
+
 class IllegalBidError(ContraiError, ValueError):
     """Raised when a bid is applied to an :class:`Auction` in which it is illegal.
 
