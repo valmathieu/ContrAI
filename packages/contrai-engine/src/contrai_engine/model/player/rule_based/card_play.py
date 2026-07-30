@@ -133,10 +133,10 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
                 if partner_was_master:
                     continue
                 # Neither followed nor trumped, with no partner to shield the
-                # choice — proof of a trump void. Guarded on ``round_trumps``
-                # rather than ``trump_suit is not None``: the latter is true
-                # for a NO_TRUMP contract, which used to record a void in
-                # Suit.NO_TRUMP — a suit no card can be held in.
+                # choice — proof of a trump void. Guarded on ``round_trumps``,
+                # not on ``trump_suit is not None``: a no-trump contract has a
+                # trump_suit that is simply not a card suit, and ``voids``
+                # holds card suits only.
                 if (
                     round_trumps
                     and card.suit != led_suit
@@ -540,10 +540,9 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         trump_suit = observation.trump_suit
         led_suit = observation.led_suit
         # No trump in this round (no contract, or a no-trump one) and no trump
-        # lead: either way nothing can be cut. One ``trump_suits`` call covers
-        # both no-contract and no-trump — the old chain had to spell them out
-        # separately, and its `trump_suit == Suit.NO_TRUMP` leg was the only
-        # thing standing between a no-trump round and the counting below.
+        # lead: either way nothing can be cut. One ``trump_suits`` call answers
+        # both cases, and its emptiness is what keeps a no-trump round out of
+        # the trump counting below.
         round_trumps = trump_suits(trump_suit)
         if not round_trumps or led_suit is None or is_trump(led_suit, trump_suit):
             return False

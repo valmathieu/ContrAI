@@ -29,7 +29,7 @@ Source at `packages/contrai-engine/src/contrai_engine/`:
 - `cli.py` — `contrai` console-script entry point: landing → game-loop → end-game
 - `tests/` — pytest suite (`test_model/`, `test_view/`)
 
-Everything else (`Card`, `Deck`, `Hand`, `Suit`, `Rank`, `Bid`, `Contract`, `Trick`, `Team`, exceptions) is imported directly from `contrai_core`. There are no back-compat re-exports under the engine namespace anymore.
+Everything else (`Card`, `Deck`, `Hand`, `Suit`, `TrumpVariant`, `Rank`, `Bid`, `Contract`, `Trick`, `Team`, exceptions) is imported directly from `contrai_core`. There are no back-compat re-exports under the engine namespace anymore.
 
 ## Class structure
 
@@ -105,7 +105,7 @@ The two zoom diagrams below break out the dense parts.
     ```plantuml format="svg" source="seq_bidding.puml"
     ```
 
-    The bid loop drives a `contrai_core.Auction` through `itertools.cycle(players_order)`. Each turn looks up `auction.legal_actions(player)`; when the only legal action is `PassBid` (partner just doubled or redoubled, or a pass closed the redouble window) the engine auto-applies it without prompting the player or the view. Otherwise `_gather_bid` consults `player.choose_bid(auction)` and — for the human seat — `view.request_bid_action(player, auction)`, both of which now return real `Bid` instances. The chosen bid is applied via `auction.apply(bid)`, which raises `IllegalBidError` rather than silently downgrading an illegal bid to a Pass. After every commit Round fires `view.on_bid_made(player, bid, history)` so the view can log the action and pause for AI bidders. Once `auction.is_terminal()`, the final `Contract` is materialised by `auction.contract()` and `Round._detect_belote_holder()` scans hands for the K + Q of trump (NO_TRUMP contracts skip the scan). The AI's expert table and the Rich view's renderer both operate on typed `Bid` objects end to end — the legacy wire format (`'Pass'` / `'Double'` / `'Redouble'` / `(value, suit)`) and its `wire_to_bid` / `bid_to_wire` bridge have been retired.
+    The bid loop drives a `contrai_core.Auction` through `itertools.cycle(players_order)`. Each turn looks up `auction.legal_actions(player)`; when the only legal action is `PassBid` (partner just doubled or redoubled, or a pass closed the redouble window) the engine auto-applies it without prompting the player or the view. Otherwise `_gather_bid` consults `player.choose_bid(auction)` and — for the human seat — `view.request_bid_action(player, auction)`, both of which now return real `Bid` instances. The chosen bid is applied via `auction.apply(bid)`, which raises `IllegalBidError` rather than silently downgrading an illegal bid to a Pass. After every commit Round fires `view.on_bid_made(player, bid, history)` so the view can log the action and pause for AI bidders. Once `auction.is_terminal()`, the final `Contract` is materialised by `auction.contract()` and `Round._detect_belote_holder()` scans hands for the K + Q of trump — narrowing the contract's trump with `isinstance(trump, Suit)` first, so a contract naming no suit skips the scan rather than building a card in a suit no deck holds. The AI's expert table and the Rich view's renderer both operate on typed `Bid` objects end to end — the legacy wire format (`'Pass'` / `'Double'` / `'Redouble'` / `(value, suit)`) and its `wire_to_bid` / `bid_to_wire` bridge have been retired.
 
 ??? note "Single trick zoom — `Round.play_trick`"
 
