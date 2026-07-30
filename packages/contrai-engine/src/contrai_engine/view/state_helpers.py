@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from contrai_core import BasePlayer, Card, Position, Suit, Trick
+from contrai_core import BasePlayer, Card, Position, Suit, Trick, trump_suits
 from rich.text import Text
 
 from contrai_engine.view.formatting import (
@@ -84,8 +84,10 @@ def _explain_constraint(
         hint.append(")", style=GREEN_FG)
         return hint
 
-    # No card of led suit. See if we're forced to trump.
-    if trump_suit and all(c.suit == trump_suit for c in playable):
+    # No card of led suit. See if we're forced to trump. The first test asks
+    # whether the round has a trump suit at all — a plain ``if trump_suit``
+    # was true for a NO_TRUMP contract too, since every enum member is truthy.
+    if trump_suits(trump_suit) and all(c.is_trump(trump_suit) for c in playable):
         # Identify the partner / opponent that led, for the message.
         leader = plays[0][0]
         leader_label = _position_short(leader.position)

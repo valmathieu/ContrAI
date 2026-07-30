@@ -976,6 +976,91 @@ class TestOpponentCutExpected:
 
 
 # ---------------------------------------------------------------------------
+# A no-trump round has no trump suit to track
+# ---------------------------------------------------------------------------
+
+
+class TestNoTrumpContract:
+    """Nothing is trump under a ``NO_TRUMP`` contract, so every piece of
+    trump reasoning must come back empty rather than treat ``NO_TRUMP``
+    itself as a suit a seat could be void in or hold cards of.
+    """
+
+    #: A trick where East neither follows hearts nor holds a master partner
+    #: — under a suit contract this is exactly what proves a trump void.
+    @staticmethod
+    def _east_compelled_discard(players):
+        return (
+            Play(players["N"], _c(Suit.HEARTS, Rank.ACE)),
+            Play(players["E"], _c(Suit.CLUBS, Rank.SEVEN)),
+            Play(players["S"], _c(Suit.HEARTS, Rank.KING)),
+            Play(players["W"], _c(Suit.HEARTS, Rank.EIGHT)),
+        )
+
+    def test_derive_tracking_records_no_trump_void(self, players):
+        north = players["N"]
+        obs = _obs(
+            north,
+            [_c(Suit.CLUBS, Rank.ACE)],
+            _contract(north, 100, Suit.NO_TRUMP),
+            completed_tricks=[self._east_compelled_discard(players)],
+        )
+        _, voids = north.cardplay._derive_tracking(obs)
+        # The led-suit void is real and still recorded.
+        assert Suit.HEARTS in voids[players["E"]]
+        # voids maps seats to sets of *card* suits. NO_TRUMP is not one, so
+        # no entry for it may appear — the whole set must be card suits.
+        assert Suit.NO_TRUMP not in voids[players["E"]]
+        assert all(
+            suit in (Suit.SPADES, Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS)
+            for void_suits in voids.values()
+            for suit in void_suits
+        )
+
+    def test_the_same_history_does_prove_a_trump_void_under_a_suit_contract(
+        self, players
+    ):
+        """The control: only the contract differs from the test above."""
+        north = players["N"]
+        obs = _obs(
+            north,
+            [_c(Suit.CLUBS, Rank.ACE)],
+            _contract(north, 100, Suit.SPADES),
+            completed_tricks=[self._east_compelled_discard(players)],
+        )
+        _, voids = north.cardplay._derive_tracking(obs)
+        assert Suit.SPADES in voids[players["E"]]
+
+    def test_no_cut_is_ever_expected(self, players):
+        """No trump exists, so no opponent can ruff anything."""
+        north = players["N"]
+        obs = _obs(
+            north,
+            [_c(Suit.HEARTS, Rank.QUEEN)],
+            _contract(north, 100, Suit.NO_TRUMP),
+            completed_tricks=[self._east_compelled_discard(players)],
+            current_trick=(Play(players["W"], _c(Suit.HEARTS, Rank.NINE)),),
+        )
+        strat = north.cardplay
+        fallen, voids = strat._derive_tracking(obs)
+        assert strat._opponent_cut_expected(obs, fallen, voids) is False
+
+    def test_opponents_never_might_have_trump(self, players):
+        north = players["N"]
+        obs = _obs(
+            north,
+            [_c(Suit.HEARTS, Rank.QUEEN)],
+            _contract(north, 100, Suit.NO_TRUMP),
+            completed_tricks=[self._east_compelled_discard(players)],
+        )
+        strat = north.cardplay
+        fallen, voids = strat._derive_tracking(obs)
+        assert strat._opponents_might_have_trump(
+            Suit.NO_TRUMP, fallen, voids, obs.hand
+        ) is False
+
+
+# ---------------------------------------------------------------------------
 # Parity suite: the trump-pull inference reads derived voids / fallen counts
 # ---------------------------------------------------------------------------
 
@@ -1106,9 +1191,9 @@ class TestPureHelpers:
         assert strat._is_master_card(_c(Suit.HEARTS, Rank.KING), Suit.SPADES, fallen) is False
 
     def test_higher_ranks_respect_trump_vs_normal_order(self, strat):
-        normal = strat._get_higher_ranks(Rank.NINE, Suit.HEARTS, Suit.SPADES)
+        normal = strat._get_higher_ranks(Rank.NINE, as_trump=False)
         assert Rank.JACK in normal and Rank.ACE in normal
-        trump = strat._get_higher_ranks(Rank.NINE, Suit.SPADES, Suit.SPADES)
+        trump = strat._get_higher_ranks(Rank.NINE, as_trump=True)
         assert Rank.JACK in trump and Rank.ACE not in trump  # 9 outranks A in trump
 
     def test_team_winning_reads_the_led_suit_master(self, strat, players):

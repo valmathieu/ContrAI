@@ -5,7 +5,7 @@ from contrai_core.play import PlayObservation
 from contrai_core.player import BasePlayer
 from contrai_core.position import Position
 from contrai_core.trick import current_winner
-from contrai_core.types import Rank, Suit
+from contrai_core.types import Rank, Suit, is_trump, trump_suits
 
 from ..strategy import CardPlayStrategy, PlayerStateMixin
 
@@ -94,6 +94,10 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         """
 
         trump_suit = observation.trump_suit
+        # The round's trump as actual card suits — empty in a no-trump round.
+        # ``voids`` below maps seats to sets of *card* suits, so a round with
+        # nothing trump must contribute no trump-void entry at all.
+        round_trumps = trump_suits(trump_suit)
         fallen: dict[Suit, set] = {
             Suit.SPADES: set(),
             Suit.HEARTS: set(),
@@ -116,7 +120,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
 
                 # Trump led: the led-suit rule above already recorded the
                 # trump void, and no further inference exists.
-                if led_suit == trump_suit:
+                if is_trump(led_suit, trump_suit):
                     continue
 
                 # Reconstruct the pre-play master: the winner among the
@@ -131,11 +135,17 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
                 # voluntary and proves nothing about trump.
                 if partner_was_master:
                     continue
-                if trump_suit is not None and card.suit not in (
-                    led_suit,
-                    trump_suit,
+                # Neither followed nor trumped, with no partner to shield the
+                # choice — proof of a trump void. Guarded on ``round_trumps``
+                # rather than ``trump_suit is not None``: the latter is true
+                # for a NO_TRUMP contract, which used to record a void in
+                # Suit.NO_TRUMP — a suit no card can be held in.
+                if (
+                    round_trumps
+                    and card.suit != led_suit
+                    and not is_trump(card.suit, trump_suit)
                 ):
-                    voids.setdefault(player, set()).add(trump_suit)
+                    voids.setdefault(player, set()).update(round_trumps)
 
         return fallen, voids
 
@@ -149,7 +159,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
 
         if contract and contract.player.team == self.team:
             # Our team has the contract - play the strongest trump
-            trump_cards = [c for c in playable_cards if c.suit == trump_suit]
+            trump_cards = [c for c in playable_cards if c.is_trump(trump_suit)]
             if trump_cards:
                 sorted_trumps = sorted(
                     trump_cards, key=lambda c: c.get_order(trump_suit), reverse=True
@@ -166,11 +176,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
                 return min(aces, key=lambda c: self._count_suit(hand, c.suit))
 
         # Default: play the lowest value card (excluding trump unless only trumps available)
-        non_trump_cards = (
-            [c for c in playable_cards if c.suit != trump_suit]
-            if trump_suit
-            else playable_cards
-        )
+        non_trump_cards = [c for c in playable_cards if not c.is_trump(trump_suit)]
 
         if not non_trump_cards:
             # Only trump cards available, use all playable cards
@@ -208,7 +214,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             and contract.player.team == self.team
             and self._opponents_might_have_trump(trump_suit, fallen, voids, hand)
         ):
-            trump_cards = [c for c in playable_cards if c.suit == trump_suit]
+            trump_cards = [c for c in playable_cards if c.is_trump(trump_suit)]
             if trump_cards:
                 return max(trump_cards, key=lambda c: c.get_order(trump_suit))
 
@@ -224,11 +230,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             return max(master_cards, key=lambda c: self._count_suit(hand, c.suit))
 
         # Default: play the lowest value card (excluding trump unless only trumps available)
-        non_trump_cards = (
-            [c for c in playable_cards if c.suit != trump_suit]
-            if trump_suit
-            else playable_cards
-        )
+        non_trump_cards = [c for c in playable_cards if not c.is_trump(trump_suit)]
 
         if not non_trump_cards:
             # Only trump cards available, use all playable cards
@@ -327,7 +329,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
 
         # 2. Discard a non-trump card.
         non_trump_cards = [
-            c for c in playable_cards if c.suit != trump_suit
+            c for c in playable_cards if not c.is_trump(trump_suit)
         ]
         if non_trump_cards:
             non_master_non_trump = [
@@ -410,8 +412,8 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             return min(same_suit_cards, key=lambda c: c.get_points(trump_suit))
 
         # 3. Can't follow suit — ruff if it wins the trick.
-        if trump_suit and led_suit != trump_suit:
-            trump_cards = [c for c in playable_cards if c.suit == trump_suit]
+        if trump_suits(trump_suit) and not is_trump(led_suit, trump_suit):
+            trump_cards = [c for c in playable_cards if c.is_trump(trump_suit)]
             if trump_cards:
                 winning_trumps = [c for c in trump_cards
                                 if self._can_trump_win(c, plays, trump_suit)]
@@ -465,7 +467,9 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
            so pulling them helps nobody.
 
         Args:
-            trump_suit: The current trump suit.
+            trump_suit: The round's trump, or ``None`` with no contract. A
+                round where nothing is trump answers ``False`` outright —
+                there is no trump for anyone to hold.
             fallen: The fallen-card map from :meth:`_derive_tracking`.
             voids: The per-player proven-void suits from
                 :meth:`_derive_tracking`.
@@ -475,9 +479,16 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             True if at least one opponent might still hold a trump.
         """
 
+        round_trumps = trump_suits(trump_suit)
+        if not round_trumps:
+            return False
+        # Narrowed to a real card suit: both knowledge sources below key on
+        # the fallen map and the void sets, which hold card suits only.
+        trump = round_trumps[0]
+
         # Counting: 8 trumps total; unseen = 8 - fallen - in our hand.
-        trump_fallen = len(fallen.get(trump_suit, set()))
-        trump_in_hand = self._count_suit(hand, trump_suit)
+        trump_fallen = len(fallen.get(trump, set()))
+        trump_in_hand = self._count_suit(hand, trump)
         if trump_fallen >= (8 - trump_in_hand):
             return False
 
@@ -487,7 +498,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         opponents_void = {
             p
             for p, void_suits in voids.items()
-            if trump_suit in void_suits and p.team is not self.team
+            if trump in void_suits and p.team is not self.team
         }
         return len(opponents_void) < 2
 
@@ -531,14 +542,21 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
 
         trump_suit = observation.trump_suit
         led_suit = observation.led_suit
-        if trump_suit is None or led_suit is None:
+        # No trump in this round (no contract, or a no-trump one) and no trump
+        # lead: either way nothing can be cut. One ``trump_suits`` call covers
+        # both no-contract and no-trump — the old chain had to spell them out
+        # separately, and its `trump_suit == Suit.NO_TRUMP` leg was the only
+        # thing standing between a no-trump round and the counting below.
+        round_trumps = trump_suits(trump_suit)
+        if not round_trumps or led_suit is None or is_trump(led_suit, trump_suit):
             return False
-        if led_suit == trump_suit or trump_suit == Suit.NO_TRUMP:
-            return False
+        # Narrowed to a real card suit, which is what the fallen map and the
+        # void sets are keyed by.
+        trump = round_trumps[0]
 
         # Leg 3 — counting: any unseen trump at all?
-        trump_fallen = len(fallen.get(trump_suit, set()))
-        trump_in_hand = self._count_suit(observation.hand, trump_suit)
+        trump_fallen = len(fallen.get(trump, set()))
+        trump_in_hand = self._count_suit(observation.hand, trump)
         if trump_fallen + trump_in_hand >= 8:
             return False
 
@@ -548,17 +566,16 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             player.team is not self.team
             and player not in already_played
             and led_suit in void_suits
-            and trump_suit not in void_suits
+            and trump not in void_suits
             for player, void_suits in voids.items()
         )
 
-    # TODO: replace trump_suit with a boolean is_trump parameter
     def _is_master_card(self, card, trump_suit, fallen: dict[Suit, set]) -> bool:
         """Check if a card is currently the master (highest remaining) in its suit.
 
         Args:
             card: The candidate card.
-            trump_suit: The current trump suit.
+            trump_suit: The round's trump, or ``None`` with no contract.
             fallen: The fallen-card map from :meth:`_derive_tracking`.
         """
 
@@ -566,31 +583,48 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         suit_fallen = fallen.get(card.suit, set())
 
         # Get all ranks higher than this card's rank
-        higher_ranks = self._get_higher_ranks(card.rank, card.suit, trump_suit)
+        higher_ranks = self._get_higher_ranks(
+            card.rank, as_trump=card.is_trump(trump_suit)
+        )
 
         # Check if all higher cards have fallen
         return all(rank in suit_fallen for rank in higher_ranks)
 
     @staticmethod
-    def _get_higher_ranks(rank, suit, trump_suit):
-        """Get all ranks higher than the given rank in the suit."""
+    def _get_higher_ranks(rank: Rank, *, as_trump: bool) -> list[Rank]:
+        """Get all ranks higher than the given rank, in the applicable order.
 
-        if suit == trump_suit:
+        Takes the already-decided answer rather than a suit to compare
+        against: only the caller knows whether the card in hand is trump,
+        and re-deriving it here from a suit pair is what let a contract
+        naming no suit pick the wrong ordering unnoticed.
+
+        Args:
+            rank: The rank to rank above.
+            as_trump: Whether to use the trump ordering (the card is trump)
+                or the plain one.
+
+        Returns:
+            The ranks above ``rank``, weakest first; empty if it is already
+            the highest.
+        """
+
+        if as_trump:
             # Trump order: 7, 8, Queen, King, 10, Ace, 9, Jack
-            trump_order = [
+            rank_order = [
                 Rank.SEVEN, Rank.EIGHT, Rank.QUEEN, Rank.KING,
                 Rank.TEN, Rank.ACE, Rank.NINE, Rank.JACK,
             ]
         else:
             # Normal order: 7, 8, 9, Jack, Queen, King, 10, Ace
-            trump_order = [
+            rank_order = [
                 Rank.SEVEN, Rank.EIGHT, Rank.NINE, Rank.JACK,
                 Rank.QUEEN, Rank.KING, Rank.TEN, Rank.ACE,
             ]
 
         try:
-            rank_index = trump_order.index(rank)
-            return trump_order[rank_index + 1:]
+            rank_index = rank_order.index(rank)
+            return rank_order[rank_index + 1:]
         except ValueError:
             return []
 
@@ -657,15 +691,15 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         cards = [card for _, card in plays]
 
         # Trump cards beat non-trump (unless led suit is trump)
-        if led_suit != trump_suit:
-            trump_cards = [c for c in cards if c.suit == trump_suit]
+        if not is_trump(led_suit, trump_suit):
+            trump_cards = [c for c in cards if c.is_trump(trump_suit)]
             if trump_cards:
                 return max(trump_cards, key=lambda c: c.get_order(trump_suit))
 
         # Among cards of led suit
         led_suit_cards = [c for c in cards if c.suit == led_suit]
         if led_suit_cards:
-            order_suit = trump_suit if led_suit == trump_suit else None
+            order_suit = trump_suit if is_trump(led_suit, trump_suit) else None
             return max(led_suit_cards, key=lambda c: c.get_order(order_suit))
 
         return cards[0]
@@ -677,17 +711,20 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         if not current_best:
             return True
 
+        best_is_trump = current_best.is_trump(trump_suit)
+        card_is_trump = card.is_trump(trump_suit)
+
         # If current best is trump and our card isn't (and trump is not led suit)
-        if current_best.suit == trump_suit and card.suit != trump_suit:
+        if best_is_trump and not card_is_trump:
             return False
 
         # If our card is trump and current best isn't
-        if card.suit == trump_suit and current_best.suit != trump_suit:
+        if card_is_trump and not best_is_trump:
             return True
 
         # Both trump or both same suit
         if card.suit == current_best.suit:
-            order_suit = trump_suit if card.suit == trump_suit else None
+            order_suit = trump_suit if card_is_trump else None
             return card.get_order(order_suit) > current_best.get_order(order_suit)
 
         return False

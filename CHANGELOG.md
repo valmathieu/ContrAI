@@ -21,6 +21,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 - (core) Suits now render as their display name wherever one is embedded in text — a contract reads `100 Spades by North` instead of `100 Suit.SPADES by North`.
 - (core) An all-trump contract now raises instead of quietly playing out as a no-trump one. The variant is still unimplemented; it just no longer answers "no card is trump" when the right answer is "every card is".
+- (engine) Under a no-trump contract the AI no longer records seats as "void in No Trump" — a suit no card can be held in. Its card tracking now leaves the trump entry out of a no-trump round entirely, so the trump-pull and anticipated-ruff inferences read a clean void map instead of a polluted one.
 
 ## [0.2.0] - 2026-07-25
 

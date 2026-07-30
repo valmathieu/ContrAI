@@ -209,8 +209,10 @@ class Round:
             return False
         if player is not self.belote_holder:
             return False
-        trump = self.contract.suit
-        return card.suit == trump and card.rank in (Rank.KING, Rank.QUEEN)
+        return card.is_trump(self.contract.suit) and card.rank in (
+            Rank.KING,
+            Rank.QUEEN,
+        )
 
     def _transition_belote_state(self, player: Player) -> Optional[str]:
         """Advance the belote_state machine and return the new state name.
