@@ -1,10 +1,14 @@
-"""Trick class for the contrée card game.
+"""Trick containers for the contrée card game.
 
-This class represents a single trick in the game.
+Two shapes of trick live here: the mutable :class:`Trick` the engine fills
+play by play, and the immutable :class:`TrickRecord` value that types a
+*completed* trick in the play-phase histories. The winner rule itself is
+the module-level :func:`current_winner` / :func:`_best_play` pair, shared
+by both.
 """
 
 from __future__ import annotations
-from typing import List, Tuple, Optional, TypeVar, TYPE_CHECKING
+from typing import Iterable, List, Sequence, Tuple, Optional, TypeVar, TYPE_CHECKING
 
 from .exceptions import TrickStateError
 
@@ -19,6 +23,12 @@ if TYPE_CHECKING:
 # (``Play`` carrying a ``BasePlayer``) and the sealed observation records
 # (``ObservedPlay`` carrying a ``Position``).
 PlayerT = TypeVar("PlayerT")
+
+# The record type a completed trick holds — a ``Play`` in state contexts,
+# an ``ObservedPlay`` in observations. ``TrickRecord`` is generic over it
+# the same way ``current_winner`` is generic over the "who" slot: the
+# rules only read each record's ``card``, everything else rides along.
+RecordT = TypeVar("RecordT")
 
 class Trick:
     """
@@ -161,31 +171,140 @@ def current_winner(
             ``TrumpVariant.ALL_TRUMP``, propagated from
             :func:`contrai_core.is_trump`.
     """
+    best = _best_play(plays, trump_suit)
+    return None if best is None else best[0]
+
+
+def _best_play(
+    plays: Sequence[Tuple[PlayerT, Card]], trump_suit: Optional[ContractSuit]
+) -> Optional[Tuple[PlayerT, Card]]:
+    """Return the winning play of a (possibly partial) trick.
+
+    The single implementation of the winner ladder: trump beats non-trump,
+    higher trump beats lower trump, and among non-trumps only the led suit
+    competes. :func:`current_winner` peels the "who" slot off the result;
+    :meth:`TrickRecord.winner` hands the whole record back.
+
+    Args:
+        plays: The ordered (who, card) pairs played so far, in play order.
+            The first entry sets the led suit.
+        trump_suit: The trump suit to evaluate against; ``None`` /
+            ``TrumpVariant.NO_TRUMP`` reduce every trump branch to the
+            follow-suit rule.
+
+    Returns:
+        The winning play — whatever record type the caller put in — or
+        ``None`` if no card has been played yet.
+
+    Raises:
+        NotImplementedError: If ``trump_suit`` is
+            ``TrumpVariant.ALL_TRUMP``, propagated from
+            :func:`contrai_core.is_trump`.
+    """
     if not plays:
         return None
 
     lead_suit = plays[0][1].suit
-    best_player = plays[0][0]
-    best_card = plays[0][1]
-    best_is_trump = best_card.is_trump(trump_suit)
+    best = plays[0]
+    best_is_trump = best[1].is_trump(trump_suit)
 
-    for player, card in plays[1:]:
+    for play in plays[1:]:
+        card = play[1]
         card_is_trump = card.is_trump(trump_suit)
 
         if card_is_trump and not best_is_trump:
             # Trump beats non-trump
-            best_player = player
-            best_card = card
+            best = play
             best_is_trump = True
         elif card_is_trump and best_is_trump:
             # Compare trump cards (Jack > 9 > Ace > 10 > King > Queen > 8 > 7)
-            if card.get_order(trump_suit) > best_card.get_order(trump_suit):
-                best_player = player
-                best_card = card
+            if card.get_order(trump_suit) > best[1].get_order(trump_suit):
+                best = play
         elif not card_is_trump and not best_is_trump and card.suit == lead_suit:
             # Compare cards of the same suit (non-trump)
-            if card.get_order() > best_card.get_order():
-                best_player = player
-                best_card = card
+            if card.get_order() > best[1].get_order():
+                best = play
 
-    return best_player
+    return best
+
+
+class TrickRecord(tuple[RecordT, ...]):
+    """A completed trick: exactly four play records, as an immutable tuple.
+
+    A thin ``tuple`` subclass — it iterates, unpacks, slices, and compares
+    exactly like the bare four-record tuples it types, so every consumer
+    that reads a completed trick as a plain sequence keeps working
+    unchanged. What it adds is the completed-trick invariant (exactly four
+    records, enforced at construction) and the two derived facts every
+    reader wants: :attr:`led_suit` and :meth:`winner`.
+
+    Generic over the record type: a trick out of
+    :attr:`contrai_core.PlayState.completed_tricks` holds
+    :class:`~contrai_core.Play` records, one out of
+    :attr:`contrai_core.PlayObservation.completed_tricks` holds sealed
+    :class:`~contrai_core.ObservedPlay` records. The rules only read each
+    record's ``card``; the "who" slot rides along untouched.
+
+    Nothing is cached: ``led_suit`` and ``winner`` recompute on every
+    call, mirroring how ``PlayState`` recomputes its derived views from
+    the flat play history.
+    """
+
+    __slots__ = ()
+
+    def __new__(cls, plays: Iterable[RecordT]) -> "TrickRecord[RecordT]":
+        """Build a completed-trick record from exactly four plays.
+
+        Args:
+            plays: The trick's play records, in play order. A single
+                iterable, consumed once.
+
+        Returns:
+            The immutable four-record trick.
+
+        Raises:
+            TrickStateError: If ``plays`` does not hold exactly four
+                records — a completed trick has no other size.
+        """
+
+        records = tuple(plays)
+        if len(records) != 4:
+            raise TrickStateError(
+                f"A completed trick holds exactly 4 plays, got "
+                f"{len(records)}."
+            )
+        return super().__new__(cls, records)
+
+    @property
+    def led_suit(self) -> Suit:
+        """The suit of the trick's first card — the suit that was led."""
+
+        return self[0].card.suit
+
+    def winner(self, trump_suit: Optional[ContractSuit]) -> RecordT:
+        """Return the record that won this trick.
+
+        Takes the contract's trump — not a rules object — so call sites
+        keep the same signature whichever contract regime a future round
+        plays under.
+
+        Args:
+            trump_suit: The trump suit to evaluate against, taken from
+                the round's contract; ``None`` / ``TrumpVariant.NO_TRUMP``
+                reduce every trump branch to the follow-suit rule.
+
+        Returns:
+            The winning play record — a :class:`~contrai_core.Play` in
+            state contexts, an :class:`~contrai_core.ObservedPlay` in
+            observations — never ``None``, since a completed trick always
+            has four plays.
+
+        Raises:
+            NotImplementedError: If ``trump_suit`` is
+                ``TrumpVariant.ALL_TRUMP``, propagated from
+                :func:`contrai_core.is_trump`.
+        """
+
+        best = _best_play(self, trump_suit)
+        assert best is not None  # four plays — a winner always exists
+        return best

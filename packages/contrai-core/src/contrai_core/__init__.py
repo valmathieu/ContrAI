@@ -23,7 +23,7 @@ from .player import BasePlayer
 from .bid import Bid, PassBid, ContractBid, DoubleBid, RedoubleBid, SlamLevel
 from .auction import Auction
 from .contract import Contract
-from .trick import Trick
+from .trick import Trick, TrickRecord
 from .play import Play, ObservedPlay, PlayState, PlayObservation
 from .exceptions import (
     ContraiError,
@@ -64,6 +64,7 @@ __all__ = [
     "Auction",
     "Contract",
     "Trick",
+    "TrickRecord",
     "Play",
     "ObservedPlay",
     "PlayState",

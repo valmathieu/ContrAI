@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, NamedTuple, Optional
 
 from .exceptions import IllegalPlayError, PlayRuleViolation
-from .trick import current_winner
+from .trick import TrickRecord, current_winner
 from .types import is_trump, trump_suits
 
 if TYPE_CHECKING:
@@ -213,11 +213,17 @@ class PlayState:
         return self.plays[self.trick_number * 4:]
 
     @property
-    def completed_tricks(self) -> tuple[tuple[Play, ...], ...]:
-        """The completed tricks, each a tuple of exactly four plays."""
+    def completed_tricks(self) -> tuple[TrickRecord[Play], ...]:
+        """The completed tricks, each a :class:`TrickRecord` of four plays.
+
+        Each record iterates and unpacks exactly like the bare four-play
+        tuple it types, and additionally knows its :attr:`~TrickRecord.led_suit`
+        and :meth:`~TrickRecord.winner`.
+        """
 
         return tuple(
-            self.plays[i:i + 4] for i in range(0, self.trick_number * 4, 4)
+            TrickRecord(self.plays[i:i + 4])
+            for i in range(0, self.trick_number * 4, 4)
         )
 
     @property
@@ -526,7 +532,8 @@ class PlayState:
             contract=self.contract,
             bids=tuple(bids),
             completed_tricks=tuple(
-                _seal_plays(trick) for trick in self.completed_tricks
+                TrickRecord(_seal_plays(trick))
+                for trick in self.completed_tricks
             ),
             current_trick=_seal_plays(self.current_trick),
             legal_cards=self.legal_actions(player),
@@ -605,7 +612,8 @@ class PlayObservation:
         bids: The auction history, passed through unchanged from whatever
             :meth:`PlayState.observe` was given — the play state itself
             has no notion of the auction.
-        completed_tricks: The completed tricks, each a tuple of four
+        completed_tricks: The completed tricks, each a
+            :class:`~contrai_core.TrickRecord` of four
             :class:`ObservedPlay` records mirroring
             :attr:`PlayState.completed_tricks` play for play — this
             history is public.
@@ -619,7 +627,7 @@ class PlayObservation:
     hand: tuple[Card, ...]
     contract: Contract
     bids: tuple[Bid, ...]
-    completed_tricks: tuple[tuple[ObservedPlay, ...], ...]
+    completed_tricks: tuple[TrickRecord[ObservedPlay], ...]
     current_trick: tuple[ObservedPlay, ...]
     legal_cards: tuple[Card, ...]
 

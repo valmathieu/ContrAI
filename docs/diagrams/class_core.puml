@@ -457,7 +457,32 @@ package "contract.py / trick.py" as p_contract {
 
     class "trick.py" as p_trick_fn <<module>> {
         current_winner(plays, trump_suit) : PlayerT? <<generic over the plays' "who" slot>>
+        - _best_play(plays, trump_suit) : (PlayerT, Card)? <<the shared winner ladder>>
     }
+
+    class TrickRecord <<tuple subclass>> {
+        + ~__new~__(plays: Iterable<RecordT>) <<exactly 4, else TrickStateError>>
+        --
+        + led_suit : Suit                       <<property>>
+        + winner(trump_suit: ContractSuit?) : RecordT
+    }
+
+    note bottom of TrickRecord
+      A **completed** trick as an immutable value: a
+      thin ""tuple"" subclass (""~__slots~__ = ()"", no
+      caching) holding exactly four play records, so it
+      iterates, unpacks and compares exactly like the
+      bare 4-tuples it types. Generic over the record
+      type: ""Play"" in ""PlayState.completed_tricks"",
+      sealed ""ObservedPlay"" in
+      ""PlayObservation.completed_tricks"".
+      ""winner(trump_suit)"" returns the winning
+      //record// (not just the who-slot) and takes the
+      contract's trump — not a rules object — so call
+      sites never re-signature when contract regimes
+      arrive. Both it and ""current_winner"" delegate
+      to the one private ""~_best~_play"" ladder.
+    end note
 
     note bottom of Trick
       A dumb container of plays — it does **not**
@@ -509,7 +534,7 @@ package "play.py" as p_play {
         --
         + trick_number : int                    <<property>>
         + current_trick : tuple<Play>            <<property>>
-        + completed_tricks : tuple<tuple<Play>>  <<property>>
+        + completed_tricks : tuple<TrickRecord<Play>> <<property>>
         + trick_winners : tuple<BasePlayer>      <<property>>
         + to_act : BasePlayer?                   <<property>>
     }
@@ -519,7 +544,7 @@ package "play.py" as p_play {
         + hand : tuple<Card>
         + contract : Contract
         + bids : tuple<Bid>
-        + completed_tricks : tuple<tuple<ObservedPlay>>
+        + completed_tricks : tuple<TrickRecord<ObservedPlay>>
         + current_trick : tuple<ObservedPlay>
         + legal_cards : tuple<Card>
         --
@@ -706,6 +731,11 @@ Trick "1" *-- "0..4" Card        : (via plays)
 Trick "1" o-- "0..4" BasePlayer  : (via plays)
 Trick ..> p_contractsuit         : get_current_winner(trump_suit)
 Trick ..> p_trick_fn             : <<delegates>>
+
+' TrickRecord types every completed trick in the play-phase histories
+TrickRecord ..> p_trick_fn       : winner <<delegates>>
+PlayState ..> TrickRecord        : <<builds completed_tricks>>
+PlayObservation "1" *-- "0..8" TrickRecord : completed_tricks
 
 ' Play is a (player, card) pair — same ownership split as Trick's plays
 Play "1" o-- "1" BasePlayer : player

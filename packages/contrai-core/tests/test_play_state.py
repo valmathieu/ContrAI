@@ -21,6 +21,7 @@ from contrai_core import (
     PlayState,
     Rank,
     Suit,
+    TrickRecord,
     TrumpVariant,
 )
 from contrai_core.bid import ContractBid
@@ -249,6 +250,8 @@ class TestDerivedPropertyBoundaries:
         assert state.current_trick == ()
         assert len(state.completed_tricks) == 1
         assert len(state.completed_tricks[0]) == 4
+        # Completed tricks are typed TrickRecord values (still tuples).
+        assert isinstance(state.completed_tricks[0], TrickRecord)
         assert len(state.trick_winners) == 1
 
     def test_terminal_boundary(self, players):
