@@ -5,7 +5,7 @@ from contrai_core.play import PlayObservation
 from contrai_core.player import BasePlayer
 from contrai_core.position import Position
 from contrai_core.trick import current_winner
-from contrai_core.types import Rank, Suit, is_trump, trump_suits
+from contrai_core.types import ContractSuit, Rank, Suit, is_trump, trump_suits
 
 from ..strategy import CardPlayStrategy, PlayerStateMixin
 
@@ -446,7 +446,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
 
     def _opponents_might_have_trump(
         self,
-        trump_suit: Suit,
+        trump_suit: ContractSuit | None,
         fallen: dict[Suit, set],
         voids: dict[BasePlayer, set[Suit]],
         hand,
