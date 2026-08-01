@@ -404,7 +404,7 @@ package "contract.py / trick.py" as p_contract {
     }
 
     class "trick.py" as p_trick_fn <<module>> {
-        current_winner(plays, trump_suit) : BasePlayer?
+        current_winner(plays, trump_suit) : PlayerT? <<generic over the plays' "who" slot>>
     }
 
     note bottom of Trick
@@ -436,6 +436,11 @@ package "play.py" as p_play {
         + card : Card
     }
 
+    class ObservedPlay <<namedtuple>> {
+        + position : Position
+        + card : Card
+    }
+
     class PlayState <<frozen dataclass>> {
         + contract : Contract
         + players : tuple<BasePlayer>
@@ -462,15 +467,15 @@ package "play.py" as p_play {
         + hand : tuple<Card>
         + contract : Contract
         + bids : tuple<Bid>
-        + completed_tricks : tuple<tuple<Play>>
-        + current_trick : tuple<Play>
+        + completed_tricks : tuple<tuple<ObservedPlay>>
+        + current_trick : tuple<ObservedPlay>
         + legal_cards : tuple<Card>
         --
         + trick_number : int            <<property>>
         + trump_suit : ContractSuit?    <<property>>
         + led_suit : Suit?              <<property>>
         + played_cards : tuple<Card>    <<property>>
-        + current_winner : BasePlayer?  <<property>>
+        + current_winner : Position?    <<property>>
     }
 
     note bottom of PlayState
@@ -501,12 +506,13 @@ package "play.py" as p_play {
       The imperfect-information projection
       PlayState.observe(player, bids) builds: own
       hand + public trick history + own legal
-      cards, never another seat's hand. Caveat:
-      Play.player is a live BasePlayer reference,
-      so a strategy reaching through
-      play.player.hand could still see another
-      seat's cards — sealing that off (e.g. an
-      opaque seat id) is a noted follow-up.
+      cards, never another seat's hand. The trick
+      records are sealed ""ObservedPlay""
+      ""(position, card)"" pairs — no live
+      ""BasePlayer"" (so no hand) is reachable
+      through them. ""contract"" / ""bids"" still
+      name the players who bid; sealing those too
+      is deferred to the AI-training work.
     end note
 }
 
@@ -645,6 +651,12 @@ Trick ..> p_trick_fn             : <<delegates>>
 ' Play is a (player, card) pair — same ownership split as Trick's plays
 Play "1" o-- "1" BasePlayer : player
 Play "1" *-- "1" Card       : card
+
+' ObservedPlay is the sealed observation-facing record: the seat's
+' Position replaces the live BasePlayer, so no hand crosses observe()
+ObservedPlay --> Position   : position
+ObservedPlay "1" *-- "1" Card : card
+PlayObservation "1" *-- "0..32" ObservedPlay : completed_tricks / current_trick
 
 ' PlayState references the established contract + seated players,
 ' composes the flat play history, and holds per-seat remaining hands

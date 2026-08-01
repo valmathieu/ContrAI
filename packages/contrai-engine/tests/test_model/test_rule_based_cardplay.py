@@ -1,11 +1,14 @@
 """Unit tests for the rule-based AI card-play strategy.
 
 The strategy is handed a single frozen ``PlayObservation`` and derives
-its own card tracking (fallen cards, per-player proven-void suits) from
-the observation's public trick history — there is no mutable per-round
-state to seed. Every scenario below is therefore expressed by building a real
-observation (own hand, contract, and completed / in-progress tricks made
-of genuine ``Play`` records), never by poking attributes on the strategy.
+its own card tracking (fallen cards, per-seat proven-void suits, keyed
+by ``Position``) from the observation's public trick history — there is
+no mutable per-round state to seed. Every scenario below is therefore
+expressed by building a real observation (own hand, contract, and
+completed / in-progress tricks written as ``Play`` records and sealed to
+``ObservedPlay`` pairs by the ``_obs`` helper, exactly as
+``PlayState.observe`` seals them), never by poking attributes on the
+strategy.
 """
 
 import pytest
@@ -14,9 +17,11 @@ from contrai_core import (
     Card,
     Contract,
     ContractBid,
+    ObservedPlay,
     Play,
     PlayObservation,
     PlayState,
+    Position,
 )
 from contrai_core.types import Suit, Rank, TrumpVariant
 
@@ -38,6 +43,12 @@ def _obs(
 ):
     """Assemble a :class:`PlayObservation` for ``observer``.
 
+    Scenario tricks are written as omniscient :class:`Play` records —
+    the same records the engine applies to its play state. This helper
+    seals them to :class:`ObservedPlay` ``(position, card)`` pairs
+    exactly as ``PlayState.observe`` does, so the strategy under test
+    receives the same sealed surface production hands it.
+
     Args:
         observer: The seat the observation is from the point of view of.
         hand: The observer's own remaining cards.
@@ -51,13 +62,19 @@ def _obs(
         bids: The auction history to attach.
     """
     hand = tuple(hand)
+
+    def seal(plays):
+        return tuple(
+            ObservedPlay(play.player.position, play.card) for play in plays
+        )
+
     return PlayObservation(
         player=observer,
         hand=hand,
         contract=contract,
         bids=tuple(bids),
-        completed_tricks=tuple(tuple(trick) for trick in completed_tricks),
-        current_trick=tuple(current_trick),
+        completed_tricks=tuple(seal(trick) for trick in completed_tricks),
+        current_trick=seal(current_trick),
         legal_cards=tuple(hand if legal_cards is None else legal_cards),
     )
 
@@ -715,8 +732,8 @@ class TestDeriveTracking:
         fallen, voids = north.cardplay._derive_tracking(obs)
         assert Rank.SEVEN in fallen[Suit.CLUBS]
         # Partner-master exemption: the heart void is proven, trump isn't.
-        assert Suit.SPADES not in voids[players["E"]]
-        assert Suit.HEARTS in voids[players["E"]]
+        assert Suit.SPADES not in voids[Position.EAST]
+        assert Suit.HEARTS in voids[Position.EAST]
 
     def test_trump_lead_off_suit_always_proves_void(self, players):
         """On a trump lead the partner-master exemption does not apply."""
@@ -737,7 +754,7 @@ class TestDeriveTracking:
             completed_tricks=[completed],
         )
         _, voids = north.cardplay._derive_tracking(obs)
-        assert Suit.SPADES in voids[players["S"]]
+        assert Suit.SPADES in voids[Position.SOUTH]
 
     def test_pre_play_winner_is_read_before_the_play_lands(self, players):
         """The off-by-one case: a seat compelled to discard is void even
@@ -763,7 +780,7 @@ class TestDeriveTracking:
             completed_tricks=[completed],
         )
         fallen, voids = north.cardplay._derive_tracking(obs)
-        assert Suit.SPADES in voids[players["E"]]
+        assert Suit.SPADES in voids[Position.EAST]
         assert fallen[Suit.CLUBS] == {Rank.SEVEN}
         assert fallen[Suit.SPADES] == {Rank.SEVEN}
 
@@ -832,8 +849,8 @@ class TestSuitVoidTracking:
             completed_tricks=[completed],
         )
         _, voids = north.cardplay._derive_tracking(obs)
-        assert Suit.HEARTS in voids[players["E"]]
-        assert Suit.SPADES not in voids[players["E"]]
+        assert Suit.HEARTS in voids[Position.EAST]
+        assert Suit.SPADES not in voids[Position.EAST]
 
     def test_ruff_records_led_suit_void(self, players):
         """A ruff is a non-follow too: West cutting a heart lead proves
@@ -852,8 +869,8 @@ class TestSuitVoidTracking:
             completed_tricks=[completed],
         )
         _, voids = north.cardplay._derive_tracking(obs)
-        assert Suit.HEARTS in voids[players["W"]]
-        assert Suit.SPADES not in voids[players["W"]]
+        assert Suit.HEARTS in voids[Position.WEST]
+        assert Suit.SPADES not in voids[Position.WEST]
 
 
 class TestOpponentCutExpected:
@@ -1007,10 +1024,10 @@ class TestNoTrumpContract:
         )
         _, voids = north.cardplay._derive_tracking(obs)
         # The led-suit void is real and still recorded.
-        assert Suit.HEARTS in voids[players["E"]]
+        assert Suit.HEARTS in voids[Position.EAST]
         # voids maps seats to sets of *card* suits. NO_TRUMP is not one, so
         # no entry for it may appear — the whole set must be card suits.
-        assert TrumpVariant.NO_TRUMP not in voids[players["E"]]
+        assert TrumpVariant.NO_TRUMP not in voids[Position.EAST]
         assert all(
             suit in (Suit.SPADES, Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS)
             for void_suits in voids.values()
@@ -1029,7 +1046,7 @@ class TestNoTrumpContract:
             completed_tricks=[self._east_compelled_discard(players)],
         )
         _, voids = north.cardplay._derive_tracking(obs)
-        assert Suit.SPADES in voids[players["E"]]
+        assert Suit.SPADES in voids[Position.EAST]
 
     def test_no_cut_is_ever_expected(self, players):
         """No trump exists, so no opponent can ruff anything."""
@@ -1094,8 +1111,8 @@ class TestTrumpPullInference:
         strat, (fallen, voids), obs_hand = self._derive(
             players, [both_void], hand
         )
-        assert Suit.SPADES in voids[players["E"]]
-        assert Suit.SPADES in voids[players["W"]]
+        assert Suit.SPADES in voids[Position.EAST]
+        assert Suit.SPADES in voids[Position.WEST]
         assert strat._opponents_might_have_trump(
             Suit.SPADES, fallen, voids, obs_hand
         ) is False
@@ -1112,8 +1129,8 @@ class TestTrumpPullInference:
         strat, (fallen, voids), obs_hand = self._derive(
             players, [one_void], hand
         )
-        assert Suit.SPADES in voids[players["E"]]
-        assert players["W"] not in voids
+        assert Suit.SPADES in voids[Position.EAST]
+        assert Position.WEST not in voids
         assert strat._opponents_might_have_trump(
             Suit.SPADES, fallen, voids, obs_hand
         ) is True
@@ -1132,7 +1149,7 @@ class TestTrumpPullInference:
         strat, (fallen, voids), obs_hand = self._derive(
             players, [partner_void], hand
         )
-        assert Suit.SPADES in voids[players["S"]]
+        assert Suit.SPADES in voids[Position.SOUTH]
         assert strat._opponents_might_have_trump(
             Suit.SPADES, fallen, voids, obs_hand
         ) is True
@@ -1196,32 +1213,34 @@ class TestPureHelpers:
         trump = strat._get_higher_ranks(Rank.NINE, as_trump=True)
         assert Rank.JACK in trump and Rank.ACE not in trump  # 9 outranks A in trump
 
-    def test_team_winning_reads_the_led_suit_master(self, strat, players):
+    def test_team_winning_reads_the_led_suit_master(self, strat):
+        # The helpers receive sealed observation records in production,
+        # so they are exercised with (position, card) pairs directly.
         partner_master = (
-            Play(players["S"], _c(Suit.HEARTS, Rank.ACE)),
-            Play(players["W"], _c(Suit.HEARTS, Rank.KING)),
+            ObservedPlay(Position.SOUTH, _c(Suit.HEARTS, Rank.ACE)),
+            ObservedPlay(Position.WEST, _c(Suit.HEARTS, Rank.KING)),
         )
         assert strat._is_team_winning_trick(partner_master) is True
         opponent_master = (
-            Play(players["W"], _c(Suit.HEARTS, Rank.ACE)),
-            Play(players["S"], _c(Suit.HEARTS, Rank.KING)),
+            ObservedPlay(Position.WEST, _c(Suit.HEARTS, Rank.ACE)),
+            ObservedPlay(Position.SOUTH, _c(Suit.HEARTS, Rank.KING)),
         )
         assert strat._is_team_winning_trick(opponent_master) is False
 
-    def test_strongest_card_with_trump_on_the_table(self, strat, players):
+    def test_strongest_card_with_trump_on_the_table(self, strat):
         plays = (
-            Play(players["N"], _c(Suit.HEARTS, Rank.ACE)),
-            Play(players["E"], _c(Suit.HEARTS, Rank.KING)),
-            Play(players["S"], _c(Suit.SPADES, Rank.EIGHT)),
+            ObservedPlay(Position.NORTH, _c(Suit.HEARTS, Rank.ACE)),
+            ObservedPlay(Position.EAST, _c(Suit.HEARTS, Rank.KING)),
+            ObservedPlay(Position.SOUTH, _c(Suit.SPADES, Rank.EIGHT)),
         )
         best = strat._get_strongest_card_in_trick(plays, Suit.SPADES)
         assert (best.suit, best.rank) == (Suit.SPADES, Rank.EIGHT)
 
-    def test_strongest_card_without_trump(self, strat, players):
+    def test_strongest_card_without_trump(self, strat):
         plays = (
-            Play(players["N"], _c(Suit.HEARTS, Rank.KING)),
-            Play(players["E"], _c(Suit.HEARTS, Rank.ACE)),
-            Play(players["S"], _c(Suit.DIAMONDS, Rank.ACE)),
+            ObservedPlay(Position.NORTH, _c(Suit.HEARTS, Rank.KING)),
+            ObservedPlay(Position.EAST, _c(Suit.HEARTS, Rank.ACE)),
+            ObservedPlay(Position.SOUTH, _c(Suit.DIAMONDS, Rank.ACE)),
         )
         best = strat._get_strongest_card_in_trick(plays, Suit.SPADES)
         assert (best.suit, best.rank) == (Suit.HEARTS, Rank.ACE)

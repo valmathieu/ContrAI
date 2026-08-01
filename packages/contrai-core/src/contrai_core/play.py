@@ -20,8 +20,10 @@ search or reinforcement-learning game-state interface wants:
   replacement hands — the determinization primitive search-based AIs need.
 - :meth:`PlayState.observe` to project the full state — which holds every
   seat's hand — down to a :class:`PlayObservation`, the imperfect-
-  information view a single player is allowed to see. This is the input
-  surface handed to AI card-play strategies, never the raw ``PlayState``.
+  information view a single player is allowed to see. Its trick records
+  are sealed to :class:`ObservedPlay` ``(position, card)`` pairs. This is
+  the input surface handed to AI card-play strategies, never the raw
+  ``PlayState``.
 
 Play records are plain ``(player, card)`` pairs, so the same tuples flow
 through the derived views and the winner rule (:func:`current_winner`) that
@@ -42,6 +44,7 @@ if TYPE_CHECKING:
     from .card import Card
     from .contract import Contract
     from .player import BasePlayer
+    from .position import Position
     from .team import Team
     from .types import ContractSuit, Suit
 
@@ -60,6 +63,29 @@ class Play(NamedTuple):
     """
 
     player: BasePlayer
+    card: Card
+
+
+class ObservedPlay(NamedTuple):
+    """A single card play as an observation reports it: seat + card.
+
+    The observation-facing counterpart of :class:`Play`. Where a ``Play``
+    holds a live :class:`BasePlayer` reference — through which a consumer
+    could reach ``player.hand`` and read cards it is not entitled to —
+    an ``ObservedPlay`` carries only the seat's opaque :class:`Position`,
+    so no hand is reachable through a trick record.
+
+    Unpacks as a ``(position, card)`` pair, mirroring how :class:`Play`
+    unpacks as ``(player, card)`` — consumers iterating ``(who, card)``
+    pairs stay drop-in compatible, they just receive a seat identifier
+    for ``who``.
+
+    Attributes:
+        position: The seat that played the card.
+        card: The card that was played.
+    """
+
+    position: Position
     card: Card
 
 
@@ -475,7 +501,9 @@ class PlayState:
         must reason from only what its own seat has observed. The
         resulting :class:`PlayObservation` carries ``player``'s own hand,
         the public trick history, and ``player``'s legal plays right now
-        — nothing else.
+        — nothing else. The trick history is re-recorded as
+        :class:`ObservedPlay` ``(position, card)`` pairs, so no other
+        seat's hand is reachable through what is handed over.
 
         Args:
             player: The observing seat.
@@ -497,8 +525,10 @@ class PlayState:
             hand=self.hand_of(player),
             contract=self.contract,
             bids=tuple(bids),
-            completed_tricks=self.completed_tricks,
-            current_trick=self.current_trick,
+            completed_tricks=tuple(
+                _seal_plays(trick) for trick in self.completed_tricks
+            ),
+            current_trick=_seal_plays(self.current_trick),
             legal_cards=self.legal_actions(player),
         )
 
@@ -556,14 +586,14 @@ class PlayObservation:
     never accidentally read another seat's hand through the object it was
     given.
 
-    Trust-boundary caveat: the :class:`Play` records carried in
-    ``completed_tricks`` and ``current_trick`` hold live ``BasePlayer``
-    references (``Play.player``), so a strategy that reaches through
-    ``play.player.hand`` could technically still see another seat's cards
-    — this observation seals what is *handed over*, not every object path
-    reachable from it. Sealing that off (e.g. replacing ``Play.player``
-    with an opaque seat identifier for observations) is a noted follow-up,
-    not something this projection solves.
+    The trick history is sealed: ``completed_tricks`` and
+    ``current_trick`` carry :class:`ObservedPlay` records — opaque
+    ``(position, card)`` pairs — never live ``BasePlayer`` references,
+    so no other seat's hand is reachable through them. The auction-side
+    values (``contract``, ``bids``) still reference the players who bid;
+    projecting those onto seat identifiers as well is deliberately left
+    to the AI-training work, where the whole observation surface gets
+    serialized anyway.
 
     Attributes:
         player: The observer — the seat this observation is from the
@@ -576,10 +606,11 @@ class PlayObservation:
             :meth:`PlayState.observe` was given — the play state itself
             has no notion of the auction.
         completed_tricks: The completed tricks, each a tuple of four
-            plays, exactly as :attr:`PlayState.completed_tricks` reports —
-            this history is public.
-        current_trick: The plays made so far in the in-progress trick —
-            also public.
+            :class:`ObservedPlay` records mirroring
+            :attr:`PlayState.completed_tricks` play for play — this
+            history is public.
+        current_trick: The plays made so far in the in-progress trick,
+            as :class:`ObservedPlay` records — also public.
         legal_cards: The observer's legal plays right now, a subset of
             ``hand``.
     """
@@ -588,8 +619,8 @@ class PlayObservation:
     hand: tuple[Card, ...]
     contract: Contract
     bids: tuple[Bid, ...]
-    completed_tricks: tuple[tuple[Play, ...], ...]
-    current_trick: tuple[Play, ...]
+    completed_tricks: tuple[tuple[ObservedPlay, ...], ...]
+    current_trick: tuple[ObservedPlay, ...]
     legal_cards: tuple[Card, ...]
 
     @property
@@ -637,17 +668,39 @@ class PlayObservation:
         ) + tuple(play.card for play in self.current_trick)
 
     @property
-    def current_winner(self) -> Optional[BasePlayer]:
-        """The player currently winning the in-progress trick.
+    def current_winner(self) -> Optional[Position]:
+        """The seat currently winning the in-progress trick.
 
         ``None`` while the trick is empty. Computed the same way
         :attr:`PlayState.trick_winners` computes a completed trick's
-        winner — via the module-level :func:`current_winner` — so a
-        partially played trick and a just-completed one agree on who is
-        master.
+        winner — via the module-level :func:`current_winner`, which is
+        generic over the "who" slot of its plays — so a partially played
+        trick and a just-completed one agree on who is master. Reported
+        as a :class:`Position` because that is all the sealed
+        :class:`ObservedPlay` records carry.
         """
 
         return current_winner(list(self.current_trick), self.trump_suit)
+
+
+def _seal_plays(plays: tuple[Play, ...]) -> tuple[ObservedPlay, ...]:
+    """Project :class:`Play` records down to sealed observation records.
+
+    The seat's :class:`Position` replaces the live :class:`BasePlayer`
+    reference — the one object path through which an observation
+    consumer could have reached another seat's hand.
+
+    Args:
+        plays: The play records to seal, in play order.
+
+    Returns:
+        The same plays as :class:`ObservedPlay` ``(position, card)``
+        pairs, order preserved.
+    """
+
+    return tuple(
+        ObservedPlay(play.player.position, play.card) for play in plays
+    )
 
 
 def _higher_trumps_than_played(

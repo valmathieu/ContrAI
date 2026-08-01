@@ -4,7 +4,7 @@ This class represents a single trick in the game.
 """
 
 from __future__ import annotations
-from typing import List, Tuple, Optional, TYPE_CHECKING
+from typing import List, Tuple, Optional, TypeVar, TYPE_CHECKING
 
 from .exceptions import TrickStateError
 
@@ -12,6 +12,13 @@ if TYPE_CHECKING:
     from .card import Card
     from .player import BasePlayer as Player
     from .types import ContractSuit, Suit
+
+# The winner rule never inspects who played a card — it only ranks the
+# cards and hands back the "who" slot of the best play. Keeping that slot
+# generic lets one implementation serve both the omniscient records
+# (``Play`` carrying a ``BasePlayer``) and the sealed observation records
+# (``ObservedPlay`` carrying a ``Position``).
+PlayerT = TypeVar("PlayerT")
 
 class Trick:
     """
@@ -118,8 +125,8 @@ class Trick:
 
 
 def current_winner(
-    plays: List[Tuple[Player, Card]], trump_suit: Optional[ContractSuit]
-) -> Optional[Player]:
+    plays: List[Tuple[PlayerT, Card]], trump_suit: Optional[ContractSuit]
+) -> Optional[PlayerT]:
     """
     Determine who currently wins a (possibly partial) trick.
 
@@ -127,8 +134,14 @@ def current_winner(
     legality checks (e.g. *partner is currently master*) and view
     rendering (live winner highlight).
 
+    Generic over the "who" slot of each play: hand it ``(BasePlayer,
+    Card)`` pairs (``Trick``, ``PlayState``) and it returns the winning
+    player; hand it the sealed ``(Position, Card)`` observation records
+    and it returns the winning seat. The cards alone decide the winner —
+    the "who" value is only carried through.
+
     Args:
-        plays: The ordered (player, card) pairs played so far, in play
+        plays: The ordered (who, card) pairs played so far, in play
             order. The first entry sets the led suit.
         trump_suit: The trump suit to evaluate against, taken from the
             round's contract. Pass ``None`` (or
@@ -139,7 +152,8 @@ def current_winner(
             trump explicitly rather than risk a silent no-trump evaluation.
 
     Returns:
-        Player who is currently winning, or None if no card has been
+        Whoever is currently winning — the "who" value of the best play,
+        whatever type the caller put there — or None if no card has been
         played yet.
 
     Raises:

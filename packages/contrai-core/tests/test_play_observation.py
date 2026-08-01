@@ -4,8 +4,10 @@
 hand — down to what a single player is allowed to see. These tests pin:
 the field set (own hand only, nothing leaking another seat's cards), that
 ``legal_cards`` matches :meth:`PlayState.legal_actions` by object identity,
-that ``bids`` passes through untouched, the five derived properties, and
-that the observation is immutable. The shared ``players`` fixture lives in
+that ``bids`` passes through untouched, the five derived properties, that
+the observation is immutable, and that the trick records are sealed to
+``ObservedPlay`` ``(position, card)`` pairs with no live ``BasePlayer``
+reachable through them. The shared ``players`` fixture lives in
 ``conftest.py``.
 """
 
@@ -20,12 +22,13 @@ from contrai_core import (
     Card,
     Contract,
     PlayState,
+    Position,
     Rank,
     Suit,
     TrumpVariant,
 )
 from contrai_core.bid import ContractBid, PassBid
-from contrai_core.play import Play, PlayObservation
+from contrai_core.play import ObservedPlay, Play, PlayObservation
 
 # Seat → suit assignment for a deterministic full deal: each player holds
 # one whole suit, so cross-seat leakage is trivial to detect and trick
@@ -223,7 +226,11 @@ class TestDerivedProperties:
 
     def test_current_winner_trump_beats_lead(self, players):
         """North leads a spade; East (void, holding only hearts — the
-        trump suit) ruffs and becomes the current master mid-trick."""
+        trump suit) ruffs and becomes the current master mid-trick.
+
+        The winner is reported as the seat's :class:`Position`, not the
+        live :class:`BasePlayer` — the observation's trick records are
+        sealed to seat identifiers."""
         contract, seating, hands, by_seat = _deal(players)
         state = PlayState.start(contract, seating, hands)
         state = state.apply(Play(players["N"], by_seat["N"][0]))
@@ -231,7 +238,7 @@ class TestDerivedProperties:
 
         obs = state.observe(players["S"])
 
-        assert obs.current_winner is players["E"]
+        assert obs.current_winner is Position.EAST
 
 
 # ---------------------------------------------------------------------------
@@ -248,3 +255,62 @@ class TestImmutability:
         for field_name in _EXPECTED_FIELDS:
             with pytest.raises(dataclasses.FrozenInstanceError):
                 setattr(obs, field_name, None)
+
+
+# ---------------------------------------------------------------------------
+# Sealed trick records
+# ---------------------------------------------------------------------------
+
+
+class TestSealedTrickRecords:
+    """The observation's trick history must carry opaque seat positions.
+
+    ``PlayState.plays`` records hold live ``BasePlayer`` references; the
+    projection must not hand those over — otherwise a strategy could reach
+    through ``play.player.hand`` and read another seat's cards.
+    """
+
+    def _observed_mid_trick(self, players) -> PlayObservation:
+        """One completed trick plus one play into trick 1."""
+        state = _play_first_trick(players)
+        winner = state.to_act
+        winner_seat = next(s for s in _ORDER if players[s] is winner)
+        second_card = _deal(players)[3][winner_seat][1]
+        state = state.apply(Play(winner, second_card))
+        return state.observe(winner)
+
+    def test_trick_records_are_observed_plays_carrying_positions(self, players):
+        obs = self._observed_mid_trick(players)
+        every_play = [
+            play for trick in obs.completed_tricks for play in trick
+        ] + list(obs.current_trick)
+
+        assert every_play, "the scenario must produce plays to inspect"
+        for play in every_play:
+            assert isinstance(play, ObservedPlay)
+            assert isinstance(play.position, Position)
+
+    def test_positions_match_the_players_who_played(self, players):
+        obs = self._observed_mid_trick(players)
+
+        # Trick 0 was played in seating order N, E, S, W.
+        recorded = tuple(play.position for play in obs.completed_tricks[0])
+        expected = tuple(players[s].position for s in _ORDER)
+        assert recorded == expected
+
+    def test_observed_plays_unpack_as_position_card_pairs(self, players):
+        obs = self._observed_mid_trick(players)
+
+        for position, card in obs.current_trick:
+            assert isinstance(position, Position)
+            assert isinstance(card, Card)
+
+    def test_no_base_player_reachable_through_trick_records(self, players):
+        obs = self._observed_mid_trick(players)
+        every_play = [
+            play for trick in obs.completed_tricks for play in trick
+        ] + list(obs.current_trick)
+
+        for play in every_play:
+            assert not hasattr(play, "player")
+            assert not any(isinstance(item, BasePlayer) for item in play)

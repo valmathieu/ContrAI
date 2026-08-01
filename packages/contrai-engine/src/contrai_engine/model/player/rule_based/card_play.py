@@ -2,7 +2,6 @@
 
 from contrai_core.card import Card
 from contrai_core.play import PlayObservation
-from contrai_core.player import BasePlayer
 from contrai_core.position import Position
 from contrai_core.trick import current_winner
 from contrai_core.types import ContractSuit, Rank, Suit, is_trump, trump_suits
@@ -53,8 +52,8 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
 
     def _derive_tracking(
         self, observation: PlayObservation
-    ) -> tuple[dict[Suit, set], dict[BasePlayer, set[Suit]]]:
-        """Rebuild fallen-card and per-player void tracking from history.
+    ) -> tuple[dict[Suit, set], dict[Position, set[Suit]]]:
+        """Rebuild fallen-card and per-seat void tracking from history.
 
         Replays every play in ``(*completed_tricks, current_trick)``
         chronologically and reconstructs, for each play, exactly the
@@ -83,14 +82,20 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         and evaluating the winner one play too late would silently hide the
         void.
 
+        The observation's trick records are sealed ``ObservedPlay``
+        pairs, so every play reads as ``(position, card)`` and all
+        tracking below keys on the seat's :class:`Position` — the
+        strategy never touches a live player object.
+
         Args:
             observation: The play-phase view whose public history is
                 replayed.
 
         Returns:
             A ``(fallen, voids)`` pair — ``fallen`` maps each card suit to
-            its set of fallen ranks; ``voids`` maps each player to the set
-            of suits that player is proven to hold no card of.
+            its set of fallen ranks; ``voids`` maps each seat's
+            :class:`Position` to the set of suits that seat is proven to
+            hold no card of.
         """
 
         trump_suit = observation.trump_suit
@@ -101,10 +106,10 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         # One bucket per card suit — every Suit member is one, so the map
         # derives from the enum rather than restating the four.
         fallen: dict[Suit, set] = {suit: set() for suit in Suit}
-        voids: dict[BasePlayer, set[Suit]] = {}
+        voids: dict[Position, set[Suit]] = {}
 
         for trick in (*observation.completed_tricks, observation.current_trick):
-            for index, (player, card) in enumerate(trick):
+            for index, (position, card) in enumerate(trick):
                 # Record the fallen card — happens for every play, whatever
                 # it proves about voids.
                 fallen[card.suit].add(card.rank)
@@ -113,7 +118,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
                 # void — following is mandatory whenever possible.
                 led_suit = trick[0].card.suit
                 if card.suit != led_suit:
-                    voids.setdefault(player, set()).add(led_suit)
+                    voids.setdefault(position, set()).add(led_suit)
 
                 # Trump led: the led-suit rule above already recorded the
                 # trump void, and no further inference exists.
@@ -122,11 +127,13 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
 
                 # Reconstruct the pre-play master: the winner among the
                 # plays strictly earlier in this trick — the state the seat
-                # decided against.
+                # decided against. On sealed records the winner comes back
+                # as a Position, so "partner was master" is seat arithmetic:
+                # the master seat is this seat's partner. (Within one trick
+                # the prior master can never be the seat itself — it has not
+                # played yet.)
                 prior = current_winner(list(trick[:index]), trump_suit)
-                partner_was_master = (
-                    prior is not None and prior.team == player.team
-                )
+                partner_was_master = prior is position.partner
 
                 # Non-trump led: a discard behind a master partner is
                 # voluntary and proves nothing about trump.
@@ -142,7 +149,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
                     and card.suit != led_suit
                     and not is_trump(card.suit, trump_suit)
                 ):
-                    voids.setdefault(player, set()).update(round_trumps)
+                    voids.setdefault(position, set()).update(round_trumps)
 
         return fallen, voids
 
@@ -195,7 +202,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         self,
         observation: PlayObservation,
         fallen: dict[Suit, set],
-        voids: dict[BasePlayer, set[Suit]],
+        voids: dict[Position, set[Suit]],
     ) -> Card:
         """Play when leading subsequent tricks."""
 
@@ -249,7 +256,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         self,
         observation: PlayObservation,
         fallen: dict[Suit, set],
-        voids: dict[BasePlayer, set[Suit]],
+        voids: dict[Position, set[Suit]],
     ) -> Card:
         """Strategy when not first to play.
 
@@ -261,8 +268,8 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         Args:
             observation: The frozen play-phase view for this seat.
             fallen: The fallen-card map from :meth:`_derive_tracking`.
-            voids: The per-player proven-void suits from
-                :meth:`_derive_tracking`.
+            voids: The per-seat proven-void suits from
+                :meth:`_derive_tracking`, keyed by :class:`Position`.
         """
 
         cut_expected = self._opponent_cut_expected(observation, fallen, voids)
@@ -448,7 +455,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         self,
         trump_suit: ContractSuit | None,
         fallen: dict[Suit, set],
-        voids: dict[BasePlayer, set[Suit]],
+        voids: dict[Position, set[Suit]],
         hand,
     ) -> bool:
         """Check if opponents might still have trump cards.
@@ -468,8 +475,8 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
                 round where nothing is trump answers ``False`` outright —
                 there is no trump for anyone to hold.
             fallen: The fallen-card map from :meth:`_derive_tracking`.
-            voids: The per-player proven-void suits from
-                :meth:`_derive_tracking`.
+            voids: The per-seat proven-void suits from
+                :meth:`_derive_tracking`, keyed by :class:`Position`.
             hand: The observing seat's own hand (``observation.hand``).
 
         Returns:
@@ -491,11 +498,12 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
 
         # Void inference: a contrée table has exactly two opponents. When both
         # are known void, any unseen trumps sit in partner's hand — pulling
-        # them helps nobody. (`is not` — Team has no __eq__, identity is it.)
+        # them helps nobody. Voids key on seat positions, so "opponent" is
+        # seat arithmetic against our own position.
         opponents_void = {
-            p
-            for p, void_suits in voids.items()
-            if trump in void_suits and p.team is not self.team
+            seat
+            for seat, void_suits in voids.items()
+            if trump in void_suits and seat in self.position.opponents
         }
         return len(opponents_void) < 2
 
@@ -503,7 +511,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         self,
         observation: PlayObservation,
         fallen: dict[Suit, set],
-        voids: dict[BasePlayer, set[Suit]],
+        voids: dict[Position, set[Suit]],
     ) -> bool:
         """Predict whether an opponent still to play will ruff this trick.
 
@@ -529,8 +537,8 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         Args:
             observation: The frozen play-phase view for this seat.
             fallen: The fallen-card map from :meth:`_derive_tracking`.
-            voids: The per-player proven-void suits from
-                :meth:`_derive_tracking`.
+            voids: The per-seat proven-void suits from
+                :meth:`_derive_tracking`, keyed by :class:`Position`.
 
         Returns:
             True when some opponent yet to play in the current trick is
@@ -556,14 +564,16 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         if trump_fallen + trump_in_hand >= 8:
             return False
 
-        # Legs 1 and 2, restricted to opponents still to play.
-        already_played = {play.player for play in observation.current_trick}
+        # Legs 1 and 2, restricted to opponents still to play. Everything
+        # here is seat arithmetic on positions — the sealed trick records
+        # carry no player objects to compare teams through.
+        already_played = {play.position for play in observation.current_trick}
         return any(
-            player.team is not self.team
-            and player not in already_played
+            seat in self.position.opponents
+            and seat not in already_played
             and led_suit in void_suits
             and trump not in void_suits
-            for player, void_suits in voids.items()
+            for seat, void_suits in voids.items()
         )
 
     def _is_master_card(self, card, trump_suit, fallen: dict[Suit, set]) -> bool:
@@ -635,7 +645,8 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         cut/over-cut reasoning lives there rather than in this gate.
 
         Args:
-            plays: The in-progress trick's plays, a ``tuple[Play, ...]``.
+            plays: The in-progress trick's plays, a
+                ``tuple[ObservedPlay, ...]``.
             trump_suit: Ordering to rank by; ``None`` for the normal order.
         """
 
@@ -647,15 +658,16 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         return strongest_position == self.position.partner
 
     def _get_strongest_card_position(self, plays, trump_suit) -> Position | None:
-        """Get the position of the player who played the strongest card.
+        """Get the position of the seat that played the strongest card.
 
         Args:
-            plays: The trick's plays, a ``tuple[Play, ...]``.
+            plays: The trick's plays, a ``tuple[ObservedPlay, ...]`` —
+                sealed ``(position, card)`` records.
             trump_suit: The suit to rank by, or ``None`` for normal order.
 
         Returns:
-            The position of the player who played the strongest card, or
-            ``None`` when ``plays`` is empty.
+            The position that played the strongest card, or ``None`` when
+            ``plays`` is empty.
         """
 
         if not plays:
@@ -663,10 +675,10 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
 
         strongest_card = self._get_strongest_card_in_trick(plays, trump_suit)
 
-        # Find which player played the strongest card
-        for player, card in plays:
+        # Find which seat played the strongest card
+        for position, card in plays:
             if card == strongest_card:
-                return player.position
+                return position
 
         return None
 
@@ -675,8 +687,8 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         """Get the strongest card played so far in the trick.
 
         Args:
-            plays: The trick's plays, a ``tuple[Play, ...]``. ``Play``
-                unpacks as ``(player, card)``.
+            plays: The trick's plays, a ``tuple[ObservedPlay, ...]``.
+                ``ObservedPlay`` unpacks as ``(position, card)``.
             trump_suit: The suit to rank by, or ``None`` for normal order.
         """
 
@@ -730,7 +742,8 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
 
         Args:
             trump_card: The trump card being considered.
-            plays: The in-progress trick's plays, a ``tuple[Play, ...]``.
+            plays: The in-progress trick's plays, a
+                ``tuple[ObservedPlay, ...]``.
             trump_suit: The current trump suit.
         """
 
