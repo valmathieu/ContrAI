@@ -49,10 +49,9 @@ class Suit(Enum):
 
         Load-bearing for every f-string and panel label that embeds a suit
         directly: ``f"{bid.value} {bid.suit}"`` reads ``"100 Spades"``
-        (``__format__`` delegates to ``__str__`` by default). Without this
-        override, the default ``Enum.__str__`` would print
-        ``"Suit.SPADES"``, which leaked into ``Contract.__str__`` and every
-        message built from it.
+        (``__format__`` delegates to ``__str__`` by default). The default
+        ``Enum.__str__`` renders ``"Suit.SPADES"`` instead, which is a
+        repr, not a display string.
         """
 
         return self.value
@@ -101,15 +100,15 @@ def is_trump(card_suit: Suit, contract_suit: ContractSuit | None) -> bool:
     """Whether ``card_suit`` is trump under ``contract_suit``.
 
     The single spelling of the question the whole trick-taking rulebook
-    rests on, and the one place the two suit types meet. It used to be
-    written out inline as ``card.suit == trump_suit`` at every boundary,
-    which is only *accidentally* right for the trump options that name no
-    suit: it happens to answer correctly for ``NO_TRUMP`` (no physical card
-    carries that suit, so every trump branch collapses to plain
-    follow-suit — which is what a no-trump contract wants) and it silently
-    answers *the same way* for ``ALL_TRUMP``, where every card should be
-    trump instead. Funnelling the comparison through here turns that
-    spread-out coincidence into one explicit decision.
+    rests on, and the one place the two suit types meet. A bare
+    ``card_suit == contract_suit`` written out at each boundary is only
+    *accidentally* right for the trump options that name no suit: it
+    answers correctly for ``NO_TRUMP`` (no physical card carries that
+    suit, so every trump branch collapses to plain follow-suit — which is
+    what a no-trump contract wants) and it answers *the same way* for
+    ``ALL_TRUMP``, where every card should be trump instead. Routing
+    every caller through here makes that distinction one explicit
+    decision rather than a coincidence repeated at each site.
 
     Args:
         card_suit: The suit of a physical card.
