@@ -99,15 +99,18 @@ package "contrai-scraper\n(Playwright spectator)" as P_scraper {
 
 ' Engine extends + uses core
 E_player --|> C_player : <<extends>>
-P_engine ..> P_core : uses Card, Suit, Rank,\nPosition, Bid, Contract,\nTrick, Team, Deck
+P_engine ..> P_core : uses Card, Suit, TrumpVariant,\nContractSuit, Rank, Position, Bid,\nContract, Trick, Team, Deck,\nis_trump / trump_suits
 
 ' Analyzer deliberately does NOT depend on core
 note as N_analyzer_indep
   **Deliberately independent.**
   ""contrai-analyzer"" does not import anything
-  from ""contrai_core"". Its ""SuitSlot"" is a
-  suit-agnostic abstraction for combinatorial
-  math, not a duplicate of core's ""Suit"".
+  from ""contrai_core"". Its ""SuitSlot"" slots a hand
+  by each suit's //role// relative to trump, for the
+  combinatorial math — it is not a duplicate of
+  core's ""Suit"", which names the four concrete
+  card suits (with ""TrumpVariant"" carrying the
+  trump options that name none).
 end note
 P_analyzer .. N_analyzer_indep
 

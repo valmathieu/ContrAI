@@ -8,7 +8,7 @@ import dataclasses
 
 import pytest
 
-from contrai_core import Card, Rank, Suit
+from contrai_core import Card, InvalidCardError, Rank, Suit, TrumpVariant
 
 
 @pytest.fixture
@@ -24,6 +24,62 @@ def sample_cards():
         'spade_7': Card(Suit.SPADES, Rank.SEVEN),
         'heart_10': Card(Suit.HEARTS, Rank.TEN),
     }
+
+
+class TestCardConstruction:
+    """A card must carry a suit a card can actually have."""
+
+    @pytest.mark.parametrize(
+        "variant", [TrumpVariant.NO_TRUMP, TrumpVariant.ALL_TRUMP]
+    )
+    def test_trump_variant_suit_raises(self, variant):
+        # The live path this closes: Hand.has_card(suit, rank) is
+        # `Card(suit, rank) in self`, and the round's belote detection feeds
+        # it contract.suit. Without the guard a no-trump contract mints a
+        # card in a suit no deck holds and quietly matches nothing.
+        with pytest.raises(InvalidCardError, match="Invalid card suit"):
+            Card(variant, Rank.ACE)
+
+    def test_string_suit_raises(self):
+        with pytest.raises(InvalidCardError, match="Invalid card suit"):
+            Card("Spades", Rank.ACE)
+
+    @pytest.mark.parametrize("suit", Suit)
+    def test_every_real_suit_is_accepted(self, suit):
+        assert Card(suit, Rank.ACE).suit is suit
+
+
+class TestCardIsTrump:
+    """Test the is_trump sugar and that get_points/get_order agree with it."""
+
+    def test_own_suit(self, sample_cards):
+        assert sample_cards['spade_jack'].is_trump(Suit.SPADES) is True
+
+    def test_other_suit(self, sample_cards):
+        assert sample_cards['spade_jack'].is_trump(Suit.HEARTS) is False
+
+    def test_no_trump_contract(self, sample_cards):
+        assert sample_cards['spade_jack'].is_trump(TrumpVariant.NO_TRUMP) is False
+
+    def test_defaults_to_no_trump(self, sample_cards):
+        # The default matches get_points()/get_order() called bare.
+        assert sample_cards['spade_jack'].is_trump() is False
+
+    def test_all_trump_raises(self, sample_cards):
+        with pytest.raises(NotImplementedError, match="All-trump"):
+            sample_cards['spade_jack'].is_trump(TrumpVariant.ALL_TRUMP)
+
+    def test_points_and_order_follow_is_trump(self, sample_cards):
+        # is_trump is the single question both value lookups branch on, so
+        # the trump tables must be selected exactly when it answers True.
+        card = sample_cards['spade_jack']
+        assert card.is_trump(Suit.SPADES)
+        assert card.get_points(Suit.SPADES) == Card.TRUMP_POINTS[Rank.JACK]
+        assert card.get_order(Suit.SPADES) == Card.TRUMP_ORDER[Rank.JACK]
+
+        assert not card.is_trump(TrumpVariant.NO_TRUMP)
+        assert card.get_points(TrumpVariant.NO_TRUMP) == Card.NORMAL_POINTS[Rank.JACK]
+        assert card.get_order(TrumpVariant.NO_TRUMP) == Card.NORMAL_ORDER[Rank.JACK]
 
 
 class TestCardGetPoints:

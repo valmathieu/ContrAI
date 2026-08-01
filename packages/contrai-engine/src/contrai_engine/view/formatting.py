@@ -14,9 +14,11 @@ from contrai_core import (
     BasePlayer,
     Card,
     Contract,
+    ContractSuit,
     Position,
     Rank,
     Suit,
+    TrumpVariant,
 )
 from contrai_core.bid import (
     Bid,
@@ -60,7 +62,7 @@ def _team_abbr(team_name: str) -> str:
     return TEAM_ABBR.get(team_name, team_name)
 
 
-def _suit_glyph(suit: Suit) -> str:
+def _suit_glyph(suit: ContractSuit) -> str:
     """Unicode suit glyph (``♠``/``♥``/``♦``/``♣``), falling back to the enum value."""
     return Card.SUIT_SYMBOLS.get(suit, suit.value)
 
@@ -85,7 +87,7 @@ def _rank_short(rank: Rank) -> str:
     return RANK_SHORT.get(rank, rank.value)
 
 
-def _suit_color(suit: Suit) -> str:
+def _suit_color(suit: ContractSuit) -> str:
     """Suit color: red for hearts/diamonds, plain foreground otherwise."""
     return RED if suit in (Suit.HEARTS, Suit.DIAMONDS) else FG
 
@@ -178,7 +180,7 @@ def _format_contract_short(
     return t
 
 
-def _format_trump_label(suit: Optional[Suit]) -> Text:
+def _format_trump_label(suit: Optional[ContractSuit]) -> Text:
     """``"♥ Hearts"`` with the glyph in suit color.
 
     Args:
@@ -189,7 +191,7 @@ def _format_trump_label(suit: Optional[Suit]) -> Text:
     t = Text()
     t.append(_suit_glyph(suit), style=_suit_color(suit))
     t.append(" ", style=FG)
-    label = "No Trump" if suit == Suit.NO_TRUMP else suit.value
+    label = "No Trump" if suit is TrumpVariant.NO_TRUMP else suit.value
     t.append(label, style="bold")
     return t
 

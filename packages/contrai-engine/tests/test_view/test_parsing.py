@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from contrai_core import Card, Position, Rank, Suit
+from contrai_core import Card, Position, Rank, Suit, TrumpVariant
 from contrai_core.bid import (
     ContractBid,
     DoubleBid,
@@ -78,8 +78,8 @@ class TestParseBidInput:
             ("130 diamond", 130, Suit.DIAMONDS),
             ("140 c", 140, Suit.CLUBS),
             ("150 clubs", 150, Suit.CLUBS),
-            ("160 nt", 160, Suit.NO_TRUMP),
-            ("160 notrump", 160, Suit.NO_TRUMP),
+            ("160 nt", 160, TrumpVariant.NO_TRUMP),
+            ("160 notrump", 160, TrumpVariant.NO_TRUMP),
             ("80 ♥", 80, Suit.HEARTS),
             ("80 ♠", 80, Suit.SPADES),
         ],

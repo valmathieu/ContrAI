@@ -11,10 +11,23 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 ### Added
 
 - (core) **BREAKING:** Position seat enum — anticlockwise next, partner, opponents, strict parsing, French seat-name mapping (french_name/from_french). BasePlayer.position is now a Position, not a free-form string.
+- (core) `is_trump(card_suit, contract_suit)` and `trump_suits(contract_suit)` — the one place that answers "is this card trump under this contract", plus `Card.is_trump(trump_suit)` sugar. Every trick-taking rule now asks through them instead of spelling out `card.suit == trump_suit` at each boundary.
 
 ### Changed
 
 - (engine) **BREAKING:** Seating, dealer/turn rotation, team formation, and the AI's partner reasoning now flow through core Position — the seat-order list, hardcoded partner map, and position-string scans are gone, and the terminal UI keys its seat labels, diamond slots, and belote badges on Position.
+- (core) **BREAKING:** Card suits and contract trumps are now two types. `Suit` has exactly the four card-bearing members, the two options that name no suit move to the new `TrumpVariant` enum, and `ContractSuit` is the union of the two — so `Card.suit` can no longer hold something no card carries, and `tuple(Suit)` is safe to iterate anywhere a real suit is meant. `Card` rejects a non-`Suit` at construction with the new `InvalidCardError`.
+- (core) **BREAKING:** All-trump is no longer bookable. `ContractBid.VALID_SUITS` drops it, so the auction offers 65 opening contracts instead of 78 and a search-based agent sampling `legal_actions` can no longer reach a contract the engine cannot play.
+
+### Fixed
+
+- (core) Suits now render as their display name wherever one is embedded in text — a contract reads `100 Spades by North` instead of `100 Suit.SPADES by North`.
+- (core) An all-trump contract now raises instead of quietly playing out as a no-trump one. The variant is still unimplemented; it just no longer answers "no card is trump" when the right answer is "every card is".
+- (engine) Under a no-trump contract the AI no longer records seats as "void in No Trump" — a suit no card can be held in. Its card tracking now leaves the trump entry out of a no-trump round entirely, so the trump-pull and anticipated-ruff inferences read a clean void map instead of a polluted one.
+
+### Removed
+
+- (core) **BREAKING:** `CARD_SUITS`. With `Suit` down to its four card-bearing members, `tuple(Suit)` is the same tuple — iterate the enum directly. `CONTRACT_SUITS` is the new constant for the wider "anything a contract can name" set.
 
 ## [0.2.0] - 2026-07-25
 

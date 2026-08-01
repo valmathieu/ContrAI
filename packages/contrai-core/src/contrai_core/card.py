@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .types import Suit, Rank
+from .exceptions import InvalidCardError
+from .types import ContractSuit, Suit, Rank
+# Aliased on import: the module-level predicate and the ``Card.is_trump``
+# method below would otherwise share a name, and while Python resolves the
+# call inside the method body to this global, the alias spares the reader
+# from having to know that.
+from .types import is_trump as suit_is_trump
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -30,6 +36,7 @@ class Card:
     Methods:
         __str__(): Returns a string representation of the card with suit symbol.
         __repr__(): Returns a string representation for debugging.
+        is_trump(trump_suit=None): Whether this card plays as trump.
         get_points(trump_suit=None): Returns the point value of the card, considering trump.
         get_order(trump_suit=None): Returns the order of the card, considering trump.
     """
@@ -88,18 +95,99 @@ class Card:
         Suit.CLUBS: "♣",
     }
 
+    def __post_init__(self) -> None:
+        """Reject a suit no physical card can carry, at construction time.
+
+        Mirrors :meth:`contrai_core.ContractBid.__post_init__`: the type is
+        checked where the object is built, not where it later misbehaves.
+        The path this closes is real rather than hypothetical —
+        ``Hand.has_card(suit, rank)`` is implemented as ``Card(suit, rank)
+        in self``, and the round's belote detection feeds it
+        ``contract.suit`` directly. A no-trump contract reaching that call
+        would otherwise mint a ``Card`` in a suit no deck contains and
+        quietly find nothing.
+
+        Raises:
+            InvalidCardError: If ``suit`` is not a :class:`Suit` member —
+                typically a :class:`TrumpVariant` that belongs on a
+                contract rather than on a card.
+        """
+
+        if not isinstance(self.suit, Suit):
+            raise InvalidCardError(
+                f"Invalid card suit: {self.suit!r}. A card must carry one "
+                f"of the four Suit members; NO_TRUMP / ALL_TRUMP are "
+                f"contract trump options (TrumpVariant), not card suits."
+            )
+
     def __str__(self) -> str:
         return f"{self.rank.value} {Card.SUIT_SYMBOLS[self.suit]}"
 
     def __repr__(self) -> str:
         return f"Card({self.suit!r}, {self.rank!r})"
 
-    def get_points(self, trump_suit: Suit | None = None) -> int:
-        if trump_suit and self.suit == trump_suit:
+    def is_trump(self, trump_suit: ContractSuit | None = None) -> bool:
+        """Whether this card plays as trump under ``trump_suit``.
+
+        Sugar over :func:`contrai_core.is_trump` for the common case of
+        asking about a card in hand or on the table. Prefer it to
+        ``card.suit == trump_suit``: that bare comparison is a cross-type
+        one, always ``False`` for a suitless contract trump, which is the
+        right answer only by coincidence.
+
+        Args:
+            trump_suit: The trump the round's contract settled on, or
+                ``None`` when no contract is established yet.
+
+        Returns:
+            ``True`` if this card is trump.
+
+        Raises:
+            NotImplementedError: If ``trump_suit`` is
+                ``TrumpVariant.ALL_TRUMP``, propagated from
+                :func:`contrai_core.is_trump`.
+        """
+
+        return suit_is_trump(self.suit, trump_suit)
+
+    def get_points(self, trump_suit: ContractSuit | None = None) -> int:
+        """Point value of this card, on the trump or the plain scale.
+
+        Args:
+            trump_suit: The trump the round's contract settled on, or
+                ``None`` when no contract is established yet.
+
+        Returns:
+            The card's point value, read from the trump table when
+            :meth:`is_trump` answers ``True`` and the plain one otherwise.
+
+        Raises:
+            NotImplementedError: If ``trump_suit`` is
+                ``TrumpVariant.ALL_TRUMP``, propagated from
+                :meth:`is_trump`.
+        """
+
+        if self.is_trump(trump_suit):
             return Card.TRUMP_POINTS[self.rank]
         return Card.NORMAL_POINTS[self.rank]
 
-    def get_order(self, trump_suit: Suit | None = None) -> int:
-        if trump_suit and self.suit == trump_suit:
+    def get_order(self, trump_suit: ContractSuit | None = None) -> int:
+        """Strength of this card, on the trump or the plain scale.
+
+        Args:
+            trump_suit: The trump the round's contract settled on, or
+                ``None`` when no contract is established yet.
+
+        Returns:
+            The card's order index — higher beats lower, comparable only
+            against cards ranked on the same scale.
+
+        Raises:
+            NotImplementedError: If ``trump_suit`` is
+                ``TrumpVariant.ALL_TRUMP``, propagated from
+                :meth:`is_trump`.
+        """
+
+        if self.is_trump(trump_suit):
             return Card.TRUMP_ORDER[self.rank]
         return Card.NORMAL_ORDER[self.rank]

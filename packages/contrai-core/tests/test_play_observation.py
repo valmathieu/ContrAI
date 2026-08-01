@@ -22,6 +22,7 @@ from contrai_core import (
     PlayState,
     Rank,
     Suit,
+    TrumpVariant,
 )
 from contrai_core.bid import ContractBid, PassBid
 from contrai_core.play import Play, PlayObservation
@@ -180,10 +181,10 @@ class TestDerivedProperties:
         assert obs.trump_suit == Suit.CLUBS
 
     def test_trump_suit_no_trump_contract(self, players):
-        contract, seating, hands, _ = _deal(players, trump=Suit.NO_TRUMP)
+        contract, seating, hands, _ = _deal(players, trump=TrumpVariant.NO_TRUMP)
         state = PlayState.start(contract, seating, hands)
         obs = state.observe(players["N"])
-        assert obs.trump_suit == Suit.NO_TRUMP
+        assert obs.trump_suit == TrumpVariant.NO_TRUMP
 
     def test_led_suit_none_when_trick_empty(self, players):
         contract, seating, hands, _ = _deal(players)

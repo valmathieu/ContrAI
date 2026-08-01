@@ -9,7 +9,7 @@ rendering or game logic lives here.
 
 from __future__ import annotations
 
-from contrai_core import Position, Suit
+from contrai_core import Position, Suit, TrumpVariant
 from contrai_core.bid import ContractBid
 
 # ---------------------------------------------------------------------------
@@ -66,7 +66,9 @@ SUIT_ALIASES = {
     "h": Suit.HEARTS, "hearts": Suit.HEARTS, "heart": Suit.HEARTS, "♥": Suit.HEARTS,
     "d": Suit.DIAMONDS, "diamonds": Suit.DIAMONDS, "diamond": Suit.DIAMONDS, "♦": Suit.DIAMONDS,
     "c": Suit.CLUBS, "clubs": Suit.CLUBS, "club": Suit.CLUBS, "♣": Suit.CLUBS,
-    "nt": Suit.NO_TRUMP, "notrump": Suit.NO_TRUMP, "no-trump": Suit.NO_TRUMP,
+    "nt": TrumpVariant.NO_TRUMP,
+    "notrump": TrumpVariant.NO_TRUMP,
+    "no-trump": TrumpVariant.NO_TRUMP,
 }
 # Derived from ``ContractBid.VALID_VALUES`` so the human-input parser
 # stays in lockstep with the auction's canonical value ladder. The

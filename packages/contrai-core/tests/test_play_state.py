@@ -21,6 +21,7 @@ from contrai_core import (
     PlayState,
     Rank,
     Suit,
+    TrumpVariant,
 )
 from contrai_core.bid import ContractBid
 from contrai_core.play import Play
@@ -378,7 +379,7 @@ class TestWithHands:
 
 class TestNoTrumpDegrade:
     def _no_trump_state(self, players, south_hand, plays):
-        contract = Contract(ContractBid(players["N"], 100, Suit.NO_TRUMP))
+        contract = Contract(ContractBid(players["N"], 100, TrumpVariant.NO_TRUMP))
         seating = tuple(players[s] for s in _ORDER)
         hands = tuple(
             tuple(south_hand) if s == "S" else () for s in _ORDER

@@ -209,8 +209,10 @@ class Round:
             return False
         if player is not self.belote_holder:
             return False
-        trump = self.contract.suit
-        return card.suit == trump and card.rank in (Rank.KING, Rank.QUEEN)
+        return card.is_trump(self.contract.suit) and card.rank in (
+            Rank.KING,
+            Rank.QUEEN,
+        )
 
     def _transition_belote_state(self, player: Player) -> Optional[str]:
         """Advance the belote_state machine and return the new state name.
@@ -237,10 +239,14 @@ class Round:
         play and ``Rebelote`` on the second. No-trump contracts have no
         belote.
         """
-        if self.contract is None or self.contract.suit == Suit.NO_TRUMP:
+        trump = self.contract.suit if self.contract else None
+        # There is a King and Queen of trump to hold only when the contract
+        # named an actual card suit. The isinstance narrowing also keeps a
+        # suitless trump out of ``has_card`` below, which builds a Card from
+        # whatever it is handed.
+        if not isinstance(trump, Suit):
             self.belote_holder = None
             return
-        trump = self.contract.suit
         for player in self.players_order:
             has_king = player.hand.has_card(trump, Rank.KING)
             has_queen = player.hand.has_card(trump, Rank.QUEEN)

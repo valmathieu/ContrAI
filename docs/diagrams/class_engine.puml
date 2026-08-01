@@ -37,6 +37,8 @@ class Contract  <<from contrai-core>> #E1F0FF
 class Auction   <<from contrai-core>> #E1F0FF
 class Trick     <<from contrai-core>> #E1F0FF
 class PlayState <<from contrai-core>> #E1F0FF
+enum Suit       <<from contrai-core>> #E1F0FF
+class "ContractSuit" as p_contractsuit <<from contrai-core>> #E1F0FF
 
 ' =========================================================
 ' model/player/ — Player hierarchy + pluggable AI strategies
@@ -86,7 +88,7 @@ package "model/player/ (subpackage)" as p_player {
     ' --- rule_based/ : the first concrete level (expert) ---
     class RuleBasedBiddingStrategy {
         + {static} BIDDING_TABLE : list<tuple>
-        + {static} SUIT_PREFERENCE : tuple<Suit>
+        + {static} SUIT_PREFERENCE : tuple<Suit> <<= tuple(Suit)>>
         + {static} SLAM_NUMERIC : int
         + {static} SOLO_SLAM_NUMERIC : int
         --
@@ -97,6 +99,7 @@ package "model/player/ (subpackage)" as p_player {
     class RuleBasedCardPlayStrategy {
         + choose_card(observation) : Card
         - _derive_tracking(observation) : (fallen, voids)
+        - _get_higher_ranks(rank: Rank, *, as_trump: bool) : list<Rank>
     }
 
     ' --- levels.py: registry + factory ---
@@ -528,6 +531,12 @@ BiddingStrategy <|-- RuleBasedBiddingStrategy
 CardPlayStrategy <|-- RuleBasedCardPlayStrategy
 PlayerStateMixin <|-- RuleBasedBiddingStrategy
 PlayerStateMixin <|-- RuleBasedCardPlayStrategy
+
+' Both strategies speak core's two suit types: the bidding table searches
+' the four card suits, the card-play rules ask core's trump predicate
+' rather than comparing a card suit against a contract's trump by hand.
+RuleBasedBiddingStrategy --> Suit            : SUIT_PREFERENCE
+RuleBasedCardPlayStrategy ..> p_contractsuit : is_trump / trump_suits
 PlayerStateMixin ..> AiPlayer : <<reads live state>>
 AiPlayer o-- "1" BiddingStrategy : bidding
 AiPlayer o-- "1" CardPlayStrategy : cardplay

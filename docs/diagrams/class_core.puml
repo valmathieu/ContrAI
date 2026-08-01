@@ -34,8 +34,18 @@ package "types.py" as p_types {
         HEARTS    = "Hearts"
         DIAMONDS  = "Diamonds"
         CLUBS     = "Clubs"
+        --
+        + ~__str~__() : str
+    }
+
+    ' ALL_TRUMP is declared but unwired: PlantUML cannot grey a single
+    ' member line (HTML colour tags are ignored inside an enum body), so
+    ' the <<future>> stereotype plus the note below carry that status.
+    enum TrumpVariant <<enum>> {
         NO_TRUMP  = "NoTrump"
-        ALL_TRUMP = "AllTrump"
+        ALL_TRUMP = "AllTrump" <<future — unbookable, raises>>
+        --
+        + ~__str~__() : str
     }
 
     enum Rank <<enum>> {
@@ -43,17 +53,42 @@ package "types.py" as p_types {
         JACK, QUEEN, KING, ACE
     }
 
+    class "ContractSuit" as p_contractsuit <<type alias>> {
+        Suit | TrumpVariant
+        --
+        + {static} CONTRACT_SUITS : tuple<ContractSuit>
+        --
+        + is_trump(card_suit: Suit,\n  contract_suit: ContractSuit?) : bool
+        + trump_suits(contract_suit: ContractSuit?)\n  : tuple<Suit>
+    }
+
     note bottom of Suit
-      Module constant:
-      **CARD_SUITS** : tuple[Suit, Suit, Suit, Suit]
-      = (SPADES, HEARTS, DIAMONDS, CLUBS)
-      —— the 4 real suits; NO_TRUMP and
-      ALL_TRUMP are contract-only suits
-      (sans atout / tout atout variants —
-      see contree-domain.md §9, §13).
-      ALL_TRUMP is currently inert: it is
-      reserved in the enum but no engine
-      logic produces or consumes it.
+      Exactly the four card-bearing suits, so
+      ""tuple(Suit)"" is safe wherever a real card
+      suit is meant —— the deck, the display order,
+      the AI's suit search, the fallen/void maps.
+      Definition order IS the suit preference.
+    end note
+
+    note bottom of p_contractsuit
+      **The only place the two suit types meet.**
+      ""is_trump"" replaces the ""card.suit == trump_suit""
+      that used to be written out at every boundary:
+      that comparison is right for ""NO_TRUMP"" only by
+      accident (no card carries it, so trump branches
+      collapse to follow-suit) and answered the same
+      for ""ALL_TRUMP"", which silently played an
+      all-trump round as a no-trump one.
+      ""is_trump"" raises ""NotImplementedError"" there.
+      ""trump_suits"" is the enumerating sibling, for
+      callers asking //is anything trump at all//.
+      ----
+      Plain ""Suit | TrumpVariant"" assignment, **not**
+      a PEP 695 ""type"" alias. ""isinstance(x, ContractSuit)""
+      works on the plain form and raises ""TypeError"" on
+      the alias form. No type checker is configured here,
+      so ""isinstance"" narrowing is the only guardrail
+      there is.
     end note
 }
 
@@ -104,7 +139,7 @@ package "position.py" as p_position {
 ' =========================================================
 package "card.py / deck.py" as p_card {
     class Card <<frozen dataclass>> {
-        + suit : Suit
+        + suit : Suit <<a real card suit only>>
         + rank : Rank
         --
         + {static} NORMAL_POINTS : dict<Rank, int>
@@ -113,8 +148,10 @@ package "card.py / deck.py" as p_card {
         + {static} TRUMP_ORDER   : dict<Rank, int>
         + {static} SUIT_SYMBOLS  : dict<Suit, str>
         --
-        + get_points(trump_suit: Suit? = None) : int
-        + get_order(trump_suit: Suit? = None)  : int
+        + ~__post_init~__() : None <<rejects a non-Suit>>
+        + is_trump(trump_suit: ContractSuit? = None) : bool
+        + get_points(trump_suit: ContractSuit? = None) : int
+        + get_order(trump_suit: ContractSuit? = None)  : int
         + __str__() : str
     }
 
@@ -235,11 +272,11 @@ package "bid.py" as p_bid {
 
     class ContractBid <<frozen dataclass>> {
         + {static} VALID_VALUES = [80..180, SlamLevel.SLAM, SlamLevel.SOLO_SLAM]
-        + {static} VALID_SUITS = list(Suit)
+        + {static} VALID_SUITS = CONTRACT_SUITS - ALL_TRUMP
         + value : int | SlamLevel
-        + suit : Suit
+        + suit : ContractSuit
         --
-        + __post_init__() : None <<validates value + suit>>
+        + ~__post_init~__() : None <<rejects ALL_TRUMP by name>>
         + get_numeric_value() : int <<SlamLevel → base_value>>
         + __gt__(other) : bool <<strict numeric ordering>>
         + __str__() : str
@@ -320,7 +357,7 @@ package "contract.py / trick.py" as p_contract {
         + player : BasePlayer
         + team : Team
         + value : int | SlamLevel
-        + suit : Suit
+        + suit : ContractSuit
         + double_player : BasePlayer?   <<who called Coinche>>
         + redouble_player : BasePlayer? <<who called Surcoinche>>
         --
@@ -361,7 +398,7 @@ package "contract.py / trick.py" as p_contract {
         + get_cards() : list<Card>
         + get_led_suit() : Suit?
         + get_plays() : list<(BasePlayer, Card)>
-        + get_current_winner(trump_suit: Suit?) : BasePlayer?
+        + get_current_winner(trump_suit: ContractSuit?) : BasePlayer?
         + is_complete() : bool
         + __len__() : int
     }
@@ -430,7 +467,7 @@ package "play.py" as p_play {
         + legal_cards : tuple<Card>
         --
         + trick_number : int            <<property>>
-        + trump_suit : Suit?            <<property>>
+        + trump_suit : ContractSuit?    <<property>>
         + led_suit : Suit?              <<property>>
         + played_cards : tuple<Card>    <<property>>
         + current_winner : BasePlayer?  <<property>>
@@ -502,6 +539,10 @@ package "exceptions.py" as p_exc {
         + context : str
     }
 
+    class InvalidCardError {
+        + context : str
+    }
+
     class IllegalBidError {
         + bid : Bid
         + bids : tuple<Bid>
@@ -531,6 +572,8 @@ package "exceptions.py" as p_exc {
     InvalidPlayerCountError --|> ValueError
     InvalidCardCountError   --|> ContraiError
     InvalidCardCountError   --|> ValueError
+    InvalidCardError        --|> ContraiError
+    InvalidCardError        --|> ValueError
     IllegalBidError         --|> ContraiError
     IllegalBidError         --|> ValueError
     IllegalPlayError        --|> ContraiError
@@ -552,9 +595,16 @@ Bid <|-- ContractBid
 Bid <|-- DoubleBid
 Bid <|-- RedoubleBid
 
-' Card composes enums (by-reference)
+' The ContractSuit union is made of the two enums
+p_contractsuit ..> Suit          : <<union member>>
+p_contractsuit ..> TrumpVariant  : <<union member>>
+
+' Card composes enums (by-reference). Card.suit is a Suit and never a
+' TrumpVariant — __post_init__ enforces it.
 Card --> Suit
 Card --> Rank
+Card ..> p_contractsuit          : is_trump / get_order(trump_suit)
+Card ..> InvalidCardError        : <<raises on a non-Suit suit>>
 
 ' Hand owns Cards
 Hand "1" *-- "0..8" Card : cards
@@ -572,7 +622,7 @@ Team "1" o-- "2" BasePlayer : players
 
 ' Bid references BasePlayer
 Bid "1" o-- "1" BasePlayer : player
-ContractBid --> Suit : suit
+ContractBid --> p_contractsuit : suit
 ContractBid ..> SlamLevel : value (all-tricks bids)
 
 ' Auction composes a tuple of Bids and materialises a Contract
@@ -584,12 +634,12 @@ Auction ..> IllegalBidError      : <<raises on apply>>
 Contract "1" o-- "1" ContractBid : contract_bid
 Contract "1" o-- "1" BasePlayer  : player
 Contract "1" o-- "1" Team        : team
-Contract --> Suit                : suit
+Contract --> p_contractsuit      : suit
 
 ' Trick composes (player, card) plays; trump arrives via get_current_winner
 Trick "1" *-- "0..4" Card        : (via plays)
 Trick "1" o-- "0..4" BasePlayer  : (via plays)
-Trick ..> Suit                   : get_current_winner(trump_suit)
+Trick ..> p_contractsuit         : get_current_winner(trump_suit)
 Trick ..> p_trick_fn             : <<delegates>>
 
 ' Play is a (player, card) pair — same ownership split as Trick's plays

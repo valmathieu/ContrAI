@@ -52,7 +52,7 @@ uv run --package contrai-engine pytest
 Run the CLI engine:
 
 ```bash
-uv run --package contrai-engine python -m contrai_engine
+uv run contrai
 ```
 
 Run the analyzer dashboard:

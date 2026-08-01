@@ -17,7 +17,7 @@ from contrai_core.bid import SlamLevel
 
 if TYPE_CHECKING:
     from contrai_core.trick import Trick
-    from contrai_core.types import Suit
+    from contrai_core.types import ContractSuit
     from ..player import Player
     from .round import Round
 
@@ -73,7 +73,7 @@ class RoundScore:
 
 
 def count_player_tricks(
-    tricks: List['Trick'], trump_suit: Optional['Suit'], player: 'Player'
+    tricks: List['Trick'], trump_suit: Optional['ContractSuit'], player: 'Player'
 ) -> int:
     """Count the number of completed tricks personally won by ``player``.
 

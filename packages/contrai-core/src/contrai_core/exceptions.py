@@ -3,10 +3,11 @@
 Every domain-rule violation raised by ``contrai-core`` (and the engine
 layered on top of it) subclasses :class:`ContraiError`, so a single
 ``except ContraiError`` catches the whole family. Each concrete error
-*also* subclasses :class:`ValueError`, preserving the historical
-contract that these used to be plain ``ValueError`` s — existing
-``except ValueError`` handlers and ``pytest.raises(ValueError)`` checks
-keep working unchanged.
+*also* subclasses :class:`ValueError` — every one of them reports a
+value the domain rejects — so a plain ``except ValueError`` handler or
+``pytest.raises(ValueError)`` check catches them just as well. The dual
+base is an invariant, not a convenience: it is asserted for every
+concrete error in ``test_exceptions.py``.
 """
 
 from __future__ import annotations
@@ -28,9 +29,9 @@ class ContraiError(Exception):
     ``ContraiError`` itself deliberately defines **no** ``__init__`` so a
     subclass's ``super().__init__(message)`` resolves through the MRO to
     :meth:`ValueError.__init__`, storing the message the way callers
-    expect. The dual inheritance lets new code catch the whole family
-    with one ``except ContraiError`` while legacy ``except ValueError``
-    handlers keep working.
+    expect. The dual inheritance is what lets one ``except
+    ContraiError`` catch the whole family while a broader ``except
+    ValueError`` still catches each member individually.
     """
 
 
@@ -89,6 +90,27 @@ class InvalidCardCountError(ContraiError, ValueError):
         super().__init__(message)
         self.expected_count = expected_count
         self.actual_count = actual_count
+        self.context = context
+
+
+class InvalidCardError(ContraiError, ValueError):
+    """Raised when a :class:`Card` is built from something that is not a card.
+
+    A physical card carries one of the four :class:`~contrai_core.Suit`
+    members. A contract's trump may also be a
+    :class:`~contrai_core.TrumpVariant` — those name no suit, so they can
+    reach a card constructor only by mistake, and the mistake is worth
+    catching where it is made rather than several tricks later.
+    """
+
+    def __init__(self, message: str, context: str = "") -> None:
+        """Initialize the InvalidCardError.
+
+        Args:
+            message: Human-readable description of the invalid card data.
+            context: Optional free-form context appended to the message.
+        """
+        super().__init__(f"{context}: {message}" if context else message)
         self.context = context
 
 

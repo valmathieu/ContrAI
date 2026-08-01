@@ -26,6 +26,7 @@ from contrai_core import (
     SlamLevel,
     Suit,
     Team,
+    TrumpVariant,
 )
 
 
@@ -111,11 +112,17 @@ class TestContractBidConstruction:
         assert bid.value == value
         assert bid.suit == Suit.SPADES
 
-    @pytest.mark.parametrize("suit", list(Suit))
+    @pytest.mark.parametrize("suit", ContractBid.VALID_SUITS)
     def test_valid_suits(self, north, suit):
-        # NO_TRUMP and ALL_TRUMP are in VALID_SUITS today (list(Suit)).
+        # Parametrized over VALID_SUITS itself: the bookable trumps are the
+        # four card suits plus NO_TRUMP, and the list is what
+        # Auction.legal_actions iterates.
         bid = ContractBid(north, 80, suit)
         assert bid.suit == suit
+
+    def test_valid_suits_is_every_contract_suit_but_all_trump(self):
+        assert ContractBid.VALID_SUITS == [*Suit, TrumpVariant.NO_TRUMP]
+        assert TrumpVariant.ALL_TRUMP not in ContractBid.VALID_SUITS
 
     @pytest.mark.parametrize(
         "bad_value",
@@ -131,6 +138,13 @@ class TestContractBidConstruction:
     def test_invalid_suit_raises(self, north):
         with pytest.raises(InvalidContractError, match="Invalid trump suit"):
             ContractBid(north, 80, "Spades")  # raw string is not a Suit enum
+
+    def test_all_trump_is_rejected_with_its_own_message(self, north):
+        # Unimplemented rather than unknown, and the message says so — an
+        # all-trump round would reorder and re-score every card, so it is
+        # refused at the auction instead of played as something else.
+        with pytest.raises(InvalidContractError, match="All-trump"):
+            ContractBid(north, 80, TrumpVariant.ALL_TRUMP)
 
     def test_player_is_stored(self, north):
         bid = ContractBid(north, 100, Suit.HEARTS)
@@ -193,18 +207,21 @@ class TestContractBidComparison:
 
 
 class TestContractBidDunders:
+    # Suits are spelled out as literals rather than interpolated as
+    # f"{Suit.SPADES}": interpolating puts the same __str__ on both sides of
+    # the assertion, so it would hold whatever __str__ returned.
     def test_str(self, north):
         bid = ContractBid(north, 100, Suit.SPADES)
-        assert str(bid) == f"100 {Suit.SPADES}"
+        assert str(bid) == "100 Spades"
 
     def test_str_slam(self, north):
         bid = ContractBid(north, SlamLevel.SLAM, Suit.SPADES)
-        assert str(bid) == f"Slam {Suit.SPADES}"
+        assert str(bid) == "Slam Spades"
 
     def test_str_solo_slam(self, north):
         # SlamLevel.__str__ uses the human label "Solo Slam" (spaced).
         bid = ContractBid(north, SlamLevel.SOLO_SLAM, Suit.SPADES)
-        assert str(bid) == f"Solo Slam {Suit.SPADES}"
+        assert str(bid) == "Solo Slam Spades"
 
     def test_equality_ignores_player(self, north, south):
         # Player is excluded from comparison; two ContractBids with

@@ -33,7 +33,7 @@ from contrai_core.play import PlayState
 from contrai_core.team import Team
 from contrai_core.exceptions import IllegalPlayError, PlayRuleViolation
 from contrai_core.trick import Trick
-from contrai_core.types import Rank, Suit
+from contrai_core.types import Rank, Suit, TrumpVariant
 
 from contrai_engine.model.player import AiPlayer, HumanPlayer
 from contrai_engine.model.round import Round
@@ -524,7 +524,7 @@ class TestBeloteHolderDetection:
         assert round_.belote_holder is None
 
     def test_no_holder_at_no_trump(self, players):
-        contract = _contract(players["N"], 100, Suit.NO_TRUMP)
+        contract = _contract(players["N"], 100, TrumpVariant.NO_TRUMP)
         round_ = _make_round(
             players,
             {

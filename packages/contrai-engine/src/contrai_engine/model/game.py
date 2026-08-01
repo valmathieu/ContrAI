@@ -12,7 +12,6 @@ from contrai_core.deck import Deck
 from contrai_core.position import Position
 from contrai_core.team import Team
 from .player import Player
-from contrai_core.trick import Trick
 from .round import Round
 from contrai_core.exceptions import InvalidPlayerCountError
 import random

@@ -4,11 +4,11 @@ import random
 
 from .card import Card
 from .exceptions import InvalidCardCountError, InvalidPlayerCountError
-from .types import CARD_SUITS, Rank
+from .types import Rank, Suit
 
 class Deck:
     def __init__(self):
-        self.cards = [Card(suit, rank) for suit in CARD_SUITS for rank in Rank]
+        self.cards = [Card(suit, rank) for suit in Suit for rank in Rank]
 
     def __repr__(self):
         """

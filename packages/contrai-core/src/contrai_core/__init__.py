@@ -4,7 +4,15 @@ Public API — consumers can ``from contrai_core import Card, Suit, Rank, …``
 without knowing the internal module layout.
 """
 
-from .types import Suit, Rank, CARD_SUITS
+from .types import (
+    Suit,
+    TrumpVariant,
+    ContractSuit,
+    Rank,
+    CONTRACT_SUITS,
+    is_trump,
+    trump_suits,
+)
 from .position import Position
 from .card import Card
 from .deck import Deck
@@ -20,6 +28,7 @@ from .exceptions import (
     ContraiError,
     InvalidPlayerCountError,
     InvalidCardCountError,
+    InvalidCardError,
     IllegalBidError,
     PlayRuleViolation,
     IllegalPlayError,
@@ -29,8 +38,12 @@ from .exceptions import (
 
 __all__ = [
     "Suit",
+    "TrumpVariant",
+    "ContractSuit",
     "Rank",
-    "CARD_SUITS",
+    "CONTRACT_SUITS",
+    "is_trump",
+    "trump_suits",
     "Position",
     "Card",
     "Deck",
@@ -52,6 +65,7 @@ __all__ = [
     "ContraiError",
     "InvalidPlayerCountError",
     "InvalidCardCountError",
+    "InvalidCardError",
     "IllegalBidError",
     "PlayRuleViolation",
     "IllegalPlayError",
