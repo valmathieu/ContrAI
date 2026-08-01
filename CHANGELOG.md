@@ -12,6 +12,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 - (core) **BREAKING:** Position seat enum — anticlockwise next, partner, opponents, strict parsing, French seat-name mapping (french_name/from_french). BasePlayer.position is now a Position, not a free-form string.
 - (core) `is_trump(card_suit, contract_suit)` and `trump_suits(contract_suit)` — the one place that answers "is this card trump under this contract", plus `Card.is_trump(trump_suit)` sugar. Every trick-taking rule now asks through them instead of spelling out `card.suit == trump_suit` at each boundary.
+- (core) `TrumpRules` trick-rules seam: one sealed rules object per contract regime (`SingleSuitRules` per suit, `NoTrumpRules` for no-trump and no-contract), resolved as shared singletons via `rules_for(contract_suit)`. It answers trumpness, per-card points, in-suit ranking, led-suit-aware trick competition (`trick_rank`), belote applicability, and the higher-ranks ladder — so a future contract variant is a new leaf plus its tables instead of a sweep over call sites. All-trump still raises `NotImplementedError`, now from `rules_for`.
 
 ### Changed
 

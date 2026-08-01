@@ -93,6 +93,58 @@ package "types.py" as p_types {
 }
 
 ' =========================================================
+' Trick-rules seam (rules.py)
+' =========================================================
+package "rules.py" as p_rules {
+    abstract class TrumpRules <<abstract, sealed>> {
+        + {abstract} is_trump(suit: Suit) : bool
+        + {abstract} points(card: Card) : int
+        + {abstract} rank_in_suit(card: Card) : int
+        + {abstract} trick_rank(card: Card, led_suit: Suit)\n  : (int, int)?
+        + {abstract} belote_suits : tuple<Suit> <<property>>
+        + {abstract} higher_ranks(rank: Rank, suit: Suit)\n  : tuple<Rank>
+    }
+
+    class SingleSuitRules <<frozen dataclass>> {
+        + suit : Suit
+    }
+
+    class NoTrumpRules <<frozen dataclass>> {
+    }
+
+    class "rules.py" as p_rules_fn <<module>> {
+        rules_for(contract_suit: ContractSuit?) : TrumpRules
+    }
+
+    note bottom of TrumpRules
+      **The per-contract trick-rules seam.** One object
+      answers every regime-dependent card question —
+      trumpness, points, in-suit ranking, trick
+      competition, belote applicability — so a future
+      contract regime is a new leaf + tables, not a
+      sweep over call sites.
+      **No global order scale**: the trump and plain
+      orderings overlap, so cross-suit competition goes
+      through the led-suit-aware ""trick_rank"" —
+      ""(1, trump_rank)"" / ""(0, plain_rank)"" / ""None""
+      (cannot take the trick); the lexicographic max
+      over a trick is the winner. ""rank_in_suit"" is
+      same-suit-only by documented contract.
+      **Sealed**: ""~__init_subclass~__"" rejects
+      out-of-module subclasses — isinstance narrowing
+      over the leaves stays exhaustive.
+      **Singletons**: ""rules_for"" hands out one shared
+      instance per regime (""None"" and ""NO_TRUMP""
+      resolve to the //same// no-trump object) and
+      raises ""NotImplementedError"" for ""ALL_TRUMP""
+      — the all-trump firewall lives here.
+      Follow/trump //obligations// stay in
+      ""PlayState.legal_actions""; rules objects supply
+      predicates and comparators only.
+    end note
+}
+
+' =========================================================
 ' Seats (position.py)
 ' =========================================================
 package "position.py" as p_position {
@@ -594,6 +646,13 @@ package "exceptions.py" as p_exc {
 ' =========================================================
 ' Relationships
 ' =========================================================
+
+' Inheritance — TrumpRules sealed hierarchy
+TrumpRules <|-- SingleSuitRules
+TrumpRules <|-- NoTrumpRules
+SingleSuitRules --> Suit : suit
+p_rules_fn ..> TrumpRules : <<resolves singleton>>
+TrumpRules ..> Card : points / rank_in_suit / trick_rank
 
 ' Inheritance — Bid hierarchy
 Bid <|-- PassBid

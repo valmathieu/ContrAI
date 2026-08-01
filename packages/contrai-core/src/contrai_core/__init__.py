@@ -13,6 +13,7 @@ from .types import (
     is_trump,
     trump_suits,
 )
+from .rules import TrumpRules, SingleSuitRules, NoTrumpRules, rules_for
 from .position import Position
 from .card import Card
 from .deck import Deck
@@ -44,6 +45,10 @@ __all__ = [
     "CONTRACT_SUITS",
     "is_trump",
     "trump_suits",
+    "TrumpRules",
+    "SingleSuitRules",
+    "NoTrumpRules",
+    "rules_for",
     "Position",
     "Card",
     "Deck",
