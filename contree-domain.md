@@ -20,10 +20,10 @@ commit to a points contract.
 A game consists of multiple rounds (**manches**); each round runs through four
 phases:
 
-1. **Deal** (*distribution*)
-2. **Bidding** (*enchères*)
-3. **Card play** (*le jeu de la carte*) — 8 tricks
-4. **Scoring** (*comptage*)
+1. **Deal**
+2. **Bidding**
+3. **Card play** — 8 tricks
+4. **Scoring**
 
 The first team to reach a target score (commonly 1500 or 2000 points) wins.
 
@@ -37,8 +37,10 @@ The first team to reach a target score (commonly 1500 or 2000 points) wins.
   in Bridge.
 - **Deck.** 32 cards: 7, 8, 9, 10, Jack, Queen, King, Ace in each of four suits
   (♠ ♥ ♦ ♣).
-- **Turn order.** Anticlockwise. The player to the **right** of the current
-  actor plays next.
+- **Turn order.** Anticlockwise by default — the player to the **right** of the
+  current actor plays next. Tables may agree to play clockwise instead; every
+  directional rule in this document (dealing, bidding order, lead, dealer
+  rotation) then mirrors accordingly.
 - **Dealer rotation.** Anticlockwise — each new round, the dealer is the player
   to the right of the previous dealer.
 
@@ -68,14 +70,40 @@ The Jack (*Valet*) and the 9 are the master cards at trump. Mnemonic:
 
 Standard order outside trump: **A 10 R D V 9 8 7**.
 
-### 3.3. Totals
+### 3.3. All-trump contracts (strongest first, every suit)
 
-- 152 points live in the cards themselves.
-- An extra 10 points (the **dix de der**) go to whichever team wins the last
-  trick.
+Under an **all-trump** contract (§5.2) every suit ranks like trump, with a
+dedicated scale so the deck total stays constant:
+
+| Card       | Jack | 9   | Ace | 10  | King | Queen | 8   | 7   |
+| ---------- | ---- | --- | --- | --- | ---- | ----- | --- | --- |
+| **Points** | 14   | 9   | 6   | 5   | 3    | 1     | 0   | 0   |
+
+Order within every suit: **V 9 A 10 R D 8 7** — 38 points per suit, 152 in the
+deck, exactly as in a suit contract.
+
+### 3.4. No-trump contracts (strongest first, every suit)
+
+Under a **no-trump** contract every suit ranks like a plain suit, rescaled to
+keep the deck total constant:
+
+| Card       | Ace | 10  | King | Queen | Jack | 9   | 8   | 7   |
+| ---------- | --- | --- | ---- | ----- | ---- | --- | --- | --- |
+| **Points** | 19  | 10  | 4    | 3     | 2    | 0   | 0   | 0   |
+
+Order within every suit: **A 10 R D V 9 8 7**.
+
+### 3.5. Totals
+
+- 152 points live in the cards themselves — under **every** contract mode
+  (suit, all-trump, no-trump).
+- An extra 10 points (the **last trick bonus**) go to whichever team wins the
+  last trick.
 - Per round, **162 points** are distributed across the two teams.
-- The Belote bonus (see §6.5) adds 20 points to one team's total if applicable,
-  bringing the per-round ceiling to 182.
+- Belote (see §6.6) adds 20 points per belote where it exists: exactly one is
+  possible in a suit contract (per-round ceiling 182); none at no-trump; at
+  all-trump the agreed belote regime (§6.6) allows zero, one, or up to four
+  (ceiling 242).
 
 There is no hierarchy *between* the three non-trump suits — they are all equal,
 beaten only by the trump suit.
@@ -110,56 +138,72 @@ proceeds anticlockwise.
 
 ### 5.2. Possible actions on your turn
 
-- **Make a bid.** Announce a *value* and a *suit*, e.g. `90 ♥`. The value is
-  the number of points your team commits to taking with that suit as trump.
+- **Make a bid.** Announce a *value* and a *trump choice* — one of the four
+  suits (e.g. `90 ♥`), **no trump**, or **all trump**. The value is the number
+  of points your team commits to taking under that trump regime.
   
   - Minimum opening bid: **80**.
   - Increments: **10 points**.
-  - Maximum numeric bid: **180**.
-  - Each new bid must be strictly higher than the current one.
+  - Each new bid must be strictly higher than the current one, whatever its
+    trump choice.
+  - Maximum numeric bid — the ladder top depends on the trump choice and, at
+    all trump, on the agreed belote regime (§6.6):
   
-  > The 170 and 180 steps are only feasible with **Belote** in hand (K + Q of
-  > trump add 20 points), since the cards alone cap at 162 + 10 *dix de der* =
-  > 
-  > 172. The auction does **not** enforce that constraint at bid time —
-  >      announcing 170 / 180 without Belote is legal but commits the bidder to a contract they cannot make on cards alone, which will *chuter* at scoring.
+  | Trump choice                        | Ladder top | Theoretical max take  |
+  | ----------------------------------- | ---------- | --------------------- |
+  | Suit (♠ ♥ ♦ ♣)                      | 180        | 162 + 20 Belote = 182 |
+  | No trump                            | 160        | 162 (no Belote)       |
+  | All trump — no-belote regime        | 160        | 162                   |
+  | All trump — single belote (default) | 180        | 162 + 20 = 182        |
+  | All trump — four belotes            | 240        | 162 + 80 = 242        |
+  
+  > The top steps of each ladder are only feasible with the required **Belote**
+  > in hand — the cards alone cap at 152 + 10 = 162. The auction does **not**
+  > enforce that at bid time: announcing a top step without the Belote is legal
+  > but commits the bidder to a contract they cannot make on cards alone, which
+  > will *fail* at scoring.
 
-- **Bid Slam** (*Capot*). A special bid declaring your team will take **all 8
+- **Bid Slam**. A special bid declaring your team will take **all 8
   tricks**. Contract base value **250** points. Slam outranks any numeric
   bid: once declared, no further contract bid is legal (numeric, Slam, or
-  Solo Slam). *Contre* and *surcontre* remain available against a Slam.
+  Solo Slam). *Double* and *redouble* remain available against a Slam.
 
-- **Bid Solo Slam** (*Capot général*). A stronger all-tricks bid declaring
+- **Bid Solo Slam**. A stronger all-tricks bid declaring
   that the **bidder personally** will win every one of the 8 tricks — their
   partner may play normally but is forbidden from winning any trick. Contract
   base value **500** points. Solo Slam outranks any numeric bid, but it
   **cannot be announced after a Slam** — once a Slam is on the table, the
-  auction is closed to further contract bids (asymmetric block). *Contre*
-  and *surcontre* remain available.
+  auction is closed to further contract bids (asymmetric block). *Double* and *redouble* remain available.
 
-- **Pass** (*passer*). A player who passes may re-enter the bidding later, as
+> Slam-family bids exist under every trump choice (suit, no trump, all trump),
+> with the same base values. Some tables disallow the **Solo Slam** bid
+> altogether — its availability is agreed before the game (allowed by default).
+
+- **Pass**. A player who passes may re-enter the bidding later, as
   long as the auction has not yet ended.
 
-- **Contrer** (double) — see §5.3.
+- **Double** — see §5.3.
 
-- **Surcontrer** (redouble) — see §5.3.
+- **Redouble** — see §5.3.
 
 ### 5.3. Doubling
 
-- **Contre**: an opponent of the current bidder may call *contre* instead of
+- **Double**: an opponent of the current bidder may call *contre* instead of
   passing or bidding. This **freezes** the auction at the current contract
   and **doubles** the contract's point value (both for success and for
   failure).
-- **Surcontre**: the bidder's team may respond to a contre with a
+- **Redouble**: the bidder's team may respond to a contre with a
   *surcontre*, which **quadruples** the contract's point value. Either player
   on the bidding team may do this.
-- *Contre* can only be called on the most recent numeric bid (it cannot be
+- *Double* can only be called on the most recent numeric bid (it cannot be
   used to reopen a finished auction).
-- **Intervening passes do not close the Coinche / Surcoinche window.** Both
-  *contre* (by an opposing player) and *surcontre* (by the bidding team)
+- **Intervening passes do not close the Double/ Redouble window.** Both
+  *double* (by an opposing player) and *redouble* (by the bidding team)
   remain legal up until the auction terminates on three consecutive passes
-  per §5.4 — players who passed earlier may re-enter and call *contre* or
-  *surcontre*, consistent with the general re-entry rule in §5.2.
+  per §5.4 — players who passed earlier may re-enter and call *double* or
+  *redouble*, consistent with the general re-entry rule in §5.2.
+- **Table option:** doubling and redoubling **Slam-family** contracts can be
+  forbidden by prior agreement (allowed by default).
 
 ### 5.4. End of bidding
 
@@ -167,19 +211,23 @@ The auction ends when three consecutive players pass after the last bid (or
 fewer if the bid has been contred / surcontred and the appropriate replies
 given).
 
-- The team holding the final bid becomes the **declarer** / *attaque* /
-  *preneur*.
-- The other team is the **defense** / *défense*.
+- The team holding the final bid becomes the **declarer** / *attacker* .
+- The other team is the **defense**.
 - The suit of the final bid is the **trump** for this round.
-- If everyone passes without anyone bidding, the round is annulled, cards are
-  collected and redealt (with the same dealer).
+- If everyone passes without anyone bidding, the round is annulled: cards are
+  collected and the **next dealer** (normal rotation, §2) redeals.
 
 ---
 
 ## 6. Phase 3 — Card play
 
-The first card of the round (the *entame*) is played by the player to the
+The first card of the round (the *lead*) is played by the player to the
 **right of the dealer**, regardless of which team won the contract.
+
+> **Table option — the Solo Slam gives the lead** (off by default): the declarer
+> of a Solo Slam contract leads the first trick instead. Nothing else changes —
+> trick winners still lead the following tricks, and the next round's dealer is
+> still the seat after the previous dealer, never the Solo Slam declarer.
 
 ### 6.1. The trick
 
@@ -204,6 +252,13 @@ suit led, a player must obey the following, in order:
 5. **Discard.** If you have neither the led suit nor a trump (and no obligation
    forces a trump), you may play any card.
 
+> **Table option — under-trump exemption** (*dispense de pisser*, off by
+> default): when you are void in the led suit, an **opponent** has already
+> trumped, and you hold no trump able to beat the best trump on the table, you
+> may discard freely instead of playing a losing trump. The obligations to
+> over-trump when you can, to trump when nobody has cut yet, and the trump-led
+> rule (§6.3) are unchanged.
+
 ### 6.3. Special case: trump is led
 
 When trump is led, the follow-suit rule (1) applies as usual. In addition,
@@ -211,13 +266,29 @@ every player who can must play a trump *higher* than the highest already on
 the table, if they hold one. If they cannot beat it, they must still play a
 trump.
 
-### 6.4. Winning a trick
+### 6.4. No-trump and all-trump play
+
+- **No trump:** there is no trump suit. Follow the led suit if you can;
+  otherwise discard freely — no trumping, no over-trumping, no partner
+  exception to worry about. The highest card of the led suit (§3.4 order) wins
+  the trick.
+- **All trump:** every suit is trump, and every trick behaves like §6.3 in the
+  led suit: follow it *and* play a card **higher** than the best one already on
+  the table if you can; if you cannot beat it, you must still follow. When you
+  are void in the led suit you discard freely — cards of the other suits can
+  never win the trick, so there is no cross-suit cutting. The highest card of
+  the led suit (§3.3 order) wins.
+
+### 6.5. Winning a trick
 
 - If the trick contains any trumps, the highest trump wins.
 - Otherwise, the highest card *in the led suit* wins. Cards of other non-trump
   suits cannot win.
 
-### 6.5. Belote / Rebelote
+These two rules cover suit contracts; §6.4 states the winner at no trump and
+all trump (always the highest card of the led suit).
+
+### 6.6. Belote / Rebelote
 
 If a player holds **both** the King and the Queen of trump, they may declare
 this for a 20-point bonus to their team. The declaration is verbal:
@@ -229,9 +300,19 @@ Notes:
 
 - The bonus is awarded to the team regardless of which of the two cards is
   played first.
-- It counts toward the contract total (so it can save a borderline contract).
-- It is **kept even if the contract fails**. This is non-obvious and worth
-  testing carefully in the engine.
+- **Where Belote exists.** Suit contracts: only K + Q of the trump suit —
+  exactly one belote possible. No trump: no belote at all. All trump: the table
+  agrees a *belote regime* before the game — **none**, **single** (only the
+  first belote declared in play counts; the common default), or **four** (every
+  K + Q pair held counts 20 each, so one team may score up to +80).
+- **It counts toward the contract** by default — both for reaching the contract
+  value and for out-scoring the defense where that rule applies (§7.5): *la
+  belote sert à prendre*. Tables may agree instead that Belote never enters
+  those tests and is only added to the marked score afterwards.
+- It is **kept even if the contract fails** by default. This is non-obvious and
+  worth testing carefully in the engine. A table option transfers the failing
+  attackers' Belote (20 points each) to the defense instead — a defending
+  team's Belote is never taken.
 
 ---
 
@@ -243,7 +324,7 @@ At the end of the 8 tricks:
 
 1. Each team sums the point values of the cards in the tricks it has won
    (using the *current* trump values — see §3).
-2. The team that won the last trick adds the **dix de der** (10 points).
+2. The team that won the last trick adds the **last trick bonus** (10 points).
 3. Belote bonus (20) is added if applicable.
 
 The total across both teams (excluding Belote) is always **162**.
@@ -252,21 +333,22 @@ The total across both teams (excluding Belote) is always **162**.
 
 Let:
 
-- `C` = numeric contract value (one of 80, 90, …, 180)
+- `C` = numeric contract value (80, 90, … up to the ladder top of the trump
+  choice — §5.2)
 - `P_attack` = points realized by the declaring team (cards + der + Belote if
   applicable)
-- `M` = multiplier: 1 (no contre), 2 (contre), 4 (surcontre)
+- `M` = multiplier: 1 (no double), 2 (double), 4 (redouble)
 
-#### Numeric contracts (80–180)
+#### Numeric contracts
 
 **Un-doubled** (`M = 1`) — the two sides *share* the pile:
 
 - **Made** (`P_attack ≥ C`): **declarer** scores `C + P_attack`; **defense**
-  scores its own card points (its share of the 162 + the *dix de der* if it
+  scores its own card points (its share of the 162 + the *last trick bonus* if it
   took the last trick).
   Worked example: contract `90 ♥`, declarer realizes 102 → declarer 192,
   defense 60.
-- **Failed** (`P_attack < C`, *chuté*): **declarer** scores 0; **defense**
+- **Failed** (`P_attack < C`, *failed*): **declarer** scores 0; **defense**
   scores `160 + C`.
   Worked example: contract `100 ♠`, failed → defense 260, declarer 0.
 
@@ -281,66 +363,77 @@ Slam grid below:
   contract failed → defense 360, declarer 0.
 
 > The 162-point pile is treated as a flat **160** in the winner-takes-all and
-> *chuté* formulas — the engine's rounding convention.
+> *failed* formulas — the engine's rounding convention.
+
+**Table option — fixed stakes** (the *modular* stakes above are the default):
+the at-risk amounts become flat, independent of `C` — failed un-doubled **320**,
+doubled **640**, redoubled **1280**. Slam-family contracts under this option:
+1000 / 2000 doubled / redoubled for a Slam, 2000 / 4000 for a Solo Slam;
+un-doubled Slam-family amounts are unchanged (500 / 1000).
 
 **Belote (+20)** is the standing exception to "the loser scores 0": it is
 always credited to the team **holding** K + Q of trump (not whoever captures
-those cards in a trick — see §6.5), on top of everything else, win or lose.
+those cards in a trick — see §6.6), on top of everything else, win or lose.
 
-#### Unannounced capot
+#### Unannounced slam
 
 If the declaring team wins **all 8 tricks** on a numeric contract *without
-having bid a Slam*, the trick pile (152 cards + 10 *dix de der* = 162) is
+having bid a Slam*, the trick pile (152 cards + 10 *last trick bonus* = 162) is
 replaced by a flat **250** substitute: the declarer scores `C + 250`, the
 defense scores nothing, and the contract is necessarily **made** (sweeping
 every trick cannot fail). This mirrors the announced-Slam shape but keeps the
 numeric contract value `C` as the base.
 
-- Whether the contracting player took all 8 tricks **personally** (a *grand
-  slam*) or the team split them (a plain *slam*), the substitute is the same
-  250 — the distinction is only descriptive.
+- If the team split the 8 tricks, the substitute is **250**. If the
+  contracting player swept all 8 **personally**, the substitute is **500** by
+  default — tables may agree to keep a flat 250 for both cases.
 - **Un-doubled only.** A doubled / redoubled sweep keeps the winner-takes-all
   `160 + C × M` shape above; the 250 substitute does **not** apply.
-- **Declaring team only.** If the *defense* takes all 8 tricks the declarer
-  has simply *chuté* — score it as an ordinary failed contract (`160 + C`),
-  not as a capot.
+  - **Declaring team only.** If the *defense* takes all 8 tricks the declarer
+    has simply failed — score it as an ordinary failed contract (`160 + C`),
+    not as a slam.
 - **Belote (+20)** still layers on top for the holding team, as everywhere.
 
-> Worked example: contract `100 ♠`, declarer sweeps all 8 → declarer
-> 350 (`100 + 250`), defense 0.
+> Worked example: contract `100 ♠`, declaring team sweeps all 8 → declarer
+> 350 (`100 + 250`), defense 0; if the contracting player took them all alone →
+> 600 (`100 + 500`).
 
 #### Slam and Solo Slam
 
 Slam-family contracts keep the same shape as numeric contracts — the at-risk
-amount is **contract + trick-points × multiplier** — but the trick pile
+amount is **contract × multiplier + substitute** — where the trick pile
 (normally up to 162) is *replaced* by a flat **substitute** equal to the
-contract base. So the at-risk amount is:
+contract base:
 
-> `(contract + substitute) × multiplier`
+> `C × M + substitute`
 
-with `substitute = contract` for both Slam and Solo Slam.
+with `substitute = C` for both Slam and Solo Slam.
 
-| Bid       | Contract (`C`) | Substitute (replaces 162) | At-risk per `M`   |
-| --------- | -------------- | ------------------------- | ----------------- |
-| Slam      | 250            | 250                       | `(250 + 250) × M` |
-| Solo Slam | 500            | 500                       | `(500 + 500) × M` |
+| Bid       | Contract (`C`) | Substitute (replaces 162) | At-risk per `M` |
+| --------- | -------------- | ------------------------- | --------------- |
+| Slam      | 250            | 250                       | `250 × M + 250` |
+| Solo Slam | 500            | 500                       | `500 × M + 500` |
 
-Both halves are multiplied by `M` (1 for normal, 2 for *contre*, 4 for
-*surcontre*), giving:
+Only the contract half is multiplied by `M` (1 for normal, 2 for double, 4 for
+redouble) — the substitute is not — giving:
 
 | Contract  | Normal | Doubled | Redoubled |
 | --------- | ------ | ------- | --------- |
-| Slam      | 500    | 1000    | 2000      |
-| Solo Slam | 1000   | 2000    | 4000      |
+| Slam      | 500    | 750     | 1250      |
+| Solo Slam | 1000   | 1500    | 2500      |
+
+Under the **fixed stakes** option (see the numeric-contracts section) the
+doubled / redoubled amounts are flat 1000 / 2000 for a Slam and 2000 / 4000
+for a Solo Slam instead.
 
 The grid is **symmetric**: whichever side wins the contract scores the
 at-risk amount (declarer if made, defense if failed). The other side scores
 zero (modulo Belote — see below).
 
-**Slam** (*Capot*) is **made** when the declaring team wins **all 8 tricks**.
+**Slam** is **made** when the declaring team wins **all 8 tricks**.
 Anything less is a failure → defense scores the at-risk amount.
 
-**Solo Slam** (*Capot général*) is **made** only when the **declaring player
+**Solo Slam** is **made** only when the **declaring player
 personally** wins every one of the 8 tricks. The team winning all 8 together
 is **not** enough — if the partner wins any trick, the Solo Slam fails and
 defense scores the at-risk amount.
@@ -348,10 +441,51 @@ defense scores the at-risk amount.
 **Belote (+20)** still applies on top of the Slam grid: it goes to whichever
 team holds the K + Q of trump, independent of which side wins the contract.
 
-**Dix de der** does **not** apply on a Slam-family round — the substitute
+**Last trick bonus** does **not** apply on a Slam-family round — the substitute
 already covers the full trick pile.
 
-### 7.3. Double/ Redouble multiplier
+### 7.3. Marking conventions
+
+§7.2 describes the common default, where **both** marking conventions are
+active: *points faits* (the points actually made are marked) **and** *points
+annoncés* (the contract value is marked). Tables may keep only one:
+
+| Convention             | Made contract                               | Failed contract                                                         |
+| ---------------------- | ------------------------------------------- | ----------------------------------------------------------------------- |
+| Both (default)         | declarer `C + P_attack`; defense its points | defense `160 + C` (flat 320 under fixed stakes)                         |
+| *Points faits* only    | declarer `P_attack`; defense its points     | defense the whole pile: **162** (Slam-family: the 250 / 500 substitute) |
+| *Points annoncés* only | declarer `C`; defense **0**                 | defense flat **160** (Slam-family: 250 / 500)                           |
+
+Doubled / redoubled contracts ignore the marking conventions entirely — the
+winner-takes-all stake of §7.2 applies as-is. Belote follows its own rules
+(§6.6) on top of every convention.
+
+### 7.4. Rounding
+
+By default marks are written exactly. Tables may agree to round each team's
+realized card points to the nearest **10** or the nearest **5** when composing
+the marks:
+
+- Nearest 10 rounds half **up**: 85 → 90. A raw 85–77 split therefore marks
+  90–80 — exceptionally 170 in total.
+- With integer piles, ties are impossible when rounding to the nearest 5.
+- Rounding affects the *marks* only; whether the contract is made is always
+  judged on exact points.
+
+### 7.5. Out-scoring the defense & dispute (*litige*)
+
+Table option (off by default): to make its contract the attack must not only
+reach `C` but also score **strictly more than the defense**
+(`P_attack > P_defense`), Belote included on both sides whenever it counts
+toward the contract (§6.6). An exact tie — 81 / 81, or 91 / 91 when a Belote
+counts — is a **dispute** (*litige*), resolved by prior agreement in one of
+three ways:
+
+1. Each team marks its own points (the common default).
+2. Only the defense marks its points; the attack marks nothing.
+3. The attack fails — ordinary failed-contract scoring applies.
+
+### 7.6. Double/ Redouble multiplier
 
 The multiplier `M` from §7.2 applies whether the contract is made or failed.
 Doubling cuts both ways — it punishes overbidding *and* rewards a successful
@@ -366,26 +500,23 @@ defense.
 - If both teams cross the target in the same round, the higher score wins.
 - If both teams sit at the **same score** at or above the target, nobody has
   won yet: play continues with additional rounds (sudden death) until one
-  team leads.
+  team leads, in case of a *dispute*.
+- **Table option** (off by default): a team cannot cross the target on Belote
+  points alone — if only the Belote bonus takes it past the target, the win
+  waits until points from play confirm it.
 
 ---
 
 ## 9. Variants
 
-These are common community variants. The base ContrAI engine does **not**
-implement them; they are listed here for future reference and to clarify
-terminology.
+Community variants and where they stand in this rule set:
 
-- **Sans atout** (*no trump*): a contract played with no trump suit. Card
-  values shift (e.g. the Ace ranks highest in every suit) and the contract
-  value is typically scaled.
-- **Tout atout** (*all trump*): every suit acts as trump simultaneously. Card
-  values become the trump values in every suit; total card points change
-  accordingly.
-- **Corsica deal**: 4-4 dealing pattern instead of 3-2-3.
-- **Générale**: a regional synonym (or close cousin) of *Capot général* —
-  a contract declaring the bidder *alone* will take all 8 tricks. ContrAI
-  models this as **Solo Slam** in the canonical engine (see §5.2).
+- **No trump** and **All trump**: fully specified in this document (§3.3–3.5,
+  §5.2, §6.4, §6.6) and part of the canonical rule set.
+- **Corsica deal**: 4-4 dealing pattern instead of 3-2-3. Not part of the rule
+  set; listed for terminology.
+- **Solo Slam**: a contract declaring the bidder *alone* will take all 8
+  tricks — a standard bid here (§5.2), optional at some tables.
 - **Annonces**: extra bonuses declared at the start of the first trick for
   card combinations held in hand (*tierce*, *cinquante*, *cent*, *carré*…).
   Inherited from classical Belote. **Out of scope for ContrAI** — this is
@@ -400,7 +531,7 @@ For the bilingual report and for keeping Claude consistent across languages.
 | French                  | English                       | Notes                                                                   |
 | ----------------------- | ----------------------------- | ----------------------------------------------------------------------- |
 | Atout                   | Trump                         |                                                                         |
-| Annonce                 | Bid / announcement            | Context: a bidding announcement (the only meaning used in this project) |
+| Annonce                 | Bid                           | Context: a bidding announcement (the only meaning used in this project) |
 | Belote                  | Belote                        | The K+Q-of-trump bonus                                                  |
 | Capot                   | Slam                          | Taking all 8 tricks (the *team* wins them all)                          |
 | Capot général           | Solo Slam                     | Bidder *personally* takes all 8 tricks (cannot follow a Slam)           |
@@ -412,16 +543,22 @@ For the bilingual report and for keeping Claude consistent across languages.
 | Défense                 | Defense                       | The non-declaring team                                                  |
 | Der / Dix de der        | Last trick / last-trick bonus | 10 points                                                               |
 | Donneur                 | Dealer                        |                                                                         |
+| Enchères                | Auction                       |                                                                         |
 | Entame / Entamer        | Lead / to lead                | First card of a trick                                                   |
 | Fournir                 | To follow suit                |                                                                         |
+| Générale                | Solo Slam                     | Regional synonym of *capot général*                                     |
 | Levée                   | Trick                         | Synonym of *pli*                                                        |
+| Litige                  | Dispute                       |                                                                         |
 | Main                    | Hand                          | The 8 cards a player holds                                              |
 | Manche                  | Round / hand                  | One complete deal + bidding + 8 tricks + scoring                        |
 | Maître / Maîtresse      | Master                        | A card guaranteed to win (in its suit, given what has fallen)           |
 | Monter                  | To raise / to overtrump       | *Monter à l'atout* = play a higher trump                                |
 | Partie                  | Game                          | Multiple rounds, ending when a team reaches the target score            |
 | Passer                  | To pass                       |                                                                         |
+| Pisser                  | To under-trump                | Play a losing trump by obligation                                       |
 | Pli                     | Trick                         | Synonym of *levée*                                                      |
+| Points annoncés         | Announced-value marking       | Marking convention (§7.3)                                               |
+| Points faits            | Actual-points marking         | Marking convention (§7.3)                                               |
 | Preneur / Prenante      | Declarer / declaring team     | The team that won the contract                                          |
 | Rebelote                | Rebelote                      | Second of the Belote pair                                               |
 | Sans atout              | No trump                      | Variant                                                                 |
@@ -445,7 +582,8 @@ the listed pieces, you can open at this level."*
 > The auction itself allows numeric bids up to **180** (see §5.2), but this
 > opening-bid convention conservatively caps at 160 — 170 and 180 are
 > Belote-only steps and the table here doesn't try to characterise hands
-> strong enough to open there.
+> strong enough to open there. It also covers **suit contracts** only —
+> opening conventions for no-trump and all-trump are not codified yet.
 
 | Opening | Required trumps | Min trumps | Aces | Non-bare tens | Min tricks | Belote |
 | ------- | --------------- | ---------- | ---- | ------------- | ---------- | ------ |
@@ -498,18 +636,19 @@ threshold; details live alongside the AI implementation.*
 
 ## 12. Quick reference — round flow
 
-```
+```text
 [Deal]      → 8 cards each, 3-2-3 anticlockwise
    ↓
 [Bidding]   → starting right of dealer
-              actions: bid (80–180, slam, or solo slam), contre, surcontre, pass
+              actions: bid (80 up to the mode ladder — suit / no-trump /
+              all-trump), slam, solo slam, contre, surcontre, pass
               ends: 3 consecutive passes after the last bid
    ↓
 [Card play] → 8 tricks, anticlockwise, lead = right of dealer
               obey: follow → trump → overtrump (except partner-master) → discard
               optional: announce Belote/Rebelote on K/Q of trump
    ↓
-[Scoring]   → sum cards + dix de der (+ belote if applicable)
+[Scoring]   → sum cards + last trick bonus (+ belote if applicable)
               apply contract success/failure + multiplier
    ↓
 [Check]     → if one team strictly leads at ≥ target (1500/2000): end game
@@ -525,8 +664,6 @@ Things deliberately left out or unresolved here, to revisit:
 
 - **Annonces** (tierce, cinquante, carré, etc.) are out of scope for ContrAI.
   This is the explicit boundary of the project: Contrée *without* annonces.
-- The *sans atout* and *tout atout* variants are out of scope for v1 of the
-  engine.
 - The bidding table in §11 is one convention among several. The project's
   next AI families (supervised → RL) will likely *not* use this table at all;
   it remains here as the baseline rule-based behavior and as a sanity check
