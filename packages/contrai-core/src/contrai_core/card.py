@@ -131,9 +131,9 @@ class Card:
 
         Sugar over :func:`contrai_core.is_trump` for the common case of
         asking about a card in hand or on the table. Prefer it to
-        ``card.suit == trump_suit``: the bare comparison is now a
-        cross-type one that is always ``False`` for a suitless contract
-        trump, which is the right answer only by coincidence.
+        ``card.suit == trump_suit``: that bare comparison is a cross-type
+        one, always ``False`` for a suitless contract trump, which is the
+        right answer only by coincidence.
 
         Args:
             trump_suit: The trump the round's contract settled on, or
@@ -141,16 +141,53 @@ class Card:
 
         Returns:
             ``True`` if this card is trump.
+
+        Raises:
+            NotImplementedError: If ``trump_suit`` is
+                ``TrumpVariant.ALL_TRUMP``, propagated from
+                :func:`contrai_core.is_trump`.
         """
 
         return suit_is_trump(self.suit, trump_suit)
 
     def get_points(self, trump_suit: ContractSuit | None = None) -> int:
+        """Point value of this card, on the trump or the plain scale.
+
+        Args:
+            trump_suit: The trump the round's contract settled on, or
+                ``None`` when no contract is established yet.
+
+        Returns:
+            The card's point value, read from the trump table when
+            :meth:`is_trump` answers ``True`` and the plain one otherwise.
+
+        Raises:
+            NotImplementedError: If ``trump_suit`` is
+                ``TrumpVariant.ALL_TRUMP``, propagated from
+                :meth:`is_trump`.
+        """
+
         if self.is_trump(trump_suit):
             return Card.TRUMP_POINTS[self.rank]
         return Card.NORMAL_POINTS[self.rank]
 
     def get_order(self, trump_suit: ContractSuit | None = None) -> int:
+        """Strength of this card, on the trump or the plain scale.
+
+        Args:
+            trump_suit: The trump the round's contract settled on, or
+                ``None`` when no contract is established yet.
+
+        Returns:
+            The card's order index — higher beats lower, comparable only
+            against cards ranked on the same scale.
+
+        Raises:
+            NotImplementedError: If ``trump_suit`` is
+                ``TrumpVariant.ALL_TRUMP``, propagated from
+                :meth:`is_trump`.
+        """
+
         if self.is_trump(trump_suit):
             return Card.TRUMP_ORDER[self.rank]
         return Card.NORMAL_ORDER[self.rank]

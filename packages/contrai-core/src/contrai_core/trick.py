@@ -108,6 +108,11 @@ class Trick:
         Returns:
             Player who is currently winning, or None if no card has been
             played yet.
+
+        Raises:
+            NotImplementedError: If ``trump_suit`` is
+                ``TrumpVariant.ALL_TRUMP``, propagated from
+                :func:`contrai_core.is_trump`.
         """
         return current_winner(self.plays, trump_suit)
 
@@ -136,6 +141,11 @@ def current_winner(
     Returns:
         Player who is currently winning, or None if no card has been
         played yet.
+
+    Raises:
+        NotImplementedError: If ``trump_suit`` is
+            ``TrumpVariant.ALL_TRUMP``, propagated from
+            :func:`contrai_core.is_trump`.
     """
     if not plays:
         return None
