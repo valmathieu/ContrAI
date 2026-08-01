@@ -8,6 +8,7 @@ from contrai_core import (
     IllegalBidError,
     IllegalPlayError,
     InvalidCardCountError,
+    InvalidCardError,
     InvalidContractError,
     InvalidPlayerCountError,
     PlayRuleViolation,
@@ -20,6 +21,7 @@ from contrai_core import (
 ALL_DOMAIN_ERRORS = [
     InvalidPlayerCountError,
     InvalidCardCountError,
+    InvalidCardError,
     IllegalBidError,
     IllegalPlayError,
     TrickStateError,
@@ -178,3 +180,21 @@ class TestInvalidCardCountError:
     def test_message_without_context(self):
         err = InvalidCardCountError(32, 20)
         assert str(err) == "Expected 32 cards, got 20"
+
+
+class TestInvalidCardError:
+    def test_is_value_error_subclass(self):
+        assert issubclass(InvalidCardError, ValueError)
+
+    def test_context_is_stored(self):
+        err = InvalidCardError("Invalid card suit: NO_TRUMP", context="Card")
+        assert err.context == "Card"
+
+    def test_message_with_context(self):
+        err = InvalidCardError("Invalid card suit: NO_TRUMP", "Card")
+        assert str(err) == "Card: Invalid card suit: NO_TRUMP"
+
+    def test_message_without_context(self):
+        err = InvalidCardError("Invalid card suit: NO_TRUMP")
+        assert str(err) == "Invalid card suit: NO_TRUMP"
+        assert err.context == ""
