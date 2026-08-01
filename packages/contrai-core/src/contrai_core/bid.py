@@ -41,11 +41,11 @@ class SlamLevel(Enum):
 
     A Slam-family contract's *identity* is the kind of declaration — not
     the number of points it is worth. Each member therefore owns its
-    :attr:`base_value` as data: this is the single source of truth for
-    the 250 / 500 that used to be re-derived from string sentinels all
-    over the codebase. The base value drives auction precedence (both
-    members outrank the 180 numeric ceiling) and doubles as the
-    slam-family scoring substitute — see
+    :attr:`base_value` as data: one source of truth for the 250 / 500,
+    rather than a constant each caller re-derives for itself. The base
+    value drives auction precedence (both members outrank the 180
+    numeric ceiling) and doubles as the slam-family scoring
+    substitute — see
     :meth:`ContractBid.get_numeric_value`,
     :meth:`contrai_core.Contract.get_base_points`, and
     :meth:`contrai_core.Contract.get_slam_card_substitute`.
