@@ -1207,11 +1207,15 @@ class TestPureHelpers:
         # ♥K still has ♥10 out → not master.
         assert strat._is_master_card(_c(Suit.HEARTS, Rank.KING), Suit.SPADES, fallen) is False
 
-    def test_higher_ranks_respect_trump_vs_normal_order(self, strat):
-        normal = strat._get_higher_ranks(Rank.NINE, as_trump=False)
-        assert Rank.JACK in normal and Rank.ACE in normal
-        trump = strat._get_higher_ranks(Rank.NINE, as_trump=True)
-        assert Rank.JACK in trump and Rank.ACE not in trump  # 9 outranks A in trump
+    def test_master_check_respects_trump_vs_normal_order(self, strat):
+        # The ladders live on the TrumpRules seam now; the master check
+        # must still rank a trump 9 above the Ace and a plain 9 below it.
+        # ♥ trump: once the Jack falls, the ♥9 is master (A is beneath it).
+        fallen = self._fallen(Suit.HEARTS, {Rank.JACK})
+        assert strat._is_master_card(_c(Suit.HEARTS, Rank.NINE), Suit.HEARTS, fallen) is True
+        # Plain ♥ (spades trump): J and A still out → the ♥9 is nowhere
+        # near master on the plain ladder.
+        assert strat._is_master_card(_c(Suit.HEARTS, Rank.NINE), Suit.SPADES, fallen) is False
 
     def test_team_winning_reads_the_led_suit_master(self, strat):
         # The helpers receive sealed observation records in production,
