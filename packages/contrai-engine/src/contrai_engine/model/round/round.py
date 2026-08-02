@@ -5,6 +5,7 @@ scoring.
 """
 
 import itertools
+import logging
 from typing import Optional, Dict, List, TYPE_CHECKING
 
 from contrai_core.auction import Auction
@@ -20,6 +21,12 @@ if TYPE_CHECKING:
     from ..player import Player
     from contrai_core.team import Team
     from contrai_core.deck import Deck
+
+# Logging is infrastructure, not presentation: this module never attaches a
+# handler or configures a level itself (see contrai_engine.log_setup) — it
+# only ever emits through the standard logging module, so the calls below
+# are silent no-ops for any interface that hasn't opted into debug mode.
+logger = logging.getLogger(__name__)
 
 
 class Round:
@@ -155,6 +162,7 @@ class Round:
         self.auction = auction
         self.contract = auction.contract()
         if self.contract is not None:
+            logger.debug("contract fixed: %s", self.contract)
             self._detect_belote_holder()
             # Bookmark the contract in the event log so the start of
             # play is clearly delimited.
@@ -376,6 +384,21 @@ class Round:
             self.tricks.append(self.current_trick)
             if winner and winner.team:
                 self.team_tricks[winner.team.name].append(self.current_trick)
+
+            # The point total costs a real sum over the trick's four cards,
+            # unlike a bare lazy %s argument — guard it explicitly so a
+            # disabled run never pays for it.
+            if logger.isEnabledFor(logging.DEBUG):
+                trick_points = sum(
+                    card.get_points(trump_suit)
+                    for _, card in self.current_trick.get_plays()
+                )
+                logger.debug(
+                    "trick %d complete: winner %s, %d points",
+                    len(self.tricks),
+                    winner.position if winner else None,
+                    trick_points,
+                )
 
         # Add cards back to deck (last card played first, then reverse order)
         if self.current_trick and hasattr(self.current_trick, 'get_plays'):
