@@ -14,6 +14,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (core) `is_trump(card_suit, contract_suit)` and `trump_suits(contract_suit)` — the one place that answers "is this card trump under this contract", plus `Card.is_trump(trump_suit)` sugar. Every trick-taking rule now asks through them instead of spelling out `card.suit == trump_suit` at each boundary.
 - (core) `TrumpRules` trick-rules seam: one sealed rules object per contract regime (`SingleSuitRules` per suit, `NoTrumpRules` for no-trump and no-contract), resolved as shared singletons via `rules_for(contract_suit)`. It answers trumpness, per-card points, in-suit ranking, led-suit-aware trick competition (`trick_rank`), belote applicability, and the higher-ranks ladder — so a future contract variant is a new leaf plus its tables instead of a sweep over call sites. All-trump still raises `NotImplementedError`, now from `rules_for`.
 - (core) `TrickRecord`, the completed-trick value: an immutable four-record tuple that knows its `led_suit` and its `winner(trump_suit)` — returning the winning play *record* (a `Play` in state contexts, a sealed `ObservedPlay` in observations), never just the seat.
+- (engine) `contrai --debug / --seed / --autoplay` — face-up debug view with still-in-play summary, stdlib-logging diagnostics to `contrai-debug.log` with recorded seed, reproducible deals, and unattended 4-AI autoplay.
 
 ### Changed
 
@@ -27,6 +28,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 ### Fixed
 
+- (engine) The AI no longer hands the opponents a Ten it did not have to. When it can neither follow suit nor usefully ruff, it now gives up its cheapest card outright instead of emptying whichever suit it happened to be shortest in — that ordering walked a suit down to its Ten while a worthless 7 sat untouched in a longer one. Over 300 rounds the change concedes 36% fewer points on those discards and halves the ten-or-better cards thrown away. Ties go to the longest suit, then to a draw, so a seat's discards are no longer readable from hand order.
 - (core) Suits now render as their display name wherever one is embedded in text — a contract reads `100 Spades by North` instead of `100 Suit.SPADES by North`.
 - (core) An all-trump contract now raises instead of quietly playing out as a no-trump one. The variant is still unimplemented; it just no longer answers "no card is trump" when the right answer is "every card is".
 - (engine) Under a no-trump contract the AI no longer records seats as "void in No Trump" — a suit no card can be held in. Its card tracking now leaves the trump entry out of a no-trump round entirely, so the trump-pull and anticipated-ruff inferences read a clean void map instead of a polluted one.

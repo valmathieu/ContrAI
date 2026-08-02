@@ -21,6 +21,8 @@ The legal-play oracle itself lives in ``contrai-core``'s
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from contrai_core import Hand, Position
@@ -689,4 +691,120 @@ class TestManageBiddingAutoPasses:
         assert contract.double is True
         # And the critical assertion: S was never prompted.
         assert prompts == []
+
+
+# ---------------------------------------------------------------------------
+# Debug-logging diagnostics (stdlib logging, model-side)
+# ---------------------------------------------------------------------------
+
+
+class TestContractFixedLogging:
+    """``manage_bidding`` logs the fixed contract once bidding closes."""
+
+    def test_contract_fixed_logs_at_debug(self, players, caplog):
+        w, n, e, s = players["W"], players["N"], players["E"], players["S"]
+        scripted = {
+            n: [ContractBid(n, 80, Suit.HEARTS)],
+            e: [PassBid(e)],
+            s: [PassBid(s)],
+            w: [PassBid(w)],
+        }
+        for ai, choices in scripted.items():
+            queue = list(choices)
+            ai.choose_bid = lambda _auction, _p=ai, _q=queue: (
+                _q.pop(0) if _q else PassBid(_p)
+            )
+
+        round_ = _empty_round(players)  # order N, E, S, W
+
+        with caplog.at_level(logging.DEBUG, logger="contrai_engine"):
+            contract = round_.manage_bidding()
+
+        assert contract is not None
+        records = [
+            record for record in caplog.records
+            if record.name == "contrai_engine.model.round.round"
+        ]
+        assert len(records) == 1
+        assert records[0].levelno == logging.DEBUG
+        assert records[0].getMessage() == "contract fixed: 80 Hearts by N"
+
+    def test_all_pass_does_not_log_contract_fixed(self, players, caplog):
+        """An all-passed auction never fixes a contract, so the
+        "contract fixed" line must never appear."""
+        for ai in players.values():
+            ai.choose_bid = lambda _auction, _p=ai: PassBid(_p)
+
+        round_ = _empty_round(players)
+
+        with caplog.at_level(logging.DEBUG, logger="contrai_engine"):
+            contract = round_.manage_bidding()
+
+        assert contract is None
+        assert not any(
+            "contract fixed" in record.getMessage() for record in caplog.records
+        )
+
+
+class TestTrickCompletedLogging:
+    """``play_trick`` logs the winner and point total once a trick closes."""
+
+    def _all_trump_trick(self, players):
+        """A one-round-of-spades trick: every seat holds a single trump
+        card, so follow-suit is trivial and the point/winner arithmetic is
+        easy to state by hand.
+
+        J♠ (20) + 9♠ (14) + A♠ (11) + 7♠ (0) = 45 trump points; the Jack of
+        trump outranks every other trump card, so North (the leader) wins.
+        """
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        hands = {
+            "N": [Card(Suit.SPADES, Rank.JACK)],
+            "E": [Card(Suit.SPADES, Rank.NINE)],
+            "S": [Card(Suit.SPADES, Rank.ACE)],
+            "W": [Card(Suit.SPADES, Rank.SEVEN)],
+        }
+        round_ = _make_round(players, hands, contract, [], deck=_StubDeck())
+        for seat, cards in hands.items():
+            players[seat].choose_card = (
+                lambda observation, _card=cards[0]: _card
+            )
+        return round_
+
+    def test_trick_completed_logs_winner_and_points_at_debug(
+        self, players, caplog
+    ):
+        round_ = self._all_trump_trick(players)
+
+        with caplog.at_level(logging.DEBUG, logger="contrai_engine"):
+            round_.play_trick()
+
+        records = [
+            record for record in caplog.records
+            if record.name == "contrai_engine.model.round.round"
+        ]
+        assert len(records) == 1
+        assert records[0].levelno == logging.DEBUG
+        assert records[0].getMessage() == (
+            "trick 1 complete: winner North, 45 points"
+        )
+
+    def test_trick_completed_emits_no_debug_log_by_default(
+        self, players, caplog
+    ):
+        """Test that no trick-completed record is captured at the default
+        log level. A caplog assertion only observes the emitted record, so
+        this can't distinguish "the guard skipped the points sum" from
+        "the sum ran but the disabled logger call no-opped it" — it
+        confirms the observable, back-compat-relevant behavior: nothing is
+        emitted for contrai_engine.model.round.round when DEBUG is not
+        active."""
+        round_ = self._all_trump_trick(players)
+
+        round_.play_trick()
+
+        assert not any(
+            record.name == "contrai_engine.model.round.round"
+            for record in caplog.records
+        )
 

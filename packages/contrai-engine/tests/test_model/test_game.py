@@ -7,13 +7,20 @@ and the ``manage_round`` lifecycle driven through a ``Round`` double
 (completed contract, score accumulation, all-pass redeal).
 """
 
+import logging
+
 import pytest
+from contrai_engine.debug_state import round_result_lines
 from contrai_engine.model import game as game_module
 from contrai_engine.model.game import Game
+from contrai_engine.model.player import AiPlayer
 from contrai_core.deck import Deck
 from contrai_core.exceptions import InvalidPlayerCountError
+from contrai_core.bid import ContractBid, PassBid
 from contrai_core.card import Card
+from contrai_core.contract import Contract
 from contrai_core.position import Position
+from contrai_core.types import Suit
 
 class DummyPlayer:
     """Minimal player stand-in: name, seat position, and an empty hand."""
@@ -38,6 +45,7 @@ class FakeRound:
     bidding_contract = None
     play_scores: dict[str, int] = {}
     failed_scores: dict[str, int] = {}
+    contract_made = True
 
     def __init__(self, players_order, dealer, deck, round_number):
         self.players_order = players_order
@@ -45,14 +53,21 @@ class FakeRound:
         self.deck = deck
         self.round_number = round_number
         self.calls: list[str] = []
+        # Mirrors the attributes the real Round exposes once bidding/scoring
+        # runs, so debug_state.round_result_lines (read by Game's debug
+        # logging) has something valid to read off this double too.
+        self.contract = None
+        self.round_scores: dict[str, int] = {}
 
     def deal_cards(self):
         """Record the call; no cards actually move."""
         self.calls.append("deal_cards")
 
     def manage_bidding(self, view=None):
-        """Record the call and resolve to the scripted contract."""
+        """Record the call, resolve to the scripted contract, and mirror it
+        onto ``self.contract`` the way the real ``Round`` does."""
         self.calls.append("manage_bidding")
+        self.contract = self.bidding_contract
         return self.bidding_contract
 
     def play_all_tricks(self, view=None):
@@ -61,8 +76,11 @@ class FakeRound:
         return {}
 
     def calculate_round_scores(self):
-        """Record the call and report the scripted completed-round scores."""
+        """Record the call and report the scripted completed-round scores,
+        mirroring them onto ``self.round_scores`` the way the real ``Round``
+        does."""
         self.calls.append("calculate_round_scores")
+        self.round_scores = dict(self.play_scores)
         return dict(self.play_scores)
 
     def handle_failed_contract(self):
@@ -451,3 +469,174 @@ def test_manage_round_all_pass_redeals(game, monkeypatch):
     # The view was asked to redeal, and the totals were left untouched.
     assert view.redeal_count == 1
     assert game.scores == {'North-South': 0, 'East-West': 0}
+
+
+# ---------------------------------------------------------------------------
+# Debug-logging diagnostics (stdlib logging, model-side)
+# ---------------------------------------------------------------------------
+
+
+def test_start_new_round_logs_deal_snapshot_at_debug(game, caplog):
+    """
+    Test that starting a new round emits a single DEBUG record holding the
+    round header and every seat's freshly dealt hand.
+    """
+    with caplog.at_level(logging.DEBUG, logger="contrai_engine"):
+        game.start_new_round()
+
+    game_records = [
+        record for record in caplog.records
+        if record.name == "contrai_engine.model.game"
+    ]
+    assert len(game_records) == 1
+    assert game_records[0].levelno == logging.DEBUG
+
+    message = game_records[0].getMessage()
+    assert f"Round #{game.round_number} dealt" in message
+    for player in game.players:
+        assert f"{player.position.name[0]}: " in message
+
+
+def test_start_new_round_does_not_log_without_debug_level(game, caplog):
+    """
+    Test that no deal-snapshot record is captured at the default log
+    level. A caplog assertion only observes the emitted record, so this
+    can't distinguish "the guard skipped building the snapshot" from "the
+    snapshot was built but the disabled logger call no-opped it" — it
+    confirms the observable, back-compat-relevant behavior: nothing is
+    emitted for contrai_engine.model.game when DEBUG is not active.
+    """
+    game.start_new_round()
+
+    assert not any(
+        record.name == "contrai_engine.model.game" for record in caplog.records
+    )
+
+
+def test_manage_round_completed_logs_round_result_at_debug(
+    game, players, monkeypatch, caplog
+):
+    """
+    Test that a completed round logs its contract outcome and the running
+    totals at DEBUG, after the round's points are folded into game.scores.
+    """
+    contract = Contract(ContractBid(players[0], 100, Suit.HEARTS))
+    FakeRound.bidding_contract = contract
+    FakeRound.play_scores = {'North-South': 160, 'East-West': 0}
+    FakeRound.contract_made = True
+    monkeypatch.setattr(game_module, 'Round', FakeRound)
+
+    with caplog.at_level(logging.DEBUG, logger="contrai_engine"):
+        game.manage_round()
+
+    game_records = [
+        record for record in caplog.records
+        if record.name == "contrai_engine.model.game"
+    ]
+    result_messages = [
+        record.getMessage() for record in game_records
+        if record.getMessage().startswith(f"Round #{game.round_number}: contract")
+    ]
+    assert len(result_messages) == 1
+    assert result_messages[0].splitlines() == [
+        f"Round #{game.round_number}: contract 100 ♥ by N — made.",
+        "Round points: North-South 160 · East-West 0",
+        "Totals: North-South 160 · East-West 0",
+    ]
+
+
+def test_manage_round_all_pass_logs_redeal_at_debug(game, monkeypatch, caplog):
+    """
+    Test that an all-passed round logs the redeal outcome at DEBUG, joined
+    as a single multi-line record (header line + running totals), with the
+    totals left untouched.
+    """
+    FakeRound.bidding_contract = None
+    FakeRound.failed_scores = {'North-South': 0, 'East-West': 0}
+    monkeypatch.setattr(game_module, 'Round', FakeRound)
+
+    with caplog.at_level(logging.DEBUG, logger="contrai_engine"):
+        game.manage_round()
+
+    game_records = [
+        record for record in caplog.records
+        if record.name == "contrai_engine.model.game"
+    ]
+    result_messages = [
+        record.getMessage() for record in game_records
+        if "all passed" in record.getMessage()
+    ]
+    assert len(result_messages) == 1
+    assert result_messages[0].splitlines() == [
+        f"Round #{game.round_number}: all passed — redeal.",
+        "Totals: North-South 0 · East-West 0",
+    ]
+
+
+def test_manage_round_completed_logs_round_result_against_a_genuine_round(
+    caplog
+):
+    """
+    Test that the round-result DEBUG log reflects a *genuine* Round's
+    outcome end to end through the public ``manage_round`` API — real
+    ``Auction``/``PlayState``/``score_round`` machinery, never a
+    hand-scripted double — so a regression in any of those (e.g. a change
+    to ``score_round``'s None-branch reachability, or to ``Contract``'s
+    ``.player`` invariant) would surface here instead of being masked by
+    ``FakeRound``'s fabricated ``contract_made``/``round_scores``.
+    """
+    north = AiPlayer("North", Position.NORTH)
+    east = AiPlayer("East", Position.EAST)
+    south = AiPlayer("South", Position.SOUTH)
+    west = AiPlayer("West", Position.WEST)
+    game = Game([north, east, south, west])
+
+    # Real bidding: North contracts 80 Hearts, everyone else passes —
+    # legal regardless of what the real shuffle actually deals, since bid
+    # legality never depends on hand contents. Whoever the (randomly
+    # chosen) dealer puts first in the cycle, North's single scripted
+    # ContractBid fires on its own first turn and every other seat always
+    # passes (scripted, then falls back to passing once its queue is
+    # empty), so this always converges on "80 Hearts by North".
+    scripted = {
+        north: [ContractBid(north, 80, Suit.HEARTS)],
+        east: [PassBid(east)],
+        south: [PassBid(south)],
+        west: [PassBid(west)],
+    }
+    for ai, choices in scripted.items():
+        queue = list(choices)
+        ai.choose_bid = lambda _auction, _p=ai, _q=queue: (
+            _q.pop(0) if _q else PassBid(_p)
+        )
+    # Real play: every seat always plays its first legal card — the same
+    # deal-content-agnostic strategy
+    # TestPlayThroughReachesTerminal uses in test_round.py.
+    for ai in (north, east, south, west):
+        ai.choose_card = lambda observation: observation.legal_cards[0]
+
+    with caplog.at_level(logging.DEBUG, logger="contrai_engine"):
+        game.manage_round()
+
+    # Sanity: the scripted bid landed a real contract and real scoring ran
+    # (rather than both sides of the comparison below silently reading the
+    # same un-set None).
+    assert game.current_contract is not None
+    assert game.current_round.contract_made is not None
+
+    game_records = [
+        record for record in caplog.records
+        if record.name == "contrai_engine.model.game"
+    ]
+    result_messages = [
+        record.getMessage() for record in game_records
+        if record.getMessage().startswith(f"Round #{game.round_number}: contract")
+    ]
+    assert len(result_messages) == 1
+    # The log must equal what the real round_result_lines projection
+    # produces from this *same* genuine, just-played round and these
+    # *same* running totals — proving Game._log_round_result wires the
+    # real Round through rather than a stand-in.
+    assert result_messages[0] == "\n".join(
+        round_result_lines(game.current_round, game.scores)
+    )

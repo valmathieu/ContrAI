@@ -25,6 +25,11 @@ htmlcov/
 # Auto-saved shadows of .ipynb files. Cause noisy diffs and merge conflicts.
 .ipynb_checkpoints/
 
+# ─── Engine debug mode ────────────────────────────────────────────────────
+# Per-run diagnostics written by `contrai --debug` into the working
+# directory. Overwritten on every run - a local artifact, never a repo file.
+contrai-debug.log
+
 # ─── Editors / IDEs ───────────────────────────────────────────────────────
 .idea/
 .vscode/

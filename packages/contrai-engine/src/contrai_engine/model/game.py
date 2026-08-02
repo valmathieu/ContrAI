@@ -5,12 +5,14 @@ This class manages the game state, players, teams, deck, and game logic.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from contrai_core.deck import Deck
 from contrai_core.position import Position
 from contrai_core.team import Team
+from contrai_engine.debug_state import deal_lines, round_result_lines
 from .player import Player
 from .round import Round
 from contrai_core.exceptions import InvalidPlayerCountError
@@ -18,6 +20,12 @@ import random
 
 if TYPE_CHECKING:
     from contrai_engine.view.rich_view import RichView
+
+# Logging is infrastructure, not presentation: this module never attaches a
+# handler or configures a level itself (see contrai_engine.log_setup) — it
+# only ever emits through the standard logging module, so the calls below
+# are silent no-ops for any interface that hasn't opted into debug mode.
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -141,6 +149,12 @@ class Game:
         # Deal cards
         self.current_round.deal_cards()
 
+        # Snapshot the fresh deal for any interface's debug log, view
+        # attached or not. Building the snapshot (a per-seat hand sort)
+        # is only worth doing when a handler is actually listening.
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("%s", "\n".join(deal_lines(self.current_round)))
+
     def manage_round(self, view: RichView | None = None) -> None:
         """
         Manages a complete round: bidding, trick-taking, and scoring using Round class.
@@ -167,6 +181,7 @@ class Game:
         # If no contract (all passed), handle failed contract (redistributes cards).
         if not contract:
             self.current_round.handle_failed_contract()
+            self._log_round_result()
             # Notify the view that the round will be redealt. The hook is a
             # pure announcement — it carries no round payload.
             if view is not None and hasattr(view, 'on_all_pass_redeal'):
@@ -182,6 +197,25 @@ class Game:
         # Update total scores
         for team_name, points in round_scores.items():
             self.scores[team_name] += points
+
+        self._log_round_result()
+
+    def _log_round_result(self) -> None:
+        """Log the just-finished round's outcome at DEBUG.
+
+        Covers both a scored round and an all-passed redeal in one call
+        site: :func:`contrai_engine.debug_state.round_result_lines` itself
+        branches on ``current_round.contract`` to pick the right wording.
+        Building the lines is only worth doing when a handler is actually
+        listening.
+        """
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "%s",
+                "\n".join(
+                    round_result_lines(self.current_round, self.scores)
+                ),
+            )
 
     def check_game_over(self, target_score: int = 1500) -> GameOverStatus:
         """

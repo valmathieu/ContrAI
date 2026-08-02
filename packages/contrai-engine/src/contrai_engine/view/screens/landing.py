@@ -121,8 +121,16 @@ def _panel_game_setup(selected: int) -> Panel:
     )
 
 
-def _panel_players() -> Panel:
+def _panel_players(autoplay: bool = False) -> Panel:
     """Players block. Hardcoded for v1 — South=human, others=AI expert.
+
+    Args:
+        autoplay: ``True`` when South is an AI seat as well (unattended
+            four-AI game), so the block announces four AI players
+            instead of a human seat nobody is sitting in.
+
+    Returns:
+        The players ``Panel``.
 
     TODO: replace with a configurable seat picker when we expose
     difficulty / player config on the landing screen.
@@ -130,10 +138,15 @@ def _panel_players() -> Panel:
     # Per-seat role metadata, keyed by Position rather than a parallel
     # string roster — the letter and seat name rendered below both
     # derive from the enum member itself.
+    south = (
+        ("AI · expert", ORANGE, False)
+        if autoplay
+        else ("human", GREEN_FG, True)
+    )
     roles: dict[Position, tuple[str, str, bool]] = {
         Position.NORTH: ("AI · expert", BLUE, False),
         Position.EAST: ("AI · expert", ORANGE, False),
-        Position.SOUTH: ("human", GREEN_FG, True),
+        Position.SOUTH: south,
         Position.WEST: ("AI · expert", ORANGE, False),
     }
     # Two columns of two: render as a 2-row, 2-col Table. The on-screen

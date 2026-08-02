@@ -18,13 +18,13 @@ from contrai_core import (
     ContractSuit,
     NoTrumpRules,
     Position,
-    Suit,
     Trick,
     rules_for,
 )
 from contrai_core.trick import current_winner
 from rich.text import Text
 
+from contrai_engine.debug_state import sort_cards_trump_first
 from contrai_engine.view.formatting import (
     _format_card_compact,
     _position_short,

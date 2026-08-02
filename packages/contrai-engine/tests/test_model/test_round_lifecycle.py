@@ -20,13 +20,14 @@ a rule-derived invariant (the exact total ``score_round`` guarantees for a
 *made*, un-doubled, non-sweep numeric contract: ``contract_value + 162``,
 plus 20 when a team holds the belote) and a regression pin on the concrete
 per-team split. The bidding table's outcome is derived by hand in the
-docstrings below and asserted exactly; the card-by-card play is a
-deterministic function of the stacked hands (see ``rule_based/card_play.py``'s
-``RuleBasedCardPlayStrategy``), but tracing that decision tree by hand
-across 8 tricks is impractical — the concrete numbers are pinned from an
-actual (deterministic, reproducible) run and guarded by the invariant, so
-a scoring-rule regression still fails loudly even if the exact split ever
-drifts.
+docstrings below and asserted exactly; the card-by-card play is a function
+of the stacked hands plus the seeded RNG the strategy breaks ties with (see
+``rule_based/card_play.py``'s ``RuleBasedCardPlayStrategy``, and the
+``pinned_rng`` fixture in ``conftest.py`` that pins the draw), but tracing
+that decision tree by hand across 8 tricks is impractical — the concrete
+numbers are pinned from an actual reproducible run and guarded by the
+invariant, so a scoring-rule regression still fails loudly even if the
+exact split ever drifts.
 """
 
 from __future__ import annotations
@@ -222,11 +223,12 @@ class TestFullRoundLifecycleHappyPath:
         assert sum(scores.values()) == contract.value + 162
         assert scores["North-South"] > scores["East-West"]
         # Regression pin: the concrete split observed from this exact
-        # stacked deal (deterministic - no RNG is reachable from either
-        # strategy). Re-run twice to confirm before trusting a change to
+        # stacked deal, under the RNG the ``pinned_rng`` fixture seeds -
+        # the card-play strategy draws from it to break ties nothing else
+        # separates. Re-run twice to confirm before trusting a change to
         # these numbers reflects a real scoring-rule change and not a
         # stacking edit.
-        assert scores == {"North-South": 259, "East-West": 13}
+        assert scores == {"North-South": 258, "East-West": 14}
 
 
 # ---------------------------------------------------------------------------
@@ -354,7 +356,7 @@ class TestFullRoundLifecycleBelote:
         assert sum(scores.values()) == contract.value + 162 + 20
         assert scores["North-South"] > scores["East-West"]
         # Regression pin: the concrete split observed from this exact
-        # stacked deal (deterministic - no RNG is reachable).
+        # stacked deal, under the RNG the ``pinned_rng`` fixture seeds.
         assert scores == {"North-South": 278, "East-West": 14}
 
 

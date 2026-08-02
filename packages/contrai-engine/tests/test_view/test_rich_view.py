@@ -13,11 +13,15 @@ The deeper ``Panel``/``Table`` rendering is smoke-validated by the
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from rich.text import Text
 
 from contrai_core import Auction, Card, Position, Rank, Suit, Trick
 from contrai_core.bid import ContractBid, DoubleBid, PassBid
+from contrai_engine.model.game import GameOverStatus
+from contrai_engine.options import DebugOptions
 from contrai_engine.view.rich_view import RichView
 from contrai_engine.view.screens.bidding import (
     _bidding_prompt_text,
@@ -954,3 +958,710 @@ class TestRenderInGameHandSlot:
         )
         combined = "\n".join(captured)
         assert "Your hand" not in combined
+
+
+# ======================================================================
+# Debug / autoplay options wiring
+# ======================================================================
+#
+# Shared fixtures below back the test classes covering RichView(options=...):
+# the back-compat anchor (RichView() with no args), the _pause/_wait_or_pause
+# pacing helpers, the autoplay branches of the four blocking-prompt sites,
+# the _log -> events-logger mirror, and the debug hands strip.
+
+
+@pytest.fixture
+def _forbid_console_input():
+    """A ``console.input`` stand-in that fails the test if ever invoked.
+
+    A blocking ``console.input`` call reaching an autoplay code path is
+    the primary failure mode of this feature — it means an unattended
+    run would hang forever. Tests that exercise an autoplay branch wire
+    this in place of ``console.input`` so any such call fails loudly
+    instead of hanging the test process.
+    """
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError(
+            "console.input must not be called under autoplay"
+        )
+
+    return _boom
+
+
+@pytest.fixture
+def end_game_status():
+    """A representative ``GameOverStatus`` for ``show_end_game`` tests."""
+    return GameOverStatus(
+        game_over=True,
+        winner="North-South",
+        tied_teams=None,
+        final_scores={"North-South": 1620, "East-West": 1420},
+    )
+
+
+def _capture_prints(view) -> list[str]:
+    """Patch ``view.console`` to a no-op clear + a print recorder.
+
+    Returns the list the recorder appends to. Mirrors
+    ``TestRenderInGameHandSlot._capture_render``: walks both bare
+    ``Text`` renderables and ``Panel``s (via ``.renderable``), plus
+    ``Panel`` titles, collecting every ``.plain`` string printed.
+    """
+    captured: list[str] = []
+
+    def _record(*args, **_kw):
+        for a in args:
+            title = getattr(a, "title", None)
+            if title is not None and hasattr(title, "plain"):
+                captured.append(title.plain)
+            if hasattr(a, "plain"):
+                captured.append(a.plain)
+            elif hasattr(a, "renderable") and hasattr(a.renderable, "plain"):
+                captured.append(a.renderable.plain)
+
+    view.console.clear = lambda *_a, **_kw: None
+    view.console.print = _record
+    return captured
+
+
+class TestOptionsBackCompat:
+    """``RichView()`` with no arguments is the back-compat anchor."""
+
+    def test_default_construction_holds_all_off_options(self):
+        view = RichView()
+        assert view.options == DebugOptions()
+
+    def test_none_options_defaults(self):
+        view = RichView(options=None)
+        assert view.options == DebugOptions()
+
+    def test_options_can_be_passed(self):
+        opts = DebugOptions(debug=True, autoplay=True, seed=7)
+        view = RichView(options=opts)
+        assert view.options is opts
+
+
+class TestPause:
+    """``_pause`` sleeps a tunable delay, zeroed by default under debug."""
+
+    def test_uses_default_when_no_env_and_not_debug(self, monkeypatch):
+        from contrai_engine.view import rich_view
+
+        sleep_calls = []
+        monkeypatch.setattr(rich_view.time, "sleep",
+                            lambda s: sleep_calls.append(s))
+        monkeypatch.delenv("CONTRAI_TEST_PAUSE", raising=False)
+        view = RichView()
+
+        view._pause("CONTRAI_TEST_PAUSE", 3.0)
+
+        assert sleep_calls == [3.0]
+
+    def test_default_zeroed_under_debug(self, monkeypatch):
+        from contrai_engine.view import rich_view
+
+        sleep_calls = []
+        monkeypatch.setattr(rich_view.time, "sleep",
+                            lambda s: sleep_calls.append(s))
+        monkeypatch.delenv("CONTRAI_TEST_PAUSE", raising=False)
+        view = RichView(options=DebugOptions(debug=True))
+
+        view._pause("CONTRAI_TEST_PAUSE", 3.0)
+
+        assert sleep_calls == [0.0]
+
+    def test_env_var_wins_over_default(self, monkeypatch):
+        from contrai_engine.view import rich_view
+
+        sleep_calls = []
+        monkeypatch.setattr(rich_view.time, "sleep",
+                            lambda s: sleep_calls.append(s))
+        monkeypatch.setenv("CONTRAI_TEST_PAUSE", "0.05")
+        view = RichView()
+
+        view._pause("CONTRAI_TEST_PAUSE", 3.0)
+
+        assert sleep_calls == [0.05]
+
+    def test_env_var_wins_over_debug_zeroing(self, monkeypatch):
+        from contrai_engine.view import rich_view
+
+        sleep_calls = []
+        monkeypatch.setattr(rich_view.time, "sleep",
+                            lambda s: sleep_calls.append(s))
+        monkeypatch.setenv("CONTRAI_TEST_PAUSE", "0.05")
+        view = RichView(options=DebugOptions(debug=True))
+
+        view._pause("CONTRAI_TEST_PAUSE", 3.0)
+
+        assert sleep_calls == [0.05]
+
+
+class TestWaitOrPause:
+    """``_wait_or_pause``: autoplay bypasses ``console.input`` entirely."""
+
+    def test_autoplay_never_calls_console_input(
+        self, monkeypatch, _forbid_console_input
+    ):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(autoplay=True))
+        view.console.input = _forbid_console_input
+
+        # Must not raise -- proves console.input was never reached.
+        view._wait_or_pause("gold1", "CONTRAI_TEST_WAIT", 0.01)
+
+    def test_autoplay_pauses_via_pause_helper(
+        self, monkeypatch, _forbid_console_input
+    ):
+        from contrai_engine.view import rich_view
+
+        sleep_calls = []
+        monkeypatch.setattr(rich_view.time, "sleep",
+                            lambda s: sleep_calls.append(s))
+        monkeypatch.setenv("CONTRAI_TEST_WAIT", "0.02")
+        view = RichView(options=DebugOptions(autoplay=True))
+        view.console.input = _forbid_console_input
+
+        view._wait_or_pause("gold1", "CONTRAI_TEST_WAIT", 0.01)
+
+        assert sleep_calls == [0.02]
+
+    def test_non_autoplay_calls_console_input(self):
+        """Outside autoplay, the pre-existing console.input idiom runs."""
+        view = RichView()
+        calls = []
+        view.console.input = lambda *a, **k: calls.append((a, k)) or ""
+
+        view._wait_or_pause("gold1", "CONTRAI_TEST_WAIT", 0.01)
+
+        assert len(calls) == 1
+
+
+class TestAutoplayCtrlCPropagation:
+    """Ctrl+C during an autoplay pause propagates; it is never swallowed.
+
+    Outside autoplay the pre-existing idiom (``console.input`` wrapped in
+    ``try/except (EOFError, KeyboardInterrupt): pass``) is unchanged —
+    verified here too, as a regression guard on the refactor.
+    """
+
+    def test_pause_propagates_keyboard_interrupt(self, monkeypatch):
+        """Ctrl+C during a timed pause must reach ``main``'s handler.
+
+        ``_pause`` is the single sleep chokepoint every autoplay pause
+        and AI-pacing delay routes through, so nothing may swallow the
+        interrupt here — including on the default, non-autoplay path.
+        """
+        from contrai_engine.view import rich_view
+
+        def _raise(_seconds):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(rich_view.time, "sleep", _raise)
+        view = RichView()
+
+        with pytest.raises(KeyboardInterrupt):
+            view._pause("CONTRAI_TEST_PAUSE", 0.01)
+
+    def test_wait_or_pause_propagates_under_autoplay(
+        self, monkeypatch, _forbid_console_input
+    ):
+        from contrai_engine.view import rich_view
+
+        def _raise(_seconds):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(rich_view.time, "sleep", _raise)
+        view = RichView(options=DebugOptions(autoplay=True))
+        view.console.input = _forbid_console_input
+
+        with pytest.raises(KeyboardInterrupt):
+            view._wait_or_pause("gold1", "CONTRAI_TEST_WAIT", 0.01)
+
+    def test_wait_or_pause_swallows_keyboard_interrupt_outside_autoplay(self):
+        view = RichView()
+
+        def _raise(*_a, **_kw):
+            raise KeyboardInterrupt
+
+        view.console.input = _raise
+
+        # Must not raise -- matches the pre-existing console.input idiom.
+        view._wait_or_pause("gold1", "CONTRAI_TEST_WAIT", 0.01)
+
+    def test_show_landing_autoplay_pause_propagates_keyboard_interrupt(
+        self, monkeypatch
+    ):
+        from contrai_engine.view import rich_view
+
+        def _raise(_seconds):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(rich_view.time, "sleep", _raise)
+        view = RichView(options=DebugOptions(autoplay=True))
+
+        with pytest.raises(KeyboardInterrupt):
+            view.show_landing(1500)
+
+
+class TestAiDelayDebugZeroing:
+    """The 3 AI-pacing sleeps route through ``_pause``: debug zeroes them
+    too (env var still wins), on top of the pre-existing env-override
+    behavior the untouched tests above already cover."""
+
+    def test_on_bid_made_zeroes_delay_under_debug_without_env(
+        self, monkeypatch, four_players
+    ):
+        from contrai_engine.view import rich_view
+
+        north, *_ = four_players
+        sleep_calls = []
+        monkeypatch.setattr(rich_view.time, "sleep",
+                            lambda s: sleep_calls.append(s))
+        monkeypatch.delenv("CONTRAI_AI_BID_DELAY", raising=False)
+        view = RichView(options=DebugOptions(debug=True))
+        bid = ContractBid(north, 100, Suit.HEARTS)
+
+        view.on_bid_made(north, bid, [bid])
+
+        assert sleep_calls == [0.0]
+
+    def test_on_bid_made_env_still_wins_under_debug(
+        self, monkeypatch, four_players
+    ):
+        from contrai_engine.view import rich_view
+
+        north, *_ = four_players
+        sleep_calls = []
+        monkeypatch.setattr(rich_view.time, "sleep",
+                            lambda s: sleep_calls.append(s))
+        monkeypatch.setenv("CONTRAI_AI_BID_DELAY", "0.07")
+        view = RichView(options=DebugOptions(debug=True))
+        bid = ContractBid(north, 100, Suit.HEARTS)
+
+        view.on_bid_made(north, bid, [bid])
+
+        assert sleep_calls == [0.07]
+
+
+class TestOnTrickCompleteAutoplay:
+    """``on_trick_complete`` under autoplay: timed pause, no blocking input."""
+
+    class _StubRound:
+        contract = None
+        tricks = []
+        team_tricks = {}
+
+    def test_autoplay_never_calls_console_input(
+        self, monkeypatch, four_players, _forbid_console_input
+    ):
+        from contrai_engine.view import rich_view
+
+        north, east, south, west = four_players
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(autoplay=True))
+        view.console.input = _forbid_console_input
+
+        trick = Trick()
+        trick.add_play(north, Card(Suit.HEARTS, Rank.JACK))
+        trick.add_play(east, Card(Suit.HEARTS, Rank.ACE))
+        trick.add_play(south, Card(Suit.HEARTS, Rank.KING))
+        trick.add_play(west, Card(Suit.HEARTS, Rank.QUEEN))
+
+        view.on_trick_complete(trick, north, self._StubRound())
+
+        # Did not hang, and still rotated the last-completed trick.
+        assert view.last_completed_trick == (trick, north)
+
+    def test_autoplay_pauses_using_trick_env_delay(
+        self, monkeypatch, four_players, _forbid_console_input
+    ):
+        from contrai_engine.view import rich_view
+
+        north, *_ = four_players
+        sleep_calls = []
+        monkeypatch.setattr(rich_view.time, "sleep",
+                            lambda s: sleep_calls.append(s))
+        monkeypatch.setenv("CONTRAI_AUTOPLAY_PAUSE", "0.02")
+        view = RichView(options=DebugOptions(autoplay=True))
+        view.console.input = _forbid_console_input
+
+        trick = Trick()
+        trick.add_play(north, Card(Suit.HEARTS, Rank.JACK))
+
+        view.on_trick_complete(trick, north, self._StubRound())
+
+        assert sleep_calls == [0.02]
+
+    def test_autoplay_and_debug_together_zero_the_pause_by_default(
+        self, monkeypatch, four_players, _forbid_console_input
+    ):
+        """The unattended-stress-run story: --debug --autoplay races
+        through with no artificial pacing anywhere, trick pause included."""
+        from contrai_engine.view import rich_view
+
+        north, *_ = four_players
+        sleep_calls = []
+        monkeypatch.setattr(rich_view.time, "sleep",
+                            lambda s: sleep_calls.append(s))
+        monkeypatch.delenv("CONTRAI_AUTOPLAY_PAUSE", raising=False)
+        view = RichView(options=DebugOptions(debug=True, autoplay=True))
+        view.console.input = _forbid_console_input
+
+        trick = Trick()
+        trick.add_play(north, Card(Suit.HEARTS, Rank.JACK))
+
+        view.on_trick_complete(trick, north, self._StubRound())
+
+        assert sleep_calls == [0.0]
+
+    def test_autoplay_prompt_uses_autoplay_wrapper_text(
+        self, monkeypatch, four_players, _forbid_console_input
+    ):
+        from contrai_engine.view import rich_view
+
+        north, *_ = four_players
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(autoplay=True))
+        view.console.input = _forbid_console_input
+        captured = _capture_prints(view)
+
+        trick = Trick()
+        trick.add_play(north, Card(Suit.HEARTS, Rank.JACK))
+
+        view.on_trick_complete(trick, north, self._StubRound())
+
+        assert any(t.startswith("(autoplay) ") for t in captured)
+
+
+class TestShowRoundRecapAutoplay:
+    """``show_round_recap`` under autoplay: timed pause, no blocking input."""
+
+    class _StubRound:
+        round_number = 3
+        contract = None
+        round_scores = {"North-South": 0, "East-West": 0}
+        team_tricks = {}
+
+    def test_autoplay_never_calls_console_input(
+        self, monkeypatch, _forbid_console_input
+    ):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(autoplay=True))
+        view.console.input = _forbid_console_input
+
+        view.show_round_recap(
+            self._StubRound(), {"North-South": 0, "East-West": 0}
+        )
+        # Did not hang -- reaching this line proves it.
+
+    def test_autoplay_pauses_using_recap_env_delay(
+        self, monkeypatch, _forbid_console_input
+    ):
+        from contrai_engine.view import rich_view
+
+        sleep_calls = []
+        monkeypatch.setattr(rich_view.time, "sleep",
+                            lambda s: sleep_calls.append(s))
+        monkeypatch.setenv("CONTRAI_AUTOPLAY_RECAP_PAUSE", "0.03")
+        view = RichView(options=DebugOptions(autoplay=True))
+        view.console.input = _forbid_console_input
+
+        view.show_round_recap(
+            self._StubRound(), {"North-South": 0, "East-West": 0}
+        )
+
+        assert sleep_calls == [0.03]
+
+    def test_autoplay_prompt_uses_autoplay_wrapper_text(
+        self, monkeypatch, _forbid_console_input
+    ):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(autoplay=True))
+        view.console.input = _forbid_console_input
+        captured = _capture_prints(view)
+
+        view.show_round_recap(
+            self._StubRound(), {"North-South": 0, "East-West": 0}
+        )
+
+        assert any("(autoplay)" in t for t in captured)
+
+
+class TestShowLandingAutoplay:
+    """``show_landing`` under autoplay: renders once, pauses, returns the
+    default/passed target -- there is no human to type a choice."""
+
+    def test_autoplay_returns_passed_target_without_input(
+        self, monkeypatch, _forbid_console_input
+    ):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(autoplay=True))
+        view.console.input = _forbid_console_input
+
+        assert view.show_landing(2000) == 2000
+
+    def test_autoplay_returns_default_target_when_not_passed(
+        self, monkeypatch, _forbid_console_input
+    ):
+        from contrai_engine.view import rich_view
+        from contrai_engine.view.theme import DEFAULT_TARGET
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(autoplay=True))
+        view.console.input = _forbid_console_input
+
+        assert view.show_landing() == DEFAULT_TARGET
+
+    def test_autoplay_pauses_using_landing_env_delay(
+        self, monkeypatch, _forbid_console_input
+    ):
+        from contrai_engine.view import rich_view
+
+        sleep_calls = []
+        monkeypatch.setattr(rich_view.time, "sleep",
+                            lambda s: sleep_calls.append(s))
+        monkeypatch.setenv("CONTRAI_AUTOPLAY_LANDING_PAUSE", "0.04")
+        view = RichView(options=DebugOptions(autoplay=True))
+        view.console.input = _forbid_console_input
+
+        view.show_landing(1500)
+
+        assert sleep_calls == [0.04]
+
+    def test_autoplay_prompt_uses_autoplay_wrapper_text(
+        self, monkeypatch, _forbid_console_input
+    ):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(autoplay=True))
+        view.console.input = _forbid_console_input
+        captured = _capture_prints(view)
+
+        view.show_landing(1500)
+
+        assert any("(autoplay)" in t for t in captured)
+
+
+class TestShowLandingInteractive:
+    """Non-autoplay path — a regression net on the splash-print refactor.
+
+    ``show_landing`` had no dedicated coverage before this change; these
+    tests lock its pre-existing (untouched) behavior now that the splash
+    print is shared with the new autoplay branch.
+    """
+
+    def test_blank_input_returns_selected_target(self):
+        view = RichView()
+        view.console.input = lambda *a, **k: ""
+
+        assert view.show_landing(2000) == 2000
+
+    def test_valid_numeric_input_returns_that_target(self):
+        view = RichView()
+        view.console.input = lambda *a, **k: "1000"
+
+        assert view.show_landing(2000) == 1000
+
+    def test_invalid_then_valid_input_reprompts(self):
+        view = RichView()
+        inputs = iter(["notanumber", "", "1500"])
+        view.console.input = lambda *a, **k: next(inputs)
+
+        assert view.show_landing(2000) == 1500
+
+
+class TestShowEndGameAutoplay:
+    """``show_end_game`` under autoplay: pause, log, return ``"q"``."""
+
+    def test_autoplay_returns_q_without_input(
+        self, monkeypatch, _forbid_console_input, end_game_status
+    ):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(autoplay=True))
+        view.console.input = _forbid_console_input
+
+        assert view.show_end_game(end_game_status) == "q"
+
+    def test_autoplay_logs_game_over(
+        self, monkeypatch, _forbid_console_input, end_game_status, caplog
+    ):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(autoplay=True))
+        view.console.input = _forbid_console_input
+
+        with caplog.at_level(logging.INFO, logger="contrai_engine.view.events"):
+            view.show_end_game(end_game_status)
+
+        events_records = [
+            r for r in caplog.records if r.name == "contrai_engine.view.events"
+        ]
+        assert any("GAME OVER" in r.getMessage() for r in events_records)
+
+    def test_autoplay_pauses_using_endgame_env_delay(
+        self, monkeypatch, _forbid_console_input, end_game_status
+    ):
+        from contrai_engine.view import rich_view
+
+        sleep_calls = []
+        monkeypatch.setattr(rich_view.time, "sleep",
+                            lambda s: sleep_calls.append(s))
+        monkeypatch.setenv("CONTRAI_AUTOPLAY_ENDGAME_PAUSE", "0.06")
+        view = RichView(options=DebugOptions(autoplay=True))
+        view.console.input = _forbid_console_input
+
+        view.show_end_game(end_game_status)
+
+        assert sleep_calls == [0.06]
+
+    def test_autoplay_prompt_uses_autoplay_wrapper_text(
+        self, monkeypatch, _forbid_console_input, end_game_status
+    ):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(autoplay=True))
+        view.console.input = _forbid_console_input
+        captured = _capture_prints(view)
+
+        view.show_end_game(end_game_status)
+
+        assert any("(autoplay)" in t for t in captured)
+
+
+class TestShowEndGameInteractive:
+    """Non-autoplay path — a regression net on the banner-print refactor."""
+
+    def test_q_input_returns_q(self, end_game_status):
+        view = RichView()
+        view.console.input = lambda *a, **k: "q"
+
+        assert view.show_end_game(end_game_status) == "q"
+
+    def test_n_input_returns_n(self, end_game_status):
+        view = RichView()
+        view.console.input = lambda *a, **k: "n"
+
+        assert view.show_end_game(end_game_status) == "n"
+
+    def test_invalid_then_valid_input_reprompts(self, end_game_status):
+        view = RichView()
+        inputs = iter(["bogus", "", "r"])
+        view.console.input = lambda *a, **k: next(inputs)
+
+        assert view.show_end_game(end_game_status) == "r"
+
+
+class TestLogMirror:
+    """``_log`` mirrors every line to the events logger, uncapped, while
+    ``event_log`` keeps its ``LOG_MAX`` display cap."""
+
+    def test_mirrors_every_line_uncapped(self, caplog):
+        view = RichView()
+        with caplog.at_level(logging.DEBUG, logger="contrai_engine.view.events"):
+            for i in range(view.LOG_MAX + 3):
+                view._log(Text(f"line {i}"))
+
+        # Display cap still holds.
+        assert len(view.event_log) == view.LOG_MAX
+        assert view.event_log[0].plain == f"line {3}"
+
+        # The mirror captured every line, uncapped.
+        events_records = [
+            r for r in caplog.records if r.name == "contrai_engine.view.events"
+        ]
+        messages = [r.getMessage() for r in events_records]
+        assert len(messages) == view.LOG_MAX + 3
+        assert messages[0] == "line 0"
+        assert messages[-1] == f"line {view.LOG_MAX + 2}"
+
+    def test_mirror_uses_plain_text_not_markup(self, caplog):
+        view = RichView()
+        line = Text()
+        line.append("N ", style="bold red")
+        line.append("wins trick.")
+
+        with caplog.at_level(logging.DEBUG, logger="contrai_engine.view.events"):
+            view._log(line)
+
+        events_records = [
+            r for r in caplog.records if r.name == "contrai_engine.view.events"
+        ]
+        assert events_records[-1].getMessage() == "N wins trick."
+
+
+class TestDebugStrip:
+    """The debug hands strip appears only under ``options.debug`` with a
+    round attached — never by default, never without a round."""
+
+    class _StubRound:
+        round_number = 1
+        contract = None
+        dealer = None
+        tricks = []
+        team_tricks = {}
+
+    class _StubGame:
+        def __init__(self, players):
+            self.players = players
+            self.current_round = TestDebugStrip._StubRound()
+            self.scores = {"North-South": 0, "East-West": 0}
+
+    def _render_bidding_frame(self, view):
+        captured = _capture_prints(view)
+        view._render_in_game(
+            phase="bidding",
+            current_player=None,
+            bidding_history=[],
+            prompt_question=Text(""),
+            mandatory=False,
+        )
+        return captured
+
+    def test_strip_present_when_debug_and_round(self, monkeypatch, four_players):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(debug=True, seed=42))
+        view.attach(self._StubGame(list(four_players)), target_score=1500)
+
+        combined = "\n".join(self._render_bidding_frame(view))
+
+        assert "Debug — all hands" in combined
+        assert "seed 42" in combined
+
+    def test_strip_absent_by_default(self, monkeypatch, four_players):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView()
+        view.attach(self._StubGame(list(four_players)), target_score=1500)
+
+        combined = "\n".join(self._render_bidding_frame(view))
+
+        assert "Debug — all hands" not in combined
+
+    def test_strip_absent_when_debug_but_no_round(self, monkeypatch):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(debug=True))
+        # No .attach() -> self.game is None -> round_ is None internally.
+
+        combined = "\n".join(self._render_bidding_frame(view))
+
+        assert "Debug — all hands" not in combined

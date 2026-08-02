@@ -12,12 +12,33 @@ specific to the state that file exercises.
 
 from __future__ import annotations
 
+import random
+
 import pytest
 
 from contrai_core.position import Position
 from contrai_core.team import Team
 
 from contrai_engine.model.player import AiPlayer
+
+
+@pytest.fixture(autouse=True)
+def pinned_rng():
+    """Pin the global RNG for the duration of each model test.
+
+    ``RuleBasedCardPlayStrategy`` draws from the global ``random`` module
+    when nothing separates two equally cheap cards, which is the same
+    module the CLI's ``--seed`` flag seeds. Tests asserting a concrete
+    card — or a concrete score across a full stacked round — need that
+    draw pinned, so the seed is applied here rather than repeated per
+    scenario. The prior state is restored afterwards so the seed never
+    leaks into whatever runs next.
+    """
+
+    state = random.getstate()
+    random.seed(20260803)
+    yield
+    random.setstate(state)
 
 
 @pytest.fixture
