@@ -272,7 +272,7 @@ package "model/round/ package" as p_round {
     ' --- scoring.py: the pure scoring transformation ---
     class "scoring.py" as r_scoring <<module>> #FFEFD9 {
         score_round(round) : RoundScore
-        count_player_tricks(tricks, trump, player) : int
+        count_player_tricks(trick_winners, player) : int
         UnannouncedSlam <<enum>> : {SLAM, GRAND_SLAM}
         RoundScore <<dataclass>>
     }
@@ -337,6 +337,13 @@ package "model/round/ package" as p_round {
 
     note bottom of r_scoring
       Pure ""round -> RoundScore"" transform.
+      Reads the **authoritative** ""round.play_state""
+      — card points from each completed trick's
+      pile credited to its winner's team
+      (per-card values via ""rules_for(trump).points""),
+      trick counts and the +10 last-trick bonus
+      from ""trick_winners"" — never the
+      view-facing mirrors.
       Four scoring shapes (numeric share-pile,
       unannounced-Slam 250 substitute, doubled
       winner-takes-all, Slam / Solo Slam grid),

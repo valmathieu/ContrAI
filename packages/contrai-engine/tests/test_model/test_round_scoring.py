@@ -7,12 +7,15 @@ doubled/redoubled winner-takes-all path, and the symmetric Slam / Solo
 Slam grid — with the Belote (+20) bonus layered onto every shape for the
 team *holding* K + Q of trump.
 
-These build a ``Round`` directly and stuff it with the minimal state the
-scoring path reads (``contract`` / ``team_tricks`` / ``tricks`` /
-``last_trick_winner`` / ``belote_holder``), then assert on the published
-result attributes (``round_scores`` / ``contract_made`` /
-``unannounced_slam``). The shared ``players`` fixture lives in
-``conftest.py``.
+These build a ``Round`` directly and seed its authoritative
+``play_state`` with synthesised four-play tricks via the bare
+(unvalidated) :class:`contrai_core.PlayState` constructor — the scoring
+path reads ``contract`` / ``play_state`` / ``belote_holder`` and nothing
+else — then assert on the published result attributes (``round_scores``
+/ ``contract_made`` / ``unannounced_slam``). Each fixture self-asserts
+the play state's derived ``trick_winners`` before any scoring assertion,
+so a mis-stacked trick fails loudly at construction rather than skewing
+a total. The shared ``players`` fixture lives in ``conftest.py``.
 """
 
 from __future__ import annotations
@@ -20,32 +23,77 @@ from __future__ import annotations
 from contrai_core.bid import ContractBid, SlamLevel
 from contrai_core.card import Card
 from contrai_core.contract import Contract
-from contrai_core.trick import Trick
+from contrai_core.play import Play, PlayState
 from contrai_core.types import Rank, Suit
 
 from contrai_engine.model.round import Round, UnannouncedSlam
 from contrai_engine.model.round.scoring import RoundScore, score_round
+
+_ORDER = ("N", "E", "S", "W")
 
 
 def _contract(player, value, suit):
     return Contract(ContractBid(player, value, suit))
 
 
+def _stack_trick(players_dict, winner_seat, trump):
+    """Four zero-point plays handing the trick to ``winner_seat``.
+
+    The winner leads the trump seven — the only trump in the trick, so
+    it wins under any suit contract — while the other three seats
+    discard 0-point cards of the two remaining off suits. Every card is
+    a 7 or an 8, worth 0 on both scales, so a stacked trick never moves
+    a card-point total.
+
+    Args:
+        players_dict: the ``players`` fixture (seat → Player).
+        winner_seat: seat letter that must win the trick.
+        trump: the contract's trump suit (a real card suit).
+
+    Returns:
+        A tuple of four :class:`Play` records, winner leading.
+    """
+    winner = players_dict[winner_seat]
+    others = [players_dict[s] for s in _ORDER if s != winner_seat]
+    off_suits = [s for s in Suit if s is not trump]
+    return (
+        Play(winner, Card(trump, Rank.SEVEN)),
+        Play(others[0], Card(off_suits[0], Rank.SEVEN)),
+        Play(others[1], Card(off_suits[0], Rank.EIGHT)),
+        Play(others[2], Card(off_suits[1], Rank.SEVEN)),
+    )
+
+
+def _seed_play_state(round_, players_dict, contract, plays):
+    """Attach a bare PlayState carrying ``plays`` to ``round_``.
+
+    The bare constructor performs no validation, so the synthesised
+    mid-round history (empty hands, stacked tricks, repeated filler
+    cards) is injectable directly — exactly the seam the core provides
+    for tests and search forks.
+    """
+    order = tuple(players_dict[s] for s in _ORDER)
+    round_.play_state = PlayState(
+        contract=contract,
+        players=order,
+        hands=((), (), (), ()),
+        plays=tuple(plays),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Slam / Solo Slam scoring (calculate_round_scores)
 # ---------------------------------------------------------------------------
 #
-# Tests below build a Round directly and stuff it with the minimal state
-# the scoring path reads:
-#   - ``self.contract``         — drives base / multiplier / family check.
-#   - ``self.team_tricks``      — number of tricks per team (length used).
-#   - ``self.tricks``           — per-trick winners (used by Solo Slam).
-#   - ``self.last_trick_winner``— last-trick bonus (irrelevant for Slam family).
+# Tests below build a Round directly and seed the minimal state the
+# scoring path reads:
+#   - ``self.contract``    — drives base / multiplier / family check.
+#   - ``self.play_state``  — completed tricks (card points) and their
+#     winners (team trick counts, Solo Slam's personal tally, the
+#     last-trick bonus).
 #
-# Cards inside each Trick only matter when belote / card points are
-# computed; for Slam family they are not — we still seed at least one
-# card per trick so :meth:`Trick.get_current_winner` has something to
-# answer with.
+# The stacked tricks are all zero-point, so Slam-family assertions read
+# the grid amounts alone.
 
 
 def _slam_round(
@@ -54,37 +102,31 @@ def _slam_round(
     contract,
     trick_winners,
 ):
-    """Build a Round with synthesised tricks.
+    """Build a Round whose play state yields the given trick winners.
 
     Args:
         players_dict: the ``players`` fixture (seat → Player).
         contract: a Contract bound to one of the players.
         trick_winners: ordered list of seat letters — one per completed
-            trick. Each entry is the player who wins that trick. Cards
-            are filler (the suit-7), and the winner leads it so
-            :meth:`Trick.get_current_winner` returns them.
+            trick. Each entry is the player who wins that trick (each
+            stacked trick is zero-point filler).
 
     Returns:
-        Round with ``contract``, ``tricks``, ``team_tricks``, and
-        ``last_trick_winner`` populated.
+        Round with ``contract`` and ``play_state`` populated.
     """
-    order = [players_dict[s] for s in ("N", "E", "S", "W")]
+    order = [players_dict[s] for s in _ORDER]
     round_ = Round(order, dealer=players_dict["N"], deck=None, round_number=1)
     round_.contract = contract
 
-    # Filler card per trick: a low non-trump card. The winner plays it
-    # solo so get_current_winner returns them regardless of trump.
-    filler = Card(Suit.CLUBS, Rank.SEVEN)
+    plays = []
     for seat in trick_winners:
-        trick = Trick()
-        trick.add_play(players_dict[seat], filler)
-        round_.tricks.append(trick)
-        winner = players_dict[seat]
-        if winner.team is not None:
-            round_.team_tricks[winner.team.name].append(trick)
+        plays.extend(_stack_trick(players_dict, seat, contract.suit))
+    _seed_play_state(round_, players_dict, contract, plays)
 
-    if trick_winners:
-        round_.last_trick_winner = players_dict[trick_winners[-1]]
+    # Self-check: the stacked piles decide exactly the winners intended.
+    assert list(round_.play_state.trick_winners) == [
+        players_dict[s] for s in trick_winners
+    ]
     return round_
 
 
@@ -315,39 +357,42 @@ class TestNumericContractScoringRegression:
     Slam-family branch added during this refactor."""
 
     @staticmethod
-    def _trick_with_card(seat_player, card):
-        trick = Trick()
-        trick.add_play(seat_player, card)
-        return trick
+    def _jack_trick(players_dict, seat):
+        """A trick ``seat`` wins with the clubs-trump Jack — 20 points."""
+        winner = players_dict[seat]
+        others = [players_dict[s] for s in _ORDER if s != seat]
+        return (
+            Play(winner, Card(Suit.CLUBS, Rank.JACK)),
+            Play(others[0], Card(Suit.HEARTS, Rank.SEVEN)),
+            Play(others[1], Card(Suit.HEARTS, Rank.EIGHT)),
+            Play(others[2], Card(Suit.DIAMONDS, Rank.SEVEN)),
+        )
 
     def test_numeric_made_normal_uses_base_plus_card_points(self, players):
         """80 made by N-S without double, and *not* a sweep: attacker =
         80 + card points, defender = its own card points. Trump = clubs;
-        the bidder plays the trump Jack (20 pts) in seven tricks while
-        E-W steal one 0-point trick — so the plain made formula, not the
-        unannounced-Slam substitute, is the path under test."""
+        the bidder wins seven tricks with the trump Jack (20 pts each)
+        while E-W steal one 0-point trick — so the plain made formula,
+        not the unannounced-Slam substitute, is the path under test."""
         contract = _contract(players["N"], 80, Suit.CLUBS)
-        order = [players[s] for s in ("N", "E", "S", "W")]
+        order = [players[s] for s in _ORDER]
         round_ = Round(
             order, dealer=players["N"], deck=None, round_number=1
         )
         round_.contract = contract
-        # Seven tricks where N plays the trump Jack solo — 20 pts each.
-        # (Card identity is fine — Card doesn't have unique-per-instance
-        # invariants we care about for scoring.)
-        for _ in range(7):
-            trick = self._trick_with_card(
-                players["N"], Card(Suit.CLUBS, Rank.JACK)
-            )
-            round_.tricks.append(trick)
-            round_.team_tricks["North-South"].append(trick)
-        # E-W steal a single 0-point trick so N-S did not sweep all 8.
-        ew_trick = self._trick_with_card(
-            players["E"], Card(Suit.HEARTS, Rank.SEVEN)
+        # Six Jack tricks to N, one 0-point steal to E-W, then a final
+        # Jack trick to N so the last-trick bonus lands with N-S. (Card
+        # identity is fine — the bare play state is unvalidated and
+        # scoring has no unique-per-instance invariants.)
+        plays = []
+        for _ in range(6):
+            plays.extend(self._jack_trick(players, "N"))
+        plays.extend(_stack_trick(players, "E", Suit.CLUBS))
+        plays.extend(self._jack_trick(players, "N"))
+        _seed_play_state(round_, players, contract, plays)
+        assert list(round_.play_state.trick_winners) == (
+            [players["N"]] * 6 + [players["E"]] + [players["N"]]
         )
-        round_.tricks.append(ew_trick)
-        round_.team_tricks["East-West"].append(ew_trick)
-        round_.last_trick_winner = players["N"]
         scores = round_.calculate_round_scores()
         # Card points = 20*7 = 140; last-trick bonus = +10 → 150 card pts.
         # Contract made (150 >= 80) → attacker score = 80 + 150 = 230.
@@ -372,12 +417,20 @@ class TestNumericContractScoringRegression:
 # Numeric scoring — belote attribution & doubled (winner-takes-all)
 # ---------------------------------------------------------------------------
 #
-# These build a Round directly and stuff ``team_tricks`` with synthesised
-# tricks. Scoring only sums ``card.get_points(trump)`` over each team's
-# tricks, so the trick *shape* (how many cards, who else played) is
-# irrelevant — we can pack all of a team's point-carrying cards into a
-# single Trick. Trump = hearts throughout, where the trump-aware values
-# are J=20, 9=14, A=11, 10=10, K=4, Q=3, 8=7=0.
+# These build a Round directly and seed its ``play_state`` with
+# synthesised four-play tricks. Scoring credits each completed trick's
+# whole pile to its winner's team, so a team's point-carrying cards are
+# packed into tricks played (and therefore won) entirely by one of its
+# seats, padded to four plays with 0-point filler. Trump = hearts
+# throughout, where the trump-aware values are J=20, 9=14, A=11, 10=10,
+# K=4, Q=3, 8=7=0.
+
+#: Zero-point padding cards (7s and 8s are 0 on both scales).
+_FILLERS = (
+    Card(Suit.DIAMONDS, Rank.SEVEN),
+    Card(Suit.DIAMONDS, Rank.EIGHT),
+    Card(Suit.SPADES, Rank.EIGHT),
+)
 
 
 def _numeric_round(
@@ -388,36 +441,62 @@ def _numeric_round(
     last_trick_winner=None,
     belote_holder=None,
 ):
-    """Build a numeric-contract Round with synthesised tricks.
+    """Build a numeric-contract Round with a synthesised play state.
 
     Args:
         players_dict: the ``players`` fixture (seat → Player).
         contract: a numeric Contract bound to one of the players.
         team_cards: mapping team-name → list of ``(seat, Card)`` plays.
-            Each team's cards are packed into Tricks of up to four cards
-            (the Trick capacity), all credited to that team.
-        last_trick_winner: seat letter credited with the last-trick bonus, or
-            None.
+            Each team's cards are chunked into four-play tricks padded
+            with 0-point filler, every play made by that team's seats —
+            so the trick's winner (whoever it is) credits the whole pile
+            to that team.
+        last_trick_winner: seat letter credited with the last-trick
+            bonus, or None. Realised as a final zero-point stacked trick
+            won by that seat.
         belote_holder: seat letter holding K + Q of trump, or None.
 
     Returns:
-        Round with ``contract``, ``tricks``, ``team_tricks``,
-        ``last_trick_winner`` and ``belote_holder`` populated.
+        Round with ``contract``, ``play_state`` and ``belote_holder``
+        populated.
     """
-    order = [players_dict[s] for s in ("N", "E", "S", "W")]
+    order = [players_dict[s] for s in _ORDER]
     round_ = Round(order, dealer=players_dict["N"], deck=None, round_number=1)
     round_.contract = contract
-    for team_name, plays in team_cards.items():
-        # Trick holds at most four cards — chunk the team's plays so the
-        # synthesised pile spans as many tricks as needed.
-        for start in range(0, len(plays), 4):
-            trick = Trick()
-            for seat, card in plays[start:start + 4]:
-                trick.add_play(players_dict[seat], card)
-            round_.tricks.append(trick)
-            round_.team_tricks[team_name].append(trick)
+
+    plays = []
+    expected_teams = []
+    for team_name, seat_cards in team_cards.items():
+        # A trick holds exactly four plays — chunk the team's cards and
+        # pad the tail with 0-point filler from the chunk's first seat,
+        # keeping every play (hence the winner) inside the team.
+        for start in range(0, len(seat_cards), 4):
+            chunk = list(seat_cards[start:start + 4])
+            pad_seat = chunk[0][0]
+            while len(chunk) < 4:
+                chunk.append((pad_seat, _FILLERS[len(chunk) - 1]))
+            plays.extend(
+                Play(players_dict[seat], card) for seat, card in chunk
+            )
+            expected_teams.append(team_name)
     if last_trick_winner is not None:
-        round_.last_trick_winner = players_dict[last_trick_winner]
+        plays.extend(
+            _stack_trick(players_dict, last_trick_winner, contract.suit)
+        )
+        expected_teams.append(players_dict[last_trick_winner].team.name)
+    _seed_play_state(round_, players_dict, contract, plays)
+
+    # Self-check: every synthesised trick is won inside the team its
+    # cards were meant for, and the last-trick bonus lands as intended.
+    assert [
+        winner.team.name for winner in round_.play_state.trick_winners
+    ] == expected_teams
+    if last_trick_winner is not None:
+        assert (
+            round_.play_state.trick_winners[-1]
+            is players_dict[last_trick_winner]
+        )
+
     if belote_holder is not None:
         round_.belote_holder = players_dict[belote_holder]
     return round_
@@ -688,18 +767,26 @@ class TestUnannouncedSlamScoring:
             ContractBid(players["N"], 100, Suit.SPADES),
             double_player=players["E"],
         )
-        order = [players[s] for s in ("N", "E", "S", "W")]
+        order = [players[s] for s in _ORDER]
         round_ = Round(order, dealer=players["N"], deck=None, round_number=1)
         round_.contract = contract
         # N sweeps all 8 with the trump Jack (20 pts each → 160 card
         # points, clearing the 100 threshold). Card identity is
         # irrelevant to scoring, so the same Card may recur.
+        winner = players["N"]
+        others = [players[s] for s in _ORDER if s != "N"]
+        plays = []
         for _ in range(8):
-            trick = Trick()
-            trick.add_play(players["N"], Card(Suit.SPADES, Rank.JACK))
-            round_.tricks.append(trick)
-            round_.team_tricks["North-South"].append(trick)
-        round_.last_trick_winner = players["N"]
+            plays.extend(
+                (
+                    Play(winner, Card(Suit.SPADES, Rank.JACK)),
+                    Play(others[0], Card(Suit.HEARTS, Rank.SEVEN)),
+                    Play(others[1], Card(Suit.HEARTS, Rank.EIGHT)),
+                    Play(others[2], Card(Suit.DIAMONDS, Rank.SEVEN)),
+                )
+            )
+        _seed_play_state(round_, players, contract, plays)
+        assert list(round_.play_state.trick_winners) == [winner] * 8
         scores = round_.calculate_round_scores()
         assert round_.unannounced_slam is None
         assert round_.contract_made is True
