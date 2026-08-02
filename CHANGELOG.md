@@ -12,6 +12,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 - (core) **BREAKING:** Position seat enum — anticlockwise next, partner, opponents, strict parsing, French seat-name mapping (french_name/from_french). BasePlayer.position is now a Position, not a free-form string.
 - (core) `is_trump(card_suit, contract_suit)` and `trump_suits(contract_suit)` — the one place that answers "is this card trump under this contract", plus `Card.is_trump(trump_suit)` sugar. Every trick-taking rule now asks through them instead of spelling out `card.suit == trump_suit` at each boundary.
+- (engine) `contrai --debug / --seed / --autoplay` — face-up debug view with still-in-play summary, stdlib-logging diagnostics to `contrai-debug.log` with recorded seed, reproducible deals, and unattended 4-AI autoplay.
 
 ### Changed
 
