@@ -121,6 +121,26 @@ class TestOpeningLead:
         result = north.cardplay.choose_card(obs)
         assert (result.suit, result.rank) == (Suit.SPADES, Rank.ACE)
 
+    def test_aceless_lead_takes_the_cheapest_from_the_longest_suit(
+        self, players
+    ):
+        """No ace to open with — the fallback sheds from the long suit.
+
+        Both 8s are free, so the tie falls to suit length and the
+        three-card suit gives one up.
+        """
+        north, east = players["N"], players["E"]
+        hand = [
+            _c(Suit.DIAMONDS, Rank.EIGHT),
+            _c(Suit.DIAMONDS, Rank.QUEEN),
+            _c(Suit.CLUBS, Rank.EIGHT),
+            _c(Suit.CLUBS, Rank.KING),
+            _c(Suit.CLUBS, Rank.QUEEN),
+        ]
+        obs = _obs(north, hand, _contract(east, 100, Suit.HEARTS))
+        result = north.cardplay.choose_card(obs)
+        assert (result.suit, result.rank) == (Suit.CLUBS, Rank.EIGHT)
+
 
 class TestSubsequentLead:
     """Leading a later trick (empty trick, trick_number > 0)."""
@@ -176,6 +196,38 @@ class TestSubsequentLead:
         result = north.cardplay.choose_card(obs)
         # Not a trump — the pull stopped; the ace goes out instead.
         assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.ACE)
+
+    def test_lead_without_ace_or_master_sheds_from_the_longest_suit(
+        self, players
+    ):
+        """Nothing to cash — the fallback sheds from the long suit.
+
+        Both 8s are free, so the tie falls to suit length.
+        """
+        north = players["N"]
+        # Both opponents proved void in trump, so the pull stops; no ace
+        # and no master remains, which lands on the lowest-value rule.
+        both_void = (
+            Play(north, _c(Suit.HEARTS, Rank.ACE)),
+            Play(players["E"], _c(Suit.CLUBS, Rank.SEVEN)),
+            Play(players["S"], _c(Suit.HEARTS, Rank.KING)),
+            Play(players["W"], _c(Suit.DIAMONDS, Rank.SEVEN)),
+        )
+        hand = [
+            _c(Suit.DIAMONDS, Rank.EIGHT),
+            _c(Suit.DIAMONDS, Rank.QUEEN),
+            _c(Suit.CLUBS, Rank.EIGHT),
+            _c(Suit.CLUBS, Rank.KING),
+            _c(Suit.CLUBS, Rank.QUEEN),
+        ]
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.SPADES),
+            completed_tricks=[both_void],
+        )
+        result = north.cardplay.choose_card(obs)
+        assert (result.suit, result.rank) == (Suit.CLUBS, Rank.EIGHT)
 
 
 # ---------------------------------------------------------------------------
@@ -545,8 +597,84 @@ class TestFollowingTeamLosing:
             completed_tricks=[prior],
         )
         result = north.cardplay.choose_card(obs)
-        # Diamonds is the shortest suit; ♦7 is its lowest non-master card.
+        # ♦7 is the cheapest non-master card in hand.
         assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.SEVEN)
+
+    def test_discard_prefers_cheapest_over_shortest_suit(self, players):
+        """A free 7 beats a short suit's honour.
+
+        Ordering by suit length first walks a shortening suit down to its
+        10 while a 0-point card sits untouched in a longer suit; points
+        come first, so the 7 goes.
+        """
+        north = players["N"]
+        # West leads ♥A; ♥ trump; North holds no heart and cannot ruff.
+        current = (Play(players["W"], _c(Suit.HEARTS, Rank.ACE)),)
+        hand = [
+            # Diamonds is the shorter suit — and every card in it costs.
+            _c(Suit.DIAMONDS, Rank.KING),
+            _c(Suit.DIAMONDS, Rank.TEN),
+            _c(Suit.SPADES, Rank.SEVEN),
+            _c(Suit.SPADES, Rank.QUEEN),
+            _c(Suit.SPADES, Rank.KING),
+        ]
+        obs = _obs(
+            north,
+            hand,
+            _contract(players["E"], 100, Suit.HEARTS),
+            current_trick=current,
+        )
+        result = north.cardplay.choose_card(obs)
+        assert (result.suit, result.rank) == (Suit.SPADES, Rank.SEVEN)
+
+    def test_discard_breaks_point_ties_from_the_longest_suit(self, players):
+        """Equal-points candidates: the longest suit gives one up.
+
+        Both 8s cost nothing, so the choice falls to suit length —
+        pitching from the longer suit keeps the short one's shape.
+        """
+        north = players["N"]
+        current = (Play(players["W"], _c(Suit.HEARTS, Rank.ACE)),)
+        hand = [
+            _c(Suit.DIAMONDS, Rank.EIGHT),
+            _c(Suit.DIAMONDS, Rank.QUEEN),
+            _c(Suit.SPADES, Rank.EIGHT),
+            _c(Suit.SPADES, Rank.KING),
+            _c(Suit.SPADES, Rank.QUEEN),
+        ]
+        obs = _obs(
+            north,
+            hand,
+            _contract(players["E"], 100, Suit.HEARTS),
+            current_trick=current,
+        )
+        result = north.cardplay.choose_card(obs)
+        assert (result.suit, result.rank) == (Suit.SPADES, Rank.EIGHT)
+
+    def test_discard_picks_randomly_when_points_and_length_tie(self, players):
+        """Same points and same suit length — the pick is random.
+
+        Both 8s sit in two-card suits and cost nothing, so nothing
+        separates them; over many draws each must come up.
+        """
+        north = players["N"]
+        current = (Play(players["W"], _c(Suit.HEARTS, Rank.ACE)),)
+        hand = [
+            _c(Suit.DIAMONDS, Rank.EIGHT),
+            _c(Suit.DIAMONDS, Rank.QUEEN),
+            _c(Suit.SPADES, Rank.EIGHT),
+            _c(Suit.SPADES, Rank.QUEEN),
+        ]
+        obs = _obs(
+            north,
+            hand,
+            _contract(players["E"], 100, Suit.HEARTS),
+            current_trick=current,
+        )
+        seen = {
+            north.cardplay.choose_card(obs).suit for _ in range(50)
+        }
+        assert seen == {Suit.DIAMONDS, Suit.SPADES}
 
     def test_beats_with_smallest_winning_card_when_cut_expected(self, players):
         """East (void in the led suit, trump holding unknown) plays after

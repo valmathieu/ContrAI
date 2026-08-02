@@ -1,5 +1,8 @@
 """Expert rule-based card-play strategy (see the package docstring)."""
 
+import random
+from collections.abc import Sequence
+
 from contrai_core.card import Card
 from contrai_core.play import PlayObservation
 from contrai_core.position import Position
@@ -189,14 +192,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             # Use non-trump cards
             cards_to_consider = non_trump_cards
 
-        # Find cards with minimum points value
-        min_points = min(c.get_points(trump_suit) for c in cards_to_consider)
-        lowest_value_cards = [
-            c for c in cards_to_consider if c.get_points(trump_suit) == min_points
-        ]
-
-        # If multiple cards with same lowest value, choose randomly
-        return lowest_value_cards[0]
+        return self._lowest_value_card(cards_to_consider, hand, trump_suit)
 
     def _play_leading_card(
         self,
@@ -243,14 +239,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             # Use non-trump cards
             cards_to_consider = non_trump_cards
 
-        # Find cards with minimum points value
-        min_points = min(c.get_points(trump_suit) for c in cards_to_consider)
-        lowest_value_cards = [
-            c for c in cards_to_consider if c.get_points(trump_suit) == min_points
-        ]
-
-        # If multiple cards with same lowest value, choose randomly
-        return lowest_value_cards[0]
+        return self._lowest_value_card(cards_to_consider, hand, trump_suit)
 
     def _play_following_card(
         self,
@@ -380,10 +369,10 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
            played works the same way — the comparison is trump-aware).
            No trump wins → fall through rather than waste one that
            would be over-ruffed.
-        4. Cannot follow or usefully ruff → discard the lowest-points
-           card from the shortest suit, excluding masters (a master can
-           still win its suit later). Nothing but masters left → the
-           first legal card goes.
+        4. Cannot follow or usefully ruff → give up the cheapest card
+           we can afford (:meth:`_lowest_value_card`), excluding masters
+           (a master can still win its suit later). Nothing but masters
+           left → the first legal card goes.
 
         Args:
             observation: The frozen play-phase view for this seat.
@@ -424,18 +413,65 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
                 if winning_trumps:
                     return min(winning_trumps, key=lambda c: c.get_order(trump_suit))
 
-        # 4. Can't follow or usefully ruff — discard lowest from the
-        # shortest suit (excluding masters).
+        # 4. Can't follow or usefully ruff — give up the cheapest card
+        # (excluding masters).
         non_master_cards = [
             c for c in playable_cards if not self._is_master_card(c, trump_suit, fallen)
         ]
         if non_master_cards:
-            return min(non_master_cards, key=lambda c: (
-                self._count_suit(observation.hand, c.suit),
-                c.get_points(trump_suit)
-            ))
+            return self._lowest_value_card(
+                non_master_cards, observation.hand, trump_suit
+            )
 
         return playable_cards[0]
+
+    def _lowest_value_card(
+        self,
+        candidates: Sequence[Card],
+        hand: Sequence[Card],
+        trump_suit: ContractSuit | None,
+    ) -> Card:
+        """Pick the cheapest card to give up, ties broken by suit length.
+
+        The selection ladder, strongest criterion first:
+
+        1. **Fewest points.** Whatever we concede should cost as little
+           as possible, and this dominates outright: a 0-point card in a
+           five-card suit is a better gift than a Ten sitting alone in a
+           two-card one. Ranking by suit length first is what walks a
+           shortening suit down to its Ten while a 7 sits untouched
+           elsewhere.
+        2. **Longest suit.** Among equally cheap cards, shed from where
+           we hold most. The long suit can afford the card, and the short
+           ones keep the shape that may still matter — a doubleton can
+           become a void worth ruffing from, a lone card cannot.
+        3. **Random.** Nothing separates what is left, so the pick is
+           drawn rather than settled by hand order, which would make the
+           seat readable from one round to the next. Draws from the
+           global RNG, so a seeded run stays reproducible.
+
+        Args:
+            candidates: The cards eligible to be given up. Must be
+                non-empty — every caller filters from a non-empty legal
+                set and checks before calling.
+            hand: The seat's full remaining hand, which the suit-length
+                count reads. Passed separately because ``candidates`` is
+                usually a filtered subset, and length is a property of
+                the hand, not of the subset.
+            trump_suit: The round's trump, setting the points scale.
+
+        Returns:
+            The chosen card, one of ``candidates``.
+        """
+
+        def rank_key(card: Card) -> tuple[int, int]:
+            # Length negated so ``min`` prefers the *longest* suit once
+            # the points comparison ties.
+            return card.get_points(trump_suit), -self._count_suit(hand, card.suit)
+
+        best = min(rank_key(card) for card in candidates)
+        tied = [card for card in candidates if rank_key(card) == best]
+        return random.choice(tied)
 
     @staticmethod
     def _count_suit(hand, suit: Suit) -> int:
