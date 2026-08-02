@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Iterable, List, Sequence, Tuple, Optional, TypeVar, TYPE_CHECKING
 
 from .exceptions import TrickStateError
+from .rules import rules_for
 
 if TYPE_CHECKING:
     from .card import Card
@@ -129,7 +130,7 @@ class Trick:
         Raises:
             NotImplementedError: If ``trump_suit`` is
                 ``TrumpVariant.ALL_TRUMP``, propagated from
-                :func:`contrai_core.is_trump`.
+                :func:`contrai_core.rules_for`.
         """
         return current_winner(self.plays, trump_suit)
 
@@ -169,7 +170,7 @@ def current_winner(
     Raises:
         NotImplementedError: If ``trump_suit`` is
             ``TrumpVariant.ALL_TRUMP``, propagated from
-            :func:`contrai_core.is_trump`.
+            :func:`contrai_core.rules_for`.
     """
     best = _best_play(plays, trump_suit)
     return None if best is None else best[0]
@@ -199,31 +200,26 @@ def _best_play(
     Raises:
         NotImplementedError: If ``trump_suit`` is
             ``TrumpVariant.ALL_TRUMP``, propagated from
-            :func:`contrai_core.is_trump`.
+            :func:`contrai_core.rules_for`.
     """
     if not plays:
         return None
 
+    rules = rules_for(trump_suit)
     lead_suit = plays[0][1].suit
+
+    # ``trick_rank`` totally orders the cards that can take a
+    # ``lead_suit`` trick — (1, trump scale) above (0, plain scale) —
+    # and answers None for the cards that cannot. The led card itself
+    # always competes, so ``best_rank`` starts non-None and the running
+    # max is the winner.
     best = plays[0]
-    best_is_trump = best[1].is_trump(trump_suit)
-
+    best_rank = rules.trick_rank(best[1], lead_suit)
     for play in plays[1:]:
-        card = play[1]
-        card_is_trump = card.is_trump(trump_suit)
-
-        if card_is_trump and not best_is_trump:
-            # Trump beats non-trump
+        rank = rules.trick_rank(play[1], lead_suit)
+        if rank is not None and rank > best_rank:
             best = play
-            best_is_trump = True
-        elif card_is_trump and best_is_trump:
-            # Compare trump cards (Jack > 9 > Ace > 10 > King > Queen > 8 > 7)
-            if card.get_order(trump_suit) > best[1].get_order(trump_suit):
-                best = play
-        elif not card_is_trump and not best_is_trump and card.suit == lead_suit:
-            # Compare cards of the same suit (non-trump)
-            if card.get_order() > best[1].get_order():
-                best = play
+            best_rank = rank
 
     return best
 
@@ -302,7 +298,7 @@ class TrickRecord(tuple[RecordT, ...]):
         Raises:
             NotImplementedError: If ``trump_suit`` is
                 ``TrumpVariant.ALL_TRUMP``, propagated from
-                :func:`contrai_core.is_trump`.
+                :func:`contrai_core.rules_for`.
         """
 
         best = _best_play(self, trump_suit)

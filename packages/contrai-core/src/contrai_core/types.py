@@ -120,22 +120,20 @@ def is_trump(card_suit: Suit, contract_suit: ContractSuit | None) -> bool:
 
     Raises:
         NotImplementedError: If ``contract_suit`` is
-            ``TrumpVariant.ALL_TRUMP``. All-trump is not implemented;
-            raising here is what keeps it from quietly playing out as a
-            no-trump round. The auction does not offer it
+            ``TrumpVariant.ALL_TRUMP``, propagated from
+            :func:`contrai_core.rules_for` — the all-trump firewall lives
+            there. The auction does not offer all-trump
             (:attr:`contrai_core.ContractBid.VALID_SUITS`), so reaching
-            this means a caller built the contract by hand.
+            the raise means a caller built the contract by hand.
     """
 
-    if contract_suit is None or contract_suit is TrumpVariant.NO_TRUMP:
-        return False
-    if contract_suit is TrumpVariant.ALL_TRUMP:
-        raise NotImplementedError(
-            "All-trump contracts are not implemented: every suit would be "
-            "trump, which changes card ordering, point values and the "
-            "follow obligations. Bid a suit or no-trump instead."
-        )
-    return card_suit is contract_suit
+    # A thin delegate over the TrumpRules seam — the rules object is the
+    # authority on trumpness. Imported function-locally: ``rules.py``
+    # imports this module's enums, so a module-level import here would be
+    # a cycle.
+    from .rules import rules_for
+
+    return rules_for(contract_suit).is_trump(card_suit)
 
 
 def trump_suits(contract_suit: ContractSuit | None) -> tuple[Suit, ...]:
@@ -160,10 +158,15 @@ def trump_suits(contract_suit: ContractSuit | None) -> tuple[Suit, ...]:
 
     Raises:
         NotImplementedError: If ``contract_suit`` is
-            ``TrumpVariant.ALL_TRUMP``, propagated from :func:`is_trump`.
+            ``TrumpVariant.ALL_TRUMP``, propagated from
+            :func:`contrai_core.rules_for`.
     """
 
-    return tuple(suit for suit in Suit if is_trump(suit, contract_suit))
+    # Function-local for the same cycle reason as in :func:`is_trump`.
+    from .rules import rules_for
+
+    rules = rules_for(contract_suit)
+    return tuple(suit for suit in Suit if rules.is_trump(suit))
 
 
 class Rank(Enum):

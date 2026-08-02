@@ -36,8 +36,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, NamedTuple, Optional
 
 from .exceptions import IllegalPlayError, PlayRuleViolation
+from .rules import NoTrumpRules, TrumpRules, rules_for
 from .trick import TrickRecord, current_winner
-from .types import is_trump, trump_suits
 
 if TYPE_CHECKING:
     from .bid import Bid
@@ -317,7 +317,7 @@ class PlayState:
         if not hand:
             return ()
 
-        trump_suit = self._trump_suit
+        rules = rules_for(self._trump_suit)
         trick = self.current_trick
         if not trick:
             # First to play in this trick — anything goes.
@@ -325,19 +325,15 @@ class PlayState:
 
         lead_suit = trick[0].card.suit
         lead_suit_cards = tuple(card for card in hand if card.suit == lead_suit)
-        # No ``if trump_suit`` guard needed: ``is_trump`` already answers
-        # False for every card when there is no trump suit.
-        trump_cards = tuple(card for card in hand if card.is_trump(trump_suit))
+        # No regime guard needed: ``rules.is_trump`` already answers False
+        # for every card when no suit is trump.
+        trump_cards = tuple(card for card in hand if rules.is_trump(card.suit))
 
         # Rule 1/2 — follow suit, over-trumping when the led suit is trump.
         if lead_suit_cards:
-            if is_trump(lead_suit, trump_suit):
-                # Inside this branch the led suit *is* the trump suit, so
-                # ``lead_suit`` is the same member as ``trump_suit`` — and it
-                # is the one already known to be a real card suit, which is
-                # all the ranking helper needs.
+            if rules.is_trump(lead_suit):
                 higher = _higher_trumps_than_played(
-                    lead_suit_cards, trick, lead_suit
+                    lead_suit_cards, trick, rules
                 )
                 return higher if higher else lead_suit_cards
             return lead_suit_cards
@@ -345,28 +341,28 @@ class PlayState:
         # Rule 4 — partner-master exemption. Applies only while the partner
         # is *currently* winning; a partner since over-trumped no longer
         # shields the player from the trump obligation.
-        current_master = current_winner(list(trick), trump_suit)
+        current_master = current_winner(list(trick), self._trump_suit)
         if current_master is not None and current_master.team == player.team:
             return tuple(hand)
 
-        # No trump suit (or the led suit is trump and we are void in it):
-        # nothing to over-trump, free discard. The first test has to enumerate
-        # rather than lean on truthiness — every enum member is truthy, so a
-        # bare ``if not trump_suit`` never fired for a NO_TRUMP contract even
-        # though that is precisely the case it was written for.
-        if not trump_suits(trump_suit) or is_trump(lead_suit, trump_suit):
+        # No trump suit at all (or the led suit is trump and we are void in
+        # it): nothing to trump with, free discard. The regime test is an
+        # ``isinstance`` check against the sealed no-trump leaf — an enum
+        # member is always truthy, so no bare ``if not trump_suit`` can
+        # distinguish a NO_TRUMP contract from a suit one.
+        if isinstance(rules, NoTrumpRules) or rules.is_trump(lead_suit):
             return tuple(hand)
 
         # Rule 3 — trump obligation. If an opponent has ruffed, beat them.
         highest_opponent_trump = _highest_opponent_trump(
-            trick, player.team, trump_suit
+            trick, player.team, rules
         )
         if highest_opponent_trump is not None:
             higher_trumps = tuple(
                 card
                 for card in trump_cards
-                if card.get_order(trump_suit)
-                > highest_opponent_trump.get_order(trump_suit)
+                if rules.rank_in_suit(card)
+                > rules.rank_in_suit(highest_opponent_trump)
             )
             if higher_trumps:
                 return higher_trumps
@@ -714,7 +710,7 @@ def _seal_plays(plays: tuple[Play, ...]) -> tuple[ObservedPlay, ...]:
 def _higher_trumps_than_played(
     trumps_in_hand: tuple[Card, ...],
     plays: tuple[Play, ...],
-    trump_suit: Suit,
+    rules: TrumpRules,
 ) -> tuple[Card, ...]:
     """Return the held trumps that beat every trump already in ``plays``.
 
@@ -726,10 +722,9 @@ def _higher_trumps_than_played(
     Args:
         trumps_in_hand: The candidate trumps from the player's hand.
         plays: The plays of the current trick.
-        trump_suit: The trump suit to rank by. A real card suit, not a
-            contract's trump option — the caller has already established
-            that some suit is trump, so there is nothing left to decide
-            here.
+        rules: The contract's trick rules, supplying trumpness and the
+            in-suit ranking. All cards compared here are trumps of the
+            same suit, which is exactly what ``rank_in_suit`` orders.
 
     Returns:
         The subset of ``trumps_in_hand`` outranking the best trump played.
@@ -737,10 +732,10 @@ def _higher_trumps_than_played(
 
     best_so_far = None
     for _, card in plays:
-        if not card.is_trump(trump_suit):
+        if not rules.is_trump(card.suit):
             continue
-        if best_so_far is None or card.get_order(trump_suit) > best_so_far.get_order(
-            trump_suit
+        if best_so_far is None or rules.rank_in_suit(card) > rules.rank_in_suit(
+            best_so_far
         ):
             best_so_far = card
     if best_so_far is None:
@@ -748,22 +743,22 @@ def _higher_trumps_than_played(
     return tuple(
         card
         for card in trumps_in_hand
-        if card.get_order(trump_suit) > best_so_far.get_order(trump_suit)
+        if rules.rank_in_suit(card) > rules.rank_in_suit(best_so_far)
     )
 
 
 def _highest_opponent_trump(
     plays: tuple[Play, ...],
     player_team: Team,
-    trump_suit: Optional[ContractSuit],
+    rules: TrumpRules,
 ) -> Optional[Card]:
     """Return the highest trump an opponent of ``player_team`` has played.
 
     Args:
         plays: The plays of the current trick.
         player_team: The team whose opponents' trumps we scan for.
-        trump_suit: The trump suit to rank by; ``None``/``NO_TRUMP`` yields
-            no trumps at all.
+        rules: The contract's trick rules; under the no-trump regime no
+            card is trump, so the scan finds nothing.
 
     Returns:
         The highest opposing trump card, or ``None`` if none was played.
@@ -771,10 +766,10 @@ def _highest_opponent_trump(
 
     highest = None
     for trick_player, card in plays:
-        if not card.is_trump(trump_suit) or trick_player.team == player_team:
+        if not rules.is_trump(card.suit) or trick_player.team == player_team:
             continue
-        if highest is None or card.get_order(trump_suit) > highest.get_order(
-            trump_suit
+        if highest is None or rules.rank_in_suit(card) > rules.rank_in_suit(
+            highest
         ):
             highest = card
     return highest
@@ -805,22 +800,29 @@ def _classify_violation(
         The :class:`PlayRuleViolation` for the broken obligation.
     """
 
+    rules = rules_for(trump_suit)
     lead_suit = trick[0].card.suit
     lead_suit_cards = [c for c in hand if c.suit == lead_suit]
 
-    # Held the led suit. Trump led + a too-low trump is an over-trump
-    # failure; anything else off-suit is a follow failure.
+    # Held the led suit. Trump led + a too-low card of that suit is an
+    # over-trump failure; anything else off-suit is a follow failure. The
+    # played card is discriminated by its *suit* against the led one —
+    # under a single-suit contract that is the same question as "is it
+    # trump", and it stays the right one for any regime where the led
+    # suit competes on its own scale.
     if lead_suit_cards:
-        if is_trump(lead_suit, trump_suit) and card.is_trump(trump_suit):
+        if rules.is_trump(lead_suit) and card.suit == lead_suit:
             return PlayRuleViolation.MUST_OVERTRUMP
         return PlayRuleViolation.MUST_FOLLOW_SUIT
 
     # Void in the led suit (partner-master plays are legal, so never reach
     # here). An opponent already ruffed and we under-trumped → over-trump
-    # failure; otherwise we discarded instead of trumping.
+    # failure; otherwise we discarded instead of trumping. Here the
+    # discriminator is genuine trumpness — the card competes as a trump,
+    # wherever the trick was led.
     highest_opponent_trump = _highest_opponent_trump(
-        trick, player.team, trump_suit
+        trick, player.team, rules
     )
-    if highest_opponent_trump is not None and card.is_trump(trump_suit):
+    if highest_opponent_trump is not None and rules.is_trump(card.suit):
         return PlayRuleViolation.MUST_OVERTRUMP
     return PlayRuleViolation.MUST_TRUMP
