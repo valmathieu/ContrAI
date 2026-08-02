@@ -45,8 +45,8 @@ class Trick:
         A trick is a dumb container of plays; it does not own the trump
         suit. Trump is round-level state living on the ``Contract`` and is
         passed to :meth:`get_current_winner` at call time — mirroring how
-        :meth:`contrai_core.Card.get_order` / ``get_points`` take trump as
-        a parameter rather than storing it.
+        :func:`contrai_core.rules_for` resolves the trick rules from a
+        contract's trump at each decision site rather than storing them.
         """
         self.plays: List[Tuple[Player, Card]] = []
 

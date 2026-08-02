@@ -99,7 +99,7 @@ package "model/player/ (subpackage)" as p_player {
     class RuleBasedCardPlayStrategy {
         + choose_card(observation) : Card
         - _derive_tracking(observation) : (fallen, voids)
-        - _get_higher_ranks(rank: Rank, *, as_trump: bool) : list<Rank>
+        - _is_master_card(card, trump_suit, fallen) : bool
     }
 
     ' --- levels.py: registry + factory ---
@@ -157,7 +157,9 @@ package "model/player/ (subpackage)" as p_player {
       following_card, _play_when_team_winning/losing,
       _is_master_card, _is_stronger_card,
       _can_trump_win, _opponents_might_have_trump,
-      _opponent_cut_expected, _get_higher_ranks, …).
+      _opponent_cut_expected, …). Every trump / point /
+      ranking question resolves through core
+      ""rules_for(trump_suit)"" — no local ladders.
       Partner / opponent seats come from
       ""Position.partner"", not a local seat map.
       A future MCTS / learned level is a new

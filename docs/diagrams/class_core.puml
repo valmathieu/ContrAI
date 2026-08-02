@@ -194,29 +194,23 @@ package "card.py / deck.py" as p_card {
         + suit : Suit <<a real card suit only>>
         + rank : Rank
         --
-        + {static} NORMAL_POINTS : dict<Rank, int>
-        + {static} TRUMP_POINTS  : dict<Rank, int>
-        + {static} NORMAL_ORDER  : dict<Rank, int>
-        + {static} TRUMP_ORDER   : dict<Rank, int>
         + {static} SUIT_SYMBOLS  : dict<Suit, str>
         --
         + ~__post_init~__() : None <<rejects a non-Suit>>
-        + is_trump(trump_suit: ContractSuit? = None) : bool
-        + get_points(trump_suit: ContractSuit? = None) : int
-        + get_order(trump_suit: ContractSuit? = None)  : int
         + __str__() : str
     }
 
     note bottom of Card
-      Immutable value object: equality and
-      hashing are by ""(suit, rank)"", so
-      distinct instances of the same physical
-      card are equal and hashable. No
-      ""~__lt~__"" — strength is parametric via
-      ""get_order(trump_suit)"", and the four
-      class-level tables above are the single
-      source of truth for points and ordering
-      (trump vs plain).
+      Immutable value object — **pure identity**:
+      equality and hashing are by ""(suit, rank)"",
+      so distinct instances of the same physical
+      card are equal and hashable. No ""~__lt~__""
+      and no call-time trump API: whether a card
+      is trump, what it scores and how strong it
+      is are //contract// questions, answered by
+      the ""TrumpRules"" object from
+      ""rules_for(contract_suit)"" (rules.py),
+      which owns the point/order tables.
     end note
 
     class Deck {
@@ -488,7 +482,8 @@ package "contract.py / trick.py" as p_contract {
       A dumb container of plays — it does **not**
       store trump. ""get_current_winner(trump_suit)""
       takes trump as a **required** argument
-      (like ""Card.get_order"" / ""get_points"") and
+      (resolved through ""rules_for"", like every
+      trick rule) and
       works on **partial** tricks. The engine
       builds ""Trick()"" bare and passes the
       contract's suit for trick-winner
@@ -693,7 +688,6 @@ p_contractsuit ..> TrumpVariant  : <<union member>>
 ' TrumpVariant — __post_init__ enforces it.
 Card --> Suit
 Card --> Rank
-Card ..> p_contractsuit          : is_trump / get_order(trump_suit)
 Card ..> InvalidCardError        : <<raises on a non-Suit suit>>
 
 ' Hand owns Cards

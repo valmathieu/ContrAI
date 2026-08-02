@@ -1,7 +1,10 @@
 """Tests for the ``Card`` value object.
 
-Covers trump vs non-trump point values, ordering strength, equality /
-hashing, immutability, and the string representations.
+Card is pure identity — a suit and a rank. These tests cover
+construction (the non-Suit rejection), equality / hashing, immutability,
+and the string representations. Everything contextual a card used to be
+asked about (trumpness, points, strength) belongs to the ``TrumpRules``
+seam and is pinned in ``test_rules.py``.
 """
 
 import dataclasses
@@ -21,8 +24,6 @@ def sample_cards():
         'heart_ace': Card(Suit.HEARTS, Rank.ACE),
         'diamond_9': Card(Suit.DIAMONDS, Rank.NINE),
         'club_king': Card(Suit.CLUBS, Rank.KING),
-        'spade_7': Card(Suit.SPADES, Rank.SEVEN),
-        'heart_10': Card(Suit.HEARTS, Rank.TEN),
     }
 
 
@@ -34,9 +35,10 @@ class TestCardConstruction:
     )
     def test_trump_variant_suit_raises(self, variant):
         # The live path this closes: Hand.has_card(suit, rank) is
-        # `Card(suit, rank) in self`, and the round's belote detection feeds
-        # it contract.suit. Without the guard a no-trump contract mints a
-        # card in a suit no deck holds and quietly matches nothing.
+        # `Card(suit, rank) in self`, and the round's belote detection
+        # feeds it suits taken from the contract's rules. Without the
+        # guard a suitless trump mints a card in a suit no deck holds and
+        # quietly matches nothing.
         with pytest.raises(InvalidCardError, match="Invalid card suit"):
             Card(variant, Rank.ACE)
 
@@ -48,249 +50,12 @@ class TestCardConstruction:
     def test_every_real_suit_is_accepted(self, suit):
         assert Card(suit, Rank.ACE).suit is suit
 
-
-class TestCardIsTrump:
-    """Test the is_trump sugar and that get_points/get_order agree with it."""
-
-    def test_own_suit(self, sample_cards):
-        assert sample_cards['spade_jack'].is_trump(Suit.SPADES) is True
-
-    def test_other_suit(self, sample_cards):
-        assert sample_cards['spade_jack'].is_trump(Suit.HEARTS) is False
-
-    def test_no_trump_contract(self, sample_cards):
-        assert sample_cards['spade_jack'].is_trump(TrumpVariant.NO_TRUMP) is False
-
-    def test_defaults_to_no_trump(self, sample_cards):
-        # The default matches get_points()/get_order() called bare.
-        assert sample_cards['spade_jack'].is_trump() is False
-
-    def test_all_trump_raises(self, sample_cards):
-        with pytest.raises(NotImplementedError, match="All-trump"):
-            sample_cards['spade_jack'].is_trump(TrumpVariant.ALL_TRUMP)
-
-    def test_points_and_order_follow_is_trump(self, sample_cards):
-        # is_trump is the single question both value lookups branch on, so
-        # the trump tables must be selected exactly when it answers True.
-        card = sample_cards['spade_jack']
-        assert card.is_trump(Suit.SPADES)
-        assert card.get_points(Suit.SPADES) == Card.TRUMP_POINTS[Rank.JACK]
-        assert card.get_order(Suit.SPADES) == Card.TRUMP_ORDER[Rank.JACK]
-
-        assert not card.is_trump(TrumpVariant.NO_TRUMP)
-        assert card.get_points(TrumpVariant.NO_TRUMP) == Card.NORMAL_POINTS[Rank.JACK]
-        assert card.get_order(TrumpVariant.NO_TRUMP) == Card.NORMAL_ORDER[Rank.JACK]
-
-
-class TestCardGetPoints:
-    """Test the get_points method of the Card class."""
-
-    def test_get_points_normal_suit(self, sample_cards):
-        """
-        Test that get_points returns normal points when card is not trump.
-        """
-        # Jack of Spades should have 2 points when not trump
-        assert sample_cards['spade_jack'].get_points() == 2
-        assert sample_cards['spade_jack'].get_points(Suit.HEARTS) == 2
-
-        # Ace of Hearts should have 11 points when not trump
-        assert sample_cards['heart_ace'].get_points() == 11
-        assert sample_cards['heart_ace'].get_points(Suit.SPADES) == 11
-
-        # 9 of Diamonds should have 0 points when not trump
-        assert sample_cards['diamond_9'].get_points() == 0
-        assert sample_cards['diamond_9'].get_points(Suit.CLUBS) == 0
-
-    def test_get_points_trump_suit(self, sample_cards):
-        """
-        Test that get_points returns trump points when card is trump.
-        """
-        # Jack of Spades should have 20 points when trump
-        assert sample_cards['spade_jack'].get_points(Suit.SPADES) == 20
-
-        # 9 of Diamonds should have 14 points when trump
-        assert sample_cards['diamond_9'].get_points(Suit.DIAMONDS) == 14
-
-        # Ace of Hearts should have 11 points when trump (same as normal)
-        assert sample_cards['heart_ace'].get_points(Suit.HEARTS) == 11
-
-        # King of Clubs should have 4 points when trump (same as normal)
-        assert sample_cards['club_king'].get_points(Suit.CLUBS) == 4
-
-    def test_get_points_all_ranks_normal(self):
-        """
-        Test get_points for all ranks in normal (non-trump) suit.
-        """
-        test_suit = Suit.SPADES
-        expected_normal_points = {
-            Rank.SEVEN: 0, Rank.EIGHT: 0, Rank.NINE: 0, Rank.JACK: 2,
-            Rank.QUEEN: 3, Rank.KING: 4, Rank.TEN: 10, Rank.ACE: 11
-        }
-
-        for rank, expected_points in expected_normal_points.items():
-            card = Card(test_suit, rank)
-            assert card.get_points(Suit.HEARTS) == expected_points  # Different trump suit
-
-    def test_get_points_all_ranks_trump(self):
-        """
-        Test get_points for all ranks when they are trump.
-        """
-        test_suit = Suit.SPADES
-        expected_trump_points = {
-            Rank.SEVEN: 0, Rank.EIGHT: 0, Rank.NINE: 14, Rank.JACK: 20,
-            Rank.QUEEN: 3, Rank.KING: 4, Rank.TEN: 10, Rank.ACE: 11
-        }
-
-        for rank, expected_points in expected_trump_points.items():
-            card = Card(test_suit, rank)
-            assert card.get_points(test_suit) == expected_points
-
-
-class TestCardGetOrder:
-    """Test the get_order method of the Card class."""
-
-    def test_get_order_normal_suit(self, sample_cards):
-        """
-        Test that get_order returns normal order when card is not trump.
-        """
-        # Jack of Spades should have order 3 when not trump
-        assert sample_cards['spade_jack'].get_order() == 3
-        assert sample_cards['spade_jack'].get_order(Suit.HEARTS) == 3
-
-        # Ace of Hearts should have order 7 when not trump
-        assert sample_cards['heart_ace'].get_order() == 7
-        assert sample_cards['heart_ace'].get_order(Suit.SPADES) == 7
-
-        # 9 of Diamonds should have order 2 when not trump
-        assert sample_cards['diamond_9'].get_order() == 2
-        assert sample_cards['diamond_9'].get_order(Suit.CLUBS) == 2
-
-    def test_get_order_trump_suit(self, sample_cards):
-        """
-        Test that get_order returns trump order when card is trump.
-        """
-        # Jack of Spades should have order 7 when trump (highest)
-        assert sample_cards['spade_jack'].get_order(Suit.SPADES) == 7
-
-        # 9 of Diamonds should have order 6 when trump (second highest)
-        assert sample_cards['diamond_9'].get_order(Suit.DIAMONDS) == 6
-
-        # Ace of Hearts should have order 5 when trump
-        assert sample_cards['heart_ace'].get_order(Suit.HEARTS) == 5
-
-        # King of Clubs should have order 3 when trump
-        assert sample_cards['club_king'].get_order(Suit.CLUBS) == 3
-
-    def test_get_order_all_ranks_normal(self):
-        """
-        Test get_order for all ranks in normal (non-trump) suit.
-        """
-        test_suit = Suit.SPADES
-        expected_normal_order = {
-            Rank.SEVEN: 0, Rank.EIGHT: 1, Rank.NINE: 2, Rank.JACK: 3,
-            Rank.QUEEN: 4, Rank.KING: 5, Rank.TEN: 6, Rank.ACE: 7
-        }
-
-        for rank, expected_order in expected_normal_order.items():
-            card = Card(test_suit, rank)
-            assert card.get_order(Suit.HEARTS) == expected_order  # Different trump suit
-
-    def test_get_order_all_ranks_trump(self):
-        """
-        Test get_order for all ranks when they are trump.
-        """
-        test_suit = Suit.SPADES
-        expected_trump_order = {
-            Rank.SEVEN: 0, Rank.EIGHT: 1, Rank.QUEEN: 2, Rank.KING: 3,
-            Rank.TEN: 4, Rank.ACE: 5, Rank.NINE: 6, Rank.JACK: 7
-        }
-
-        for rank, expected_order in expected_trump_order.items():
-            card = Card(test_suit, rank)
-            assert card.get_order(test_suit) == expected_order
-
-    def test_trump_order_hierarchy(self):
-        """
-        Test that trump cards are ordered correctly from lowest to highest.
-        """
-        trump_suit = Suit.HEARTS
-        cards = [
-            Card(trump_suit, Rank.SEVEN),    # order 0
-            Card(trump_suit, Rank.EIGHT),    # order 1
-            Card(trump_suit, Rank.QUEEN),    # order 2
-            Card(trump_suit, Rank.KING),     # order 3
-            Card(trump_suit, Rank.TEN),      # order 4
-            Card(trump_suit, Rank.ACE),      # order 5
-            Card(trump_suit, Rank.NINE),     # order 6
-            Card(trump_suit, Rank.JACK),     # order 7
-        ]
-
-        for i in range(len(cards) - 1):
-            assert cards[i].get_order(trump_suit) < cards[i + 1].get_order(trump_suit)
-
-    def test_normal_order_hierarchy(self):
-        """
-        Test that normal cards are ordered correctly from lowest to highest.
-        """
-        normal_suit = Suit.HEARTS
-        trump_suit = Suit.SPADES  # Different from normal suit
-        cards = [
-            Card(normal_suit, Rank.SEVEN),   # order 0
-            Card(normal_suit, Rank.EIGHT),   # order 1
-            Card(normal_suit, Rank.NINE),    # order 2
-            Card(normal_suit, Rank.JACK),    # order 3
-            Card(normal_suit, Rank.QUEEN),   # order 4
-            Card(normal_suit, Rank.KING),    # order 5
-            Card(normal_suit, Rank.TEN),     # order 6
-            Card(normal_suit, Rank.ACE),     # order 7
-        ]
-
-        for i in range(len(cards) - 1):
-            assert cards[i].get_order(trump_suit) < cards[i + 1].get_order(trump_suit)
-
-
-class TestCardIntegration:
-    """Integration tests for Card methods."""
-
-    def test_trump_vs_normal_points_difference(self):
-        """
-        Test that certain cards have different points when trump vs normal.
-        """
-        jack = Card(Suit.SPADES, Rank.JACK)
-        nine = Card(Suit.SPADES, Rank.NINE)
-        ace = Card(Suit.SPADES, Rank.ACE)
-
-        # Jack: 2 normal, 20 trump
-        assert jack.get_points(Suit.HEARTS) == 2
-        assert jack.get_points(Suit.SPADES) == 20
-
-        # Nine: 0 normal, 14 trump
-        assert nine.get_points(Suit.HEARTS) == 0
-        assert nine.get_points(Suit.SPADES) == 14
-
-        # Ace: 11 normal, 11 trump (same)
-        assert ace.get_points(Suit.HEARTS) == 11
-        assert ace.get_points(Suit.SPADES) == 11
-
-    def test_trump_vs_normal_order_difference(self):
-        """
-        Test that certain cards have different order when trump vs normal.
-        """
-        jack = Card(Suit.SPADES, Rank.JACK)
-        nine = Card(Suit.SPADES, Rank.NINE)
-        queen = Card(Suit.SPADES, Rank.QUEEN)
-
-        # Jack: 3 normal, 7 trump (becomes highest)
-        assert jack.get_order(Suit.HEARTS) == 3
-        assert jack.get_order(Suit.SPADES) == 7
-
-        # Nine: 2 normal, 6 trump (becomes second highest)
-        assert nine.get_order(Suit.HEARTS) == 2
-        assert nine.get_order(Suit.SPADES) == 6
-
-        # Queen: 4 normal, 2 trump (becomes lower)
-        assert queen.get_order(Suit.HEARTS) == 4
-        assert queen.get_order(Suit.SPADES) == 2
+    def test_carries_no_call_time_trump_api(self):
+        # Contextual questions live on the TrumpRules seam, not the card:
+        # a Card knows its identity and nothing about any contract.
+        card = Card(Suit.SPADES, Rank.JACK)
+        for retired in ("is_trump", "get_points", "get_order"):
+            assert not hasattr(card, retired)
 
 
 class TestCardStringRepresentations:
@@ -328,8 +93,8 @@ class TestCardValueSemantics:
     Distinct instances of the same physical card must be interchangeable —
     this is what lets a Card survive a deep-copy / SQLite reload / replay and
     still compare equal to "the same" card, and live in a ``set``/``dict`` by
-    value. There is no ``__lt__``: strength is parametric via
-    :meth:`Card.get_order`, not direct comparison.
+    value. There is no ``__lt__``: strength is contextual and belongs to the
+    contract's ``TrumpRules`` object, not to direct card comparison.
     """
 
     def test_same_suit_and_rank_are_equal(self):
@@ -383,6 +148,7 @@ class TestCardValueSemantics:
             card.rank = Rank.ACE
 
     def test_no_ordering_defined(self):
-        # Strength is parametric (get_order), so Card defines no __lt__.
+        # Strength is contextual (the rules object's job), so Card
+        # defines no __lt__.
         with pytest.raises(TypeError):
             sorted([Card(Suit.SPADES, Rank.SEVEN), Card(Suit.HEARTS, Rank.ACE)])

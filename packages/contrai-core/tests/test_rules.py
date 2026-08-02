@@ -1,10 +1,9 @@
 """Tests for the TrumpRules seam.
 
-Pins the four per-card tables against literals, cross-checks the seam
-against ``Card.get_points`` / ``Card.get_order`` while the two APIs
-coexist, and locks the structural guarantees the rest of the domain
-leans on: singleton identity, the sealed hierarchy, and the all-trump
-firewall now living in :func:`rules_for`.
+Pins the four per-card tables against literals and locks the structural
+guarantees the rest of the domain leans on: singleton identity, the
+sealed hierarchy, and the all-trump firewall living in
+:func:`rules_for`.
 """
 
 import pytest
@@ -108,26 +107,16 @@ class TestTables:
         assert rules.rank_in_suit(card) == PLAIN_ORDER[rank]
 
 
-class TestCrossCheckAgainstCard:
-    """The seam must agree with Card's tables while both APIs coexist."""
+class TestFullDeckCoverage:
+    """Every implemented regime answers for all 32 physical cards."""
 
     @pytest.mark.parametrize("trump", IMPLEMENTED_TRUMPS)
-    def test_points_match_card_get_points(self, trump):
+    def test_every_card_has_points_and_rank(self, trump):
         rules = rules_for(trump)
         for card in ALL_CARDS:
-            assert rules.points(card) == card.get_points(trump)
-
-    @pytest.mark.parametrize("trump", IMPLEMENTED_TRUMPS)
-    def test_rank_in_suit_matches_card_get_order(self, trump):
-        rules = rules_for(trump)
-        for card in ALL_CARDS:
-            assert rules.rank_in_suit(card) == card.get_order(trump)
-
-    @pytest.mark.parametrize("trump", IMPLEMENTED_TRUMPS)
-    def test_is_trump_matches_card_is_trump(self, trump):
-        rules = rules_for(trump)
-        for card in ALL_CARDS:
-            assert rules.is_trump(card.suit) == card.is_trump(trump)
+            assert isinstance(rules.points(card), int)
+            assert isinstance(rules.rank_in_suit(card), int)
+            assert isinstance(rules.is_trump(card.suit), bool)
 
 
 class TestTrickRank:

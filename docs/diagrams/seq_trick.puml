@@ -167,7 +167,8 @@ R -> T : winner = current_trick.get_current_winner(contract.suit)
 note right of T
   Trump comes from ""self.contract.suit"".
   Trump beats non-trump; within the same suit,
-  highest ""get_order()"" wins. The rule lives on
+  the higher ""rules_for(trump).trick_rank"" wins.
+  The rule lives on
   ""Trick.get_current_winner(trump_suit)"" in contrai-core.
 end note
 

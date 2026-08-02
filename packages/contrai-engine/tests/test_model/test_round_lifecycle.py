@@ -113,7 +113,8 @@ def _stack_deck(hands: dict[str, list[Card]]) -> Deck:
 #      ``contract`` away from N/110/Spades and fail loudly there.
 #
 # N/S hold 6 of the 8 trumps (missing only the Queen and King, the two
-# lowest-ranked trumps - see ``Card.TRUMP_ORDER``), so the contract is
+# lowest-ranked trumps on the trump ladder - see
+# ``rules_for(trump).rank_in_suit``), so the contract is
 # expected to be comfortably made; the exact card-by-card play (and hence
 # the precise score split) is pinned from an actual run - see the module
 # docstring.

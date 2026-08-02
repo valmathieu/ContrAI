@@ -849,7 +849,7 @@ class TestRoundRecapPanel:
         view = RichView()
         north, east, south, west = four_players
         contract = self._StubContract(100, Suit.HEARTS, "North-South")
-        # N-S took two tricks; sum of card.get_points(♥) =
+        # N-S took two tricks; ♥-trump per-card points sum to
         #   J♥(20)+7♥(0)+9♥(14)+8♥(0) = 34
         #   A♠(11)+7♠(0)+K♠(4)+8♠(0)  = 15
         # Total card points: 49.

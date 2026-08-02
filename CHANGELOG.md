@@ -23,6 +23,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (core) **BREAKING:** All-trump is no longer bookable. `ContractBid.VALID_SUITS` drops it, so the auction offers 65 opening contracts instead of 78 and a search-based agent sampling `legal_actions` can no longer reach a contract the engine cannot play.
 - (core) `PlayState.completed_tricks` and `PlayObservation.completed_tricks` now hold `TrickRecord` values instead of bare four-play tuples. `TrickRecord` is a `tuple` subclass, so every consumer that iterates, unpacks, or compares a completed trick as a plain sequence keeps working unchanged.
 - (engine) Round scoring now reads the authoritative core play state: card points come from each completed trick's pile credited to its winner's team, and trick counts plus the last-trick bonus come from the state's derived winners — never from the view-facing mirror lists. A malformed trick history now fails loudly instead of silently scoring 0–0.
+- (core) **BREAKING:** `Card` is pure identity — the call-time trump API is retired. `Card.is_trump(trump_suit)`, `Card.get_points(trump_suit)`, `Card.get_order(trump_suit)` and the four class-level point/order tables are gone; every trumpness, scoring, and ranking question is answered by the contract's `TrumpRules` object from `rules_for(contract_suit)` (the tables now live in `contrai_core.rules`). The module-level `is_trump(card_suit, contract_suit)` / `trump_suits(contract_suit)` predicates remain as thin delegates over the seam.
 
 ### Fixed
 
