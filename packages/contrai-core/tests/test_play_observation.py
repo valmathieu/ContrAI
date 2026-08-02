@@ -25,6 +25,7 @@ from contrai_core import (
     Position,
     Rank,
     Suit,
+    TrickRecord,
     TrumpVariant,
 )
 from contrai_core.bid import ContractBid, PassBid
@@ -289,6 +290,10 @@ class TestSealedTrickRecords:
         for play in every_play:
             assert isinstance(play, ObservedPlay)
             assert isinstance(play.position, Position)
+        # Each completed trick arrives typed as a TrickRecord of sealed
+        # records (still a plain tuple to every existing consumer).
+        for trick in obs.completed_tricks:
+            assert isinstance(trick, TrickRecord)
 
     def test_positions_match_the_players_who_played(self, players):
         obs = self._observed_mid_trick(players)

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from contrai_core import Suit
+from contrai_core import Suit, rules_for
 from rich.box import ROUNDED
 from rich.panel import Panel
 from rich.text import Text
@@ -155,8 +155,8 @@ def _recap_breakdown(round_) -> dict:
                       failed *and* on numeric doubled/redoubled made
                       — winner-takes-all; base*mult on Slam family
                       for the side winning the contract; 0 otherwise).
-        card_points:  sum of card.get_points(trump) across the
-                      team's tricks (trump-aware) for numeric
+        card_points:  trump-aware per-card points summed across the
+                      team's tricks for numeric
                       contracts, *or* the flat substitute
                       ``slam_card_substitute * multiplier`` credited
                       to the side winning a Slam-family contract.
@@ -224,11 +224,12 @@ def _recap_breakdown(round_) -> dict:
         is_slam_family = False
         slam_substitute = 0
 
+    rules = rules_for(trump)
     out = {}
     for team_name in ("North-South", "East-West"):
         tricks = team_tricks.get(team_name, [])
         raw_card_pts = sum(
-            card.get_points(trump)
+            rules.points(card)
             for tr in tricks
             for _, card in tr.get_plays()
         )

@@ -13,6 +13,7 @@ from .types import (
     is_trump,
     trump_suits,
 )
+from .rules import TrumpRules, SingleSuitRules, NoTrumpRules, rules_for
 from .position import Position
 from .card import Card
 from .deck import Deck
@@ -22,7 +23,7 @@ from .player import BasePlayer
 from .bid import Bid, PassBid, ContractBid, DoubleBid, RedoubleBid, SlamLevel
 from .auction import Auction
 from .contract import Contract
-from .trick import Trick
+from .trick import Trick, TrickRecord
 from .play import Play, ObservedPlay, PlayState, PlayObservation
 from .exceptions import (
     ContraiError,
@@ -44,6 +45,10 @@ __all__ = [
     "CONTRACT_SUITS",
     "is_trump",
     "trump_suits",
+    "TrumpRules",
+    "SingleSuitRules",
+    "NoTrumpRules",
+    "rules_for",
     "Position",
     "Card",
     "Deck",
@@ -59,6 +64,7 @@ __all__ = [
     "Auction",
     "Contract",
     "Trick",
+    "TrickRecord",
     "Play",
     "ObservedPlay",
     "PlayState",

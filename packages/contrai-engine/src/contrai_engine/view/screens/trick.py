@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from contrai_core import BasePlayer, Card, Position, Suit, Trick
+from contrai_core import BasePlayer, Card, Position, Suit, Trick, rules_for
 from rich.align import Align
 from rich.box import ROUNDED
 from rich.panel import Panel
@@ -127,13 +127,13 @@ def _round_running_points(round_: Optional[Round]) -> tuple[int, int]:
     """
     if not round_ or not round_.contract:
         return 0, 0
-    trump = round_.contract.suit
+    rules = rules_for(round_.contract.suit)
     ns, ew = 0, 0
     for team_name, tricks in round_.team_tricks.items():
         pts = 0
         for trick in tricks:
             for _, card in trick.get_plays():
-                pts += card.get_points(trump)
+                pts += rules.points(card)
         if team_name == "North-South":
             ns = pts
         elif team_name == "East-West":

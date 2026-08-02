@@ -16,11 +16,13 @@ from contrai_core import (
     BasePlayer,
     Card,
     ContractSuit,
+    NoTrumpRules,
     Position,
     Suit,
     Trick,
-    trump_suits,
+    rules_for,
 )
+from contrai_core.trick import current_winner
 from rich.text import Text
 
 from contrai_engine.view.formatting import (
@@ -43,6 +45,7 @@ def _sort_hand_for_display(
     """
     # Suit's definition order IS the display preference — no need to
     # restate it here.
+    rules = rules_for(trump_suit)
     suit_order = list(Suit)
     if trump_suit and trump_suit in suit_order:
         suit_order.remove(trump_suit)
@@ -51,7 +54,10 @@ def _sort_hand_for_display(
     sorted_cards: list[Card] = []
     for suit in suit_order:
         in_suit = [c for c in cards if c.suit == suit]
-        in_suit.sort(key=lambda c: c.get_order(trump_suit), reverse=True)
+        # Within one suit, ``rank_in_suit`` is exactly the comparison
+        # the display wants — trump ladder for the trump column, plain
+        # ladder elsewhere.
+        in_suit.sort(key=rules.rank_in_suit, reverse=True)
         sorted_cards.extend(in_suit)
     return sorted_cards
 
@@ -61,18 +67,12 @@ def _current_winner(
 ) -> Optional[BasePlayer]:
     """Return the player currently winning the (possibly incomplete) trick.
 
-    Thin wrapper around :meth:`contrai_core.trick.Trick.get_current_winner`
-    that accepts a raw ``plays`` list (the shape ``_render_diamond`` already
-    uses) instead of forcing a Trick allocation at every render.
+    Thin wrapper around :func:`contrai_core.trick.current_winner` — the
+    module-level winner rule already accepts a raw ``plays`` list (the
+    shape ``_render_diamond`` uses), so no ``Trick`` needs synthesizing
+    at render time.
     """
-    if not plays:
-        return None
-    # Synthesize a minimal Trick for the delegate. Cheap: no game logic
-    # depends on the wrapper instance — only the plays list is read.
-    proxy = Trick()
-    for p, c in plays:
-        proxy.plays.append((p, c))
-    return proxy.get_current_winner(trump_suit)
+    return current_winner(plays, trump_suit)
 
 
 def _explain_constraint(
@@ -98,8 +98,13 @@ def _explain_constraint(
 
     # No card of led suit. See if we're forced to trump. The first test asks
     # whether the round has a trump suit at all — a plain ``if trump_suit``
-    # was true for a NO_TRUMP contract too, since every enum member is truthy.
-    if trump_suits(trump_suit) and all(c.is_trump(trump_suit) for c in playable):
+    # was true for a NO_TRUMP contract too, since every enum member is
+    # truthy; the isinstance check against the sealed no-trump leaf is the
+    # honest regime test.
+    rules = rules_for(trump_suit)
+    if not isinstance(rules, NoTrumpRules) and all(
+        rules.is_trump(c.suit) for c in playable
+    ):
         # Identify the partner / opponent that led, for the message.
         leader = plays[0][0]
         leader_label = _position_short(leader.position)

@@ -33,6 +33,7 @@ from contrai_core import (
     Card,
     Contract,
     Trick,
+    rules_for,
 )
 from contrai_engine.view.bidding_rules import _illegal_bid_reason
 from contrai_engine.view.formatting import (
@@ -273,7 +274,8 @@ class RichView:
     ) -> None:
         """Record the winner in the log, render the trick-won state, wait for Enter."""
         trump = round_.contract.suit if round_ and round_.contract else None
-        trick_points = sum(card.get_points(trump) for _, card in trick.get_plays())
+        rules = rules_for(trump)
+        trick_points = sum(rules.points(card) for _, card in trick.get_plays())
         self._log(self._format_trick_won_log(winner, trick_points))
         # State 3: full trick shown, winner highlighted, Press Enter.
         self._render_in_game(

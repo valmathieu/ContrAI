@@ -11,8 +11,9 @@ from contrai_core.auction import Auction
 from contrai_core.bid import Bid
 from contrai_core.contract import Contract
 from contrai_core.play import Play, PlayState
+from contrai_core.rules import rules_for
 from contrai_core.trick import Trick
-from contrai_core.types import Rank, Suit
+from contrai_core.types import Rank
 
 from .scoring import UnannouncedSlam, score_round
 
@@ -209,7 +210,8 @@ class Round:
             return False
         if player is not self.belote_holder:
             return False
-        return card.is_trump(self.contract.suit) and card.rank in (
+        rules = rules_for(self.contract.suit)
+        return rules.is_trump(card.suit) and card.rank in (
             Rank.KING,
             Rank.QUEEN,
         )
@@ -240,19 +242,17 @@ class Round:
         belote.
         """
         trump = self.contract.suit if self.contract else None
-        # There is a King and Queen of trump to hold only when the contract
-        # named an actual card suit. The isinstance narrowing also keeps a
-        # suitless trump out of ``has_card`` below, which builds a Card from
-        # whatever it is handed.
-        if not isinstance(trump, Suit):
-            self.belote_holder = None
-            return
-        for player in self.players_order:
-            has_king = player.hand.has_card(trump, Rank.KING)
-            has_queen = player.hand.has_card(trump, Rank.QUEEN)
-            if has_king and has_queen:
-                self.belote_holder = player
-                return
+        # The rules object knows which suits can carry a belote — always
+        # real card suits, so ``has_card`` below (which builds a Card from
+        # what it is handed) never sees a suitless trump. Empty under a
+        # no-trump contract: no belote to hold.
+        for suit in rules_for(trump).belote_suits:
+            for player in self.players_order:
+                has_king = player.hand.has_card(suit, Rank.KING)
+                has_queen = player.hand.has_card(suit, Rank.QUEEN)
+                if has_king and has_queen:
+                    self.belote_holder = player
+                    return
         self.belote_holder = None
 
     def _sync_hands(self) -> None:

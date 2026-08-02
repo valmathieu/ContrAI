@@ -1,23 +1,24 @@
 """Round scoring — the pure transformation from a played-out round to
 its team scores.
 
-``score_round`` reads the final round state (contract, captured tricks,
-last-trick winner, belote holder) and returns a :class:`RoundScore`
-result; it mutates nothing. The thin ``Round.calculate_round_scores``
-wrapper unpacks that result onto the round's public result attributes.
-Keeping the maths side-effect-free here isolates ~250 lines of scoring
-rules from the lifecycle orchestrator.
+``score_round`` reads the authoritative :class:`contrai_core.PlayState`
+on the round (contract, completed tricks and their winners) plus the
+round's belote holder, and returns a :class:`RoundScore` result; it
+mutates nothing. The thin ``Round.calculate_round_scores`` wrapper
+unpacks that result onto the round's public result attributes. Keeping
+the maths side-effect-free here isolates ~250 lines of scoring rules
+from the lifecycle orchestrator.
 """
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, Optional, Sequence, TYPE_CHECKING
 
 from contrai_core.bid import SlamLevel
+from contrai_core.rules import rules_for
 
 if TYPE_CHECKING:
-    from contrai_core.trick import Trick
-    from contrai_core.types import ContractSuit
+    from contrai_core.player import BasePlayer
     from ..player import Player
     from .round import Round
 
@@ -73,34 +74,24 @@ class RoundScore:
 
 
 def count_player_tricks(
-    tricks: List['Trick'], trump_suit: Optional['ContractSuit'], player: 'Player'
+    trick_winners: Sequence['BasePlayer'], player: 'Player'
 ) -> int:
     """Count the number of completed tricks personally won by ``player``.
 
-    Walks the round's trick history and asks each trick for its
-    winner via :meth:`contrai_core.Trick.get_current_winner`,
-    forcing the contract's trump suit so trump beats lead-suit
-    regardless of whether the trick had its ``trump_suit`` bound
-    at construction time. Used by the Solo Slam predicate in
-    :func:`score_round`.
+    A straight tally over the per-trick winners the play state already
+    derives (:attr:`contrai_core.PlayState.trick_winners`) — the winner
+    rule itself lives in the core, so nothing is re-adjudicated here.
+    Used by the Solo Slam predicate in :func:`score_round`.
 
     Args:
-        tricks: The round's completed tricks.
-        trump_suit: The contract's trump suit, forced into the winner
-            comparison.
+        trick_winners: The winning player of each completed trick, in
+            trick order.
         player: The player whose personal trick tally we want.
 
     Returns:
         The number of completed tricks won outright by ``player``.
     """
-    if not tricks or trump_suit is None:
-        return 0
-    count = 0
-    for trick in tricks:
-        winner = trick.get_current_winner(trump_suit)
-        if winner is player:
-            count += 1
-    return count
+    return sum(1 for winner in trick_winners if winner is player)
 
 
 def score_round(round_: 'Round') -> RoundScore:
@@ -144,8 +135,8 @@ def score_round(round_: 'Round') -> RoundScore:
 
     Args:
         round_: The played-out round, read by reference (contract,
-            team_tricks, tricks, last_trick_winner, belote_holder,
-            players_order). Nothing on it is mutated.
+            play_state, belote_holder, players_order). Nothing on it is
+            mutated.
 
     Returns:
         A :class:`RoundScore` carrying the per-team scores, the
@@ -163,24 +154,42 @@ def score_round(round_: 'Round') -> RoundScore:
     contract_team = round_.contract.player.team
     contract_value = round_.contract.value
     trump_suit = round_.contract.suit
+    rules = rules_for(trump_suit)
 
-    team_card_points = {team_name: 0 for team_name in round_.team_tricks.keys()}
-    team_scores = {team_name: 0 for team_name in round_.team_tricks.keys()}
+    # The authoritative play history: completed tricks and their winners
+    # come straight from the core play state, never from the view-facing
+    # mirrors.
+    play_state = round_.play_state
+    completed_tricks = play_state.completed_tricks
+    trick_winners = play_state.trick_winners
 
-    # Card points per team (trump-aware). Belote is deliberately NOT
-    # folded in here — it is a *held-cards* bonus credited below to
+    team_names = {
+        player.team.name
+        for player in round_.players_order
+        if player.team is not None
+    }
+    team_card_points = {team_name: 0 for team_name in team_names}
+    team_scores = {team_name: 0 for team_name in team_names}
+    team_trick_counts = {team_name: 0 for team_name in team_names}
+
+    # Card points and trick counts per team (trump-aware): each completed
+    # trick's whole pile is credited to its winner's team. A winner with
+    # no team is skipped rather than guessed at. Belote is deliberately
+    # NOT folded in here — it is a *held-cards* bonus credited below to
     # the holder's team, independent of who captured the K/Q.
-    for team_name, tricks in round_.team_tricks.items():
-        points = 0
-        for trick in tricks:
-            if hasattr(trick, 'get_plays'):
-                for _player, card in trick.get_plays():
-                    points += card.get_points(trump_suit)
-        team_card_points[team_name] = points
+    for trick, winner in zip(completed_tricks, trick_winners):
+        if winner.team is None:
+            continue
+        team_card_points[winner.team.name] += sum(
+            rules.points(play.card) for play in trick
+        )
+        team_trick_counts[winner.team.name] += 1
 
     # Add the last-trick bonus (10 points for winning the last trick).
-    if round_.last_trick_winner and round_.last_trick_winner.team:
-        team_card_points[round_.last_trick_winner.team.name] += 10
+    if trick_winners:
+        last_winner = trick_winners[-1]
+        if last_winner.team is not None:
+            team_card_points[last_winner.team.name] += 10
 
     # Belote (+20) belongs to the team *holding* K + Q of trump, not
     # to whoever wins the trick those cards land in. ``belote_holder``
@@ -207,15 +216,14 @@ def score_round(round_: 'Round') -> RoundScore:
     # Solo Slam at normal / doubled / redoubled. The grid is symmetric:
     # whichever side wins the contract scores the at-risk amount.
     if round_.contract.is_slam_family():
-        contract_team_trick_count = len(round_.team_tricks[contract_team_name])
-        contract_made = contract_team_trick_count == 8
+        contract_made = team_trick_counts[contract_team_name] == 8
 
         # Solo Slam: the bidder *personally* must win all 8 tricks.
         # Even if their team takes every trick collectively, the
         # contract fails when the partner won any of them.
         if round_.contract.is_solo_slam():
             bidder_personal_tricks = count_player_tricks(
-                round_.tricks, trump_suit, round_.contract.player
+                trick_winners, round_.contract.player
             )
             contract_made = contract_made and bidder_personal_tricks == 8
 
@@ -255,11 +263,11 @@ def score_round(round_: 'Round') -> RoundScore:
     unannounced_slam: Optional[UnannouncedSlam] = None
     declarer_slam = (
         multiplier == 1
-        and len(round_.team_tricks[contract_team_name]) == 8
+        and team_trick_counts[contract_team_name] == 8
     )
     if declarer_slam:
         bidder_personal_tricks = count_player_tricks(
-            round_.tricks, trump_suit, round_.contract.player
+            trick_winners, round_.contract.player
         )
         unannounced_slam = (
             UnannouncedSlam.GRAND_SLAM
