@@ -1,7 +1,10 @@
 """Bid hierarchy — pure value carriers for the bidding phase.
 
-Each :class:`Bid` is a frozen dataclass attached to the player who made
-it. The four concrete variants are:
+Each :class:`Bid` is a frozen dataclass attached to whoever made it —
+a live :class:`~contrai_core.BasePlayer` in an auction, a bare
+:class:`~contrai_core.Position` once projected into an observation. The
+hierarchy is generic over that slot (:data:`ActorT`) rather than
+duplicated, so both sides speak the same four variants:
 
 - :class:`PassBid` — the player declines to act.
 - :class:`ContractBid` — a numeric contract or *Slam* / *Solo Slam*
@@ -25,15 +28,25 @@ bid-to-wire bridge, future MCTS / RL agents) actually want.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, Generic, TypeVar
 
 from .exceptions import InvalidContractError
 from .types import CONTRACT_SUITS, ContractSuit, TrumpVariant
 
 if TYPE_CHECKING:
     from .player import BasePlayer
+    from .position import Position
+
+#: The type naming *who* made a bid. A bid is the same announcement
+#: whoever holds the slot, so the hierarchy is generic over it rather
+#: than duplicated per actor kind: auction-side code speaks
+#: ``Bid[BasePlayer]`` (the live player, whose team and hand the engine
+#: needs), while the sealed observation surface speaks ``Bid[Position]``
+#: (a bare seat token, through which no hand is reachable). See
+#: :meth:`contrai_core.PlayState.observe`.
+ActorT = TypeVar("ActorT", "BasePlayer", "Position")
 
 
 class SlamLevel(Enum):
@@ -72,28 +85,41 @@ class SlamLevel(Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class Bid:
+class Bid(Generic[ActorT]):
     """Common base class for all bid variants.
 
-    Holds the player who made the bid. Concrete subclasses add their
-    own payload fields (a numeric value + suit for :class:`ContractBid`,
+    Holds whoever made the bid. Concrete subclasses add their own
+    payload fields (a numeric value + suit for :class:`ContractBid`,
     nothing for the other three).
 
-    Equality on bids is *type + payload*, not player identity. Two
+    Generic over :data:`ActorT`, the type filling the ``player`` slot.
+    An auction holds ``Bid[BasePlayer]``; the imperfect-information
+    :class:`contrai_core.PlayObservation` holds ``Bid[Position]``,
+    projected seat by seat so a strategy reading the auction history
+    cannot reach a live player — and through it another seat's hand.
+    Parameterizing beats duplicating the four variants into a parallel
+    "observed bid" hierarchy: the announcement is identical either way,
+    and every ``isinstance`` / ``match`` over the sum type keeps working
+    on both sides of the projection.
+
+    Equality on bids is *type + payload*, not actor identity. Two
     ``PassBid`` instances from different players still compare equal —
     a bid identifies *what was announced*, not *who announced it*. The
     ``player`` field is therefore excluded from the auto-generated
-    ``__eq__`` / ``__hash__`` via :func:`dataclasses.field`.
+    ``__eq__`` / ``__hash__`` via :func:`dataclasses.field`. That also
+    makes a bid equal to its own sealed projection, since sealing
+    rewrites only the excluded field.
 
     Attributes:
-        player: The player who made the bid.
+        player: Whoever made the bid — a live ``BasePlayer`` in an
+            auction, a bare ``Position`` in an observation.
     """
 
-    player: BasePlayer = field(compare=False)
+    player: ActorT = field(compare=False)
 
 
 @dataclass(frozen=True, slots=True)
-class PassBid(Bid):
+class PassBid(Bid[ActorT]):
     """The player declines to bid this turn.
 
     Always a legal action in any :class:`contrai_core.Auction` state.
@@ -104,7 +130,7 @@ class PassBid(Bid):
 
 
 @dataclass(frozen=True, slots=True)
-class ContractBid(Bid):
+class ContractBid(Bid[ActorT]):
     """A numeric contract or *Slam* / *Solo Slam* announcement.
 
     Validated at construction via ``__post_init__``: the value must be
@@ -206,7 +232,7 @@ class ContractBid(Bid):
 
 
 @dataclass(frozen=True, slots=True)
-class DoubleBid(Bid):
+class DoubleBid(Bid[ActorT]):
     """A *contre* — doubles the contract's stake (×2)."""
 
     def __str__(self) -> str:
@@ -214,8 +240,35 @@ class DoubleBid(Bid):
 
 
 @dataclass(frozen=True, slots=True)
-class RedoubleBid(Bid):
+class RedoubleBid(Bid[ActorT]):
     """A *surcontre* — quadruples the contract's stake (×4)."""
 
     def __str__(self) -> str:
         return "Redouble"
+
+
+def seal_bid(bid: Bid[BasePlayer]) -> Bid[Position]:
+    """Project a bid onto its bidder's seat, dropping the live player.
+
+    The bid-side half of the observation trust boundary: a live
+    :class:`~contrai_core.BasePlayer` in the ``player`` slot is an
+    object path to ``player.hand`` and, via ``player.team``, to the
+    partner's hand as well. Replacing it with the bare
+    :class:`~contrai_core.Position` leaves exactly the public fact —
+    *this seat announced this* — that a player at the table has.
+
+    Rebuilt with :func:`dataclasses.replace`, so the concrete variant
+    survives: a :class:`ContractBid` seals to a ``ContractBid``, and
+    every ``isinstance`` / ``match`` over the sum type reads the same on
+    both sides. Since ``player`` is ``compare=False``, the sealed bid
+    also compares equal to the one it came from.
+
+    Args:
+        bid: The auction-side bid to project.
+
+    Returns:
+        The same announcement by the same variant, its ``player`` slot
+        holding the bidder's seat.
+    """
+
+    return replace(bid, player=bid.player.position)

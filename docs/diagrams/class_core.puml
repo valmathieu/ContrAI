@@ -299,8 +299,8 @@ package "team.py / player.py" as p_team {
 ' Bid hierarchy (bid.py) — frozen dataclass sum type
 ' =========================================================
 package "bid.py" as p_bid {
-    class Bid <<frozen dataclass>> {
-        + player : BasePlayer <<compare=False>>
+    class Bid<ActorT> <<frozen dataclass>> {
+        + player : ActorT <<compare=False>>
     }
 
     class PassBid <<frozen dataclass>> {
@@ -336,6 +336,10 @@ package "bid.py" as p_bid {
         + __str__() : str <<"Redouble">>
     }
 
+    class "bid.py" as p_bid_fn <<module>> {
+        seal_bid(bid: Bid<BasePlayer>) : Bid<Position> <<reseats onto the bidder's seat>>
+    }
+
     note bottom of Bid
       Pure value carriers — no auction-state
       behaviour. ""player"" is excluded from
@@ -346,6 +350,13 @@ package "bid.py" as p_bid {
       ""SlamLevel"" owns the 250 / 500 base
       values as data, so nothing downstream
       re-derives them from a string.
+      Generic over ""ActorT"", who made the bid:
+      an ""Auction"" holds ""Bid<BasePlayer>"",
+      a ""PlayObservation"" holds ""Bid<Position>"".
+      ""seal~_bid()"" projects one to the other via
+      ""dataclasses.replace"", so the concrete
+      variant survives — and since the actor is
+      ""compare=False"", so does equality.
     end note
 }
 
@@ -704,8 +715,10 @@ BasePlayer --> Position : position
 ' Team aggregates exactly 2 players
 Team "1" o-- "2" BasePlayer : players
 
-' Bid references BasePlayer
-Bid "1" o-- "1" BasePlayer : player
+' Bid's actor slot holds a live player in an auction, a bare seat once
+' seal_bid() has projected it for an observation
+Bid "1" o-- "1" BasePlayer : player <<ActorT = BasePlayer>>
+Bid --> Position           : player <<ActorT = Position, via seal_bid>>
 ContractBid --> p_contractsuit : suit
 ContractBid ..> SlamLevel : value (all-tricks bids)
 

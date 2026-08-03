@@ -11,12 +11,15 @@ remains here is the data contract of each variant:
 - :meth:`ContractBid.get_numeric_value` and the strict ``__gt__``
   ordering used inside the AI's bidding helpers.
 - ``__str__`` for the rendering layer.
+- :func:`seal_bid`, the projection onto the bidder's seat that the
+  imperfect-information observation surface is built from.
 """
 
 import pytest
 
 from contrai_core import (
     BasePlayer,
+    Bid,
     ContractBid,
     DoubleBid,
     InvalidContractError,
@@ -27,6 +30,7 @@ from contrai_core import (
     Suit,
     Team,
     TrumpVariant,
+    seal_bid,
 )
 
 
@@ -322,3 +326,76 @@ class TestSlamLevel:
         # equal to its numeric points, so scoring can't confuse them.
         assert SlamLevel.SLAM != 250
         assert not isinstance(SlamLevel.SLAM, int)
+
+
+# ---------------------------------------------------------------------------
+# seal_bid — the bid-side half of the observation trust boundary
+# ---------------------------------------------------------------------------
+
+
+class TestSealBid:
+    """Projecting a bid onto its bidder's seat must lose only the player.
+
+    The sealed bid is what a :class:`contrai_core.PlayObservation` hands
+    a strategy, so nothing reachable from it may be a live player — and
+    everything else about the announcement must survive intact.
+    """
+
+    def _all_variants(self, player):
+        """One instance of each of the four variants, same bidder."""
+        return [
+            PassBid(player),
+            ContractBid(player, 100, Suit.SPADES),
+            ContractBid(player, SlamLevel.SOLO_SLAM, TrumpVariant.NO_TRUMP),
+            DoubleBid(player),
+            RedoubleBid(player),
+        ]
+
+    def test_player_slot_becomes_the_bidder_seat(self, north):
+        for bid in self._all_variants(north):
+            assert seal_bid(bid).player is Position.NORTH
+
+    def test_no_base_player_survives(self, north):
+        for bid in self._all_variants(north):
+            assert not isinstance(seal_bid(bid).player, BasePlayer)
+
+    def test_concrete_variant_is_preserved(self, north):
+        # The sum type is what pattern-matching consumers dispatch on;
+        # sealing must not collapse it to the Bid base.
+        for bid in self._all_variants(north):
+            assert type(seal_bid(bid)) is type(bid)
+
+    def test_contract_payload_is_preserved(self, north):
+        sealed = seal_bid(ContractBid(north, 150, Suit.HEARTS))
+        assert sealed.value == 150
+        assert sealed.suit is Suit.HEARTS
+        assert sealed.get_numeric_value() == 150
+
+    def test_slam_payload_is_preserved(self, north):
+        sealed = seal_bid(ContractBid(north, SlamLevel.SLAM, Suit.CLUBS))
+        assert sealed.value is SlamLevel.SLAM
+        assert sealed.get_numeric_value() == 250
+
+    def test_sealed_bid_equals_its_source(self, north):
+        # ``player`` is compare=False, so reseating is equality-preserving
+        # — a sealed auction history still compares to the live one.
+        for bid in self._all_variants(north):
+            assert seal_bid(bid) == bid
+
+    def test_str_rendering_is_unchanged(self, north):
+        for bid in self._all_variants(north):
+            assert str(seal_bid(bid)) == str(bid)
+
+    def test_source_bid_is_not_mutated(self, north):
+        bid = ContractBid(north, 110, Suit.DIAMONDS)
+        seal_bid(bid)
+        assert bid.player is north
+
+    def test_ordering_still_works_between_sealed_contract_bids(self, north, east):
+        low = seal_bid(ContractBid(north, 90, Suit.SPADES))
+        high = seal_bid(ContractBid(east, 120, Suit.HEARTS))
+        assert high > low
+        assert not low > high
+
+    def test_sealed_pass_is_still_a_bid(self, north):
+        assert isinstance(seal_bid(PassBid(north)), Bid)

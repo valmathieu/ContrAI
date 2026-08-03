@@ -20,7 +20,15 @@ from .deck import Deck
 from .hand import Hand
 from .team import Team
 from .player import BasePlayer
-from .bid import Bid, PassBid, ContractBid, DoubleBid, RedoubleBid, SlamLevel
+from .bid import (
+    Bid,
+    PassBid,
+    ContractBid,
+    DoubleBid,
+    RedoubleBid,
+    SlamLevel,
+    seal_bid,
+)
 from .auction import Auction
 from .contract import Contract
 from .trick import Trick, TrickRecord
@@ -61,6 +69,7 @@ __all__ = [
     "DoubleBid",
     "RedoubleBid",
     "SlamLevel",
+    "seal_bid",
     "Auction",
     "Contract",
     "Trick",

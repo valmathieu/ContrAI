@@ -16,6 +16,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (core) `TrickRecord`, the completed-trick value: an immutable four-record tuple that knows its `led_suit` and its `winner(trump_suit)` — returning the winning play *record* (a `Play` in state contexts, a sealed `ObservedPlay` in observations), never just the seat.
 - (engine) `contrai --debug / --seed / --autoplay` — face-up debug view with still-in-play summary, stdlib-logging diagnostics to `contrai-debug.log` with recorded seed, reproducible deals, and unattended 4-AI autoplay.
 - (core) `Position.is_teammate(other)` — the same-side question as a boolean, derived from `partner` so it can never disagree with the `partner` / `opponents` pairing. A seat is its own teammate, so "did my side declare this?" needs no extra self-check at the call site.
+- (core) `seal_bid(bid)` — projects a bid onto its bidder's seat, replacing the live player with a bare `Position`. The `Bid` hierarchy is now generic over whoever made the bid, so an auction holds `Bid[BasePlayer]` and an observation `Bid[Position]` without a parallel set of variant classes: the concrete variant survives the projection, and because the bidder is excluded from bid equality, so does equality.
 
 ### Changed
 
