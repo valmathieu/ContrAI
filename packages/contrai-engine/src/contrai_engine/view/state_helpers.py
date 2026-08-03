@@ -39,27 +39,12 @@ def _sort_hand_for_display(
 ) -> list[Card]:
     """Sort cards trump-first then by suit; within each suit by rank.
 
-    Mockup convention: trump cards on the far left (in trump order),
-    then non-trump suits in spades/hearts/diamonds/clubs preference,
-    skipping suits with no cards. Within a suit, highest rank first.
+    Thin delegate to :func:`contrai_engine.debug_state.sort_cards_trump_first`,
+    the view-agnostic home of the display ordering, so every interface
+    (Rich hand row, debug strip, future surfaces) orders cards the same
+    way.
     """
-    # Suit's definition order IS the display preference — no need to
-    # restate it here.
-    rules = rules_for(trump_suit)
-    suit_order = list(Suit)
-    if trump_suit and trump_suit in suit_order:
-        suit_order.remove(trump_suit)
-        suit_order.insert(0, trump_suit)
-
-    sorted_cards: list[Card] = []
-    for suit in suit_order:
-        in_suit = [c for c in cards if c.suit == suit]
-        # Within one suit, ``rank_in_suit`` is exactly the comparison
-        # the display wants — trump ladder for the trump column, plain
-        # ladder elsewhere.
-        in_suit.sort(key=rules.rank_in_suit, reverse=True)
-        sorted_cards.extend(in_suit)
-    return sorted_cards
+    return sort_cards_trump_first(cards, trump_suit)
 
 
 def _current_winner(

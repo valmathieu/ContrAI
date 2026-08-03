@@ -389,8 +389,9 @@ class Round:
             # unlike a bare lazy %s argument — guard it explicitly so a
             # disabled run never pays for it.
             if logger.isEnabledFor(logging.DEBUG):
+                rules = rules_for(trump_suit)
                 trick_points = sum(
-                    card.get_points(trump_suit)
+                    rules.points(card)
                     for _, card in self.current_trick.get_plays()
                 )
                 logger.debug(

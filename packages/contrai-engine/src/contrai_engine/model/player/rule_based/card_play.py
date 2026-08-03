@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from contrai_core.card import Card
 from contrai_core.play import PlayObservation
 from contrai_core.position import Position
-from contrai_core.rules import NoTrumpRules, rules_for
+from contrai_core.rules import NoTrumpRules, TrumpRules, rules_for
 from contrai_core.trick import current_winner
 from contrai_core.types import ContractSuit, Rank, Suit
 
@@ -194,14 +194,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             # Use non-trump cards
             cards_to_consider = non_trump_cards
 
-        # Find cards with minimum points value
-        min_points = min(rules.points(c) for c in cards_to_consider)
-        lowest_value_cards = [
-            c for c in cards_to_consider if rules.points(c) == min_points
-        ]
-
-        # If multiple cards with same lowest value, choose randomly
-        return lowest_value_cards[0]
+        return self._lowest_value_card(cards_to_consider, hand, rules)
 
     def _play_leading_card(
         self,
@@ -249,14 +242,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             # Use non-trump cards
             cards_to_consider = non_trump_cards
 
-        # Find cards with minimum points value
-        min_points = min(rules.points(c) for c in cards_to_consider)
-        lowest_value_cards = [
-            c for c in cards_to_consider if rules.points(c) == min_points
-        ]
-
-        # If multiple cards with same lowest value, choose randomly
-        return lowest_value_cards[0]
+        return self._lowest_value_card(cards_to_consider, hand, rules)
 
     def _play_following_card(
         self,
@@ -441,10 +427,9 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             c for c in playable_cards if not self._is_master_card(c, trump_suit, fallen)
         ]
         if non_master_cards:
-            return min(non_master_cards, key=lambda c: (
-                self._count_suit(observation.hand, c.suit),
-                rules.points(c)
-            ))
+            return self._lowest_value_card(
+                non_master_cards, observation.hand, rules
+            )
 
         return playable_cards[0]
 
@@ -452,7 +437,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         self,
         candidates: Sequence[Card],
         hand: Sequence[Card],
-        trump_suit: ContractSuit | None,
+        rules: TrumpRules,
     ) -> Card:
         """Pick the cheapest card to give up, ties broken by suit length.
 
@@ -481,7 +466,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
                 count reads. Passed separately because ``candidates`` is
                 usually a filtered subset, and length is a property of
                 the hand, not of the subset.
-            trump_suit: The round's trump, setting the points scale.
+            rules: The round's regime, setting the points scale.
 
         Returns:
             The chosen card, one of ``candidates``.
@@ -490,7 +475,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         def rank_key(card: Card) -> tuple[int, int]:
             # Length negated so ``min`` prefers the *longest* suit once
             # the points comparison ties.
-            return card.get_points(trump_suit), -self._count_suit(hand, card.suit)
+            return rules.points(card), -self._count_suit(hand, card.suit)
 
         best = min(rank_key(card) for card in candidates)
         tied = [card for card in candidates if rank_key(card) == best]

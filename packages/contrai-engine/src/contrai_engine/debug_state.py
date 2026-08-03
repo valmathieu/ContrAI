@@ -16,7 +16,16 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Optional
 
-from contrai_core import BasePlayer, Card, ContractSuit, Position, Rank, Suit
+from contrai_core import (
+    BasePlayer,
+    Card,
+    ContractSuit,
+    Position,
+    Rank,
+    Suit,
+    TrumpRules,
+    rules_for,
+)
 
 if TYPE_CHECKING:
     from contrai_engine.model.round import Round
@@ -48,22 +57,24 @@ def _seat_letter(position: Position) -> str:
 
 
 def _sorted_suit_cards(
-    cards: list[Card], suit: Suit, trump_suit: Optional[ContractSuit]
+    cards: list[Card], suit: Suit, rules: TrumpRules
 ) -> list[Card]:
     """One suit's cards from ``cards``, strongest first.
 
     Args:
         cards: The pool to filter. Not mutated.
         suit: The suit to pick out.
-        trump_suit: The scale to rank on — trump ordering when ``suit``
-            is trump, plain ordering otherwise. ``None`` ranks every
-            suit on the plain scale.
+        rules: The regime supplying the scale. ``rank_in_suit`` already
+            answers with the trump ladder for the trump suit and the
+            plain one elsewhere, so no branch is needed here.
 
     Returns:
         A new list of the matching cards, highest rank first.
     """
     in_suit = [c for c in cards if c.suit == suit]
-    in_suit.sort(key=lambda c: c.get_order(trump_suit), reverse=True)
+    # Comparing ``rank_in_suit`` across suits would be meaningless, but
+    # this list holds one suit only — exactly its valid domain.
+    in_suit.sort(key=rules.rank_in_suit, reverse=True)
     return in_suit
 
 
@@ -87,6 +98,7 @@ def sort_cards_trump_first(
     """
     # Suit's definition order IS the display preference — no need to
     # restate it here.
+    rules = rules_for(trump_suit)
     suit_order = list(Suit)
     if trump_suit and trump_suit in suit_order:
         suit_order.remove(trump_suit)
@@ -94,7 +106,7 @@ def sort_cards_trump_first(
 
     sorted_cards: list[Card] = []
     for suit in suit_order:
-        sorted_cards.extend(_sorted_suit_cards(cards, suit, trump_suit))
+        sorted_cards.extend(_sorted_suit_cards(cards, suit, rules))
     return sorted_cards
 
 
@@ -118,8 +130,9 @@ def cards_still_in_play(
         (non-trump) scale.
     """
     remaining = [card for player in players for card in player.hand]
+    plain = rules_for(None)
     return {
-        suit: _sorted_suit_cards(remaining, suit, None) for suit in Suit
+        suit: _sorted_suit_cards(remaining, suit, plain) for suit in Suit
     }
 
 
