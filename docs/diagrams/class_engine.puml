@@ -161,7 +161,11 @@ package "model/player/ (subpackage)" as p_player {
       ranking question resolves through core
       ""rules_for(trump_suit)"" — no local ladders.
       Partner / opponent seats come from
-      ""Position.partner"", not a local seat map.
+      ""Position.partner"", not a local seat map,
+      and "did my side declare this?" from
+      ""Position.is~_teammate(contract.declarer)"" —
+      the observation carries seats, never the
+      declaring player or team.
       A future MCTS / learned level is a new
       strategy class, never an edit to AiPlayer.
     end note

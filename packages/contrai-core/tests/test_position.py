@@ -1,7 +1,8 @@
 """Tests for the :class:`Position` seat enum.
 
 Covers membership and the canonical seating order, the ``next`` /
-``partner`` / ``opponents`` turn-order derivations, strict value parsing
+``partner`` / ``opponents`` turn-order derivations and the
+``is_teammate`` same-side predicate built on them, strict value parsing
 (the plain constructor accepts only the exact display strings — no
 case-folding, no French fallback), the French seat-name bijection the
 scraper's DOM ids need, the absence of ordering support, and the
@@ -119,6 +120,46 @@ class TestOpponents:
 
     def test_north_opponents_are_west_and_east(self):
         assert Position.NORTH.opponents == (Position.WEST, Position.EAST)
+
+
+# ---------------------------------------------------------------------------
+# is_teammate — the boolean form of the same-side question
+# ---------------------------------------------------------------------------
+
+
+class TestIsTeammate:
+    @pytest.mark.parametrize("position", list(Position))
+    def test_seat_is_its_own_teammate(self, position):
+        # Callers asking "is the declarer on my side?" want True when they
+        # declared it themselves.
+        assert position.is_teammate(position)
+
+    @pytest.mark.parametrize("position", list(Position))
+    def test_partner_is_a_teammate(self, position):
+        assert position.is_teammate(position.partner)
+
+    @pytest.mark.parametrize("position", list(Position))
+    def test_neither_opponent_is_a_teammate(self, position):
+        for opponent in position.opponents:
+            assert not position.is_teammate(opponent)
+
+    @pytest.mark.parametrize("position", list(Position))
+    def test_agrees_with_partner_and_opponents(self, position):
+        # The three derivations partition the table the same way: exactly
+        # two of the four seats are teammates, and they are self + partner.
+        teammates = {other for other in Position if position.is_teammate(other)}
+        assert teammates == {position, position.partner}
+
+    @pytest.mark.parametrize("position", list(Position))
+    def test_is_symmetric(self, position):
+        for other in Position:
+            assert position.is_teammate(other) == other.is_teammate(position)
+
+    def test_named_pairings(self):
+        assert Position.NORTH.is_teammate(Position.SOUTH)
+        assert Position.WEST.is_teammate(Position.EAST)
+        assert not Position.NORTH.is_teammate(Position.WEST)
+        assert not Position.SOUTH.is_teammate(Position.EAST)
 
 
 # ---------------------------------------------------------------------------

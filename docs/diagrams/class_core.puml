@@ -299,8 +299,8 @@ package "team.py / player.py" as p_team {
 ' Bid hierarchy (bid.py) — frozen dataclass sum type
 ' =========================================================
 package "bid.py" as p_bid {
-    class Bid <<frozen dataclass>> {
-        + player : BasePlayer <<compare=False>>
+    class Bid<ActorT> <<frozen dataclass>> {
+        + player : ActorT <<compare=False>>
     }
 
     class PassBid <<frozen dataclass>> {
@@ -336,6 +336,10 @@ package "bid.py" as p_bid {
         + __str__() : str <<"Redouble">>
     }
 
+    class "bid.py" as p_bid_fn <<module>> {
+        seal_bid(bid: Bid<BasePlayer>) : Bid<Position> <<reseats onto the bidder's seat>>
+    }
+
     note bottom of Bid
       Pure value carriers — no auction-state
       behaviour. ""player"" is excluded from
@@ -346,6 +350,13 @@ package "bid.py" as p_bid {
       ""SlamLevel"" owns the 250 / 500 base
       values as data, so nothing downstream
       re-derives them from a string.
+      Generic over ""ActorT"", who made the bid:
+      an ""Auction"" holds ""Bid<BasePlayer>"",
+      a ""PlayObservation"" holds ""Bid<Position>"".
+      ""seal~_bid()"" projects one to the other via
+      ""dataclasses.replace"", so the concrete
+      variant survives — and since the actor is
+      ""compare=False"", so does equality.
     end note
 }
 
@@ -417,9 +428,43 @@ package "contract.py / trick.py" as p_contract {
         + is_slam_family() : bool
         + get_base_points() : int <<Slam → 250, Solo Slam → 500>>
         + get_slam_card_substitute() : int <<250 / 500, else 0>>
+        + observed() : ObservedContract <<seals onto seats>>
         + __str__() : str
         + __eq__(other) : bool
     }
+
+    class ObservedContract <<frozen dataclass>> {
+        + declarer : Position
+        + value : int | SlamLevel
+        + suit : ContractSuit
+        + doubled_by : Position?   <<who called Coinche>>
+        + redoubled_by : Position? <<who called Surcoinche>>
+        --
+        + double : bool    <<property>>
+        + redouble : bool  <<property>>
+        --
+        + get_multiplier() : int <<1, 2, or 4>>
+        + is_slam() : bool
+        + is_solo_slam() : bool
+        + is_slam_family() : bool
+        + __str__() : str
+    }
+
+    note bottom of ObservedContract
+      What a ""PlayObservation"" carries in place
+      of a live ""Contract"": the same terms with
+      every person named by seat, so neither the
+      declarer's hand nor — via ""Contract.team"" —
+      the whole declaring pair is reachable.
+      No ""team"" field: a seat's side is derivable
+      with ""position.is~_teammate(declarer)"", and
+      a second copy of the pairing would only be
+      something else to keep consistent.
+      The scoring helpers are deliberately **not**
+      mirrored — scoring reads the authoritative
+      ""Contract"" off the round, never a
+      projection.
+    end note
 
     note bottom of Contract
       The doubled / redoubled state is
@@ -535,10 +580,10 @@ package "play.py" as p_play {
     }
 
     class PlayObservation <<frozen dataclass>> {
-        + player : BasePlayer
+        + position : Position
         + hand : tuple<Card>
-        + contract : Contract
-        + bids : tuple<Bid>
+        + contract : ObservedContract?
+        + bids : tuple<Bid<Position>>
         + completed_tricks : tuple<TrickRecord<ObservedPlay>>
         + current_trick : tuple<ObservedPlay>
         + legal_cards : tuple<Card>
@@ -578,13 +623,19 @@ package "play.py" as p_play {
       The imperfect-information projection
       PlayState.observe(player, bids) builds: own
       hand + public trick history + own legal
-      cards, never another seat's hand. The trick
-      records are sealed ""ObservedPlay""
-      ""(position, card)"" pairs — no live
-      ""BasePlayer"" (so no hand) is reachable
-      through them. ""contract"" / ""bids"" still
-      name the players who bid; sealing those too
-      is deferred to the AI-training work.
+      cards, never another seat's hand.
+      **Every** seat it names is a ""Position"":
+      the observer, the trick records
+      (""ObservedPlay""), the contract
+      (""ObservedContract""), each bidder
+      (""Bid<Position>"" via ""seal~_bid""). No live
+      ""BasePlayer"" is reachable by any object
+      path — one surviving reference would reopen
+      ""hand"" and, via ""team.players"", the
+      partner's hand too.
+      ""observe()"" still takes the live player: it
+      needs the identity to look up the hand and
+      the legal actions. Only the output is sealed.
     end note
 }
 
@@ -704,8 +755,9 @@ BasePlayer --> Position : position
 ' Team aggregates exactly 2 players
 Team "1" o-- "2" BasePlayer : players
 
-' Bid references BasePlayer
-Bid "1" o-- "1" BasePlayer : player
+' Bid's actor slot holds a live player in an auction, a bare seat once
+' seal_bid() has projected it for an observation (see the Bid note)
+Bid "1" o-- "1" BasePlayer : player <<ActorT = BasePlayer>>
 ContractBid --> p_contractsuit : suit
 ContractBid ..> SlamLevel : value (all-tricks bids)
 
@@ -719,6 +771,12 @@ Contract "1" o-- "1" ContractBid : contract_bid
 Contract "1" o-- "1" BasePlayer  : player
 Contract "1" o-- "1" Team        : team
 Contract --> p_contractsuit      : suit
+
+' ObservedContract is the sealed counterpart: the same terms with every
+' person named by seat, so no hand crosses observe()
+Contract ..> ObservedContract       : <<observed()>>
+ObservedContract --> Position       : declarer / doubled_by / redoubled_by
+ObservedContract --> p_contractsuit : suit
 
 ' Trick composes (player, card) plays; trump arrives via get_current_winner
 Trick "1" *-- "0..4" Card        : (via plays)
@@ -740,6 +798,12 @@ Play "1" *-- "1" Card       : card
 ObservedPlay --> Position   : position
 ObservedPlay "1" *-- "1" Card : card
 PlayObservation "1" *-- "0..32" ObservedPlay : completed_tricks / current_trick
+
+' ...and the rest of the observation is sealed the same way: the observer
+' is a bare seat (Position, reached via ObservedPlay above), the contract
+' and the auction are their sealed forms
+PlayObservation "1" o-- "0..1" ObservedContract : contract
+PlayObservation "1" *-- "0..N" Bid              : bids <<Bid<Position>>>
 
 ' PlayState references the established contract + seated players,
 ' composes the flat play history, and holds per-seat remaining hands

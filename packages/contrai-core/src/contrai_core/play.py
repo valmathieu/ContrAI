@@ -20,10 +20,12 @@ search or reinforcement-learning game-state interface wants:
   replacement hands — the determinization primitive search-based AIs need.
 - :meth:`PlayState.observe` to project the full state — which holds every
   seat's hand — down to a :class:`PlayObservation`, the imperfect-
-  information view a single player is allowed to see. Its trick records
-  are sealed to :class:`ObservedPlay` ``(position, card)`` pairs. This is
-  the input surface handed to AI card-play strategies, never the raw
-  ``PlayState``.
+  information view a single player is allowed to see. Every person the
+  observation names is named by seat: its trick records are sealed to
+  :class:`ObservedPlay` ``(position, card)`` pairs, its contract to an
+  :class:`~contrai_core.ObservedContract`, its auction to
+  ``Bid[Position]`` records. This is the input surface handed to AI
+  card-play strategies, never the raw ``PlayState``.
 
 Play records are plain ``(player, card)`` pairs, so the same tuples flow
 through the derived views and the winner rule (:func:`current_winner`) that
@@ -35,6 +37,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, NamedTuple, Optional
 
+from .bid import seal_bid
 from .exceptions import IllegalPlayError, PlayRuleViolation
 from .rules import NoTrumpRules, TrumpRules, rules_for
 from .trick import TrickRecord, current_winner
@@ -42,7 +45,7 @@ from .trick import TrickRecord, current_winner
 if TYPE_CHECKING:
     from .bid import Bid
     from .card import Card
-    from .contract import Contract
+    from .contract import Contract, ObservedContract
     from .player import BasePlayer
     from .position import Position
     from .team import Team
@@ -502,17 +505,28 @@ class PlayState:
         ``PlayState`` holds every seat's hand, but a card-play strategy
         must reason from only what its own seat has observed. The
         resulting :class:`PlayObservation` carries ``player``'s own hand,
-        the public trick history, and ``player``'s legal plays right now
-        — nothing else. The trick history is re-recorded as
-        :class:`ObservedPlay` ``(position, card)`` pairs, so no other
-        seat's hand is reachable through what is handed over.
+        the public trick history, the contract and auction, and
+        ``player``'s legal plays right now — nothing else.
+
+        Every person the observation would otherwise name is re-recorded
+        as a bare seat on the way out: the trick history as
+        :class:`ObservedPlay` ``(position, card)`` pairs, the contract as
+        an :class:`~contrai_core.ObservedContract`, each bid via
+        :func:`~contrai_core.seal_bid`. No live :class:`BasePlayer`
+        survives the projection, so no other seat's hand is reachable
+        through what is handed over — not directly, and not through
+        ``player.team.players`` either.
+
+        The observing player is still passed in live: the state needs the
+        identity to look up the hand and the legal actions. Only what
+        comes back out is sealed.
 
         Args:
             player: The observing seat.
             bids: The auction history to attach to the observation,
-                passed through unchanged. ``PlayState`` has no notion of
-                the auction itself — the caller (the engine's ``Round``)
-                supplies it. Defaults to an empty tuple.
+                sealed onto seats on the way in. ``PlayState`` has no
+                notion of the auction itself — the caller (the engine's
+                ``Round``) supplies it. Defaults to an empty tuple.
 
         Returns:
             A :class:`PlayObservation` seeded from this state, from
@@ -523,10 +537,10 @@ class PlayState:
         """
 
         return PlayObservation(
-            player=player,
+            position=player.position,
             hand=self.hand_of(player),
-            contract=self.contract,
-            bids=tuple(bids),
+            contract=self.contract.observed() if self.contract else None,
+            bids=tuple(seal_bid(bid) for bid in bids),
             completed_tricks=tuple(
                 TrickRecord(_seal_plays(trick))
                 for trick in self.completed_tricks
@@ -589,25 +603,30 @@ class PlayObservation:
     never accidentally read another seat's hand through the object it was
     given.
 
-    The trick history is sealed: ``completed_tricks`` and
-    ``current_trick`` carry :class:`ObservedPlay` records — opaque
-    ``(position, card)`` pairs — never live ``BasePlayer`` references,
-    so no other seat's hand is reachable through them. The auction-side
-    values (``contract``, ``bids``) still reference the players who bid;
-    projecting those onto seat identifiers as well is deliberately left
-    to the AI-training work, where the whole observation surface gets
-    serialized anyway.
+    **Every seat is named by :class:`~contrai_core.Position` and nothing
+    else** — the observer itself, the trick records, the contract's
+    declarer and doublers, and each bidder in the auction. No live
+    :class:`BasePlayer` is reachable by any object path from an
+    observation, which is what makes that guarantee hold: a
+    ``BasePlayer`` exposes ``.hand`` directly and, through ``.team``,
+    the partner's hand as well, so a single surviving reference would
+    reopen the whole leak. The hidden state a search or learning agent
+    must infer therefore cannot be read off its own input, and an
+    evaluation result cannot be quietly invalidated by a policy that
+    found the shortcut.
 
     Attributes:
-        player: The observer — the seat this observation is from the
-            point of view of.
+        position: The observer's seat — the point of view this
+            observation is from.
         hand: The observer's own remaining cards, and only the observer's;
             no other seat's hand is reachable from this field.
-        contract: The established contract, supplying the trump suit,
-            value, and bidder.
-        bids: The auction history, passed through unchanged from whatever
-            :meth:`PlayState.observe` was given — the play state itself
-            has no notion of the auction.
+        contract: The established contract as an
+            :class:`~contrai_core.ObservedContract`, supplying the trump
+            suit, value, and the declarer's seat. ``None`` when the state
+            carries no contract.
+        bids: The auction history sealed onto seats — the same four
+            variants an :class:`~contrai_core.Auction` holds, each with
+            a :class:`~contrai_core.Position` in place of the bidder.
         completed_tricks: The completed tricks, each a
             :class:`~contrai_core.TrickRecord` of four
             :class:`ObservedPlay` records mirroring
@@ -619,10 +638,10 @@ class PlayObservation:
             ``hand``.
     """
 
-    player: BasePlayer
+    position: Position
     hand: tuple[Card, ...]
-    contract: Contract
-    bids: tuple[Bid, ...]
+    contract: Optional[ObservedContract]
+    bids: tuple[Bid[Position], ...]
     completed_tricks: tuple[TrickRecord[ObservedPlay], ...]
     current_trick: tuple[ObservedPlay, ...]
     legal_cards: tuple[Card, ...]

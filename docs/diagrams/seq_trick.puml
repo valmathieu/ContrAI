@@ -89,13 +89,15 @@ loop **for _ in range(4)**
         note right of P
           The frozen PlayObservation carries only
           this seat's own hand, the public trick
-          history — sealed ""ObservedPlay""
-          ""(position, card)"" records, no live
-          player references — the contract/auction,
-          and its legal cards right now: the sole
-          input a strategy receives, so it can
-          never read another seat's hand through
-          the trick history it replays.
+          history, the contract/auction, and its
+          legal cards right now — the sole input a
+          strategy receives. Every seat it names is
+          a bare ""Position"": ""ObservedPlay""
+          records, an ""ObservedContract"", and
+          ""Bid<Position>"" bids. No live player
+          reference survives ""observe()"", so no
+          other seat's hand is reachable by any
+          path from what the strategy is handed.
           ""RuleBasedCardPlayStrategy"" derives its
           fallen-card / trump-void tracking (keyed
           by Position) by replaying that public
