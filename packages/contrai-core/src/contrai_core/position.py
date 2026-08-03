@@ -83,6 +83,29 @@ class Position(Enum):
 
         return (self.next, self.partner.next)
 
+    def is_teammate(self, other: Position) -> bool:
+        """Whether ``other`` sits on this seat's side of the table.
+
+        True for the seat itself and for its :attr:`partner`, False for
+        either opponent — the boolean form of the same pairing
+        :attr:`partner` and :attr:`opponents` derive from, so the three
+        can never disagree.
+
+        A seat counts as its own teammate: callers asking "is the
+        declarer on my side?" want ``True`` when they declared it
+        themselves, and forcing every one of them to spell out the
+        ``other is self or …`` half is exactly the re-derivation this
+        enum exists to prevent.
+
+        Args:
+            other: The seat to test against this one.
+
+        Returns:
+            ``True`` if both seats belong to the same team.
+        """
+
+        return other is self or other is self.partner
+
     @property
     def french_name(self) -> str:
         """The lowercase French seat name used by the scraper's DOM ids.

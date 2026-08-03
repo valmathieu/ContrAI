@@ -15,6 +15,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (core) `TrumpRules` trick-rules seam: one sealed rules object per contract regime (`SingleSuitRules` per suit, `NoTrumpRules` for no-trump and no-contract), resolved as shared singletons via `rules_for(contract_suit)`. It answers trumpness, per-card points, in-suit ranking, led-suit-aware trick competition (`trick_rank`), belote applicability, and the higher-ranks ladder — so a future contract variant is a new leaf plus its tables instead of a sweep over call sites. All-trump still raises `NotImplementedError`, now from `rules_for`.
 - (core) `TrickRecord`, the completed-trick value: an immutable four-record tuple that knows its `led_suit` and its `winner(trump_suit)` — returning the winning play *record* (a `Play` in state contexts, a sealed `ObservedPlay` in observations), never just the seat.
 - (engine) `contrai --debug / --seed / --autoplay` — face-up debug view with still-in-play summary, stdlib-logging diagnostics to `contrai-debug.log` with recorded seed, reproducible deals, and unattended 4-AI autoplay.
+- (core) `Position.is_teammate(other)` — the same-side question as a boolean, derived from `partner` so it can never disagree with the `partner` / `opponents` pairing. A seat is its own teammate, so "did my side declare this?" needs no extra self-check at the call site.
 
 ### Changed
 
