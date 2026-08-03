@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from enum import Enum
 
+from .team_side import TeamSide
+
 
 class Position(Enum):
     """The four seats around a contrée table.
@@ -17,8 +19,8 @@ class Position(Enum):
     Definition order IS the anticlockwise turn order that bidding and
     card play both speak (N -> W -> S -> E -> N again): ``list(Position)``
     is therefore the canonical seating, and :attr:`next`, :attr:`partner`,
-    and :attr:`opponents` all derive from that single ordering rather than
-    each re-encoding the seat arithmetic separately.
+    :attr:`opponents` and :attr:`team_side` all derive from that single
+    ordering rather than each re-encoding the seat arithmetic separately.
 
     This is a plain :class:`~enum.Enum`, not a :class:`~enum.StrEnum`, on
     purpose: ``Position.NORTH == "North"`` is ``False`` — a ``Position``
@@ -83,13 +85,33 @@ class Position(Enum):
 
         return (self.next, self.partner.next)
 
+    @property
+    def team_side(self) -> TeamSide:
+        """Which side of the table this seat belongs to.
+
+        The seats alternate sides around the table, so the side is the
+        parity of this seat's index in the canonical seating: the seats
+        at even indices (North, South) are :attr:`~TeamSide.NS`, the odd
+        ones (West, East) are :attr:`~TeamSide.EW`. Deriving it from the
+        ordering rather than from a second lookup table keeps it from
+        drifting out of sync with :attr:`partner` and :attr:`opponents`.
+
+        This is the *which side* counterpart to :meth:`is_teammate`'s
+        *same side*: use it when a side is needed as a value — a score
+        dictionary key, a persisted record, a training label — and
+        :meth:`is_teammate` when only the boolean matters.
+        """
+
+        seats = list(Position)
+        return TeamSide.NS if seats.index(self) % 2 == 0 else TeamSide.EW
+
     def is_teammate(self, other: Position) -> bool:
         """Whether ``other`` sits on this seat's side of the table.
 
         True for the seat itself and for its :attr:`partner`, False for
         either opponent — the boolean form of the same pairing
-        :attr:`partner` and :attr:`opponents` derive from, so the three
-        can never disagree.
+        :attr:`partner`, :attr:`opponents` and :attr:`team_side` derive
+        from, so the four can never disagree.
 
         A seat counts as its own teammate: callers asking "is the
         declarer on my side?" want ``True`` when they declared it
@@ -104,7 +126,7 @@ class Position(Enum):
             ``True`` if both seats belong to the same team.
         """
 
-        return other is self or other is self.partner
+        return other.team_side is self.team_side
 
     @property
     def french_name(self) -> str:

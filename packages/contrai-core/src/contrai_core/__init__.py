@@ -14,6 +14,7 @@ from .types import (
     trump_suits,
 )
 from .rules import TrumpRules, SingleSuitRules, NoTrumpRules, rules_for
+from .team_side import TeamSide
 from .position import Position
 from .card import Card
 from .deck import Deck
@@ -57,6 +58,7 @@ __all__ = [
     "SingleSuitRules",
     "NoTrumpRules",
     "rules_for",
+    "TeamSide",
     "Position",
     "Card",
     "Deck",
