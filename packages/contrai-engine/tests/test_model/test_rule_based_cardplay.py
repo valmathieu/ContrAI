@@ -4,11 +4,10 @@ The strategy is handed a single frozen ``PlayObservation`` and derives
 its own card tracking (fallen cards, per-seat proven-void suits, keyed
 by ``Position``) from the observation's public trick history — there is
 no mutable per-round state to seed. Every scenario below is therefore
-expressed by building a real observation (own hand, contract, and
-completed / in-progress tricks written as ``Play`` records and sealed to
-``ObservedPlay`` pairs by the ``_obs`` helper, exactly as
-``PlayState.observe`` seals them), never by poking attributes on the
-strategy.
+expressed by building a real observation — own hand, contract, and
+completed / in-progress tricks written in omniscient terms and sealed
+onto seats by the ``_obs`` helper exactly as ``PlayState.observe`` seals
+them — never by poking attributes on the strategy.
 """
 
 import pytest
@@ -22,6 +21,7 @@ from contrai_core import (
     PlayObservation,
     PlayState,
     Position,
+    seal_bid,
 )
 from contrai_core.types import Suit, Rank, TrumpVariant
 
@@ -43,16 +43,20 @@ def _obs(
 ):
     """Assemble a :class:`PlayObservation` for ``observer``.
 
-    Scenario tricks are written as omniscient :class:`Play` records —
-    the same records the engine applies to its play state. This helper
-    seals them to :class:`ObservedPlay` ``(position, card)`` pairs
-    exactly as ``PlayState.observe`` does, so the strategy under test
-    receives the same sealed surface production hands it.
+    Scenarios are written in omniscient terms — :class:`Play` records
+    and a live :class:`Contract`, the same objects the engine applies to
+    its play state — and this helper seals them exactly as
+    ``PlayState.observe`` does: plays to :class:`ObservedPlay`
+    ``(position, card)`` pairs, the contract to an
+    :class:`ObservedContract`, each bid via :func:`seal_bid`. The
+    strategy under test therefore receives the same sealed surface
+    production hands it, from scenario tables that stay readable.
 
     Args:
         observer: The seat the observation is from the point of view of.
         hand: The observer's own remaining cards.
-        contract: The established :class:`Contract` (supplies trump).
+        contract: The established :class:`Contract` (supplies trump), or
+            ``None``.
         current_trick: Plays made so far in the in-progress trick, a
             sequence of :class:`Play`.
         completed_tricks: Sequence of completed tricks, each a sequence of
@@ -69,10 +73,10 @@ def _obs(
         )
 
     return PlayObservation(
-        player=observer,
+        position=observer.position,
         hand=hand,
-        contract=contract,
-        bids=tuple(bids),
+        contract=contract.observed() if contract is not None else None,
+        bids=tuple(seal_bid(bid) for bid in bids),
         completed_tricks=tuple(seal(trick) for trick in completed_tricks),
         current_trick=seal(current_trick),
         legal_cards=tuple(hand if legal_cards is None else legal_cards),

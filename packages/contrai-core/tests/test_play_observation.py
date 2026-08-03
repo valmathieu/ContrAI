@@ -4,11 +4,18 @@
 hand — down to what a single player is allowed to see. These tests pin:
 the field set (own hand only, nothing leaking another seat's cards), that
 ``legal_cards`` matches :meth:`PlayState.legal_actions` by object identity,
-that ``bids`` passes through untouched, the five derived properties, that
-the observation is immutable, and that the trick records are sealed to
-``ObservedPlay`` ``(position, card)`` pairs with no live ``BasePlayer``
-reachable through them. The shared ``players`` fixture lives in
-``conftest.py``.
+that ``bids`` arrives complete but sealed onto seats, the five derived
+properties, that the observation is immutable, and that every person the
+observation names is named by ``Position`` — the trick records as
+``ObservedPlay`` ``(position, card)`` pairs, the contract as an
+``ObservedContract``.
+
+``TestNothingLiveIsReachable`` states the whole guarantee as one
+property: nothing reachable from an observation by *any* object path is
+a live ``BasePlayer``, ``Team`` or ``Hand``. That is the seal itself,
+independent of which fields happen to exist today.
+
+The shared ``players`` fixture lives in ``conftest.py``.
 """
 
 from __future__ import annotations
@@ -21,14 +28,17 @@ from contrai_core import (
     BasePlayer,
     Card,
     Contract,
+    Hand,
+    ObservedContract,
     PlayState,
     Position,
     Rank,
     Suit,
+    Team,
     TrickRecord,
     TrumpVariant,
 )
-from contrai_core.bid import ContractBid, PassBid
+from contrai_core.bid import ContractBid, DoubleBid, PassBid, RedoubleBid
 from contrai_core.play import ObservedPlay, Play, PlayObservation
 
 # Seat → suit assignment for a deterministic full deal: each player holds
@@ -43,7 +53,7 @@ _SEAT_SUITS = {
 _ORDER = ("N", "E", "S", "W")
 
 _EXPECTED_FIELDS = {
-    "player",
+    "position",
     "hand",
     "contract",
     "bids",
@@ -90,6 +100,14 @@ def _play_first_trick(players_dict: dict[str, BasePlayer]) -> PlayState:
 class TestOwnHandOnly:
     def test_field_set_is_exactly_the_seven_specified(self):
         assert set(PlayObservation.__dataclass_fields__) == _EXPECTED_FIELDS
+
+    def test_observer_is_named_by_seat(self, players):
+        contract, seating, hands, _ = _deal(players)
+        state = PlayState.start(contract, seating, hands)
+
+        for seat in _ORDER:
+            obs = state.observe(players[seat])
+            assert obs.position is players[seat].position
 
     def test_hand_matches_hand_of_and_leaks_no_other_seat(self, players):
         contract, seating, hands, by_seat = _deal(players)
@@ -144,6 +162,13 @@ class TestLegalCardsParity:
 
 
 class TestBidsPassthrough:
+    """The auction arrives complete, but sealed onto seats.
+
+    A bid's actor is excluded from its equality, so the sealed history
+    still compares equal to the live one it was built from — the
+    passthrough assertions read exactly as they did before the seal.
+    """
+
     def test_default_is_empty_tuple(self, players):
         contract, seating, hands, _ = _deal(players)
         state = PlayState.start(contract, seating, hands)
@@ -159,6 +184,30 @@ class TestBidsPassthrough:
 
         assert obs.bids == tuple(bids)
         assert isinstance(obs.bids, tuple)
+
+    def test_variants_and_payloads_survive_the_seal(self, players):
+        contract, seating, hands, _ = _deal(players)
+        state = PlayState.start(contract, seating, hands)
+        bids = [PassBid(players["E"]), ContractBid(players["N"], 100, Suit.HEARTS)]
+
+        obs = state.observe(players["N"], bids=bids)
+
+        assert isinstance(obs.bids[0], PassBid)
+        assert isinstance(obs.bids[1], ContractBid)
+        assert obs.bids[1].value == 100
+        assert obs.bids[1].suit is Suit.HEARTS
+
+    def test_bidders_arrive_as_positions(self, players):
+        contract, seating, hands, _ = _deal(players)
+        state = PlayState.start(contract, seating, hands)
+        bids = [PassBid(players["E"]), ContractBid(players["N"], 100, Suit.HEARTS)]
+
+        obs = state.observe(players["N"], bids=bids)
+
+        assert [bid.player for bid in obs.bids] == [
+            Position.EAST,
+            Position.NORTH,
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -319,3 +368,212 @@ class TestSealedTrickRecords:
         for play in every_play:
             assert not hasattr(play, "player")
             assert not any(isinstance(item, BasePlayer) for item in play)
+
+
+# ---------------------------------------------------------------------------
+# Sealed contract
+# ---------------------------------------------------------------------------
+
+
+class TestSealedContract:
+    """The contract must name its people by seat, not by reference.
+
+    A live ``Contract`` holds the declaring player, the declaring
+    ``Team`` (whose ``players`` list reaches both members' hands), and
+    the doubler / redoubler.
+    """
+
+    def _doubled_observation(self, players) -> PlayObservation:
+        """An observation whose contract is North's, doubled by East."""
+        contract = Contract(
+            ContractBid(players["N"], 120, Suit.HEARTS),
+            double_player=players["E"],
+        )
+        _, seating, hands, _ = _deal(players)
+        state = PlayState.start(contract, seating, hands)
+        return state.observe(players["S"])
+
+    def test_contract_is_an_observed_contract(self, players):
+        obs = self._doubled_observation(players)
+        assert isinstance(obs.contract, ObservedContract)
+
+    def test_declarer_and_doubler_are_positions(self, players):
+        obs = self._doubled_observation(players)
+        assert obs.contract.declarer is Position.NORTH
+        assert obs.contract.doubled_by is Position.EAST
+        assert obs.contract.redoubled_by is None
+
+    def test_terms_survive_the_projection(self, players):
+        obs = self._doubled_observation(players)
+        assert obs.contract.value == 120
+        assert obs.contract.suit is Suit.HEARTS
+        assert obs.contract.double is True
+        assert obs.contract.get_multiplier() == 2
+
+    def test_no_declaring_player_or_team_is_reachable(self, players):
+        obs = self._doubled_observation(players)
+        for gone in ("player", "team", "double_player", "redouble_player"):
+            assert not hasattr(obs.contract, gone)
+
+    def test_declaring_side_is_derivable_from_the_seat_alone(self, players):
+        # The reason ObservedContract carries no Team: the observer can
+        # answer "did my side declare this?" from the seats it has.
+        obs = self._doubled_observation(players)
+        assert obs.position.is_teammate(obs.contract.declarer)
+        assert not Position.WEST.is_teammate(obs.contract.declarer)
+
+    def test_trump_suit_still_reads_through_the_sealed_contract(self, players):
+        obs = self._doubled_observation(players)
+        assert obs.trump_suit is Suit.HEARTS
+
+
+# ---------------------------------------------------------------------------
+# Reachability — the acceptance criterion, checked rather than reviewed
+# ---------------------------------------------------------------------------
+
+
+def _slot_names(cls) -> list[str]:
+    """Every slot declared anywhere in ``cls``'s MRO.
+
+    Walking only ``type(obj).__slots__`` is not enough for a slotted
+    class hierarchy: a ``ContractBid`` declares ``('value', 'suit')``
+    while the ``player`` slot it inherits is declared on ``Bid``. Missing
+    it would let the reachability walk below pass over exactly the field
+    the seal exists to protect.
+    """
+    return [
+        name
+        for klass in cls.__mro__
+        for name in getattr(klass, "__slots__", ()) or ()
+    ]
+
+
+def _reachable(root, _seen=None):
+    """Walk every object reachable from ``root`` by attribute or element.
+
+    Traverses dataclasses, named tuples, plain tuples/lists/dicts and
+    ordinary objects' ``__dict__`` / ``__slots__`` (the whole MRO's), so
+    a leak buried behind several hops
+    (``contract.team.players[0].hand``) is found the same way a strategy
+    would find it. Cycles are cut by identity.
+
+    Args:
+        root: The object to start from.
+        _seen: Recursion bookkeeping; callers leave it unset.
+
+    Yields:
+        Every distinct object reachable from ``root``, ``root`` included.
+    """
+    if _seen is None:
+        _seen = {}
+    if id(root) in _seen:
+        return
+    _seen[id(root)] = root
+    yield root
+
+    children = []
+    if isinstance(root, (str, bytes, int, float, bool, type(None))):
+        return
+    if isinstance(root, dict):
+        children = list(root.keys()) + list(root.values())
+    elif isinstance(root, (tuple, list, set, frozenset)):
+        children = list(root)
+    else:
+        for name in _slot_names(type(root)):
+            if hasattr(root, name):
+                children.append(getattr(root, name))
+        children.extend(vars(root).values() if hasattr(root, "__dict__") else ())
+        # Hand is not a sequence subclass — it wraps its cards rather
+        # than exposing them as attributes, so iterate it explicitly.
+        if isinstance(root, Hand):
+            children.extend(list(root))
+
+    for child in children:
+        yield from _reachable(child, _seen)
+
+
+class TestNothingLiveIsReachable:
+    """No object path from an observation may reach hidden state.
+
+    This is issue #6's acceptance criterion stated as a property rather
+    than a field-by-field review: whatever shape the observation grows
+    into, a live ``BasePlayer`` (and through it ``.hand``, and through
+    ``.team.players`` the partner's hand) must never be reachable from
+    it. The walk below is deliberately structural, so a leak reintroduced
+    three hops down a future field still fails this test.
+    """
+
+    def _fully_populated(self, players) -> PlayObservation:
+        """Every field non-trivially filled: doubled contract, full
+        four-seat auction, a completed trick and a partial one."""
+        contract = Contract(
+            ContractBid(players["N"], 120, Suit.HEARTS),
+            double_player=players["E"],
+            redouble_player=players["S"],
+        )
+        _, seating, hands, by_seat = _deal(players)
+        state = PlayState.start(contract, seating, hands)
+        for seat in _ORDER:
+            state = state.apply(Play(players[seat], by_seat[seat][0]))
+        winner = state.to_act
+        winner_seat = next(s for s in _ORDER if players[s] is winner)
+        state = state.apply(Play(winner, by_seat[winner_seat][1]))
+
+        bids = [
+            PassBid(players["W"]),
+            ContractBid(players["N"], 120, Suit.HEARTS),
+            DoubleBid(players["E"]),
+            RedoubleBid(players["S"]),
+        ]
+        return state.observe(winner, bids=bids)
+
+    def test_the_scenario_actually_fills_every_field(self, players):
+        obs = self._fully_populated(players)
+        assert obs.hand and obs.legal_cards
+        assert obs.contract is not None and obs.contract.redoubled_by
+        assert len(obs.bids) == 4
+        assert obs.completed_tricks and obs.current_trick
+
+    def test_no_base_player_is_reachable(self, players):
+        obs = self._fully_populated(players)
+        leaks = [o for o in _reachable(obs) if isinstance(o, BasePlayer)]
+        assert not leaks, f"live players reachable from the observation: {leaks}"
+
+    def test_no_team_is_reachable(self, players):
+        # Team.players is a two-element list of live players — reaching a
+        # Team is reaching both its members' hands.
+        obs = self._fully_populated(players)
+        assert not [o for o in _reachable(obs) if isinstance(o, Team)]
+
+    def test_no_hand_object_is_reachable(self, players):
+        obs = self._fully_populated(players)
+        assert not [o for o in _reachable(obs) if isinstance(o, Hand)]
+
+    def test_only_the_observers_own_and_public_cards_are_reachable(self, players):
+        obs = self._fully_populated(players)
+        allowed = set(obs.hand) | set(obs.played_cards)
+        reachable_cards = {o for o in _reachable(obs) if isinstance(o, Card)}
+        assert reachable_cards <= allowed
+
+    def test_the_walk_finds_a_leak_when_one_exists(self, players):
+        # Guard against the reachability walk silently passing because it
+        # traverses nothing: given a live Contract it must find the
+        # declarer, the team, and every seat's Hand.
+        contract = Contract(ContractBid(players["N"], 120, Suit.HEARTS))
+        found = list(_reachable(contract))
+        assert any(isinstance(o, BasePlayer) for o in found)
+        assert any(isinstance(o, Team) for o in found)
+        assert any(isinstance(o, Hand) for o in found)
+
+    def test_the_walk_finds_a_leak_planted_in_a_sealed_field(self, players):
+        # The sharper negative control: plant an unsealed bid in an
+        # otherwise-sealed observation and confirm the walk reaches the
+        # player through it. A ContractBid inherits its ``player`` slot
+        # from Bid rather than declaring it, so a walk that read only
+        # ``type(obj).__slots__`` would pass this observation as clean.
+        obs = self._fully_populated(players)
+        leaky = dataclasses.replace(
+            obs, bids=(ContractBid(players["W"], 120, Suit.HEARTS),)
+        )
+        found = [o for o in _reachable(leaky) if isinstance(o, BasePlayer)]
+        assert players["W"] in found

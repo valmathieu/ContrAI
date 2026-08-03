@@ -23,6 +23,13 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
     public trick history on each turn (see :meth:`_derive_tracking`),
     never carried across calls or rounds. Decides which card to play
     from the trick state, the contract, and what has fallen.
+
+    Every table question it asks is answered in seat terms — void maps
+    keyed by :class:`~contrai_core.Position`, "did my side declare this"
+    via :meth:`~contrai_core.Position.is_teammate` against the
+    contract's ``declarer``. The observation carries nothing else to ask
+    with, which is deliberate: the strategy reasons from the same public
+    information a player at the table has.
     """
 
     def choose_card(self, observation: PlayObservation) -> Card:
@@ -166,7 +173,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         hand = observation.hand
         rules = rules_for(observation.trump_suit)
 
-        if contract and contract.player.team == self.team:
+        if contract and self.position.is_teammate(contract.declarer):
             # Our team has the contract - play the strongest trump
             trump_cards = [c for c in playable_cards if rules.is_trump(c.suit)]
             if trump_cards:
@@ -214,7 +221,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         # trump, play the strongest trump
         if (
             contract
-            and contract.player.team == self.team
+            and self.position.is_teammate(contract.declarer)
             and self._opponents_might_have_trump(trump_suit, fallen, voids, hand)
         ):
             trump_cards = [c for c in playable_cards if rules.is_trump(c.suit)]

@@ -30,7 +30,7 @@ from .bid import (
     seal_bid,
 )
 from .auction import Auction
-from .contract import Contract
+from .contract import Contract, ObservedContract
 from .trick import Trick, TrickRecord
 from .play import Play, ObservedPlay, PlayState, PlayObservation
 from .exceptions import (
@@ -72,6 +72,7 @@ __all__ = [
     "seal_bid",
     "Auction",
     "Contract",
+    "ObservedContract",
     "Trick",
     "TrickRecord",
     "Play",
