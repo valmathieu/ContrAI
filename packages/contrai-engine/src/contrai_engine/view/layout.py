@@ -17,14 +17,15 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from contrai_core import TeamSide
+
+from contrai_engine.view.formatting import _team_abbr, _team_color
 from contrai_engine.view.theme import (
-    BLUE,
     BORDER,
     BORDER_DIM,
     DIM,
     DOT,
     FG,
-    ORANGE,
     TITLE,
     YELLOW,
 )
@@ -77,15 +78,12 @@ def _panel_prompt(
     )
 
 
-def _panel_game_score(scores: dict[str, int], target_score: int) -> Panel:
+def _panel_game_score(scores: dict[TeamSide, int], target_score: int) -> Panel:
     """Top-left panel with both teams' running totals and the target."""
     body = Text()
-    ns = scores.get("North-South", 0)
-    ew = scores.get("East-West", 0)
-    body.append(f"{'N-S':<8}", style=f"bold {BLUE}")
-    body.append(f"{ns:>10}\n", style=FG)
-    body.append(f"{'E-W':<8}", style=f"bold {ORANGE}")
-    body.append(f"{ew:>10}\n", style=FG)
+    for side in TeamSide:
+        body.append(f"{_team_abbr(side):<8}", style=f"bold {_team_color(side)}")
+        body.append(f"{scores.get(side, 0):>10}\n", style=FG)
     body.append("·" * 18, style=DOT)
     body.append("\n")
     body.append(f"{'Target':<8}", style=DIM)

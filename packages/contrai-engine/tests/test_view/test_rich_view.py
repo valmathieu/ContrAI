@@ -18,7 +18,15 @@ import logging
 import pytest
 from rich.text import Text
 
-from contrai_core import Auction, Card, Position, Rank, Suit, Trick
+from contrai_core import (
+    Auction,
+    Card,
+    Position,
+    Rank,
+    Suit,
+    TeamSide,
+    Trick,
+)
 from contrai_core.bid import ContractBid, DoubleBid, PassBid
 from contrai_engine.model.game import GameOverStatus
 from contrai_engine.options import DebugOptions
@@ -483,7 +491,7 @@ class TestEventLog:
         class _StubGame:
             def __init__(self):
                 self.current_round = None
-                self.scores = {"North-South": 0, "East-West": 0}
+                self.scores = {TeamSide.NS: 0, TeamSide.EW: 0}
 
         view.attach(_StubGame(), target_score=1500)
         assert view.event_log == []
@@ -503,7 +511,7 @@ class TestBeloteAnnouncement:
             self.suit = suit
             class _T: pass
             self.team = _T()
-            self.team.name = "North-South"
+            self.team.name = TeamSide.NS
 
     class _StubRound:
         def __init__(self, contract, belote_state):
@@ -776,7 +784,7 @@ class TestPanelHandPersistence:
             def __init__(self, human):
                 self.players = [human]
                 self.current_round = None
-                self.scores = {"North-South": 0, "East-West": 0}
+                self.scores = {TeamSide.NS: 0, TeamSide.EW: 0}
 
         view = RichView()
         view.attach(_StubGame(human), target_score=1500)
@@ -876,7 +884,7 @@ class TestRenderInGameHandSlot:
             def __init__(self, human):
                 self.players = [human]
                 self.current_round = None
-                self.scores = {"North-South": 0, "East-West": 0}
+                self.scores = {TeamSide.NS: 0, TeamSide.EW: 0}
 
         view = RichView()
         view.attach(_StubGame(human), target_score=1500)
@@ -945,7 +953,7 @@ class TestRenderInGameHandSlot:
         class _StubGame:
             players = []
             current_round = None
-            scores = {"North-South": 0, "East-West": 0}
+            scores = {TeamSide.NS: 0, TeamSide.EW: 0}
 
         view.attach(_StubGame(), target_score=1500)
         captured = self._capture_render(view)
@@ -994,9 +1002,9 @@ def end_game_status():
     """A representative ``GameOverStatus`` for ``show_end_game`` tests."""
     return GameOverStatus(
         game_over=True,
-        winner="North-South",
+        winner=TeamSide.NS,
         tied_teams=None,
-        final_scores={"North-South": 1620, "East-West": 1420},
+        final_scores={TeamSide.NS: 1620, TeamSide.EW: 1420},
     )
 
 
@@ -1343,7 +1351,7 @@ class TestShowRoundRecapAutoplay:
     class _StubRound:
         round_number = 3
         contract = None
-        round_scores = {"North-South": 0, "East-West": 0}
+        round_scores = {TeamSide.NS: 0, TeamSide.EW: 0}
         team_tricks = {}
 
     def test_autoplay_never_calls_console_input(
@@ -1356,7 +1364,7 @@ class TestShowRoundRecapAutoplay:
         view.console.input = _forbid_console_input
 
         view.show_round_recap(
-            self._StubRound(), {"North-South": 0, "East-West": 0}
+            self._StubRound(), {TeamSide.NS: 0, TeamSide.EW: 0}
         )
         # Did not hang -- reaching this line proves it.
 
@@ -1373,7 +1381,7 @@ class TestShowRoundRecapAutoplay:
         view.console.input = _forbid_console_input
 
         view.show_round_recap(
-            self._StubRound(), {"North-South": 0, "East-West": 0}
+            self._StubRound(), {TeamSide.NS: 0, TeamSide.EW: 0}
         )
 
         assert sleep_calls == [0.03]
@@ -1389,7 +1397,7 @@ class TestShowRoundRecapAutoplay:
         captured = _capture_prints(view)
 
         view.show_round_recap(
-            self._StubRound(), {"North-South": 0, "East-West": 0}
+            self._StubRound(), {TeamSide.NS: 0, TeamSide.EW: 0}
         )
 
         assert any("(autoplay)" in t for t in captured)
@@ -1619,7 +1627,7 @@ class TestDebugStrip:
         def __init__(self, players):
             self.players = players
             self.current_round = TestDebugStrip._StubRound()
-            self.scores = {"North-South": 0, "East-West": 0}
+            self.scores = {TeamSide.NS: 0, TeamSide.EW: 0}
 
     def _render_bidding_frame(self, view):
         captured = _capture_prints(view)

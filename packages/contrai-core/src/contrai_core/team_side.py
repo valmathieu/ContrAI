@@ -54,7 +54,7 @@ class TeamSide(Enum):
         Keeps f-strings and log lines that embed a side reading as
         ``"NS"`` rather than the default ``Enum.__str__`` output
         ``"TeamSide.NS"``. Human-facing labels are the view's job — see
-        the engine's ``TEAM_LABEL`` / ``TEAM_ABBR`` mappings.
+        the engine's ``TEAM_ABBR`` mapping.
         """
 
         return self.value
@@ -68,6 +68,9 @@ class TeamSide(Enum):
         where "which seats pair up" is encoded.
         """
 
+        # Imported here rather than at module scope: ``position`` imports
+        # this module for :attr:`Position.team_side`, so the dependency
+        # only runs one way at import time.
         from .position import Position
 
         return tuple(

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from rich.text import Text
 
+from contrai_core import TeamSide
 from contrai_engine.view.layout import (
     _panel_event_log,
     _panel_game_score,
@@ -44,7 +45,7 @@ class TestPanelGameScore:
 
     def test_renders_scores_and_target(self):
         panel = _panel_game_score(
-            {"North-South": 120, "East-West": 250}, target_score=1500
+            {TeamSide.NS: 120, TeamSide.EW: 250}, target_score=1500
         )
         text = panel.renderable.plain
         assert panel.title.plain == "Game score"

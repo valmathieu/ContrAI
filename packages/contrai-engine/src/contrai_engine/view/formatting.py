@@ -18,6 +18,7 @@ from contrai_core import (
     Position,
     Rank,
     Suit,
+    TeamSide,
     TrumpVariant,
 )
 from contrai_core.bid import (
@@ -49,17 +50,17 @@ def _position_short(position: Position) -> str:
 
 def _position_color(position: Position) -> str:
     """Seat color by team: blue for N/S seats, orange for E/W."""
-    return BLUE if position in (Position.NORTH, Position.SOUTH) else ORANGE
+    return _team_color(position.team_side)
 
 
-def _team_color(team_name: str) -> str:
+def _team_color(side: TeamSide) -> str:
     """Team color: blue for North-South, orange for East-West."""
-    return BLUE if team_name == "North-South" else ORANGE
+    return BLUE if side is TeamSide.NS else ORANGE
 
 
-def _team_abbr(team_name: str) -> str:
-    """Scoreboard abbreviation: ``"North-South"`` -> ``"N-S"``."""
-    return TEAM_ABBR.get(team_name, team_name)
+def _team_abbr(side: TeamSide) -> str:
+    """Scoreboard abbreviation: ``TeamSide.NS`` -> ``"N-S"``."""
+    return TEAM_ABBR[side]
 
 
 def _suit_glyph(suit: ContractSuit) -> str:
@@ -162,8 +163,8 @@ def _format_contract_short(
         t.append_text(taker)
     else:
         # Defensive fallback: name the team if the player is missing.
-        t.append(_team_abbr(contract.team.name),
-                 style=f"bold {_team_color(contract.team.name)}")
+        side = contract.team.players[0].position.team_side
+        t.append(_team_abbr(side), style=f"bold {_team_color(side)}")
     # Double / redouble: multiplier plus the player who called it.
     if contract.redouble:
         caller = _seat_letter(getattr(contract, "redouble_player", None))

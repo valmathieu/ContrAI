@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from contrai_core.deck import Deck
 from contrai_core.position import Position
 from contrai_core.team import Team
+from contrai_core.team_side import TeamSide
 from contrai_engine.debug_state import deal_lines, round_result_lines
 from .player import Player
 from .round import Round
@@ -32,20 +33,25 @@ logger = logging.getLogger(__name__)
 class GameOverStatus:
     """Structured verdict returned by :meth:`Game.check_game_over`.
 
+    Every team in this verdict is named by its :class:`TeamSide`, the
+    same key :attr:`Game.scores` uses — never by a display string, so a
+    caller can look a winner straight up in ``final_scores`` and the view
+    is free to spell the label however it likes.
+
     Attributes:
         game_over: Whether a team strictly leads at or above the target score.
-        winner: The winning team name — always set when ``game_over`` is True,
-            ``None`` otherwise.
-        tied_teams: The teams sharing the lead at or above the target — the
-            sudden-death signal: the game continues with tiebreaker rounds
-            until one team leads. ``None`` when no such tie exists.
+        winner: The winning team side — always set when ``game_over`` is
+            True, ``None`` otherwise.
+        tied_teams: The team sides sharing the lead at or above the target —
+            the sudden-death signal: the game continues with tiebreaker
+            rounds until one team leads. ``None`` when no such tie exists.
         final_scores: Snapshot of every team's score at the moment of the check.
     """
 
     game_over: bool
-    winner: str | None
-    tied_teams: list[str] | None
-    final_scores: dict[str, int]
+    winner: TeamSide | None
+    tied_teams: list[TeamSide] | None
+    final_scores: dict[TeamSide, int]
 
 class Game:
     """
@@ -62,7 +68,7 @@ class Game:
         current_contract (Contract): The current contract object.
         current_round (Round): The current round object.
         round_number (int): The current round number.
-        scores (dict): The current scores for each team.
+        scores (dict[TeamSide, int]): The cumulative game score of each side.
     """
     def __init__(self, players):
         """
@@ -121,7 +127,7 @@ class Game:
         self.current_contract = None
         self.current_round = None
         self.round_number = 0
-        self.scores = {team.name: 0 for team in self.teams}
+        self.scores: dict[TeamSide, int] = {side: 0 for side in TeamSide}
 
     def start_new_round(self):
         """
@@ -195,8 +201,8 @@ class Game:
         round_scores = self.current_round.calculate_round_scores()
 
         # Update total scores
-        for team_name, points in round_scores.items():
-            self.scores[team_name] += points
+        for side, points in round_scores.items():
+            self.scores[side] += points
 
         self._log_round_result()
 
@@ -237,9 +243,9 @@ class Game:
         max_score = max(self.scores.values())
 
         if max_score >= target_score:
-            # Find the team(s) sharing the top score.
-            leading_teams = [team.name for team in self.teams
-                             if self.scores[team.name] == max_score]
+            # Find the side(s) sharing the top score.
+            leading_teams = [side for side, score in self.scores.items()
+                             if score == max_score]
 
             if len(leading_teams) == 1:
                 return GameOverStatus(

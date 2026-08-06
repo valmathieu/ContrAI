@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from contrai_core import TeamSide
 from rich.box import DOUBLE, ROUNDED, SQUARE
 from rich.panel import Panel
 from rich.table import Table
@@ -22,7 +23,6 @@ from contrai_engine.view.formatting import (
     _team_color,
 )
 from contrai_engine.view.theme import (
-    BLUE,
     BORDER,
     DIM,
     FG,
@@ -30,7 +30,6 @@ from contrai_engine.view.theme import (
     GOLD_BG,
     GOLD_FG,
     GREEN_CHECK,
-    ORANGE,
     RED,
     RULE,
     TITLE,
@@ -48,12 +47,12 @@ def _panel_game_over_banner(status: GameOverStatus) -> Panel:
     The winner's total is highlighted gold; the loser keeps its team
     color. Team labels sit under their numbers.
     """
-    winner_name = status.winner or "—"
-    winner_abbr = _team_abbr(winner_name) if winner_name != "—" else "—"
+    winner = status.winner
+    winner_abbr = _team_abbr(winner) if winner is not None else "—"
     final = status.final_scores
-    ns = final.get("North-South", 0)
-    ew = final.get("East-West", 0)
-    is_ns_winner = winner_name == "North-South"
+    ns = final.get(TeamSide.NS, 0)
+    ew = final.get(TeamSide.EW, 0)
+    is_ns_winner = winner is TeamSide.NS
 
     body = Text()
     body.append("\n")
@@ -69,24 +68,26 @@ def _panel_game_over_banner(status: GameOverStatus) -> Panel:
     ns_str = str(ns)
     ew_str = str(ew)
     score_line = Text()
-    if is_ns_winner:
-        score_line.append(ns_str, style=f"bold {GOLD}")
-    else:
-        score_line.append(ns_str, style=f"bold {BLUE}")
+    ns_style = GOLD if is_ns_winner else _team_color(TeamSide.NS)
+    ew_style = _team_color(TeamSide.EW) if is_ns_winner else GOLD
+    score_line.append(ns_str, style=f"bold {ns_style}")
     score_line.append("   vs   ", style=DIM)
-    if not is_ns_winner:
-        score_line.append(ew_str, style=f"bold {GOLD}")
-    else:
-        score_line.append(ew_str, style=f"bold {ORANGE}")
+    score_line.append(ew_str, style=f"bold {ew_style}")
     pad2 = max(0, (66 - score_line.cell_len) // 2)
     body.append(" " * pad2)
     body.append_text(score_line)
     body.append("\n")
     # Team labels
     label_line = Text()
-    label_line.append("N-S".rjust(len(ns_str)), style=f"bold {BLUE}")
+    label_line.append(
+        _team_abbr(TeamSide.NS).rjust(len(ns_str)),
+        style=f"bold {_team_color(TeamSide.NS)}",
+    )
     label_line.append("       ", style=DIM)
-    label_line.append("E-W".ljust(len(ew_str)), style=f"bold {ORANGE}")
+    label_line.append(
+        _team_abbr(TeamSide.EW).ljust(len(ew_str)),
+        style=f"bold {_team_color(TeamSide.EW)}",
+    )
     pad3 = max(0, (66 - label_line.cell_len) // 2)
     body.append(" " * pad3)
     body.append_text(label_line)
@@ -116,9 +117,10 @@ def _panel_round_summary(history: list["RoundSummary"]) -> Panel:
     table.add_column("#", justify="right", style=DIM, width=3)
     table.add_column("Contract", justify="left")
     table.add_column("Made", justify="center", width=5)
-    table.add_column("N-S pts", justify="right")
-    table.add_column("E-W pts", justify="right")
-    table.add_column("Running N-S / E-W", justify="right", style=DIM)
+    ns_abbr, ew_abbr = _team_abbr(TeamSide.NS), _team_abbr(TeamSide.EW)
+    table.add_column(f"{ns_abbr} pts", justify="right")
+    table.add_column(f"{ew_abbr} pts", justify="right")
+    table.add_column(f"Running {ns_abbr} / {ew_abbr}", justify="right", style=DIM)
 
     for row in history:
         num = str(row.round_number)
@@ -130,10 +132,10 @@ def _panel_round_summary(history: list["RoundSummary"]) -> Panel:
         )
         if row.contract is None:
             made_cell = Text("—", style=DIM)
-        ns_cell = (Text(str(row.ns_pts), style=f"bold {BLUE}")
+        ns_cell = (Text(str(row.ns_pts), style=f"bold {_team_color(TeamSide.NS)}")
                    if row.ns_pts > 0
                    else Text("·", style=DIM))
-        ew_cell = (Text(str(row.ew_pts), style=f"bold {ORANGE}")
+        ew_cell = (Text(str(row.ew_pts), style=f"bold {_team_color(TeamSide.EW)}")
                    if row.ew_pts > 0
                    else Text("·", style=DIM))
         running = f"{row.running_ns} / {row.running_ew}"
@@ -158,9 +160,9 @@ def _format_summary_contract(row: "RoundSummary") -> Text:
     if row.contract is None:
         t.append("all passed", style=DIM)
         return t
-    team_abbr = _team_abbr(row.contract_team_name or "")
-    team_color = _team_color(row.contract_team_name or "")
-    t.append(team_abbr, style=f"bold {team_color}")
+    side = row.contract_side
+    if side is not None:
+        t.append(_team_abbr(side), style=f"bold {_team_color(side)}")
     t.append(" ", style=FG)
     # SlamLevel.__str__ yields "Slam" / "Solo Slam"; numerics "80"…"180".
     value_str = str(row.contract.value)

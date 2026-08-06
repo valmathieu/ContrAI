@@ -6,7 +6,7 @@ vocabulary exclusively — no French ``coinché`` / ``surcoinché`` leakage.
 
 from __future__ import annotations
 
-from contrai_core import Suit
+from contrai_core import Suit, TeamSide
 from contrai_engine.view.rich_view import RoundSummary
 from contrai_engine.view.screens.endgame import _format_summary_contract
 
@@ -23,11 +23,11 @@ class TestFormatSummaryContract:
             self.redouble = redouble
 
     @staticmethod
-    def _row(contract, team_name="North-South"):
+    def _row(contract, side=TeamSide.NS):
         return RoundSummary(
             round_number=1,
             contract=contract,
-            contract_team_name=team_name,
+            contract_side=side,
             contract_made=True,
             ns_pts=100,
             ew_pts=0,

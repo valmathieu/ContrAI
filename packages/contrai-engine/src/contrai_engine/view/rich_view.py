@@ -33,6 +33,7 @@ from contrai_core import (
     BasePlayer,
     Card,
     Contract,
+    TeamSide,
     Trick,
     rules_for,
 )
@@ -129,7 +130,7 @@ class RoundSummary:
 
     round_number: int
     contract: Optional[Contract]
-    contract_team_name: Optional[str]
+    contract_side: Optional[TeamSide]
     contract_made: bool
     ns_pts: int
     ew_pts: int
@@ -460,21 +461,21 @@ class RichView:
     def on_round_complete(self, round_: "Round", running_scores: dict) -> None:
         """Append a row to the end-game history."""
         contract = round_.contract
-        ns_pts = round_.round_scores.get("North-South", 0)
-        ew_pts = round_.round_scores.get("East-West", 0)
-        running_ns = running_scores.get("North-South", 0)
-        running_ew = running_scores.get("East-West", 0)
+        ns_pts = round_.round_scores.get(TeamSide.NS, 0)
+        ew_pts = round_.round_scores.get(TeamSide.EW, 0)
+        running_ns = running_scores.get(TeamSide.NS, 0)
+        running_ew = running_scores.get(TeamSide.EW, 0)
         if contract is None:
             made = False
-            contract_team_name = None
+            contract_side = None
         else:
-            contract_team_name = contract.team.name
+            contract_side = contract.player.position.team_side
             made = _contract_made(round_)
         self.history.append(
             RoundSummary(
                 round_number=round_.round_number,
                 contract=contract,
-                contract_team_name=contract_team_name,
+                contract_side=contract_side,
                 contract_made=made,
                 ns_pts=ns_pts,
                 ew_pts=ew_pts,
@@ -638,7 +639,7 @@ class RichView:
         # Top row: game score + round info
         scores = (
             self.game.scores if self.game
-            else {"North-South": 0, "East-West": 0}
+            else {side: 0 for side in TeamSide}
         )
         top_left = _panel_game_score(scores, self.target_score)
         top_right = _panel_round(round_, phase)

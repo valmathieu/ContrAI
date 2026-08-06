@@ -13,6 +13,7 @@ from contrai_core.bid import Bid
 from contrai_core.contract import Contract
 from contrai_core.play import Play, PlayState
 from contrai_core.rules import rules_for
+from contrai_core.team_side import TeamSide
 from contrai_core.trick import Trick
 from contrai_core.types import Rank
 
@@ -72,8 +73,8 @@ class Round:
         self.tricks: List[Trick] = []
         self.current_trick: Optional[Trick] = None
         self.last_trick_winner: Optional[Player] = None
-        self.team_tricks: Dict[str, List[Trick]] = {}
-        self.round_scores: Dict[str, int] = {}
+        self.team_tricks: Dict[TeamSide, List[Trick]] = {}
+        self.round_scores: Dict[TeamSide, int] = {}
         # Single source of truth for the contract outcome, set by
         # ``calculate_round_scores``. ``None`` until scored (or when the
         # round was all-passed). The view reads this rather than
@@ -100,10 +101,12 @@ class Round:
         self.belote_holder: Optional[Player] = None
         self.belote_state: Dict[Player, str] = {}
 
-        # Initialize team tricks dictionary
+        # Initialize the trick piles, one per seated side. Keying off the
+        # seats rather than the Team roster objects means the piles exist
+        # before teams are wired up.
         if players_order:
-            teams = set(player.team for player in players_order)
-            self.team_tricks = {team.name: [] for team in teams}
+            sides = {player.position.team_side for player in players_order}
+            self.team_tricks = {side: [] for side in sides}
 
     def deal_cards(self):
         """
@@ -379,11 +382,13 @@ class Round:
         winner = self.current_trick.get_current_winner(trump_suit)
         self.last_trick_winner = winner
 
-        # Add trick to the tricks list and to winner's team
+        # Add trick to the tricks list and to the winner's side pile
         if self.current_trick:
             self.tricks.append(self.current_trick)
-            if winner and winner.team:
-                self.team_tricks[winner.team.name].append(self.current_trick)
+            if winner:
+                self.team_tricks[winner.position.team_side].append(
+                    self.current_trick
+                )
 
             # The point total costs a real sum over the trick's four cards,
             # unlike a bare lazy %s argument — guard it explicitly so a
@@ -415,7 +420,7 @@ class Round:
 
         return
 
-    def play_all_tricks(self, view=None) -> Dict[str, List[Trick]]:
+    def play_all_tricks(self, view=None) -> Dict[TeamSide, List[Trick]]:
         """
         Play all 8 tricks of the round.
 
@@ -423,7 +428,7 @@ class Round:
             view: Optional view for human player interaction
 
         Returns:
-            Dict mapping team names to their tricks
+            Dict mapping each team side to the tricks it won
         """
         # Initialize team tricks tracking
         self.last_trick_winner = None
@@ -444,7 +449,7 @@ class Round:
 
         return self.team_tricks
 
-    def calculate_round_scores(self) -> Dict[str, int]:
+    def calculate_round_scores(self) -> Dict[TeamSide, int]:
         """
         Calculate scores for this round.
 
@@ -458,7 +463,7 @@ class Round:
         :mod:`scoring`.
 
         Returns:
-            Dict: Team scores for this round
+            Dict: Round scores, keyed by team side
         """
         result = score_round(self)
         self.round_scores = result.scores
@@ -466,12 +471,12 @@ class Round:
         self.unannounced_slam = result.unannounced_slam
         return self.round_scores
 
-    def handle_failed_contract(self) -> Dict[str, int]:
+    def handle_failed_contract(self) -> Dict[TeamSide, int]:
         """
         Manage cards when all players pass.
 
         Returns:
-            Dict: Zero scores for all teams
+            Dict: Zero scores for both team sides
         """
         # Put all players' cards back in deck (8 cards per player)
         for player in self.players_order:
@@ -479,6 +484,6 @@ class Round:
             player.hand.clear()
 
         # Return zero scores
-        teams = set(player.team for player in self.players_order)
-        self.round_scores = {team.name: 0 for team in teams}
+        sides = {player.position.team_side for player in self.players_order}
+        self.round_scores = {side: 0 for side in sides}
         return self.round_scores
