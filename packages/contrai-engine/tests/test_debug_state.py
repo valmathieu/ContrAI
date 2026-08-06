@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from contrai_core import Card, Position, Rank, Suit
+from contrai_core import Card, Position, Rank, Suit, TeamSide
 from contrai_core.team import Team
 from contrai_engine.debug_state import (
     cards_still_in_play,
@@ -195,23 +195,23 @@ class TestRoundResultLines:
                             round_number=2)
         round_.contract = _StubContract(100, Suit.HEARTS, east, east.team)
         round_.contract_made = made
-        round_.round_scores = {"North-South": 0, "East-West": 162}
+        round_.round_scores = {TeamSide.NS: 0, TeamSide.EW: 162}
         return round_
 
     def test_made_branch(self, four_players):
         round_ = self._contracted_round(four_players, made=True)
         lines = round_result_lines(
-            round_, {"North-South": 40, "East-West": 300}
+            round_, {TeamSide.NS: 40, TeamSide.EW: 300}
         )
         assert lines == [
             "Round #2: contract 100 ♥ by E — made.",
-            "Round points: North-South 0 · East-West 162",
-            "Totals: North-South 40 · East-West 300",
+            "Round points: NS 0 · EW 162",
+            "Totals: NS 40 · EW 300",
         ]
 
     def test_failed_branch(self, four_players):
         round_ = self._contracted_round(four_players, made=False)
-        lines = round_result_lines(round_, {"North-South": 0, "East-West": 0})
+        lines = round_result_lines(round_, {TeamSide.NS: 0, TeamSide.EW: 0})
         assert "— failed." in lines[0]
 
     def test_failed_branch_does_not_rederive_from_a_nonzero_score(
@@ -224,9 +224,9 @@ class TestRoundResultLines:
         round_ = self._contracted_round(four_players, made=False)
         # The declaring side (East-West) still nets a non-zero round
         # score (its Belote bonus) despite failing the contract.
-        round_.round_scores = {"North-South": 260, "East-West": 20}
+        round_.round_scores = {TeamSide.NS: 260, TeamSide.EW: 20}
         lines = round_result_lines(
-            round_, {"North-South": 260, "East-West": 20}
+            round_, {TeamSide.NS: 260, TeamSide.EW: 20}
         )
         assert "— failed." in lines[0]
         assert "made" not in lines[0]
@@ -235,8 +235,8 @@ class TestRoundResultLines:
         north, east, south, west = four_players
         round_ = _StubRound([north, east, south, west], dealer=west,
                             round_number=4)
-        lines = round_result_lines(round_, {"North-South": 10, "East-West": 20})
+        lines = round_result_lines(round_, {TeamSide.NS: 10, TeamSide.EW: 20})
         assert lines == [
             "Round #4: all passed — redeal.",
-            "Totals: North-South 10 · East-West 20",
+            "Totals: NS 10 · EW 20",
         ]

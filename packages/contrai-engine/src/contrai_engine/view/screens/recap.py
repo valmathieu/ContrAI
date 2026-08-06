@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from contrai_core import Suit, rules_for
+from contrai_core import Suit, TeamSide, rules_for
 from rich.box import ROUNDED
 from rich.panel import Panel
 from rich.text import Text
@@ -21,15 +21,15 @@ from contrai_engine.view.formatting import (
     _format_trump_label,
     _suit_color,
     _suit_glyph,
+    _team_abbr,
+    _team_color,
 )
 from contrai_engine.view.theme import (
-    BLUE,
     DEFAULT_TARGET,
     DIM,
     FG,
     GOLD,
     GREEN_CHECK,
-    ORANGE,
     RED,
     YELLOW,
 )
@@ -61,10 +61,10 @@ def _panel_round_recap(
     body = Text()
     body.append("\n")
     contract = getattr(round_, "contract", None)
-    ns_round = round_.round_scores.get("North-South", 0)
-    ew_round = round_.round_scores.get("East-West", 0)
-    running_ns = running_scores.get("North-South", 0)
-    running_ew = running_scores.get("East-West", 0)
+    ns_round = round_.round_scores.get(TeamSide.NS, 0)
+    ew_round = round_.round_scores.get(TeamSide.EW, 0)
+    running_ns = running_scores.get(TeamSide.NS, 0)
+    running_ew = running_scores.get(TeamSide.EW, 0)
 
     # Contract line
     body.append("  Contract:  ", style=DIM)
@@ -120,8 +120,8 @@ def _panel_round_recap(
     # Running game totals + target. Label padded to the shared
     # 24-char column gutter so the numbers line up under N-S / E-W.
     body.append(f"  {'Running':<22}", style=DIM)
-    body.append(f"{running_ns:>6}", style=f"bold {BLUE}")
-    body.append(f"  {running_ew:>6}", style=f"bold {ORANGE}")
+    body.append(f"{running_ns:>6}", style=f"bold {_team_color(TeamSide.NS)}")
+    body.append(f"  {running_ew:>6}", style=f"bold {_team_color(TeamSide.EW)}")
     body.append(f"     target {target_score}", style=DIM)
 
     if tiebreaker:
@@ -197,15 +197,15 @@ def _recap_breakdown(round_) -> dict:
     contract = getattr(round_, "contract", None)
     trump = contract.suit if contract else None
     team_tricks = getattr(round_, "team_tricks", {}) or {}
-    last_trick_team = None
+    last_trick_side = None
     last_trick_winner = getattr(round_, "last_trick_winner", None)
-    if last_trick_winner is not None and last_trick_winner.team is not None:
-        last_trick_team = last_trick_winner.team.name
+    if last_trick_winner is not None:
+        last_trick_side = last_trick_winner.position.team_side
 
-    belote_team = _belote_team_in_round(round_)
+    belote_side = _belote_side_in_round(round_)
 
-    attacking_team = (
-        contract.team.name if contract is not None else None
+    attacking_side = (
+        contract.player.position.team_side if contract is not None else None
     )
     contract_made = contract is not None and _contract_made(round_)
     # Unannounced-Slam marker set by the engine (None or an
@@ -226,17 +226,17 @@ def _recap_breakdown(round_) -> dict:
 
     rules = rules_for(trump)
     out = {}
-    for team_name in ("North-South", "East-West"):
-        tricks = team_tricks.get(team_name, [])
+    for side in TeamSide:
+        tricks = team_tricks.get(side, [])
         raw_card_pts = sum(
             rules.points(card)
             for tr in tricks
             for _, card in tr.get_plays()
         )
-        raw_last_trick = 10 if team_name == last_trick_team else 0
-        raw_belote = 20 if team_name == belote_team else 0
+        raw_last_trick = 10 if side is last_trick_side else 0
+        raw_belote = 20 if side is belote_side else 0
 
-        is_attacker = (team_name == attacking_team)
+        is_attacker = (side is attacking_side)
         is_winner = (is_attacker == contract_made)
         contract_row = 0
         card_points_value = raw_card_pts
@@ -252,7 +252,7 @@ def _recap_breakdown(round_) -> dict:
         # Belote (+20) is always preserved for the team holding the
         # pair, win or lose — so it counts iff this team is the
         # holder, in every scoring shape.
-        belote_count = (team_name == belote_team)
+        belote_count = (side is belote_side)
 
         if contract is None:
             # All passed — nothing scores.
@@ -309,7 +309,7 @@ def _recap_breakdown(round_) -> dict:
             if is_winner:
                 contract_row = 160 + base * mult
 
-        out[team_name] = {
+        out[side] = {
             "contract": contract_row,
             "card_points": card_points_value if cards_count else 0,
             "card_points_substituted": card_points_substituted,
@@ -402,8 +402,8 @@ def _format_outcome_table(
     carries the flat 250 substitute, and the label is appended to its
     right (e.g. ``← Grand Slam``) to explain why.
     """
-    ns = breakdown.get("North-South", {})
-    ew = breakdown.get("East-West", {})
+    ns = breakdown.get(TeamSide.NS, {})
+    ew = breakdown.get(TeamSide.EW, {})
 
     def _count_cell(value: int) -> Text:
         if all_passed:
@@ -419,8 +419,10 @@ def _format_outcome_table(
     # Header row: "                          N-S     E-W"
     header = Text()
     header.append(f"  {'':<22}", style=DIM)
-    header.append(f"{'N-S':>6}", style=f"bold {BLUE}")
-    header.append(f"  {'E-W':>6}", style=f"bold {ORANGE}")
+    header.append(f"{_team_abbr(TeamSide.NS):>6}",
+                  style=f"bold {_team_color(TeamSide.NS)}")
+    header.append(f"  {_team_abbr(TeamSide.EW):>6}",
+                  style=f"bold {_team_color(TeamSide.EW)}")
     header.append("\n")
 
     row_tricks = Text()
@@ -513,8 +515,8 @@ def _format_recap_table(
     data the columns therefore reconcile: Contract + Round points =
     Round score, which the divider anchors.
     """
-    ns = breakdown.get("North-South", {})
-    ew = breakdown.get("East-West", {})
+    ns = breakdown.get(TeamSide.NS, {})
+    ew = breakdown.get(TeamSide.EW, {})
 
     def _num_cell(value: int, *, show_zero: bool = True) -> Text:
         t = Text()
@@ -541,8 +543,10 @@ def _format_recap_table(
     # Header row: "                          N-S     E-W"
     header = Text()
     header.append(f"  {'':<22}", style=DIM)
-    header.append(f"{'N-S':>6}", style=f"bold {BLUE}")
-    header.append(f"  {'E-W':>6}", style=f"bold {ORANGE}")
+    header.append(f"{_team_abbr(TeamSide.NS):>6}",
+                  style=f"bold {_team_color(TeamSide.NS)}")
+    header.append(f"  {_team_abbr(TeamSide.EW):>6}",
+                  style=f"bold {_team_color(TeamSide.EW)}")
     header.append("\n")
 
     # Contract row — the bonus each team gets from the contract.
@@ -582,8 +586,8 @@ def _format_recap_table(
     return out
 
 
-def _belote_team_in_round(round_) -> Optional[str]:
-    """Return the team *holding* both K and Q of trump this round.
+def _belote_side_in_round(round_) -> Optional[TeamSide]:
+    """Return the side *holding* both K and Q of trump this round.
 
     Belote belongs to whoever holds the pair (``belote_holder``),
     not to whichever team captures those cards in a trick — see the
@@ -591,9 +595,9 @@ def _belote_team_in_round(round_) -> Optional[str]:
     :meth:`contrai_engine.model.round.Round.calculate_round_scores`.
     """
     holder = getattr(round_, "belote_holder", None)
-    if holder is None or getattr(holder, "team", None) is None:
+    if holder is None:
         return None
-    return holder.team.name
+    return holder.position.team_side
 
 
 def _contract_made(round_) -> bool:
@@ -612,4 +616,4 @@ def _contract_made(round_) -> bool:
     if contract is None:
         return False
     scores = getattr(round_, "round_scores", {}) or {}
-    return scores.get(contract.team.name, 0) > 0
+    return scores.get(contract.player.position.team_side, 0) > 0

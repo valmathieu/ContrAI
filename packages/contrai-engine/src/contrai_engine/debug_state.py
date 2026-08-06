@@ -23,6 +23,7 @@ from contrai_core import (
     Position,
     Rank,
     Suit,
+    TeamSide,
     TrumpRules,
     rules_for,
 )
@@ -181,7 +182,7 @@ def deal_lines(round_: "Round") -> list[str]:
 
 
 def round_result_lines(
-    round_: "Round", running_scores: dict[str, int]
+    round_: "Round", running_scores: dict[TeamSide, int]
 ) -> list[str]:
     """Plain-text summary of a finished (or all-passed) round.
 
@@ -192,15 +193,18 @@ def round_result_lines(
         round_: The round to summarize. ``contract is None`` means the
             deal was passed out.
         running_scores: The game's total scores after folding this
-            round in, keyed by team name.
+            round in, keyed by :class:`TeamSide`.
 
     Returns:
         The outcome line, a round-points line (skipped for an all-pass,
         which scores nothing), and a totals line.
     """
 
-    def _totals(scores: dict[str, int]) -> str:
-        return " · ".join(f"{name} {pts}" for name, pts in scores.items())
+    def _totals(scores: dict[TeamSide, int]) -> str:
+        # ``str(TeamSide.NS)`` is the short "NS" token, which is exactly
+        # the register a diagnostics line wants — the full "North-South"
+        # label is the view's business.
+        return " · ".join(f"{side} {pts}" for side, pts in scores.items())
 
     contract = round_.contract
     if contract is None:

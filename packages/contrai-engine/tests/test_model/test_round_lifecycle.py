@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from contrai_core.card import Card
 from contrai_core.deck import Deck
+from contrai_core.team_side import TeamSide
 from contrai_core.types import Rank, Suit
 
 from contrai_engine.model.round import Round
@@ -221,14 +222,14 @@ class TestFullRoundLifecycleHappyPath:
         # and no belote
         # is in play here.
         assert sum(scores.values()) == contract.value + 162
-        assert scores["North-South"] > scores["East-West"]
+        assert scores[TeamSide.NS] > scores[TeamSide.EW]
         # Regression pin: the concrete split observed from this exact
         # stacked deal, under the RNG the ``pinned_rng`` fixture seeds -
         # the card-play strategy draws from it to break ties nothing else
         # separates. Re-run twice to confirm before trusting a change to
         # these numbers reflects a real scoring-rule change and not a
         # stacking edit.
-        assert scores == {"North-South": 258, "East-West": 14}
+        assert scores == {TeamSide.NS: 258, TeamSide.EW: 14}
 
 
 # ---------------------------------------------------------------------------
@@ -354,10 +355,10 @@ class TestFullRoundLifecycleBelote:
         # credits it to the holder's team independent of who wins the
         # round or which cards capture the K/Q).
         assert sum(scores.values()) == contract.value + 162 + 20
-        assert scores["North-South"] > scores["East-West"]
+        assert scores[TeamSide.NS] > scores[TeamSide.EW]
         # Regression pin: the concrete split observed from this exact
         # stacked deal, under the RNG the ``pinned_rng`` fixture seeds.
-        assert scores == {"North-South": 278, "East-West": 14}
+        assert scores == {TeamSide.NS: 278, TeamSide.EW: 14}
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +454,7 @@ class TestFullRoundLifecycleAllPass:
 
         # Zero scores for both teams - no contract means nothing was at
         # stake, not merely "no score attribute published".
-        assert scores == {"North-South": 0, "East-West": 0}
+        assert scores == {TeamSide.NS: 0, TeamSide.EW: 0}
         assert round_.round_scores == scores
         # calculate_round_scores was never called on this path - the
         # made/failed and unannounced-Slam signals stay at their

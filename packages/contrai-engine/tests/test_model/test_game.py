@@ -15,6 +15,7 @@ from contrai_engine.model import game as game_module
 from contrai_engine.model.game import Game
 from contrai_engine.model.player import AiPlayer
 from contrai_core.deck import Deck
+from contrai_core.team_side import TeamSide
 from contrai_core.exceptions import InvalidPlayerCountError
 from contrai_core.bid import ContractBid, PassBid
 from contrai_core.card import Card
@@ -136,7 +137,7 @@ def test_game_initialization(game, players):
     
     # Check team formation
     team_names = {team.name for team in game.teams}
-    assert team_names == {"East-West","North-South"}
+    assert team_names == {"East-West", "North-South"}
 
 def test_game_requires_exactly_four_players():
     """
@@ -262,27 +263,27 @@ def test_check_game_over_not_finished(game):
     """
     Test check_game_over when no team has reached target score.
     """
-    game.scores = {'North-South': 1200, 'East-West': 800}
+    game.scores = {TeamSide.NS: 1200, TeamSide.EW: 800}
 
     result = game.check_game_over(target_score=1500)
 
     assert result.game_over is False
     assert result.winner is None
     assert result.tied_teams is None
-    assert result.final_scores == {'North-South': 1200, 'East-West': 800}
+    assert result.final_scores == {TeamSide.NS: 1200, TeamSide.EW: 800}
 
 def test_check_game_over_winner(game):
     """
     Test check_game_over when a team has won.
     """
-    game.scores = {'North-South': 1600, 'East-West': 1200}
+    game.scores = {TeamSide.NS: 1600, TeamSide.EW: 1200}
 
     result = game.check_game_over(target_score=1500)
 
     assert result.game_over is True
-    assert result.winner == 'North-South'
+    assert result.winner == TeamSide.NS
     assert result.tied_teams is None
-    assert result.final_scores == {'North-South': 1600, 'East-West': 1200}
+    assert result.final_scores == {TeamSide.NS: 1600, TeamSide.EW: 1200}
 
 def test_check_game_over_tie_continues_game(game):
     """
@@ -292,14 +293,14 @@ def test_check_game_over_tie_continues_game(game):
     game continues with tiebreaker rounds until one team leads, so
     ``game_over`` stays False while ``tied_teams`` flags the state.
     """
-    game.scores = {'North-South': 1600, 'East-West': 1600}
+    game.scores = {TeamSide.NS: 1600, TeamSide.EW: 1600}
 
     result = game.check_game_over(target_score=1500)
 
     assert result.game_over is False
     assert result.winner is None
-    assert result.tied_teams == ['North-South', 'East-West']
-    assert result.final_scores == {'North-South': 1600, 'East-West': 1600}
+    assert result.tied_teams == [TeamSide.NS, TeamSide.EW]
+    assert result.final_scores == {TeamSide.NS: 1600, TeamSide.EW: 1600}
 
 
 def test_check_game_over_tie_below_target_not_flagged(game):
@@ -309,7 +310,7 @@ def test_check_game_over_tie_below_target_not_flagged(game):
     ``tied_teams`` only signals the sudden-death state — equal scores
     short of the target are just an unfinished game.
     """
-    game.scores = {'North-South': 1200, 'East-West': 1200}
+    game.scores = {TeamSide.NS: 1200, TeamSide.EW: 1200}
 
     result = game.check_game_over(target_score=1500)
 
@@ -325,12 +326,12 @@ def test_check_game_over_tie_resolved_by_next_round(game):
     After sudden death, both teams sit above the target but one now
     leads — that team wins.
     """
-    game.scores = {'North-South': 1760, 'East-West': 1600}
+    game.scores = {TeamSide.NS: 1760, TeamSide.EW: 1600}
 
     result = game.check_game_over(target_score=1500)
 
     assert result.game_over is True
-    assert result.winner == 'North-South'
+    assert result.winner == TeamSide.NS
     assert result.tied_teams is None
 
 
@@ -338,12 +339,12 @@ def test_check_game_over_default_target_score(game):
     """
     Test that check_game_over uses 1500 as the default target score.
     """
-    game.scores = {'North-South': 1500, 'East-West': 900}
+    game.scores = {TeamSide.NS: 1500, TeamSide.EW: 900}
 
     result = game.check_game_over()
 
     assert result.game_over is True
-    assert result.winner == 'North-South'
+    assert result.winner == TeamSide.NS
 
 
 def test_next_dealer_picks_random_when_none(game, monkeypatch):
@@ -412,7 +413,7 @@ def test_manage_round_completed(game, monkeypatch):
     """
     contract = object()
     FakeRound.bidding_contract = contract
-    FakeRound.play_scores = {'North-South': 160, 'East-West': 0}
+    FakeRound.play_scores = {TeamSide.NS: 160, TeamSide.EW: 0}
     monkeypatch.setattr(game_module, 'Round', FakeRound)
 
     view = RecordingView()
@@ -421,7 +422,7 @@ def test_manage_round_completed(game, monkeypatch):
     # manage_round mutates game state in place and returns nothing: the contract
     # is recorded and the round's points are folded into the running totals.
     assert game.current_contract is contract
-    assert game.scores == {'North-South': 160, 'East-West': 0}
+    assert game.scores == {TeamSide.NS: 160, TeamSide.EW: 0}
 
     # The full lifecycle ran, in order.
     assert game.current_round.calls == [
@@ -437,14 +438,14 @@ def test_manage_round_accumulates_scores_across_rounds(game, monkeypatch):
     Test that manage_round adds each round's scores onto the running totals.
     """
     FakeRound.bidding_contract = object()
-    FakeRound.play_scores = {'North-South': 90, 'East-West': 70}
+    FakeRound.play_scores = {TeamSide.NS: 90, TeamSide.EW: 70}
     monkeypatch.setattr(game_module, 'Round', FakeRound)
 
     game.manage_round()
-    assert game.scores == {'North-South': 90, 'East-West': 70}
+    assert game.scores == {TeamSide.NS: 90, TeamSide.EW: 70}
 
     game.manage_round()
-    assert game.scores == {'North-South': 180, 'East-West': 140}
+    assert game.scores == {TeamSide.NS: 180, TeamSide.EW: 140}
 
 
 def test_manage_round_all_pass_redeals(game, monkeypatch):
@@ -454,7 +455,7 @@ def test_manage_round_all_pass_redeals(game, monkeypatch):
     callback fires on the view.
     """
     FakeRound.bidding_contract = None
-    FakeRound.failed_scores = {'North-South': 0, 'East-West': 0}
+    FakeRound.failed_scores = {TeamSide.NS: 0, TeamSide.EW: 0}
     monkeypatch.setattr(game_module, 'Round', FakeRound)
 
     view = RecordingView()
@@ -468,7 +469,7 @@ def test_manage_round_all_pass_redeals(game, monkeypatch):
     assert 'handle_failed_contract' in game.current_round.calls
     # The view was asked to redeal, and the totals were left untouched.
     assert view.redeal_count == 1
-    assert game.scores == {'North-South': 0, 'East-West': 0}
+    assert game.scores == {TeamSide.NS: 0, TeamSide.EW: 0}
 
 
 # ---------------------------------------------------------------------------
@@ -522,7 +523,7 @@ def test_manage_round_completed_logs_round_result_at_debug(
     """
     contract = Contract(ContractBid(players[0], 100, Suit.HEARTS))
     FakeRound.bidding_contract = contract
-    FakeRound.play_scores = {'North-South': 160, 'East-West': 0}
+    FakeRound.play_scores = {TeamSide.NS: 160, TeamSide.EW: 0}
     FakeRound.contract_made = True
     monkeypatch.setattr(game_module, 'Round', FakeRound)
 
@@ -540,8 +541,8 @@ def test_manage_round_completed_logs_round_result_at_debug(
     assert len(result_messages) == 1
     assert result_messages[0].splitlines() == [
         f"Round #{game.round_number}: contract 100 ♥ by N — made.",
-        "Round points: North-South 160 · East-West 0",
-        "Totals: North-South 160 · East-West 0",
+        "Round points: NS 160 · EW 0",
+        "Totals: NS 160 · EW 0",
     ]
 
 
@@ -552,7 +553,7 @@ def test_manage_round_all_pass_logs_redeal_at_debug(game, monkeypatch, caplog):
     totals left untouched.
     """
     FakeRound.bidding_contract = None
-    FakeRound.failed_scores = {'North-South': 0, 'East-West': 0}
+    FakeRound.failed_scores = {TeamSide.NS: 0, TeamSide.EW: 0}
     monkeypatch.setattr(game_module, 'Round', FakeRound)
 
     with caplog.at_level(logging.DEBUG, logger="contrai_engine"):
@@ -569,7 +570,7 @@ def test_manage_round_all_pass_logs_redeal_at_debug(game, monkeypatch, caplog):
     assert len(result_messages) == 1
     assert result_messages[0].splitlines() == [
         f"Round #{game.round_number}: all passed — redeal.",
-        "Totals: North-South 0 · East-West 0",
+        "Totals: NS 0 · EW 0",
     ]
 
 

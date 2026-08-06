@@ -24,6 +24,7 @@ from contrai_core.bid import ContractBid, SlamLevel
 from contrai_core.card import Card
 from contrai_core.contract import Contract
 from contrai_core.play import Play, PlayState
+from contrai_core.team_side import TeamSide
 from contrai_core.types import Rank, Suit
 
 from contrai_engine.model.round import Round, UnannouncedSlam
@@ -141,7 +142,7 @@ class TestScoreRoundResult:
         )
         result = score_round(round_)
         assert isinstance(result, RoundScore)
-        assert result.scores["North-South"] == 500
+        assert result.scores[TeamSide.NS] == 500
         assert result.contract_made is True
         assert result.unannounced_slam is None
         # Pure: the round's result attributes are untouched until the
@@ -168,8 +169,8 @@ class TestSlamScoring:
             players, contract=contract, trick_winners=["N"] * 8
         )
         scores = round_.calculate_round_scores()
-        assert scores["North-South"] == 500
-        assert scores["East-West"] == 0
+        assert scores[TeamSide.NS] == 500
+        assert scores[TeamSide.EW] == 0
 
     def test_slam_failed_normal_defender_scores_500(self, players):
         # Attacker (N) takes only 7 tricks; W steals one → contract fails.
@@ -177,8 +178,8 @@ class TestSlamScoring:
         winners = ["N"] * 7 + ["W"]
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
         scores = round_.calculate_round_scores()
-        assert scores["North-South"] == 0
-        assert scores["East-West"] == 500
+        assert scores[TeamSide.NS] == 0
+        assert scores[TeamSide.EW] == 500
 
     def test_slam_made_doubled_attacker_scores_1000(self, players):
         contract = Contract(
@@ -189,8 +190,8 @@ class TestSlamScoring:
             players, contract=contract, trick_winners=["N"] * 8
         )
         scores = round_.calculate_round_scores()
-        assert scores["North-South"] == 1000
-        assert scores["East-West"] == 0
+        assert scores[TeamSide.NS] == 1000
+        assert scores[TeamSide.EW] == 0
 
     def test_slam_failed_doubled_defender_scores_1000(self, players):
         contract = Contract(
@@ -200,8 +201,8 @@ class TestSlamScoring:
         winners = ["N"] * 6 + ["E", "W"]
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
         scores = round_.calculate_round_scores()
-        assert scores["North-South"] == 0
-        assert scores["East-West"] == 1000
+        assert scores[TeamSide.NS] == 0
+        assert scores[TeamSide.EW] == 1000
 
     def test_slam_made_redoubled_attacker_scores_2000(self, players):
         contract = Contract(
@@ -213,8 +214,8 @@ class TestSlamScoring:
             players, contract=contract, trick_winners=["N"] * 8
         )
         scores = round_.calculate_round_scores()
-        assert scores["North-South"] == 2000
-        assert scores["East-West"] == 0
+        assert scores[TeamSide.NS] == 2000
+        assert scores[TeamSide.EW] == 0
 
     def test_slam_failed_redoubled_defender_scores_2000(self, players):
         contract = Contract(
@@ -225,8 +226,8 @@ class TestSlamScoring:
         winners = ["N"] * 7 + ["W"]
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
         scores = round_.calculate_round_scores()
-        assert scores["North-South"] == 0
-        assert scores["East-West"] == 2000
+        assert scores[TeamSide.NS] == 0
+        assert scores[TeamSide.EW] == 2000
 
     def test_slam_team_partner_wins_a_trick_still_makes(self, players):
         """Plain Slam only cares about the TEAM winning all 8. The
@@ -237,8 +238,8 @@ class TestSlamScoring:
         winners = ["N"] * 5 + ["S"] * 3
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
         scores = round_.calculate_round_scores()
-        assert scores["North-South"] == 500
-        assert scores["East-West"] == 0
+        assert scores[TeamSide.NS] == 500
+        assert scores[TeamSide.EW] == 0
 
 
 class TestSoloSlamScoring:
@@ -250,8 +251,8 @@ class TestSoloSlamScoring:
             players, contract=contract, trick_winners=["N"] * 8
         )
         scores = round_.calculate_round_scores()
-        assert scores["North-South"] == 1000
-        assert scores["East-West"] == 0
+        assert scores[TeamSide.NS] == 1000
+        assert scores[TeamSide.EW] == 0
 
     def test_solo_slam_failed_when_partner_takes_a_trick(self, players):
         """Key Solo Slam invariant: team owning all 8 tricks is NOT
@@ -262,16 +263,16 @@ class TestSoloSlamScoring:
         scores = round_.calculate_round_scores()
         # Team took all 8 tricks, but partner won one → Solo Slam fails.
         # Defenders score the at-risk amount.
-        assert scores["North-South"] == 0
-        assert scores["East-West"] == 1000
+        assert scores[TeamSide.NS] == 0
+        assert scores[TeamSide.EW] == 1000
 
     def test_solo_slam_failed_when_opponent_takes_a_trick(self, players):
         contract = _contract(players["N"], SlamLevel.SOLO_SLAM, Suit.SPADES)
         winners = ["N"] * 7 + ["W"]
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
         scores = round_.calculate_round_scores()
-        assert scores["North-South"] == 0
-        assert scores["East-West"] == 1000
+        assert scores[TeamSide.NS] == 0
+        assert scores[TeamSide.EW] == 1000
 
     def test_solo_slam_made_doubled_scores_2000(self, players):
         contract = Contract(
@@ -282,8 +283,8 @@ class TestSoloSlamScoring:
             players, contract=contract, trick_winners=["N"] * 8
         )
         scores = round_.calculate_round_scores()
-        assert scores["North-South"] == 2000
-        assert scores["East-West"] == 0
+        assert scores[TeamSide.NS] == 2000
+        assert scores[TeamSide.EW] == 0
 
     def test_solo_slam_made_redoubled_scores_4000(self, players):
         contract = Contract(
@@ -295,8 +296,8 @@ class TestSoloSlamScoring:
             players, contract=contract, trick_winners=["N"] * 8
         )
         scores = round_.calculate_round_scores()
-        assert scores["North-South"] == 4000
-        assert scores["East-West"] == 0
+        assert scores[TeamSide.NS] == 4000
+        assert scores[TeamSide.EW] == 0
 
     def test_solo_slam_failed_redoubled_defender_scores_4000(self, players):
         contract = Contract(
@@ -307,8 +308,8 @@ class TestSoloSlamScoring:
         winners = ["N"] * 7 + ["S"]  # partner steals one → Solo Slam fails
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
         scores = round_.calculate_round_scores()
-        assert scores["North-South"] == 0
-        assert scores["East-West"] == 4000
+        assert scores[TeamSide.NS] == 0
+        assert scores[TeamSide.EW] == 4000
 
 
 class TestSlamFamilyBeloteLayering:
@@ -323,8 +324,8 @@ class TestSlamFamilyBeloteLayering:
         )
         round_.belote_holder = players["N"]  # N-S holds K+Q of trump
         scores = round_.calculate_round_scores()
-        assert scores["North-South"] == 520  # 500 + 20
-        assert scores["East-West"] == 0
+        assert scores[TeamSide.NS] == 520  # 500 + 20
+        assert scores[TeamSide.EW] == 0
 
     def test_slam_failed_belote_to_defender(self, players):
         """Slam failed, defender holds belote → 500 + 20 to defender."""
@@ -333,8 +334,8 @@ class TestSlamFamilyBeloteLayering:
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
         round_.belote_holder = players["W"]  # E-W holds K+Q of trump
         scores = round_.calculate_round_scores()
-        assert scores["North-South"] == 0
-        assert scores["East-West"] == 520  # 500 + 20
+        assert scores[TeamSide.NS] == 0
+        assert scores[TeamSide.EW] == 520  # 500 + 20
 
     def test_slam_failed_belote_to_attacker_independent_of_contract(
         self, players
@@ -348,8 +349,8 @@ class TestSlamFamilyBeloteLayering:
         round_.belote_holder = players["N"]  # attacker holds belote
         scores = round_.calculate_round_scores()
         # Attacker still gets +20 from belote even though the contract failed.
-        assert scores["North-South"] == 20
-        assert scores["East-West"] == 500
+        assert scores[TeamSide.NS] == 20
+        assert scores[TeamSide.EW] == 500
 
 
 class TestNumericContractScoringRegression:
@@ -397,9 +398,9 @@ class TestNumericContractScoringRegression:
         # Card points = 20*7 = 140; last-trick bonus = +10 → 150 card pts.
         # Contract made (150 >= 80) → attacker score = 80 + 150 = 230.
         assert round_.unannounced_slam is None
-        assert scores["North-South"] == 230
+        assert scores[TeamSide.NS] == 230
         # E-W captured a single 0-point trick → 0 card points.
-        assert scores["East-West"] == 0
+        assert scores[TeamSide.EW] == 0
 
     def test_numeric_failed_normal_defender_gets_160_plus_base(self, players):
         """Failed 80 contract by N-S: defender gets (160 + 80) * 1 = 240."""
@@ -409,8 +410,8 @@ class TestNumericContractScoringRegression:
             players, contract=contract, trick_winners=["E"] * 8
         )
         scores = round_.calculate_round_scores()
-        assert scores["North-South"] == 0
-        assert scores["East-West"] == 240
+        assert scores[TeamSide.NS] == 0
+        assert scores[TeamSide.EW] == 240
 
 
 # ---------------------------------------------------------------------------
@@ -446,7 +447,7 @@ def _numeric_round(
     Args:
         players_dict: the ``players`` fixture (seat → Player).
         contract: a numeric Contract bound to one of the players.
-        team_cards: mapping team-name → list of ``(seat, Card)`` plays.
+        team_cards: mapping team side → list of ``(seat, Card)`` plays.
             Each team's cards are chunked into four-play tricks padded
             with 0-point filler, every play made by that team's seats —
             so the trick's winner (whoever it is) credits the whole pile
@@ -465,8 +466,8 @@ def _numeric_round(
     round_.contract = contract
 
     plays = []
-    expected_teams = []
-    for team_name, seat_cards in team_cards.items():
+    expected_sides = []
+    for side, seat_cards in team_cards.items():
         # A trick holds exactly four plays — chunk the team's cards and
         # pad the tail with 0-point filler from the chunk's first seat,
         # keeping every play (hence the winner) inside the team.
@@ -478,19 +479,22 @@ def _numeric_round(
             plays.extend(
                 Play(players_dict[seat], card) for seat, card in chunk
             )
-            expected_teams.append(team_name)
+            expected_sides.append(side)
     if last_trick_winner is not None:
         plays.extend(
             _stack_trick(players_dict, last_trick_winner, contract.suit)
         )
-        expected_teams.append(players_dict[last_trick_winner].team.name)
+        expected_sides.append(
+            players_dict[last_trick_winner].position.team_side
+        )
     _seed_play_state(round_, players_dict, contract, plays)
 
     # Self-check: every synthesised trick is won inside the team its
     # cards were meant for, and the last-trick bonus lands as intended.
     assert [
-        winner.team.name for winner in round_.play_state.trick_winners
-    ] == expected_teams
+        winner.position.team_side
+        for winner in round_.play_state.trick_winners
+    ] == expected_sides
     if last_trick_winner is not None:
         assert (
             round_.play_state.trick_winners[-1]
@@ -528,16 +532,16 @@ class TestNumericBeloteByHolder:
             players,
             contract=contract,
             team_cards={
-                "East-West": self._all_hearts_for("E"),
-                "North-South": [],
+                TeamSide.EW: self._all_hearts_for("E"),
+                TeamSide.NS: [],
             },
             last_trick_winner="N",  # last-trick bonus to N-S, not the declarer
             belote_holder=None,     # pair is split — nobody holds it
         )
         scores = round_.calculate_round_scores()
         assert round_.contract_made is False
-        assert scores["East-West"] == 0
-        assert scores["North-South"] == 240  # 160 + 80
+        assert scores[TeamSide.EW] == 0
+        assert scores[TeamSide.NS] == 240  # 160 + 80
 
     def test_belote_credited_to_holder_even_if_opponent_captures(self, players):
         """E-W capture the K+Q in their tricks, but S (N-S) *held* the
@@ -547,17 +551,17 @@ class TestNumericBeloteByHolder:
             players,
             contract=contract,
             team_cards={
-                "East-West": self._all_hearts_for("E"),
-                "North-South": [],
+                TeamSide.EW: self._all_hearts_for("E"),
+                TeamSide.NS: [],
             },
             last_trick_winner="N",
             belote_holder="S",  # N-S holds the pair
         )
         scores = round_.calculate_round_scores()
         # Declarer E-W realized 62 < 80 → failed → 0.
-        assert scores["East-West"] == 0
+        assert scores[TeamSide.EW] == 0
         # Defender N-S: 160 + 80 (winner-takes-all, M=1) + 20 belote.
-        assert scores["North-South"] == 260
+        assert scores[TeamSide.NS] == 260
 
     def test_failed_declarer_keeps_only_its_belote(self, players):
         """A failed declarer keeps its belote bonus (always preserved)
@@ -567,11 +571,11 @@ class TestNumericBeloteByHolder:
             players,
             contract=contract,
             team_cards={
-                "East-West": [
+                TeamSide.EW: [
                     ("E", Card(Suit.HEARTS, Rank.KING)),
                     ("E", Card(Suit.HEARTS, Rank.QUEEN)),
                 ],
-                "North-South": [],
+                TeamSide.NS: [],
             },
             last_trick_winner="N",
             belote_holder="E",  # declarer holds the pair
@@ -579,8 +583,8 @@ class TestNumericBeloteByHolder:
         scores = round_.calculate_round_scores()
         # E-W realized = 7 cards + 20 belote = 27 < 80 → failed.
         assert round_.contract_made is False
-        assert scores["East-West"] == 20    # belote only
-        assert scores["North-South"] == 240  # 160 + 80
+        assert scores[TeamSide.EW] == 20    # belote only
+        assert scores[TeamSide.NS] == 240  # 160 + 80
 
 
 class TestNumericDoubledScoring:
@@ -612,10 +616,10 @@ class TestNumericDoubledScoring:
             players,
             contract=contract,
             team_cards={
-                "North-South": self._ns_big_pile(),
+                TeamSide.NS: self._ns_big_pile(),
                 # E-W win a fat trick — under the old rule they'd keep
                 # these 14 points; winner-takes-all zeroes them.
-                "East-West": [
+                TeamSide.EW: [
                     ("E", Card(Suit.DIAMONDS, Rank.TEN)),  # 10
                     ("E", Card(Suit.CLUBS, Rank.KING)),    # 4
                 ],
@@ -624,8 +628,8 @@ class TestNumericDoubledScoring:
         )
         scores = round_.calculate_round_scores()
         assert round_.contract_made is True
-        assert scores["North-South"] == 320  # 160 + 80*2
-        assert scores["East-West"] == 0
+        assert scores[TeamSide.NS] == 320  # 160 + 80*2
+        assert scores[TeamSide.EW] == 0
 
     def test_doubled_made_defender_keeps_only_belote(self, players):
         """The lone exception: the losing defender keeps its belote."""
@@ -637,15 +641,15 @@ class TestNumericDoubledScoring:
             players,
             contract=contract,
             team_cards={
-                "North-South": self._ns_big_pile(),
-                "East-West": [("E", Card(Suit.CLUBS, Rank.KING))],
+                TeamSide.NS: self._ns_big_pile(),
+                TeamSide.EW: [("E", Card(Suit.CLUBS, Rank.KING))],
             },
             last_trick_winner="N",
             belote_holder="E",  # E-W (defender) holds the pair
         )
         scores = round_.calculate_round_scores()
-        assert scores["North-South"] == 320  # 160 + 80*2
-        assert scores["East-West"] == 20     # belote only
+        assert scores[TeamSide.NS] == 320  # 160 + 80*2
+        assert scores[TeamSide.EW] == 20     # belote only
 
     def test_doubled_failed_winner_takes_160_plus_cm(self, players):
         """Doubled contract failed: the defense takes 160 + C×M, declarer 0."""
@@ -657,15 +661,15 @@ class TestNumericDoubledScoring:
             players,
             contract=contract,
             team_cards={
-                "North-South": [("N", Card(Suit.DIAMONDS, Rank.TEN))],  # 10 < 100
-                "East-West": [("E", Card(Suit.HEARTS, Rank.JACK))],
+                TeamSide.NS: [("N", Card(Suit.DIAMONDS, Rank.TEN))],  # 10 < 100
+                TeamSide.EW: [("E", Card(Suit.HEARTS, Rank.JACK))],
             },
             last_trick_winner="E",
         )
         scores = round_.calculate_round_scores()
         assert round_.contract_made is False
-        assert scores["North-South"] == 0
-        assert scores["East-West"] == 360  # 160 + 100*2
+        assert scores[TeamSide.NS] == 0
+        assert scores[TeamSide.EW] == 360  # 160 + 100*2
 
     def test_redoubled_failed_winner_takes_160_plus_c_times_four(self, players):
         """Redoubled failed: the defense takes 160 + C×4 — the same shape
@@ -679,14 +683,14 @@ class TestNumericDoubledScoring:
             players,
             contract=contract,
             team_cards={
-                "North-South": [("N", Card(Suit.DIAMONDS, Rank.TEN))],
-                "East-West": [("E", Card(Suit.HEARTS, Rank.JACK))],
+                TeamSide.NS: [("N", Card(Suit.DIAMONDS, Rank.TEN))],
+                TeamSide.EW: [("E", Card(Suit.HEARTS, Rank.JACK))],
             },
             last_trick_winner="E",
         )
         scores = round_.calculate_round_scores()
-        assert scores["North-South"] == 0
-        assert scores["East-West"] == 560  # 160 + 100*4
+        assert scores[TeamSide.NS] == 0
+        assert scores[TeamSide.EW] == 560  # 160 + 100*4
 
 
 # ---------------------------------------------------------------------------
@@ -723,8 +727,8 @@ class TestUnannouncedSlamScoring:
         scores = round_.calculate_round_scores()
         assert round_.unannounced_slam is UnannouncedSlam.SLAM
         assert round_.contract_made is True
-        assert scores["North-South"] == 350  # 100 + 250
-        assert scores["East-West"] == 0
+        assert scores[TeamSide.NS] == 350  # 100 + 250
+        assert scores[TeamSide.EW] == 0
 
     def test_bidder_personal_sweep_is_grand_slam(self, players):
         """N wins all 8 personally → UnannouncedSlam.GRAND_SLAM (same 250 substitute)."""
@@ -734,8 +738,8 @@ class TestUnannouncedSlamScoring:
         )
         scores = round_.calculate_round_scores()
         assert round_.unannounced_slam is UnannouncedSlam.GRAND_SLAM
-        assert scores["North-South"] == 350  # 100 + 250
-        assert scores["East-West"] == 0
+        assert scores[TeamSide.NS] == 350  # 100 + 250
+        assert scores[TeamSide.EW] == 0
 
     def test_unannounced_slam_forces_made_below_threshold(self, players):
         """The filler tricks carry 0 card points, so a 180 contract could
@@ -747,8 +751,8 @@ class TestUnannouncedSlamScoring:
         )
         scores = round_.calculate_round_scores()
         assert round_.contract_made is True
-        assert scores["North-South"] == 430  # 180 + 250
-        assert scores["East-West"] == 0
+        assert scores[TeamSide.NS] == 430  # 180 + 250
+        assert scores[TeamSide.EW] == 0
 
     def test_unannounced_slam_layers_belote_on_top(self, players):
         """Belote (+20) still credits the holder on top of contract + 250."""
@@ -757,8 +761,8 @@ class TestUnannouncedSlamScoring:
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
         round_.belote_holder = players["N"]  # N-S holds K+Q of trump
         scores = round_.calculate_round_scores()
-        assert scores["North-South"] == 370  # 100 + 250 + 20
-        assert scores["East-West"] == 0
+        assert scores[TeamSide.NS] == 370  # 100 + 250 + 20
+        assert scores[TeamSide.EW] == 0
 
     def test_doubled_sweep_keeps_winner_takes_all_and_is_unflagged(self, players):
         """A doubled contract swept by the declarer keeps the
@@ -790,8 +794,8 @@ class TestUnannouncedSlamScoring:
         scores = round_.calculate_round_scores()
         assert round_.unannounced_slam is None
         assert round_.contract_made is True
-        assert scores["North-South"] == 360  # 160 + 100*2
-        assert scores["East-West"] == 0
+        assert scores[TeamSide.NS] == 360  # 160 + 100*2
+        assert scores[TeamSide.EW] == 0
 
     def test_defense_sweep_is_not_an_unannounced_slam(self, players):
         """Declaring team only: when the *defence* sweeps, the declarer
@@ -803,5 +807,5 @@ class TestUnannouncedSlamScoring:
         scores = round_.calculate_round_scores()
         assert round_.unannounced_slam is None
         assert round_.contract_made is False
-        assert scores["East-West"] == 0
-        assert scores["North-South"] == 260  # 160 + 100 (normal failed)
+        assert scores[TeamSide.EW] == 0
+        assert scores[TeamSide.NS] == 260  # 160 + 100 (normal failed)

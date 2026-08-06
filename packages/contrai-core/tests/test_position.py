@@ -1,8 +1,9 @@
 """Tests for the :class:`Position` seat enum.
 
 Covers membership and the canonical seating order, the ``next`` /
-``partner`` / ``opponents`` turn-order derivations and the
-``is_teammate`` same-side predicate built on them, strict value parsing
+``partner`` / ``opponents`` turn-order derivations, the ``team_side``
+which-side value and the ``is_teammate`` same-side predicate built on
+them, strict value parsing
 (the plain constructor accepts only the exact display strings — no
 case-folding, no French fallback), the French seat-name bijection the
 scraper's DOM ids need, the absence of ordering support, and the
@@ -12,7 +13,7 @@ plain seat names.
 
 import pytest
 
-from contrai_core import Position
+from contrai_core import Position, TeamSide
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +121,32 @@ class TestOpponents:
 
     def test_north_opponents_are_west_and_east(self):
         assert Position.NORTH.opponents == (Position.WEST, Position.EAST)
+
+
+# ---------------------------------------------------------------------------
+# team_side — which side of the table, as a value
+# ---------------------------------------------------------------------------
+
+
+class TestTeamSide:
+    def test_named_sides(self):
+        assert Position.NORTH.team_side is TeamSide.NS
+        assert Position.SOUTH.team_side is TeamSide.NS
+        assert Position.WEST.team_side is TeamSide.EW
+        assert Position.EAST.team_side is TeamSide.EW
+
+    @pytest.mark.parametrize("position", list(Position))
+    def test_partner_shares_the_side(self, position):
+        assert position.partner.team_side is position.team_side
+
+    @pytest.mark.parametrize("position", list(Position))
+    def test_opponents_are_on_the_other_side(self, position):
+        for opponent in position.opponents:
+            assert opponent.team_side is position.team_side.opponent
+
+    def test_both_sides_are_seated(self):
+        # The derivation must not collapse the table onto one side.
+        assert {position.team_side for position in Position} == set(TeamSide)
 
 
 # ---------------------------------------------------------------------------

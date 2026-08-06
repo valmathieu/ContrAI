@@ -19,7 +19,7 @@ Source at `packages/contrai-engine/src/contrai_engine/`:
     - `scoring.py` — the pure `score_round(round) -> RoundScore` transformation (the numeric / unannounced-Slam / doubled / Slam-family scoring shapes, belote +20), plus `count_player_tricks` and the `UnannouncedSlam` outcome tag
 - `view/` — the terminal UI, split into focused modules (see [CLI](#cli) below):
   - `rich_view.py` — `RichView`, the stateful orchestrator: console + per-game state, the engine hooks (`request_*_action`, `on_*`, `show_*`), the input loops, and `_render_in_game` (the single seam that pulls state off `self` and feeds the pure builders). `RoundSummary` lives here too. Re-exported from `view/__init__.py`, so both `from contrai_engine.view.rich_view import RichView` (used by `cli.py` / `model/game.py`) and `from contrai_engine.view import RichView` work.
-  - `theme.py` — design tokens (colour palette) and lookup tables (target-score options, position / team labels, bid aliases, valid contract values)
+  - `theme.py` — design tokens (colour palette) and lookup tables (target-score options, `POSITION_SHORT` seat labels, `TEAM_ABBR` side labels, bid aliases, valid contract values). The team labels here are *presentation only* — identity is `TeamSide`, so rewording one cannot break a score lookup
   - `formatting.py` — stateless text / glyph / label builders (seat & suit labels, the shared contract / trump labels, and the compact `Bid` label)
   - `parsing.py` — human-input parsers (`_parse_bid_input`, `_parse_card_input`)
   - `bidding_rules.py` — the messaging-only `_illegal_bid_reason` mirror of the auction rules (the specific nudge shown when a human types an illegal bid); the adaptive prompt hint is derived directly from `Auction.legal_actions`
@@ -116,7 +116,10 @@ The two zoom diagrams below break out the dense parts.
 
 ### Scoring
 
-`Round.calculate_round_scores` is a thin wrapper around `scoring.score_round(self)`, the pure `round → RoundScore` transformation: it reads the played-out round and publishes the result's `scores` / `contract_made` / `unannounced_slam` back onto the round. The decision tree below traces every scoring shape — the all-passed zero case, the Slam / Solo Slam at-risk grid, and the numeric path with its unannounced-Slam 250 substitute, share-the-pile (M = 1) and doubled winner-takes-all (M > 1) branches — with the Belote +20 to the K + Q holder layered on top of every one.
+`Round.calculate_round_scores` is a thin wrapper around `scoring.score_round(self)`, the pure `round → RoundScore` transformation: it reads the played-out round and publishes the result's `scores` / `contract_made` / `unannounced_slam` back onto the round.
+
+**Every score is keyed by `TeamSide`.** `RoundScore.scores`, `Round.round_scores` / `team_tricks`, `Game.scores` and `GameOverStatus.winner` / `tied_teams` / `final_scores` all use the core enum rather than the team's name string, so a winner looks straight up in the final scores and nothing depends on how the view spells a label. Which side won a trick, holds Belote, or declared the contract is read off the seat (`winner.position.team_side`, `contract.player.position.team_side`) rather than the mutable `Team` roster — which also retires the old "winner has no team" guards that silently dropped a trick from the tally. `"North-South"` / `"East-West"` survive only as `Team.name` and as `theme.TEAM_ABBR`, the view's `N-S` / `E-W` scoreboard mapping.
+ The decision tree below traces every scoring shape — the all-passed zero case, the Slam / Solo Slam at-risk grid, and the numeric path with its unannounced-Slam 250 substitute, share-the-pile (M = 1) and doubled winner-takes-all (M > 1) branches — with the Belote +20 to the K + Q holder layered on top of every one.
 
 ```mermaid format="svg" source="flow_scoring.mmd"
 ```

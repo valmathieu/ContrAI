@@ -31,6 +31,7 @@ class BasePlayer <<from contrai-core>> #E1F0FF {
 }
 
 class Position  <<from contrai-core>> #E1F0FF
+enum TeamSide   <<from contrai-core>> #E1F0FF
 class Team      <<from contrai-core>> #E1F0FF
 class Deck      <<from contrai-core>> #E1F0FF
 class Contract  <<from contrai-core>> #E1F0FF
@@ -194,7 +195,7 @@ package "model/game.py" as p_game {
         + current_contract : Contract?
         + current_round : Round?
         + round_number : int
-        + scores : dict<str, int>
+        + scores : dict<TeamSide, int>
         --
         + __init__(players: list<Player>)
         + start_new_round() : None
@@ -206,9 +207,9 @@ package "model/game.py" as p_game {
 
     class GameOverStatus <<frozen dataclass>> {
         + game_over : bool
-        + winner : str?
-        + tied_teams : list<str>?
-        + final_scores : dict<str, int>
+        + winner : TeamSide?
+        + tied_teams : list<TeamSide>?
+        + final_scores : dict<TeamSide, int>
     }
 
     Game ..> GameOverStatus : <<check_game_over>>
@@ -237,6 +238,10 @@ package "model/game.py" as p_game {
       leads. ""cli.py"" loops on
       ""game_over"" and the end-game
       banner reads off the rest.
+      Every team named here is a
+      ""TeamSide"" — the same key
+      ""final_scores"" uses, so a winner
+      looks straight up in it.
     end note
 }
 
@@ -253,8 +258,8 @@ package "model/round/ package" as p_round {
         + tricks : list<Trick>
         + current_trick : Trick?
         + last_trick_winner : Player?
-        + team_tricks : dict<str, list<Trick>>
-        + round_scores : dict<str, int>
+        + team_tricks : dict<TeamSide, list<Trick>>
+        + round_scores : dict<TeamSide, int>
         + contract_made : bool?
         + unannounced_slam : UnannouncedSlam?
         + belote_holder : Player?
@@ -265,8 +270,8 @@ package "model/round/ package" as p_round {
         + manage_bidding(view=None) : Contract?
         + play_trick(view=None) : None
         + play_all_tricks(view=None) : dict<str, list<Trick>>
-        + calculate_round_scores() : dict<str, int>
-        + handle_failed_contract() : dict<str, int>
+        + calculate_round_scores() : dict<TeamSide, int>
+        + handle_failed_contract() : dict<TeamSide, int>
         --
         - _gather_bid(player, auction, view) : Bid
         - _detect_belote_holder() : None
@@ -345,7 +350,9 @@ package "model/round/ package" as p_round {
       Pure ""round -> RoundScore"" transform.
       Reads the **authoritative** ""round.play_state""
       — card points from each completed trick's
-      pile credited to its winner's team
+      pile credited to its winner's **side**
+      (""winner.position.team_side"", never the
+      mutable ""Team"" roster)
       (per-card values via ""rules_for(trump).points""),
       trick counts and the +10 last-trick bonus
       from ""trick_winners"" — never the
@@ -367,7 +374,7 @@ package "view/ package" as p_view {
     class RoundSummary <<dataclass>> {
         + round_number : int
         + contract : Contract?
-        + contract_team_name : str?
+        + contract_side : TeamSide?
         + contract_made : bool
         + ns_pts : int
         + ew_pts : int
@@ -489,13 +496,13 @@ package "view/ package" as p_view {
       normal made, 160+base×mult on doubled
       made, (160+base)×mult on failed defender)
       + card points + last-trick bonus + belote
-      → ""round_scores[team]"". The card /
+      → ""round_scores[side]"". The card /
       last-trick / belote rows
       em-dash when the engine ignores them so
       the addition matches ""round_score"".
       Helpers ""_recap_breakdown"" /
       ""_format_recap_table"" /
-      ""_belote_team_in_round"" live in
+      ""_belote_side_in_round"" live in
       ""screens/recap.py"".
       ----
       Tested per-module in

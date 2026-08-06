@@ -9,7 +9,7 @@ rendering or game logic lives here.
 
 from __future__ import annotations
 
-from contrai_core import Position, Suit, TrumpVariant
+from contrai_core import Position, Suit, TeamSide, TrumpVariant
 from contrai_core.bid import ContractBid
 
 # ---------------------------------------------------------------------------
@@ -54,8 +54,13 @@ POSITION_SHORT: dict[Position, str] = {
     Position.WEST: "W",
 }
 
-# Team -> abbreviation used in scoreboards.
-TEAM_ABBR = {"North-South": "N-S", "East-West": "E-W"}
+# Team side -> the scoreboard abbreviation. This is presentation, not
+# identity: TeamSide is what every score dictionary is keyed by, so
+# rewording a label here can no longer break a lookup.
+TEAM_ABBR: dict[TeamSide, str] = {
+    TeamSide.NS: "N-S",
+    TeamSide.EW: "E-W",
+}
 
 # Bid keyword aliases for parsing.
 PASS_WORDS = {"pass", "p"}

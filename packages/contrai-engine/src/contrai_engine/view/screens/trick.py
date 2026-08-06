@@ -10,7 +10,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from contrai_core import BasePlayer, Card, Position, Suit, Trick, rules_for
+from contrai_core import (
+    BasePlayer,
+    Card,
+    Position,
+    Suit,
+    TeamSide,
+    Trick,
+    rules_for,
+)
 from rich.align import Align
 from rich.box import ROUNDED
 from rich.panel import Panel
@@ -26,6 +34,8 @@ from contrai_engine.view.formatting import (
     _suit_color,
     _suit_color_dim,
     _suit_glyph,
+    _team_abbr,
+    _team_color,
 )
 from contrai_engine.view.screens.bidding import _render_bidding_diamond
 from contrai_engine.view.state_helpers import (
@@ -35,7 +45,6 @@ from contrai_engine.view.state_helpers import (
     _sort_hand_for_display,
 )
 from contrai_engine.view.theme import (
-    BLUE,
     BORDER,
     BORDER_DIM,
     DIM,
@@ -45,7 +54,6 @@ from contrai_engine.view.theme import (
     GOLD_FG,
     GREEN_BG,
     GREEN_FG,
-    ORANGE,
     TITLE,
     YELLOW,
 )
@@ -93,10 +101,16 @@ def _panel_round(round_: Optional[Round], phase: str) -> Panel:
         # Round running points (cards collected by each team so far).
         ns_pts, ew_pts = _round_running_points(round_)
         body.append("Round pts: ", style=DIM)
-        body.append("N-S ", style=f"bold {BLUE}")
+        body.append(
+            f"{_team_abbr(TeamSide.NS)} ",
+            style=f"bold {_team_color(TeamSide.NS)}",
+        )
         body.append(str(ns_pts), style="bold")
         body.append("  ·  ", style=DIM)
-        body.append("E-W ", style=f"bold {ORANGE}")
+        body.append(
+            f"{_team_abbr(TeamSide.EW)} ",
+            style=f"bold {_team_color(TeamSide.EW)}",
+        )
         body.append(str(ew_pts), style="bold")
 
     border_color = YELLOW if trump_active else BORDER
@@ -128,17 +142,14 @@ def _round_running_points(round_: Optional[Round]) -> tuple[int, int]:
     if not round_ or not round_.contract:
         return 0, 0
     rules = rules_for(round_.contract.suit)
-    ns, ew = 0, 0
-    for team_name, tricks in round_.team_tricks.items():
-        pts = 0
-        for trick in tricks:
-            for _, card in trick.get_plays():
-                pts += rules.points(card)
-        if team_name == "North-South":
-            ns = pts
-        elif team_name == "East-West":
-            ew = pts
-    return ns, ew
+    points = {side: 0 for side in TeamSide}
+    for side, tricks in round_.team_tricks.items():
+        points[side] = sum(
+            rules.points(card)
+            for trick in tricks
+            for _, card in trick.get_plays()
+        )
+    return points[TeamSide.NS], points[TeamSide.EW]
 
 
 def _panel_last_trick(

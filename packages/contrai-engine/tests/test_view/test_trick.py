@@ -9,7 +9,7 @@ playable-pill styling, and the per-play prompt texts.
 
 from __future__ import annotations
 
-from contrai_core import Card, Position, Rank, Suit, Trick
+from contrai_core import Card, Position, Rank, Suit, TeamSide, Trick
 from contrai_engine.model.player import HumanPlayer
 from contrai_engine.view.screens.trick import (
     _ai_card_announcement,
@@ -27,7 +27,7 @@ from contrai_engine.view.theme import GREEN_BG
 
 
 class _StubContract:
-    def __init__(self, value, suit, team_name="North-South", player=None):
+    def __init__(self, value, suit, team_name=TeamSide.NS, player=None):
         self.value = value
         self.suit = suit
         class _T:
@@ -69,8 +69,8 @@ class TestRoundRunningPoints:
         round_ = _StubRound(
             contract=contract,
             team_tricks={
-                "North-South": [ns_trick],
-                "East-West": [ew_trick],
+                TeamSide.NS: [ns_trick],
+                TeamSide.EW: [ew_trick],
             },
         )
         assert _round_running_points(round_) == (31, 0)
