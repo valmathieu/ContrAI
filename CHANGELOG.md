@@ -40,6 +40,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 ### Removed
 
+- (core) **BREAKING:** `Team.get_partner`, `Team.contains_player`, `Team.total_score` and `Team.add_points`. `Team` is now purely the two-player roster and its display name: the partner and same-side questions are answered from the seating by `Position.partner` / `Position.is_teammate` / `Position.team_side`, and cumulative scoring has always belonged to the engine's `Game.scores`, which never called the team-side accumulator. `str(team)` and `repr(team)` no longer carry a points suffix.
 - (core) **BREAKING:** `CARD_SUITS`. With `Suit` down to its four card-bearing members, `tuple(Suit)` is the same tuple — iterate the enum directly. `CONTRACT_SUITS` is the new constant for the wider "anything a contract can name" set.
 
 ## [0.2.0] - 2026-07-25

@@ -1,12 +1,15 @@
 """Tests for the ``Team`` class.
 
-Covers construction (incl. the two-player guard), partner lookup,
-membership queries, score accumulation, and the string representations.
+Covers construction (incl. the two-player guard) and the string
+representations. Team identity and same-side questions are not this
+class's job — they live in ``test_team_side.py`` and ``test_position.py``
+— so the pin here is that ``Team.name`` stays a display label and never
+doubles as an identity.
 """
 
 import pytest
 
-from contrai_core import InvalidPlayerCountError, Position, Team
+from contrai_core import InvalidPlayerCountError, Position, Team, TeamSide
 
 class DummyPlayer:
     """Dummy player class for testing purposes."""
@@ -38,7 +41,6 @@ def test_team_initialization(players):
     team = Team("Test Team", players)  # type: ignore
     assert team.name == "Test Team"
     assert team.players == players
-    assert team.total_score == 0
 
 def test_team_requires_exactly_two_players():
     """
@@ -60,92 +62,32 @@ def test_team_requires_exactly_two_players():
     with pytest.raises(InvalidPlayerCountError, match="Expected 2 players, got 0"):
         Team("Invalid Team", [])  # type: ignore
 
-def test_add_points(team):
+def test_name_is_a_label_not_an_identity(team):
     """
-    Test that adding points updates the team's total score.
+    Test that the team's name is display text and nothing more.
+
+    Identity is ``TeamSide``, reached through the seats — the name is
+    free to be reworded, so it must never be what a lookup compares.
     """
-    assert team.total_score == 0
+    assert team.name != TeamSide.NS
+    assert {player.position.team_side for player in team.players} == {
+        TeamSide.NS
+    }
 
-    team.add_points(50)
-    assert team.total_score == 50
-
-    team.add_points(30)
-    assert team.total_score == 80
-
-def test_get_partner(team, players):
-    """
-    Test that get_partner returns the correct partner.
-    """
-    player1, player2 = players
-
-    # Test getting partner of first player
-    partner = team.get_partner(player1)  # type: ignore
-    assert partner == player2
-
-    # Test getting partner of second player
-    partner = team.get_partner(player2)  # type: ignore
-    assert partner == player1
-
-    # Test with player not in team
-    outside_player = DummyPlayer("Outside Player", Position.EAST)  # type: ignore
-    partner = team.get_partner(outside_player)  # type: ignore
-    assert partner is None
-
-def test_contains_player(team):
-    """
-    Test that contains_player correctly identifies team membership.
-    """
-    player1, player2 = team.players
-
-    # Test with players in the team
-    assert team.contains_player(player1) is True  # type: ignore
-    assert team.contains_player(player2) is True  # type: ignore
-
-    # Test with player not in team
-    outside_player = DummyPlayer("Outside Player", Position.EAST)  # type: ignore
-    assert team.contains_player(outside_player) is False  # type: ignore
+    renamed = Team("Nord-Sud", team.players)  # type: ignore
+    assert renamed.name != team.name
+    assert {player.position.team_side for player in renamed.players} == {
+        TeamSide.NS
+    }
 
 def test_team_string_representation(team):
     """
     Test that string representations work correctly.
     """
-    expected_str = "North-South: Player1 & Player2 (0 pts)"
-    assert str(team) == expected_str
-
-    # Test after adding points
-    team.add_points(120)
-    expected_str = "North-South: Player1 & Player2 (120 pts)"
-    assert str(team) == expected_str
+    assert str(team) == "North-South: Player1 & Player2"
 
 def test_team_repr(team):
     """
     Test that developer representation works correctly.
     """
-    expected_repr = "Team('North-South', 2 players, 0 pts)"
-    assert repr(team) == expected_repr
-
-    # Test after adding points
-    team.add_points(75)
-    expected_repr = "Team('North-South', 2 players, 75 pts)"
-    assert repr(team) == expected_repr
-
-def test_team_score_accumulation():
-    """
-    Test that team scores accumulate correctly over multiple rounds.
-    """
-    players = [
-        DummyPlayer("Player A", Position.NORTH),
-        DummyPlayer("Player B", Position.SOUTH)
-    ]
-    team = Team("Team Test", players) # type: ignore
-
-    # Simulate multiple rounds of scoring
-    round_scores = [80, 120, 60, 100, 90]
-    expected_total = 0
-
-    for score in round_scores:
-        team.add_points(score)
-        expected_total += score
-        assert team.total_score == expected_total
-
-    assert team.total_score == sum(round_scores)
+    assert repr(team) == "Team('North-South', 2 players)"
