@@ -145,9 +145,35 @@ package "rules.py" as p_rules {
 }
 
 ' =========================================================
-' Seats (position.py)
+' Seats & sides (position.py, team_side.py)
 ' =========================================================
-package "position.py" as p_position {
+package "position.py / team_side.py" as p_position {
+    enum TeamSide <<enum>> {
+        NS = "NS"
+        EW = "EW"
+        --
+        + positions : tuple<Position,Position> <<property>>
+        + opponent : TeamSide               <<property>>
+        --
+        + __str__() : str
+    }
+
+    note bottom of TeamSide
+      Team **identity**, as a value. This is what
+      every score dictionary is keyed by —
+      ""RoundScore.scores"", ""Round.round~_scores"",
+      ""Round.team~_tricks"", ""Game.scores"",
+      ""GameOverStatus"" — and what a persisted
+      game record or a training label serializes.
+      Plain Enum, **not** a StrEnum, for the same
+      reason as ""Position"": ""TeamSide.NS"" never
+      compares equal to ""North-South"", so an old
+      name-keyed lookup misses loudly instead of
+      resolving by accident.
+      Display names (""North-South"" / ""N-S"") are
+      view presentation only, never identity.
+    end note
+
     enum Position <<enum>> {
         NORTH = "North"
         WEST  = "West"
@@ -157,8 +183,10 @@ package "position.py" as p_position {
         + next : Position                   <<property>>
         + partner : Position                <<property>>
         + opponents : tuple<Position,Position> <<property>>
+        + team_side : TeamSide              <<property>>
         + french_name : str                 <<property>>
         --
+        + is_teammate(other: Position) : bool
         + {static} from_french(name: str) : Position
         + __str__() : str
     }
@@ -169,9 +197,12 @@ package "position.py" as p_position {
       turn order (N → W → S → E), so
       ""list(Position)"" is the canonical
       seating and ""next"" / ""partner"" /
-      ""opponents"" all derive from that one
-      ordering instead of each re-encoding
-      seat arithmetic.
+      ""opponents"" / ""team~_side"" all derive from
+      that one ordering instead of each
+      re-encoding seat arithmetic.
+      ""is~_teammate"" is the //same side?//
+      boolean, expressed on top of ""team~_side"";
+      ""team~_side"" is the //which side?// value.
       Deliberately a plain Enum, **not** a
       StrEnum: a Position member never compares
       equal to a bare seat string, so a stray
@@ -268,15 +299,25 @@ package "hand.py" as p_hand {
 ' =========================================================
 package "team.py / player.py" as p_team {
     class Team {
-        + name : str
+        + name : str <<display label, **not** identity>>
         + players : list<BasePlayer>
-        + total_score : int
         --
         + __init__(name: str, players: list<BasePlayer>)
-        + add_points(points: int) : None
-        + get_partner(player: BasePlayer) : BasePlayer?
-        + contains_player(player: BasePlayer) : bool
+        + __str__() : str
+        + __repr__() : str
     }
+
+    note bottom of Team
+      The two-player roster and its display
+      name — nothing more. Identity is
+      ""TeamSide"", reached from the seat
+      (""player.position.team~_side""), and
+      cumulative scoring belongs to the
+      engine's ""Game.scores"". Partner and
+      same-side questions are answered by
+      ""Position"", so nothing here re-derives
+      the pairing from the roster list.
+    end note
 
     class BasePlayer {
         + name : str
@@ -754,6 +795,10 @@ BasePlayer --> Position : position
 
 ' Team aggregates exactly 2 players
 Team "1" o-- "2" BasePlayer : players
+
+' A seat knows its side; the side knows its two seats. One derivation,
+' read both ways — Team is not on this path at all.
+Position --> TeamSide : team_side
 
 ' Bid's actor slot holds a live player in an auction, a bare seat once
 ' seal_bid() has projected it for an observation (see the Bid note)

@@ -176,7 +176,7 @@ end note
 
 R -> R : last_trick_winner = winner
 R -> R : tricks.append(current_trick)
-R -> R : team_tricks[winner.team.name].append(\n  current_trick\n)
+R -> R : team_tricks[winner.position.team_side]\n  .append(current_trick)
 
 R -> T : current_trick.get_plays()
 T --> R : list<(Player, Card)>

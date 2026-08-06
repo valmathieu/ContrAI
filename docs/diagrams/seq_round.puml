@@ -139,13 +139,13 @@ note right of R
   in **flow_scoring.mmd**.
 end note
 R -> R : round_scores, contract_made,\nunannounced_slam = RoundScore
-R --> G : round_scores: dict<str, int>
+R --> G : round_scores: dict<TeamSide, int>
 ' No deactivate here: Round outlives manage_round — cli.py keeps
 ' handing ``game.current_round`` to the between-round view hooks
 ' below, so its bar runs on to the end of the diagram.
 
-loop team_name, points in round_scores
-    G -> G : scores[team_name] += points
+loop side, points in round_scores
+    G -> G : scores[side] += points
 end
 
 G --> C : returns None\n(current_contract + scores\n mutated in place)
