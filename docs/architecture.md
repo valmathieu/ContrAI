@@ -6,7 +6,7 @@ Overview of how the four ContrAI packages fit together.
 
 The repository is a [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/) with four members under `packages/`:
 
-- **`contrai-core`** — shared domain model. Owns `Suit`/`TrumpVariant`/`ContractSuit`/`Rank`, `Card`, `Deck`, `Hand`, `Team`, `BasePlayer`, the frozen `Bid` sum type, the `Auction` state-and-rule oracle, `Contract`, `Trick`, and the model-level exceptions (a `ContraiError` base, plus `IllegalBidError` / `IllegalPlayError` and friends). Pure data and invariants, no orchestration.
+- **`contrai-core`** — shared domain model. Owns `Suit`/`TrumpVariant`/`ContractSuit`/`Rank`, `Card`, `Deck`, `Hand` (and the `card_queries` functions it and the play path share), `Team`, `BasePlayer`, the frozen `Bid` sum type, the `Auction` state-and-rule oracle, `Contract`, `Trick`, and the model-level exceptions (a `ContraiError` base, plus `IllegalBidError` / `IllegalPlayError` and friends). Pure data and invariants, no orchestration.
 - **`contrai-engine`** — game engine on top of `contrai-core`. Extends `BasePlayer` with `Player` / `HumanPlayer` / `AiPlayer`, owns `Game` and `Round` orchestration, and ships the Rich-based `contrai` terminal UI (the `view/` package — `RichView` orchestrator plus per-screen builders — wired in `cli.py`). See [Engine — CLI](engine/index.md#cli).
 - **`contrai-analyzer`** — Streamlit dashboard for opening-hand strength (hypergeometric distribution + bidding truth-table). Deliberately independent of `contrai-core`; see [`analyzer/index.md`](analyzer/index.md) for the rationale behind the `SuitSlot` abstraction.
 - **`contrai-scraper`** — Playwright spectator-mode scraper for online Coinche games. v1 ships login + table navigation + per-round polling; bidding/play observation and persistence are still to be wired up.
@@ -27,6 +27,7 @@ Suit, TrumpVariant, ContractSuit,
 Rank, CONTRACT_SUITS,
 is_trump, trump_suits,
 Card, Deck, Hand,
+count_suit, cards_of_suit, has_suit, has_card,
 Team, BasePlayer,
 Bid, PassBid, ContractBid, DoubleBid, RedoubleBid,
 Auction,

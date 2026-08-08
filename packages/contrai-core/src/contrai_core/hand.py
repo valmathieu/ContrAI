@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 
+from . import card_queries
 from .card import Card
 from .types import Suit, Rank
 
@@ -14,9 +15,12 @@ class Hand:
     Wraps an internal ``list[Card]`` and forwards the list operations the
     engine relies on (``append``, ``extend``, ``remove``, ``clear``,
     ``in``, iteration, ``len``, indexing) so existing call sites keep
-    working unchanged. Adds query helpers (suit/rank counting, lookup by
-    suit) that AI code would otherwise re-implement ad hoc with list
-    comprehensions.
+    working unchanged. On top of those it exposes the suit queries as
+    methods, each a one-line delegate to
+    :mod:`contrai_core.card_queries` — that module holds the single
+    implementation the frozen ``tuple[Card, ...]`` of the card-play path
+    reads through as well, so neither side has to re-implement the
+    comprehensions ad hoc and the two can never drift.
 
     Hands start empty and are filled incrementally by :class:`Deck.deal`;
     the engine clears them between rounds. No size invariant is enforced
@@ -120,7 +124,7 @@ class Hand:
             The number of cards in the hand whose ``.suit`` equals
             ``suit``.
         """
-        return sum(1 for card in self.cards if card.suit == suit)
+        return card_queries.count_suit(self.cards, suit)
 
     def count_rank(self, rank: Rank) -> int:
         """Count the number of cards of a given rank in the hand.
@@ -137,10 +141,6 @@ class Hand:
     def has_suit(self, suit: Suit) -> bool:
         """Return ``True`` iff the hand holds at least one card of ``suit``.
 
-        Short-circuits on the first match, so it is cheaper than
-        ``bool(cards_of_suit(suit))`` when only presence — not the cards
-        themselves — is needed (e.g. lead-suit detection).
-
         Args:
             suit: The suit to look for.
 
@@ -148,16 +148,10 @@ class Hand:
             ``True`` if any card in the hand has ``.suit == suit``,
             ``False`` otherwise.
         """
-        return any(card.suit == suit for card in self.cards)
+        return card_queries.has_suit(self.cards, suit)
 
     def has_card(self, suit: Suit, rank: Rank) -> bool:
         """Return ``True`` iff a specific card is in the hand.
-
-        Delegates to membership (``Card(suit, rank) in self``). Since
-        :class:`Card` is a frozen value object comparing by
-        ``(suit, rank)``, ``__contains__`` is the single source of truth
-        for "do I hold this card" — there is no parallel field-by-field
-        scan to drift out of sync.
 
         Args:
             suit: The suit to look up.
@@ -167,7 +161,7 @@ class Hand:
             ``True`` if a card matching both ``suit`` and ``rank`` is
             present, ``False`` otherwise.
         """
-        return Card(suit, rank) in self
+        return card_queries.has_card(self.cards, suit, rank)
 
     def cards_of_suit(self, suit: Suit) -> list[Card]:
         """Return the cards of a given suit as a new list.
@@ -180,7 +174,7 @@ class Hand:
             order within the hand. Mutating the returned list does not
             affect the hand.
         """
-        return [card for card in self.cards if card.suit == suit]
+        return card_queries.cards_of_suit(self.cards, suit)
 
     def is_complete(self) -> bool:
         """Return ``True`` iff the hand contains exactly 8 unique cards.
