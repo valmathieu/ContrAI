@@ -4,6 +4,7 @@ import random
 from collections.abc import Sequence
 
 from contrai_core.card import Card
+from contrai_core.card_queries import count_suit
 from contrai_core.play import PlayObservation
 from contrai_core.position import Position
 from contrai_core.rules import NoTrumpRules, TrumpRules, rules_for
@@ -189,7 +190,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             aces = [c for c in playable_cards if c.rank == Rank.ACE]
             if aces:
                 # Play ace from the shortest suit
-                return min(aces, key=lambda c: self._count_suit(hand, c.suit))
+                return min(aces, key=lambda c: count_suit(hand, c.suit))
 
         # Default: play the lowest value card (excluding trump unless only trumps available)
         non_trump_cards = [c for c in playable_cards if not rules.is_trump(c.suit)]
@@ -232,12 +233,12 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         # No trump left with opponents - play ace from the longest suit
         aces = [c for c in playable_cards if c.rank == Rank.ACE]
         if aces:
-            return max(aces, key=lambda c: self._count_suit(hand, c.suit))
+            return max(aces, key=lambda c: count_suit(hand, c.suit))
 
         # Play master card from the longest suit
         master_cards = [c for c in playable_cards if self._is_master_card(c, trump_suit, fallen)]
         if master_cards:
-            return max(master_cards, key=lambda c: self._count_suit(hand, c.suit))
+            return max(master_cards, key=lambda c: count_suit(hand, c.suit))
 
         # Default: play the lowest value card (excluding trump unless only trumps available)
         non_trump_cards = [c for c in playable_cards if not rules.is_trump(c.suit)]
@@ -482,25 +483,11 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         def rank_key(card: Card) -> tuple[int, int]:
             # Length negated so ``min`` prefers the *longest* suit once
             # the points comparison ties.
-            return rules.points(card), -self._count_suit(hand, card.suit)
+            return rules.points(card), -count_suit(hand, card.suit)
 
         best = min(rank_key(card) for card in candidates)
         tied = [card for card in candidates if rank_key(card) == best]
         return random.choice(tied)
-
-    @staticmethod
-    def _count_suit(hand, suit: Suit) -> int:
-        """Count the cards of ``suit`` in the observing seat's own hand.
-
-        Args:
-            hand: The observer's hand, from ``observation.hand``.
-            suit: The suit to count.
-
-        Returns:
-            The number of cards in ``hand`` whose suit is ``suit``.
-        """
-
-        return sum(1 for card in hand if card.suit == suit)
 
     def _opponents_might_have_trump(
         self,
@@ -544,7 +531,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
 
         # Counting: 8 trumps total; unseen = 8 - fallen - in our hand.
         trump_fallen = len(fallen.get(trump, set()))
-        trump_in_hand = self._count_suit(hand, trump)
+        trump_in_hand = count_suit(hand, trump)
         if trump_fallen >= (8 - trump_in_hand):
             return False
 
@@ -612,7 +599,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
 
         # Leg 3 — counting: any unseen trump at all?
         trump_fallen = len(fallen.get(trump, set()))
-        trump_in_hand = self._count_suit(observation.hand, trump)
+        trump_in_hand = count_suit(observation.hand, trump)
         if trump_fallen + trump_in_hand >= 8:
             return False
 
