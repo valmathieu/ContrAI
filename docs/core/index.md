@@ -13,7 +13,7 @@ Source lives at `packages/contrai-core/src/contrai_core/`:
 | `team_side.py`  | `TeamSide` (the two sides of the table — team *identity*)                               |
 | `card.py`       | `Card`                                                                                  |
 | `deck.py`       | `Deck`                                                                                  |
-| `hand.py`       | `Hand` (list-compatible API including `copy()`; its query helpers delegate to `card_queries`) |
+| `hand.py`       | `Hand` (append/extend/remove/clear/`in`/iterate/`len`, no indexing; its query helpers delegate to `card_queries`) |
 | `card_queries.py` | `count_suit` / `cards_of_suit` / `has_suit` / `has_card` over any `Iterable[Card]` — the one implementation `Hand` and the play path's frozen tuples both read through |
 | `team.py`       | `Team` (the two-player roster and its display name)                                     |
 | `player.py`     | `BasePlayer` (engine `Player` extends it)                                               |

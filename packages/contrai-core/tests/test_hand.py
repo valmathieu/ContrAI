@@ -21,21 +21,6 @@ def sample_cards() -> list[Card]:
     ]
 
 
-@pytest.fixture
-def full_hand_cards() -> list[Card]:
-    """An 8-card hand with all unique (suit, rank) pairs."""
-    return [
-        Card(Suit.SPADES, Rank.ACE),
-        Card(Suit.SPADES, Rank.KING),
-        Card(Suit.HEARTS, Rank.QUEEN),
-        Card(Suit.HEARTS, Rank.JACK),
-        Card(Suit.DIAMONDS, Rank.TEN),
-        Card(Suit.DIAMONDS, Rank.NINE),
-        Card(Suit.CLUBS, Rank.EIGHT),
-        Card(Suit.CLUBS, Rank.SEVEN),
-    ]
-
-
 # ----------------------------------------------------------------------
 # construction
 # ----------------------------------------------------------------------
@@ -85,7 +70,7 @@ def test_hand_from_list_does_not_alias_input():
 
 
 # ----------------------------------------------------------------------
-# list-compatible API
+# mutation and inspection
 # ----------------------------------------------------------------------
 
 
@@ -94,7 +79,7 @@ def test_append_adds_card():
     card = Card(Suit.SPADES, Rank.ACE)
     h.append(card)
     assert len(h) == 1
-    assert h[0] is card
+    assert list(h) == [card]
 
 
 def test_extend_adds_multiple_cards(sample_cards):
@@ -110,7 +95,7 @@ def test_remove_removes_first_occurrence():
     h = Hand([card_a, card_b])
     h.remove(card_a)
     assert len(h) == 1
-    assert h[0] is card_b
+    assert list(h) == [card_b]
 
 
 def test_remove_missing_card_raises():
@@ -146,19 +131,6 @@ def test_len_matches_card_count(sample_cards):
     assert len(h) == 5
 
 
-def test_getitem_int_returns_card(sample_cards):
-    h = Hand(sample_cards)
-    assert h[0] == sample_cards[0]
-    assert h[-1] == sample_cards[-1]
-
-
-def test_getitem_slice_returns_list(sample_cards):
-    h = Hand(sample_cards)
-    result = h[1:3]
-    assert isinstance(result, list)
-    assert result == sample_cards[1:3]
-
-
 # ----------------------------------------------------------------------
 # query helpers
 # ----------------------------------------------------------------------
@@ -170,14 +142,6 @@ def test_count_suit(sample_cards):
     assert h.count_suit(Suit.HEARTS) == 1
     assert h.count_suit(Suit.DIAMONDS) == 0
     assert h.count_suit(Suit.CLUBS) == 0
-
-
-def test_count_rank(sample_cards):
-    h = Hand(sample_cards)
-    assert h.count_rank(Rank.ACE) == 1
-    assert h.count_rank(Rank.KING) == 1
-    assert h.count_rank(Rank.JACK) == 1
-    assert h.count_rank(Rank.QUEEN) == 0
 
 
 def test_has_card_hit_and_miss(sample_cards):
@@ -225,68 +189,6 @@ def test_cards_of_suit_returns_independent_list(sample_cards):
     spades = h.cards_of_suit(Suit.SPADES)
     spades.clear()
     assert h.count_suit(Suit.SPADES) == 3
-
-
-# ----------------------------------------------------------------------
-# is_complete
-# ----------------------------------------------------------------------
-
-
-def test_is_complete_true_for_8_unique_cards(full_hand_cards):
-    h = Hand(full_hand_cards)
-    assert h.is_complete() is True
-
-
-def test_is_complete_false_when_empty():
-    assert Hand().is_complete() is False
-
-
-def test_is_complete_false_for_7_cards(full_hand_cards):
-    h = Hand(full_hand_cards[:-1])
-    assert h.is_complete() is False
-
-
-def test_is_complete_false_for_9_cards(full_hand_cards):
-    h = Hand([*full_hand_cards, Card(Suit.CLUBS, Rank.NINE)])
-    assert h.is_complete() is False
-
-
-def test_is_complete_false_when_8_cards_but_duplicate():
-    """Eight cards with a duplicate (suit, rank) is not a valid full hand."""
-    dup = Card(Suit.SPADES, Rank.ACE)
-    cards = [
-        dup,
-        Card(Suit.SPADES, Rank.ACE),  # same suit+rank as dup
-        Card(Suit.HEARTS, Rank.QUEEN),
-        Card(Suit.HEARTS, Rank.JACK),
-        Card(Suit.DIAMONDS, Rank.TEN),
-        Card(Suit.DIAMONDS, Rank.NINE),
-        Card(Suit.CLUBS, Rank.EIGHT),
-        Card(Suit.CLUBS, Rank.SEVEN),
-    ]
-    assert Hand(cards).is_complete() is False
-
-
-# ----------------------------------------------------------------------
-# copy
-# ----------------------------------------------------------------------
-
-
-def test_copy_returns_list_of_same_cards(sample_cards):
-    h = Hand(sample_cards)
-    snapshot = h.copy()
-    assert isinstance(snapshot, list)
-    assert snapshot == list(sample_cards)
-
-
-def test_copy_is_independent_of_hand(sample_cards):
-    """Mutating the copy must not affect the hand or vice versa."""
-    h = Hand(sample_cards)
-    snapshot = h.copy()
-    snapshot.pop()
-    assert len(h) == len(sample_cards)
-    h.append(Card(Suit.CLUBS, Rank.NINE))
-    assert len(snapshot) == len(sample_cards) - 1
 
 
 # ----------------------------------------------------------------------

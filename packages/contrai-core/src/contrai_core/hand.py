@@ -12,20 +12,23 @@ from .types import Suit, Rank
 class Hand:
     """A player's cards in hand.
 
-    Wraps an internal ``list[Card]`` and forwards the list operations the
-    engine relies on (``append``, ``extend``, ``remove``, ``clear``,
-    ``in``, iteration, ``len``, indexing) so existing call sites keep
-    working unchanged. On top of those it exposes the suit queries as
-    methods, each a one-line delegate to
-    :mod:`contrai_core.card_queries` — that module holds the single
-    implementation the frozen ``tuple[Card, ...]`` of the card-play path
-    reads through as well, so neither side has to re-implement the
-    comprehensions ad hoc and the two can never drift.
+    Wraps an internal ``list[Card]`` and forwards the mutation and
+    inspection operations the engine relies on: ``append``, ``extend``,
+    ``remove``, ``clear``, ``in``, iteration and ``len``. The surface
+    stops there deliberately — a hand is a bag of cards a seat draws
+    from and plays out of, not a sequence anyone should address by
+    position. Callers wanting a positional or list-shaped view take
+    ``list(hand)`` explicitly.
+
+    On top of those it exposes the suit queries as methods, each a
+    one-line delegate to :mod:`contrai_core.card_queries` — that module
+    holds the single implementation the frozen ``tuple[Card, ...]`` of
+    the card-play path reads through as well, so neither side has to
+    re-implement the comprehensions ad hoc and the two can never drift.
 
     Hands start empty and are filled incrementally by :class:`Deck.deal`;
     the engine clears them between rounds. No size invariant is enforced
-    anywhere — call :meth:`is_complete` if you need to assert a
-    fully-dealt 8-card hand.
+    anywhere — a hand holds whatever it has been given.
 
     Attributes:
         cards: The underlying list of :class:`Card` objects. Exposed for
@@ -44,7 +47,7 @@ class Hand:
         self.cards: list[Card] = list(cards) if cards is not None else []
 
     # ------------------------------------------------------------------
-    # list-compatible API
+    # mutation and inspection
     # ------------------------------------------------------------------
 
     def append(self, card: Card) -> None:
@@ -79,16 +82,6 @@ class Hand:
         """Remove every card from the hand, leaving it empty."""
         self.cards.clear()
 
-    def copy(self) -> list[Card]:
-        """Return a shallow ``list`` copy of the cards.
-
-        Mirrors ``list.copy`` so callers that treat ``hand`` as a list
-        (e.g. legal plays computed by ``PlayState.legal_actions``) keep
-        working. Returns a ``list[Card]`` — not another ``Hand`` — to
-        match the "list of cards" callers expect.
-        """
-        return list(self.cards)
-
     def __contains__(self, card: object) -> bool:
         """Return ``True`` iff ``card`` is currently in the hand."""
         return card in self.cards
@@ -100,15 +93,6 @@ class Hand:
     def __len__(self) -> int:
         """Return the number of cards currently in the hand."""
         return len(self.cards)
-
-    def __getitem__(self, idx: int | slice):
-        """Index into the hand by integer or slice.
-
-        Args:
-            idx: An ``int`` (returns a :class:`Card`) or ``slice``
-                (returns a ``list[Card]``).
-        """
-        return self.cards[idx]
 
     # ------------------------------------------------------------------
     # query helpers
@@ -125,18 +109,6 @@ class Hand:
             ``suit``.
         """
         return card_queries.count_suit(self.cards, suit)
-
-    def count_rank(self, rank: Rank) -> int:
-        """Count the number of cards of a given rank in the hand.
-
-        Args:
-            rank: The rank to count.
-
-        Returns:
-            The number of cards in the hand whose ``.rank`` equals
-            ``rank``.
-        """
-        return sum(1 for card in self.cards if card.rank == rank)
 
     def has_suit(self, suit: Suit) -> bool:
         """Return ``True`` iff the hand holds at least one card of ``suit``.
@@ -175,18 +147,6 @@ class Hand:
             affect the hand.
         """
         return card_queries.cards_of_suit(self.cards, suit)
-
-    def is_complete(self) -> bool:
-        """Return ``True`` iff the hand contains exactly 8 unique cards.
-
-        A full contrée hand. Not enforced anywhere by the class itself;
-        this is a convenience for tests and downstream invariant checks.
-        Uniqueness is plain :class:`Card` value-equality (cards compare by
-        ``(suit, rank)``), so a ``set`` dedupes duplicates directly.
-        """
-        if len(self.cards) != 8:
-            return False
-        return len(set(self.cards)) == 8
 
     def __repr__(self) -> str:
         """Return a debug representation listing every card."""
