@@ -39,7 +39,7 @@ Clone and set up:
 ```bash
 git clone https://github.com/<your-fork>/contrai.git
 cd contrai
-uv sync --all-packages --all-extras
+uv sync
 ```
 
 Run the tests:
