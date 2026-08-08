@@ -13,6 +13,7 @@ import pytest
 from contrai_core import (
     Card,
     Deck,
+    Hand,
     InvalidCardCountError,
     InvalidPlayerCountError,
     Rank,
@@ -27,10 +28,10 @@ def deck():
     return Deck()
 
 class DummyPlayer:
-    """Minimal player stand-in: just the ``hand`` list ``deal`` fills."""
+    """Minimal player stand-in: just the ``Hand`` ``deal`` fills."""
 
     def __init__(self):
-        self.hand = []
+        self.hand = Hand()
 
 def test_deck_initialization(deck):
     """

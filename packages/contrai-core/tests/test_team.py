@@ -9,14 +9,14 @@ doubles as an identity.
 
 import pytest
 
-from contrai_core import InvalidPlayerCountError, Position, Team, TeamSide
+from contrai_core import Hand, InvalidPlayerCountError, Position, Team, TeamSide
 
 class DummyPlayer:
     """Dummy player class for testing purposes."""
     def __init__(self, name, position):
         self.name = name
         self.position = position
-        self.hand = []
+        self.hand = Hand()
 
     def __eq__(self, other):
         return isinstance(other, DummyPlayer) and self.name == other.name

@@ -39,14 +39,22 @@ class Deck:
         self.cards = self.cards[cut_index:] + self.cards[:cut_index]
 
     def deal(self, players: list):
-        """
-        Deals 8 cards to each player in a 3-2-3 distribution.
-        Each player receives 3 cards, then 2 cards, then 3 cards, for a total of 8 cards per player.
-        The function expects exactly 4 players, each with a 'hand' attribute (list).
-        Raises:
-            InvalidPlayerCountError: If the number of players is not exactly 4.
+        """Deal the whole deck out in the customary 3-2-3 batches.
+
+        Each of the four players receives 3 cards, then 2, then 3 — eight
+        in total, which empties the 32-card deck. The batches are handed
+        over with ``hand.extend``, so every player must already expose a
+        :class:`Hand` to deal into; the hand is appended to, never
+        replaced, and is left holding whatever it had before.
+
         Args:
-            players (list): List of 4 player objects to deal cards to.
+            players: The 4 players to deal to, in seating order.
+
+        Raises:
+            InvalidCardCountError: If the deck does not hold exactly 32
+                cards — a deck already dealt from cannot be dealt again.
+            InvalidPlayerCountError: If the number of players is not
+                exactly 4.
         """
         if len(self.cards) != 32:
             raise InvalidCardCountError(32, len(self.cards), "Dealing cards")
