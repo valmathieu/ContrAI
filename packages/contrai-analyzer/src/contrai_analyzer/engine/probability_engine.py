@@ -9,8 +9,8 @@ and how many cards of that slot remain unknown.
 
 import math
 from typing import Literal
-from src.models.hand import Hand
-from src.models.deck import SuitSlot, Rank
+from contrai_analyzer.models.hand import Hand
+from contrai_analyzer.models.deck import Card, SuitSlot, Rank
 
 
 class ProbabilityEngine:
@@ -344,7 +344,6 @@ class ProbabilityEngine:
 
         for slot in SuitSlot:
             for rank in Rank:
-                from src.models.deck import Card
                 card = Card(rank, slot)
                 # Only unknown cards contribute — skip cards in my hand
                 if card not in self.hand.cards:

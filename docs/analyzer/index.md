@@ -5,11 +5,15 @@ Streamlit dashboard for hand-strength analysis (hypergeometric distribution + bi
 ## Layout
 
 - `main.py` — Streamlit UI only, no logic
-- `src/models/` — `Card`, `Deck`, `Hand`
-- `src/engine/probability_engine.py` — hypergeometric distribution math
-- `src/bidding/evaluator.py` — bidding truth-table → suggestion
+- `src/contrai_analyzer/models/` — `Card`, `Deck`, `Hand`
+- `src/contrai_analyzer/engine/probability_engine.py` — hypergeometric distribution math
+- `src/contrai_analyzer/bidding/evaluator.py` — bidding truth-table → suggestion
 
-**Strict UI/logic split.** All math and game logic in `src/`; `main.py` is pure UI glue.
+**Strict UI/logic split.** All math and game logic in `contrai_analyzer`; `main.py` is pure UI glue.
+
+```bash
+uv run --package contrai-analyzer streamlit run main.py
+```
 
 ## Class structure
 

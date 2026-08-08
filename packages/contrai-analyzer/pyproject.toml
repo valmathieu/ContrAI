@@ -14,3 +14,8 @@ dependencies = [
     "plotly>=6.6.0",
     "streamlit>=1.40.0",
 ]
+
+# ``main.py`` is the Streamlit entry script and sits at the package root, so
+# point setuptools at src/ rather than letting flat-layout discovery guess.
+[tool.setuptools.packages.find]
+where = ["src"]
