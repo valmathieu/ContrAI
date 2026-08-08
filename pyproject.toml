@@ -46,3 +46,28 @@ no-docstring-rgx = "^_|^test_|^Test"
 # "No module named 'tests.test_view'". ``importlib`` mode imports each test
 # module under a path-derived name, so the per-package suites compose.
 addopts = "--import-mode=importlib"
+
+[tool.coverage.run]
+# Measured by import name, not path: the workspace installs both packages
+# editable, so ``contrai_core``/``contrai_engine`` resolve wherever pytest is
+# invoked from. The analyzer and scraper are excluded — they have no suites
+# (see CONTRIBUTING.md "Tests"), and folding them in would drown the signal.
+source = ["contrai_core", "contrai_engine"]
+# Branch coverage, not just line coverage: a fully-executed ``if`` whose
+# ``else`` never runs is exactly the gap this is meant to surface.
+branch = true
+omit = [
+    # Pure re-export shims — every line is an ``import``/``__all__`` entry that
+    # any test run trivially executes, so they only inflate the percentage.
+    "*/contrai_core/__init__.py",
+    "*/contrai_engine/__init__.py",
+    "*/contrai_engine/view/__init__.py",
+    "*/contrai_engine/view/screens/__init__.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+# Deliberately no ``fail_under``: the point of this pass is to record where
+# coverage actually stands. A threshold is a follow-up decision, taken once
+# there is a number to argue about.

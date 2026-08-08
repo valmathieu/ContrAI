@@ -189,6 +189,16 @@ uv run --package contrai-core pytest
 uv run --package contrai-engine pytest
 ```
 
+To see which lines and branches a suite actually reaches, add `--cov`
+(configured in the root `pyproject.toml`, so no flags beyond this are needed):
+
+```bash
+uv run --package contrai-engine pytest --cov --cov-report=term-missing
+```
+
+There is no coverage threshold — CI stays a plain pass/fail gate. The report is
+a local diagnostic for finding untested branches, not a number to defend.
+
 ## Code style
 
 - **Type hints everywhere.** Function signatures, class attributes, return
