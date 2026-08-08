@@ -83,14 +83,31 @@ package "contrai-analyzer\n(Streamlit hand strength)" as P_analyzer {
 ' contrai-scraper — purple
 ' =========================================================
 package "contrai-scraper\n(Playwright spectator)" as P_scraper {
-    class "main.py" as S_main <<module>> #EDE7F6 {
+    class "cli.py" as S_cli <<module>> #EDE7F6 {
+        + scrape()
         + main()
-        + observe_game(page)
-        + get_players(page)
-        + get_current_round(page)
-        + wait_for_new_round(page, current)
-        + is_game_scrapeable(players)
     }
+    class "session.py" as S_session <<module>> #EDE7F6 {
+        + log_in(page)
+        + open_spectator_mode(page)
+        + find_tournament_table(page) : bool
+    }
+    class "observer.py" as S_observer <<module>> #EDE7F6 {
+        + get_players(page) : dict<str, str>
+        + is_game_scrapeable(players) : bool
+        + get_current_round(page) : int
+        + wait_for_new_round(page, current) : int
+        + observe_game(page)
+    }
+    class "config.py" as S_config <<module>> #EDE7F6 {
+        + {static} TARGET_URL : str
+        + {static} ACCOUNT_EMAIL : str
+        + {static} VERIFICATION_CODE : str
+    }
+
+    S_cli ..> S_session : navigates to a table
+    S_cli ..> S_observer : hands the table over
+    S_session ..> S_config
 }
 
 ' =========================================================

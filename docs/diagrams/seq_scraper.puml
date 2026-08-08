@@ -1,5 +1,5 @@
 @startuml seq_scraper
-title contrai-scraper — spectator observation flow (main.py, current state)
+title contrai-scraper — spectator observation flow (cli.scrape, current state)
 
 ' --- Palette: scraper purple, with grey "future" components ---
 skinparam shadowing false
@@ -29,79 +29,94 @@ skinparam note {
 }
 
 actor "User" as U
-participant "main.py" as M <<scraper>>
+participant "cli.py" as C <<scraper>>
+participant "session.py" as SE <<scraper>>
+participant "observer.py" as O <<scraper>>
 participant "async_playwright" as P <<scraper>>
 participant "Browser / page\n(Chromium)" as B
 participant "DOM\nspectator site" as D
 participant "SQLite" as S <<future>> #DDDDDD
 
-U -> M : python main.py
-activate M
+U -> C : contrai-scrape
+activate C
 
-M -> P : async_playwright().start()
-M -> P : chromium.launch(headless=False, slow_mo=500)
+C -> P : async_playwright().start()
+C -> P : chromium.launch(headless=False, slow_mo=500)
 P -> B : <<creates>> page
-M -> B : page.goto(target_url)
-B -> D : navigate
 
 == Phase 1 — Login flow ==
 
-M -> M : page.wait_for_timeout(5000)
-M -> B : tutorial_btn.is_visible() ?\n(`gui.quick-start.launch.no`)
+C -> SE : log_in(page)
+activate SE
+
+SE -> B : page.goto(TARGET_URL)
+B -> D : navigate
+SE -> SE : page.wait_for_timeout(5000)
+SE -> B : tutorial_btn.is_visible() ?\n(""gui.quick-start.launch.no"")
 alt tutorial visible
-    M -> B : click `gui.quick-start.launch.no`
+    SE -> B : click ""gui.quick-start.launch.no""
 end
 
-M -> B : click 'button:has-text("Email")'
-note right of M
+SE -> B : click ""button:has-text('Email')""
+note right of SE
   Fallback selector if the
-  primary `text("Email")` fails:
-  `button[data-icon="email"]`
+  primary ""has-text('Email')"" fails:
+  ""button[data-icon='email']""
 end note
-M -> B : fill `input[placeholder=\n"Adresse électronique"]` ← EMAIL
-M -> B : click `gui.users.email-wizard.continue`
-M -> B : wait_for_selector(`#verificationCode`)
-M -> B : fill `#verificationCode` ← FIXED_CODE
-M -> B : click `#validateBtn`
+SE -> B : fill ACCOUNT_EMAIL into\n""input[placeholder='Adresse électronique']""
+SE -> B : click ""gui.users.email-wizard.continue""
+SE -> B : wait_for_selector(""#verificationCode"")
+SE -> B : fill ""#verificationCode"" ← VERIFICATION_CODE
+SE -> B : click ""#validateBtn""
 B --> D : authenticate
-M -> M : page.wait_for_timeout(10000)
+SE -> SE : page.wait_for_timeout(10000)
+deactivate SE
 
 == Phase 2 — Mode navigation ==
 
-M -> B : click `gui.actions.mode.online`
-M -> B : click `gui.actions.online.observe`
-M -> B : click `gui.versions.contree`
+C -> SE : open_spectator_mode(page)
+activate SE
+SE -> B : click ""gui.actions.mode.online""
+SE -> B : click ""gui.actions.online.observe""
+SE -> B : click ""gui.versions.contree""
+deactivate SE
 
 == Phase 3 — Table discovery ==
 
-M -> B : `.table-list-item`.first.click()  (timeout 3s)
-note right of M
+C -> SE : find_tournament_table(page)
+activate SE
+SE -> B : ""'.table-list-item'"".first.click()  (timeout 3s)
+note right of SE
   If auto-join times out,
   user has 5s to click a
   table manually.
 end note
 
-loop up to 20 attempts (until tournament found)
-    M -> M : page.wait_for_timeout(2000)
-    M -> B : `#tournamentMatchInfo`.is_visible() ?
+loop up to MAX_TABLE_ATTEMPTS (20)
+    SE -> SE : page.wait_for_timeout(2000)
+    SE -> B : ""#tournamentMatchInfo"".is_visible() ?
     alt tournament match found
-        M -> M : break loop
+        SE --> C : True
     else standard table
-        M -> B : click `gui.online.tables.other-table`
-        M -> M : page.wait_for_timeout(3000)
+        SE -> B : click ""gui.online.tables.other-table""
+        SE -> SE : page.wait_for_timeout(3000)
     end
 end
+deactivate SE
 
-== Phase 4 — observe_game(page) ==
+== Phase 4 — Observation ==
 
-M -> B : get_players(page)
-loop pos ∈ {nord, sud, est, ouest}
-    M -> D : inner_text(`#{pos} div[data-role='badge']`)
-    D --> M : player name
+C -> O : observe_game(page)
+activate O
+
+O -> B : get_players(page)
+loop seat ∈ {nord, sud, est, ouest}
+    O -> D : inner_text(""#{seat} div[data-role='badge']"")
+    D --> O : player name
 end
 
-M -> M : is_game_scrapeable(players)
-note right of M
+O -> O : is_game_scrapeable(players)
+note right of O
   **<<future>>** — currently
   returns **True** always.
   Will check a DB whether
@@ -109,35 +124,38 @@ note right of M
   being scraped.
 end note
 
-M -> B : last_known_round = get_current_round(page)
-B -> D : inner_text(`#tour label[\ndata-i18n="gui.scores.tour"]`)
-D --> M : "TOUR N" → regex \d+ → int
+O -> B : last_known_round = get_current_round(page)
+B -> D : inner_text(""#tour label[data-i18n='gui.scores.tour']"")
+D --> O : "TOUR N" → regex \d+ → int
 
 loop forever (1s poll)
-    M -> B : current_round = get_current_round(page)
-    alt round changed (and ≠ -1)
-        M -> M : print "🎬 ROUND N STARTED - RECORDING"
+    O -> B : current_round = get_current_round(page)
+    alt round changed (and ≠ UNKNOWN_ROUND)
+        O -> O : print "🎬 ROUND N STARTED - RECORDING"
 
-        ' --- FUTURE LOGIC block (main.py:105-108) ---
-        group <<future>> FUTURE LOGIC — main.py:105-108
-            M -->> B : observe_bidding(page)
-            M -->> B : observe_gameplay(page)
-            M -->> S : persist round / bids / plays
+        ' --- FUTURE LOGIC block inside observer.observe_game ---
+        group <<future>> FUTURE LOGIC — observer.observe_game
+            O -->> B : observe_bidding(page)
+            O -->> B : observe_gameplay(page)
+            O -->> S : persist round / bids / plays
         end
 
-        M -> M : last_known_round = current_round
+        O -> O : last_known_round = current_round
     end
-    M -> M : page.wait_for_timeout(1000)
+    O -> O : page.wait_for_timeout(1000)
 end
+deactivate O
 
 == Shutdown ==
 
-M -> B : browser.close()
-deactivate M
+' The observation loop never returns today, so this branch is only
+' reached when no tournament table was found in Phase 3.
+C -> B : browser.close()
+deactivate C
 
-note over M, S
+note over C, S
   **What is NOT wired up yet**
-  • `observe_bidding(page)` and `observe_gameplay(page)` — commented placeholders
+  • ""observe_bidding(page)"" and ""observe_gameplay(page)"" — commented placeholders
   • Any persistence path — no SQLite (or other) writes
   • DB-based de-duplication of already-scraped players
 end note

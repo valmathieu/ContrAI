@@ -10,9 +10,10 @@ dependencies = [
     "playwright>=1.57.0",
 ]
 
-# contrai-scraper currently ships only entry-point scripts (main.py, run.py) at
-# the package root and exposes no importable Python module. Declaring an empty
-# module list keeps setuptools' flat-layout discovery from choking on the two
-# top-level .py files. Revisit once the scraper grows a real package under src/.
-[tool.setuptools]
-py-modules = []
+[project.scripts]
+contrai-scrape = "contrai_scraper.cli:main"
+
+# ``run.py`` is a parked login experiment sitting at the package root; pointing
+# setuptools at src/ keeps flat-layout discovery from trying to package it.
+[tool.setuptools.packages.find]
+where = ["src"]
