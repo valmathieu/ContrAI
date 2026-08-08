@@ -828,7 +828,7 @@ class TestPanelHandPersistence:
         trick = _Trick()
         trick.add_play(human, Card(Suit.CLUBS, Rank.KING))
         panel = _panel_hand(
-            human, trick=trick, playable_cards=[human.hand[1]],
+            human, trick=trick, playable_cards=[list(human.hand)[1]],
             phase="playing", round_=None, interactive=False,
         )
         text = panel.renderable.plain

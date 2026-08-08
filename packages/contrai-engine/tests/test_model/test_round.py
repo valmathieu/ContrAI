@@ -323,7 +323,7 @@ class TestPlayStateSeeding:
         round_.contract = _contract(players["N"], 100, Suit.SPADES)
         # Corrupt the deal: one seat now holds only 7 cards. A validated
         # seeding (PlayState.start) must reject it.
-        players["N"].hand.remove(players["N"].hand[0])
+        players["N"].hand.remove(next(iter(players["N"].hand)))
 
         with pytest.raises(ValueError):
             round_.play_all_tricks()

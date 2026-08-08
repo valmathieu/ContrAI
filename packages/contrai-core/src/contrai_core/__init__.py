@@ -17,6 +17,7 @@ from .rules import TrumpRules, SingleSuitRules, NoTrumpRules, rules_for
 from .team_side import TeamSide
 from .position import Position
 from .card import Card
+from .card_queries import count_suit, cards_of_suit, has_suit, has_card
 from .deck import Deck
 from .hand import Hand
 from .team import Team
@@ -61,6 +62,10 @@ __all__ = [
     "TeamSide",
     "Position",
     "Card",
+    "count_suit",
+    "cards_of_suit",
+    "has_suit",
+    "has_card",
     "Deck",
     "Hand",
     "Team",

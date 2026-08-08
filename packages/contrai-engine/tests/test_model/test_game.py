@@ -20,6 +20,7 @@ from contrai_core.exceptions import InvalidPlayerCountError
 from contrai_core.bid import ContractBid, PassBid
 from contrai_core.card import Card
 from contrai_core.contract import Contract
+from contrai_core.hand import Hand
 from contrai_core.position import Position
 from contrai_core.types import Suit
 
@@ -29,7 +30,7 @@ class DummyPlayer:
     def __init__(self, name, position):
         self.name = name
         self.position = position
-        self.hand = []
+        self.hand = Hand()
 
 
 class FakeRound:

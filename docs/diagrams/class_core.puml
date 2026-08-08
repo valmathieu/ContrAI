@@ -263,34 +263,70 @@ package "hand.py" as p_hand {
         + cards : list<Card>
         --
         + __init__(cards: Iterable<Card>? = None)
-        .. list-compatible API ..
+        .. mutation and inspection ..
         + append(card: Card) : None
         + extend(cards: Iterable<Card>) : None
         + remove(card: Card) : None
         + clear() : None
-        + copy() : list<Card>
         + __contains__(card) : bool
         + __iter__() : Iterator<Card>
         + __len__() : int
-        + __getitem__(idx) : Card | list<Card>
         .. query helpers ..
         + count_suit(suit: Suit) : int
-        + count_rank(rank: Rank) : int
         + has_suit(suit: Suit) : bool
         + has_card(suit: Suit, rank: Rank) : bool
         + cards_of_suit(suit: Suit) : list<Card>
-        + is_complete() : bool
     }
 
     note bottom of Hand
       Wraps a ""list[Card]"" and forwards the
-      list operations the engine relies on, so
-      call sites can keep treating a hand like
-      a list. ""copy()"" returns a plain
-      ""list[Card]"", not another Hand.
-      No size invariant is enforced anywhere —
-      ""is_complete()"" is the opt-in check for
-      a fully dealt 8-card hand.
+      mutation and inspection operations the
+      engine relies on. The surface stops there:
+      a hand is a //bag// a seat draws from and
+      plays out of, not a sequence to address by
+      position. There is no ""~__getitem~__"" —
+      a caller wanting a list-shaped view writes
+      ""list(hand)"". No size invariant is
+      enforced anywhere either.
+      ----
+      The four query helpers hold no logic of
+      their own: each is a one-line delegate to
+      ""card_queries"", which is what lets the
+      frozen ""tuple[Card, ...]"" of the play path
+      ask the same questions through the same
+      implementation.
+    end note
+}
+
+' =========================================================
+' Shared card queries (card_queries.py)
+' =========================================================
+package "card_queries.py" as p_queries {
+    class "card_queries.py" as p_cardqueries <<module>> {
+        + count_suit(cards: Iterable<Card>,\n  suit: Suit) : int
+        + cards_of_suit(cards: Iterable<Card>,\n  suit: Suit) : list<Card>
+        + has_suit(cards: Iterable<Card>,\n  suit: Suit) : bool
+        + has_card(cards: Iterable<Card>,\n  suit: Suit, rank: Rank) : bool
+    }
+
+    note bottom of p_cardqueries
+      One implementation of the four suit
+      questions, over //any// collection of cards.
+      Two containers ask them and neither can
+      replace the other: the mutable ""Hand"" a
+      seat plays out of, and the frozen
+      ""tuple[Card, ...]"" carried by
+      ""PlayState.hands"" / ""PlayObservation.hand"",
+      whose immutability is what makes a
+      determinization fork safe to hand to a
+      search. Sharing the functions is what keeps
+      the tuple side from re-implementing the
+      comprehensions ad hoc and drifting.
+      ----
+      ""has_card"" asks through membership
+      (""Card(suit, rank) in cards""), so ""Card""
+      value-equality stays the single source of
+      truth for //do I hold this//.
     end note
 }
 
@@ -784,6 +820,11 @@ Card ..> InvalidCardError        : <<raises on a non-Suit suit>>
 
 ' Hand owns Cards
 Hand "1" *-- "0..8" Card : cards
+
+' Hand's query helpers hold no logic — they forward to the shared
+' functions the frozen play-path tuples read through as well.
+Hand ..> p_cardqueries : <<delegates>>
+p_cardqueries ..> Card : <<scans, builds for has_card>>
 
 ' Deck owns the full 32-card set
 Deck "1" *-- "32" Card : cards
