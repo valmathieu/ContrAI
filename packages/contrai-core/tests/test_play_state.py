@@ -21,6 +21,7 @@ from contrai_core import (
     PlayState,
     Rank,
     Suit,
+    TeamSide,
     TrickRecord,
     TrumpVariant,
 )
@@ -261,6 +262,117 @@ class TestDerivedPropertyBoundaries:
         assert len(state.completed_tricks) == 8
         assert all(len(trick) == 4 for trick in state.completed_tricks)
         assert len(state.trick_winners) == 8
+
+
+# ---------------------------------------------------------------------------
+# Per-side captured pile: card points and trick counts
+# ---------------------------------------------------------------------------
+
+
+# A whole round laid out so both sides capture tricks, each trick played
+# entirely in one suit (two tricks per suit) so the winner is decided by
+# the in-suit ladder alone. Read as (seat, suit, rank) in play order; the
+# trick winners under a ♥ contract are N, E, S, W, N, E, N, E.
+_SPLIT_ROUND: tuple[tuple[str, Suit, Rank], ...] = (
+    # ♠ — N takes the ace trick, E the ten trick (the 10 outranks the K
+    # on the plain ladder).
+    ("N", Suit.SPADES, Rank.ACE), ("E", Suit.SPADES, Rank.KING),
+    ("S", Suit.SPADES, Rank.QUEEN), ("W", Suit.SPADES, Rank.JACK),
+    ("E", Suit.SPADES, Rank.TEN), ("S", Suit.SPADES, Rank.NINE),
+    ("W", Suit.SPADES, Rank.EIGHT), ("N", Suit.SPADES, Rank.SEVEN),
+    # ♦ — same shape, one seat further round the table.
+    ("S", Suit.DIAMONDS, Rank.ACE), ("W", Suit.DIAMONDS, Rank.KING),
+    ("N", Suit.DIAMONDS, Rank.QUEEN), ("E", Suit.DIAMONDS, Rank.JACK),
+    ("W", Suit.DIAMONDS, Rank.TEN), ("N", Suit.DIAMONDS, Rank.NINE),
+    ("E", Suit.DIAMONDS, Rank.EIGHT), ("S", Suit.DIAMONDS, Rank.SEVEN),
+    # ♣ — as for ♠.
+    ("N", Suit.CLUBS, Rank.ACE), ("E", Suit.CLUBS, Rank.KING),
+    ("S", Suit.CLUBS, Rank.QUEEN), ("W", Suit.CLUBS, Rank.JACK),
+    ("E", Suit.CLUBS, Rank.TEN), ("S", Suit.CLUBS, Rank.NINE),
+    ("W", Suit.CLUBS, Rank.EIGHT), ("N", Suit.CLUBS, Rank.SEVEN),
+    # ♥ — the suit whose scale changes with the regime: under a ♥
+    # contract the J and 9 lead the ladder and are worth 20 and 14;
+    # under NO_TRUMP they fall back to 2 and 0 behind the ace.
+    ("N", Suit.HEARTS, Rank.JACK), ("E", Suit.HEARTS, Rank.NINE),
+    ("S", Suit.HEARTS, Rank.ACE), ("W", Suit.HEARTS, Rank.TEN),
+    ("E", Suit.HEARTS, Rank.KING), ("S", Suit.HEARTS, Rank.QUEEN),
+    ("W", Suit.HEARTS, Rank.EIGHT), ("N", Suit.HEARTS, Rank.SEVEN),
+)
+
+
+class TestCapturedPileDerivations:
+    """``card_points_by_side`` / ``trick_counts_by_side``.
+
+    Both credit each completed trick to the side of the seat that won
+    it, so they are exercised together against the same states.
+    """
+
+    def _state(self, players, plays, trump=Suit.HEARTS, count=None):
+        """A bare state over ``plays`` (hands are irrelevant to derived views)."""
+        contract = Contract(ContractBid(players["N"], 100, trump))
+        seating = tuple(players[s] for s in _ORDER)
+        records = tuple(
+            Play(players[seat], Card(suit, rank))
+            for seat, suit, rank in plays[:count]
+        )
+        return PlayState(
+            contract=contract, players=seating, hands=((), (), (), ()),
+            plays=records,
+        )
+
+    def test_empty_state_has_every_side_at_zero(self, players):
+        """No plays yet — both keys present, both zero, no ``.get`` needed."""
+        state = self._state(players, ())
+        assert state.card_points_by_side == {TeamSide.NS: 0, TeamSide.EW: 0}
+        assert state.trick_counts_by_side == {TeamSide.NS: 0, TeamSide.EW: 0}
+
+    def test_in_progress_trick_is_not_credited(self, players):
+        """One completed ♠ trick to N-S, plus two plays nobody has won yet."""
+        state = self._state(players, _SPLIT_ROUND, count=6)
+        # A♠ 11 + K♠ 4 + Q♠ 3 + J♠ 2 = 20, all to North's side.
+        assert state.card_points_by_side == {TeamSide.NS: 20, TeamSide.EW: 0}
+        assert state.trick_counts_by_side == {TeamSide.NS: 1, TeamSide.EW: 0}
+
+    def test_completed_round_splits_the_whole_deck(self, players):
+        """The two sides' piles sum to the deck's 152 card points.
+
+        152, not 162: the last-trick bonus is a contract-conversion
+        rule the engine adds, not a fact about which cards were
+        captured.
+        """
+        state = self._state(players, _SPLIT_ROUND)
+        points = state.card_points_by_side
+        # ♠A-trick 20 + ♦A-trick 20 + ♣A-trick 20 + ♥J-trick 55 = 115.
+        assert points == {TeamSide.NS: 115, TeamSide.EW: 37}
+        assert sum(points.values()) == 152
+        counts = state.trick_counts_by_side
+        assert counts == {TeamSide.NS: 4, TeamSide.EW: 4}
+        assert sum(counts.values()) == state.trick_number == 8
+
+    def test_no_trump_regime_rescales_the_pile(self, players):
+        """The same 32 plays score differently with no suit as trump.
+
+        Only the ♥ tricks move: the J and the 9 lose their trump values
+        (20 → 2, 14 → 0) and stop outranking the ace, so the ♥ ace
+        trick swaps from North to South — still N-S, but worth 23
+        rather than 55. The deck is now worth a flat 4 × 30 = 120.
+        """
+        state = self._state(players, _SPLIT_ROUND, trump=TrumpVariant.NO_TRUMP)
+        points = state.card_points_by_side
+        assert points == {TeamSide.NS: 83, TeamSide.EW: 37}
+        assert sum(points.values()) == 120
+        # The trick split is unchanged; only the scale moved.
+        assert state.trick_counts_by_side == {TeamSide.NS: 4, TeamSide.EW: 4}
+
+    def test_one_sided_sweep(self, players):
+        """East ruffs every trick: E-W takes all 8 and the whole 152."""
+        contract, seating, _, _ = _deal(players)
+        state = PlayState(
+            contract=contract, players=seating, hands=((), (), (), ()),
+            plays=_full_plays(players),
+        )
+        assert state.card_points_by_side == {TeamSide.NS: 0, TeamSide.EW: 152}
+        assert state.trick_counts_by_side == {TeamSide.NS: 0, TeamSide.EW: 8}
 
 
 # ---------------------------------------------------------------------------
