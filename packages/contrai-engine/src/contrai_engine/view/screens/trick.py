@@ -17,7 +17,6 @@ from contrai_core import (
     Suit,
     TeamSide,
     Trick,
-    rules_for,
 )
 from rich.align import Align
 from rich.box import ROUNDED
@@ -136,19 +135,21 @@ def _panel_round(round_: Optional[Round], phase: str) -> Panel:
 def _round_running_points(round_: Optional[Round]) -> tuple[int, int]:
     """Trump-aware card points each team has captured so far this round.
 
+    Reads the round's authoritative play state, which derives the two
+    piles itself — the same numbers the scorer works from, so what the
+    player watches during play cannot drift from what the recap totals
+    up afterwards.
+
     Returns ``(ns_points, ew_points)``; ``(0, 0)`` before a contract
-    exists (no trump means no point values to sum yet).
+    exists (no trump means no point values to sum yet) or before the
+    play state is seeded.
     """
     if not round_ or not round_.contract:
         return 0, 0
-    rules = rules_for(round_.contract.suit)
-    points = {side: 0 for side in TeamSide}
-    for side, tricks in round_.team_tricks.items():
-        points[side] = sum(
-            rules.points(card)
-            for trick in tricks
-            for _, card in trick.get_plays()
-        )
+    play_state = getattr(round_, "play_state", None)
+    if play_state is None:
+        return 0, 0
+    points = play_state.card_points_by_side
     return points[TeamSide.NS], points[TeamSide.EW]
 
 

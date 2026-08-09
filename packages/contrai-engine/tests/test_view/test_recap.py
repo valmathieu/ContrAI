@@ -11,7 +11,7 @@ import re
 
 import pytest
 
-from contrai_core import Card, Position, Rank, Suit, TeamSide, Trick
+from contrai_core import Card, Position, Rank, Suit, TeamSide, Trick, rules_for
 from contrai_core.bid import SlamLevel
 from contrai_engine.model.round import UnannouncedSlam
 from contrai_engine.view.rich_view import RichView
@@ -76,6 +76,31 @@ class TestRoundRecapPanel:
                 return 2
             return 1
 
+    class _StubPlayState:
+        """Stand-in for the core play state's per-side derivations.
+
+        The recap asks a play state three questions — the pile each
+        side captured, how many tricks each side took, and who won the
+        last one. The first two are derived once from the
+        ``team_tricks`` shape the tests already write; the last is set
+        per test by assigning ``trick_winners``.
+        """
+
+        def __init__(self, team_tricks, trump):
+            rules = rules_for(trump)
+            self.card_points_by_side = {
+                side: sum(
+                    rules.points(card)
+                    for tr in team_tricks.get(side, [])
+                    for _, card in tr.get_plays()
+                )
+                for side in TeamSide
+            }
+            self.trick_counts_by_side = {
+                side: len(team_tricks.get(side, [])) for side in TeamSide
+            }
+            self.trick_winners: tuple = ()
+
     class _StubRound:
         def __init__(self, *, round_number, contract, round_scores,
                      team_tricks=None, belote_holder=None,
@@ -84,6 +109,9 @@ class TestRoundRecapPanel:
             self.contract = contract
             self.round_scores = round_scores
             self.team_tricks = team_tricks or {}
+            self.play_state = TestRoundRecapPanel._StubPlayState(
+                self.team_tricks, contract.suit if contract else None
+            )
             # Belote holder (player object exposing ``.team.name``) and
             # the engine's canonical made/failed flag. ``contract_made``
             # left None lets ``RichView._contract_made`` fall back to the
@@ -163,7 +191,7 @@ class TestRoundRecapPanel:
             team_tricks={TeamSide.NS: [ns_trick], TeamSide.EW: []},
             belote_holder=north,
         )
-        round_.last_trick_winner = north
+        round_.play_state.trick_winners = (north,)
         breakdown = _recap_breakdown(round_)
         ns = breakdown[TeamSide.NS]
         # Round points is the sum of the three factual Outcome rows.
@@ -320,7 +348,7 @@ class TestRoundRecapPanel:
             team_tricks={TeamSide.NS: [ns_trick], TeamSide.EW: []},
             belote_holder=north,
         )
-        round_.last_trick_winner = north
+        round_.play_state.trick_winners = (north,)
         breakdown = _recap_breakdown(round_)
         # 11 (A♥) + 10 (last trick) + 20 (belote) = 41.
         assert breakdown[TeamSide.NS]["round_points"] == 41
@@ -370,7 +398,7 @@ class TestRoundRecapPanel:
             team_tricks={TeamSide.NS: [ns_trick], TeamSide.EW: []},
             belote_holder=north,
         )
-        round_.last_trick_winner = north
+        round_.play_state.trick_winners = (north,)
         text = _panel_round_recap(
             round_, {TeamSide.NS: 141, TeamSide.EW: 0}
         ).renderable.plain
@@ -406,7 +434,8 @@ class TestRoundRecapPanel:
             belote_holder=north,
             contract_made=False,
         )
-        round_.last_trick_winner = east  # last trick goes to E-W, not N-S
+        # Last trick goes to E-W, not N-S.
+        round_.play_state.trick_winners = (east,)
         text = _panel_round_recap(
             round_, {TeamSide.NS: 20, TeamSide.EW: 360}
         ).renderable.plain
@@ -467,7 +496,7 @@ class TestRoundRecapPanel:
             team_tricks={TeamSide.NS: [ns_trick], TeamSide.EW: []},
             belote_holder=north,
         )
-        round_.last_trick_winner = north
+        round_.play_state.trick_winners = (north,)
         text = _panel_round_recap(
             round_, {TeamSide.NS: 141, TeamSide.EW: 0}
         ).renderable.plain
@@ -499,7 +528,8 @@ class TestRoundRecapPanel:
             contract_made=True,
         )
         round_.unannounced_slam = UnannouncedSlam.GRAND_SLAM  # north swept personally
-        round_.last_trick_winner = north  # bonus would be +10 — must fold in
+        # The bonus would be +10 — it must fold into the substitute.
+        round_.play_state.trick_winners = (north,)
         breakdown = _recap_breakdown(round_)
         ns = breakdown[TeamSide.NS]
         assert ns["trick_points"] == 250
@@ -575,7 +605,7 @@ class TestRoundRecapPanel:
             round_scores={TeamSide.NS: 110, TeamSide.EW: 0},
             team_tricks={TeamSide.NS: [last_trick], TeamSide.EW: []},
         )
-        round_.last_trick_winner = north
+        round_.play_state.trick_winners = (north,)
         panel = _panel_round_recap(
             round_, {TeamSide.NS: 110, TeamSide.EW: 0}
         )
@@ -890,7 +920,7 @@ class TestRoundRecapPanel:
                 TeamSide.EW: [],
             },
         )
-        round_.last_trick_winner = north
+        round_.play_state.trick_winners = (north,)
         breakdown = _recap_breakdown(round_)
         ns = breakdown[TeamSide.NS]
         sum_ns = (

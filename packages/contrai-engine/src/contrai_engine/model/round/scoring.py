@@ -2,12 +2,13 @@
 its team scores.
 
 ``score_round`` reads the authoritative :class:`contrai_core.PlayState`
-on the round (contract, completed tricks and their winners) plus the
-round's belote holder, and returns a :class:`RoundScore` result; it
-mutates nothing. The thin ``Round.calculate_round_scores`` wrapper
-unpacks that result onto the round's public result attributes. Keeping
-the maths side-effect-free here isolates ~250 lines of scoring rules
-from the lifecycle orchestrator.
+on the round (contract, the per-side captured piles and trick counts,
+and the per-trick winners) plus the round's belote holder, and returns
+a :class:`RoundScore` result; it mutates nothing. The thin
+``Round.calculate_round_scores`` wrapper unpacks that result onto the
+round's public result attributes. Keeping the maths side-effect-free
+here isolates ~250 lines of scoring rules from the lifecycle
+orchestrator.
 """
 
 from dataclasses import dataclass
@@ -15,7 +16,6 @@ from enum import Enum
 from typing import Dict, Optional, Sequence, TYPE_CHECKING
 
 from contrai_core.bid import SlamLevel
-from contrai_core.rules import rules_for
 from contrai_core.team_side import TeamSide
 
 if TYPE_CHECKING:
@@ -153,37 +153,29 @@ def score_round(round_: 'Round') -> RoundScore:
         )
 
     contract_value = round_.contract.value
-    trump_suit = round_.contract.suit
-    rules = rules_for(trump_suit)
 
-    # The authoritative play history: completed tricks and their winners
-    # come straight from the core play state, never from the view-facing
-    # mirrors.
+    # The authoritative play history: the per-side captured piles, the
+    # trick counts and the per-trick winners all come straight from the
+    # core play state, which derives them itself — so the scorer and the
+    # screens work from one implementation of "who captured what".
+    # Belote is deliberately NOT part of it: that is a *held-cards*
+    # bonus credited below to the holder's side, independent of who
+    # captured the K/Q.
     play_state = round_.play_state
-    completed_tricks = play_state.completed_tricks
     trick_winners = play_state.trick_winners
+    team_card_points = play_state.card_points_by_side
+    team_trick_counts = play_state.trick_counts_by_side
 
     # Every seat has a Position and every Position has a side, so the
-    # two buckets are derived from the seating rather than from the
+    # score buckets are derived from the seating rather than from the
     # mutable Team roster objects.
     sides = {player.position.team_side for player in round_.players_order}
-    team_card_points = {side: 0 for side in sides}
     team_scores = {side: 0 for side in sides}
-    team_trick_counts = {side: 0 for side in sides}
-
-    # Card points and trick counts per side (trump-aware): each completed
-    # trick's whole pile is credited to its winner's side. Belote is
-    # deliberately NOT folded in here — it is a *held-cards* bonus
-    # credited below to the holder's side, independent of who captured
-    # the K/Q.
-    for trick, winner in zip(completed_tricks, trick_winners):
-        winner_side = winner.position.team_side
-        team_card_points[winner_side] += sum(
-            rules.points(play.card) for play in trick
-        )
-        team_trick_counts[winner_side] += 1
 
     # Add the last-trick bonus (10 points for winning the last trick).
+    # ``card_points_by_side`` recomputes and hands back a fresh mapping
+    # on every access, so layering the bonus onto it here cannot leak
+    # back into the state.
     if trick_winners:
         team_card_points[trick_winners[-1].position.team_side] += 10
 

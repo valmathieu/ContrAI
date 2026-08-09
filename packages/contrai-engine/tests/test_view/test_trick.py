@@ -9,7 +9,7 @@ playable-pill styling, and the per-play prompt texts.
 
 from __future__ import annotations
 
-from contrai_core import Card, Position, Rank, Suit, TeamSide, Trick
+from contrai_core import Card, Position, Rank, Suit, TeamSide, Trick, rules_for
 from contrai_engine.model.player import HumanPlayer
 from contrai_engine.view.screens.trick import (
     _ai_card_announcement,
@@ -39,6 +39,31 @@ class _StubContract:
         self.redouble = False
 
 
+class _StubPlayState:
+    """Stand-in for the core play state's per-side derivations.
+
+    The screens ask a play state only what each side has captured, so
+    the stub derives those two mappings once from the ``team_tricks``
+    shape the tests already write — the fixture stays a pile of tricks,
+    the screen reads the derivations.
+    """
+
+    def __init__(self, team_tricks, trump):
+        rules = rules_for(trump)
+        self.card_points_by_side = {
+            side: sum(
+                rules.points(card)
+                for tr in team_tricks.get(side, [])
+                for _, card in tr.get_plays()
+            )
+            for side in TeamSide
+        }
+        self.trick_counts_by_side = {
+            side: len(team_tricks.get(side, [])) for side in TeamSide
+        }
+        self.trick_winners: tuple = ()
+
+
 class _StubRound:
     def __init__(self, *, contract=None, tricks=None, dealer=None,
                  round_number=1, team_tricks=None):
@@ -47,6 +72,9 @@ class _StubRound:
         self.dealer = dealer
         self.round_number = round_number
         self.team_tricks = team_tricks or {}
+        self.play_state = _StubPlayState(
+            self.team_tricks, contract.suit if contract else None
+        )
 
 
 class TestRoundRunningPoints:
