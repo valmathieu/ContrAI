@@ -1,16 +1,17 @@
 """Tests for the game-state readers in :mod:`contrai_engine.view.state_helpers`.
 
 These read a slice of round/trick state: the display-order hand sort, the
-live trick-winner highlight, the green "↑ playable …" constraint hint, and
-the env-tunable AI pacing delay.
+live trick-winner highlight, the green "↑ playable …" constraint hint, the
+belote-badge projection, and the env-tunable AI pacing delay.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from contrai_core import Card, Rank, Suit, Trick
+from contrai_core import Card, Position, Rank, Suit, Trick
 from contrai_engine.view.state_helpers import (
+    _belote_by_position,
     _current_winner,
     _explain_constraint,
     _resolve_delay,
@@ -242,3 +243,54 @@ class TestExplainConstraint:
         playable = list(south.hand)
         result = _explain_constraint(south, trick, playable, Suit.HEARTS)
         assert "free discard" in result.plain
+
+
+class TestBeloteByPosition:
+    """`_belote_by_position` — projects belote state onto seat keys.
+
+    The trick diamond renders its ★ badge per *seat*, but the round tracks
+    belote per *player*. This is the one place that re-keys, so its three
+    empty-result paths are what the badge relies on to stay silent.
+    """
+
+    class _StubRound:
+        """A round exposing only ``belote_state``, or not even that."""
+
+        def __init__(self, belote_state=None, *, has_attribute=True):
+            if has_attribute:
+                self.belote_state = belote_state
+
+    def test_no_active_round_yields_an_empty_map(self):
+        """Before the first deal there is no round to read."""
+
+        assert _belote_by_position(None) == {}
+
+    def test_a_round_without_belote_state_yields_an_empty_map(self):
+        """The attribute is read defensively, so its absence is not a crash."""
+
+        assert _belote_by_position(self._StubRound(has_attribute=False)) == {}
+
+    def test_a_none_belote_state_yields_an_empty_map(self):
+        assert _belote_by_position(self._StubRound(None)) == {}
+
+    def test_an_empty_belote_state_yields_an_empty_map(self):
+        """Nothing declared yet — the badge stays off."""
+
+        assert _belote_by_position(self._StubRound({})) == {}
+
+    def test_a_populated_state_is_rekeyed_by_position(self, four_players):
+        north, _east, south, _west = four_players
+        round_ = self._StubRound({north: "belote", south: "rebelote"})
+
+        assert _belote_by_position(round_) == {
+            Position.NORTH: "belote",
+            Position.SOUTH: "rebelote",
+        }
+
+    def test_values_are_preserved_verbatim(self, four_players):
+        """The helper re-keys; it must not reinterpret the kind string."""
+
+        _north, east, *_ = four_players
+        round_ = self._StubRound({east: "★ Belote"})
+
+        assert _belote_by_position(round_)[Position.EAST] == "★ Belote"
