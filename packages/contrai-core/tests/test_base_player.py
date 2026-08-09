@@ -39,6 +39,29 @@ def test_two_players_have_independent_hands():
     assert len(p2.hand) == 0
 
 
+def test_base_player_is_unseated_without_a_position():
+    """The seat is optional: an unnamed one leaves the player unseated.
+
+    Identity and table state are separable — a roster can exist before
+    anyone sits down, and the engine's ``Game`` is what seats it.
+    """
+    player = BasePlayer("Corentin")
+    assert player.position is None
+    assert player.name == "Corentin"
+    assert isinstance(player.hand, Hand)
+
+
+def test_base_player_seat_is_settable_after_construction():
+    """An unseated player takes its seat by assignment.
+
+    This is the hook the engine's seating uses; nothing about the seat is
+    frozen at construction.
+    """
+    player = BasePlayer("Samuel")
+    player.position = Position.WEST
+    assert player.position is Position.WEST
+
+
 def test_all_table_positions_construct():
     """Every Position member is a valid construction argument.
 

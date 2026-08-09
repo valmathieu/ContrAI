@@ -357,11 +357,11 @@ package "team.py / player.py" as p_team {
 
     class BasePlayer {
         + name : str
-        + position : Position
+        + position : Position?
         + hand : Hand
         + team : Team?
         --
-        + __init__(name: str, position: Position)
+        + __init__(name: str, position: Position = None)
     }
 
     note bottom of BasePlayer
@@ -369,6 +369,9 @@ package "team.py / player.py" as p_team {
       data. The decision hooks
       (""choose_bid"" / ""choose_card"") live
       on the engine-side subclasses.
+      The seat is optional: a player built
+      without one is //unseated// until the
+      engine's ""Game"" seats the roster.
     end note
 }
 

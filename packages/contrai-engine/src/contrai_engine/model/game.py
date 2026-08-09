@@ -72,28 +72,65 @@ class Game:
     """
     def __init__(self, players):
         """
-        Initialize a game with 4 players positioned North, East, South, West.
+        Initialize a game with 4 players, one per seat.
         Teams are automatically created: North-South vs East-West.
 
+        Seating works one of two ways, and the list decides which:
+
+        - **Pre-seated** — every player already names a seat, and the four
+          must be the four distinct :class:`Position` members. This is
+          what the CLI does: it builds a specific table (the human at
+          South) and says so.
+        - **Unseated** — no player names a seat, and the table is laid out
+          from the list order against ``list(Position)``, i.e. the
+          anticlockwise turn order *North, West, South, East*. Note this
+          is the seating order, not the compass order N-E-S-W: the first
+          and third players end up partners, as do the second and fourth.
+          A caller wanting shuffled seating shuffles the list before
+          passing it, which keeps the RNG (and its seeding) in the
+          caller's hands — a self-play harness reseeding per game and a
+          test pinning a deterministic table both need that control.
+
+        A half-seated list is rejected rather than completed: filling the
+        gaps would silently decide partnerships the caller only specified
+        half of.
+
         Args:
-            players (list[Player]): List of 4 players with positions North, East, South, West
+            players (list[Player]): The 4 players, either all carrying a
+                distinct Position or none carrying one at all.
 
         Raises:
             InvalidPlayerCountError: If the number of players is not exactly 4.
-            ValueError: If players don't have the required positions.
+            ValueError: If only some players name a seat, or if the seats
+                they name are not the four distinct positions.
         """
         # Validate players
         if len(players) != 4:
             raise InvalidPlayerCountError(4, len(players), "Initializing game")
 
-        #TODO: Accept no position and assign positions automatically
+        unseated = [player for player in players if player.position is None]
 
-        # Validate positions
-        required_positions = set(Position)
-        player_positions = {player.position for player in players}
-        if player_positions != required_positions:
-            required = ", ".join(str(p) for p in Position)
-            raise ValueError(f"Players must have positions: {required}")
+        if unseated and len(unseated) != len(players):
+            raise ValueError(
+                "Players must either all have a position or all have none; "
+                f"got {len(players) - len(unseated)} seated and "
+                f"{len(unseated)} unseated."
+            )
+
+        if unseated:
+            # Seat them in list order around the table. Position's own
+            # definition order is the anticlockwise seating, so zipping
+            # against it is the whole assignment — no seat table here to
+            # drift out of step with the enum.
+            for player, position in zip(players, Position):
+                player.position = position
+        else:
+            # Validate positions
+            required_positions = set(Position)
+            player_positions = {player.position for player in players}
+            if player_positions != required_positions:
+                required = ", ".join(str(p) for p in Position)
+                raise ValueError(f"Players must have positions: {required}")
 
         # Sort players by position (the canonical anticlockwise seating).
         canonical_seating = list(Position)
