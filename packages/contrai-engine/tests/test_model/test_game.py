@@ -25,9 +25,13 @@ from contrai_core.position import Position
 from contrai_core.types import Suit
 
 class DummyPlayer:
-    """Minimal player stand-in: name, seat position, and an empty hand."""
+    """Minimal player stand-in: name, seat position, and an empty hand.
 
-    def __init__(self, name, position):
+    The seat defaults to ``None`` exactly as ``BasePlayer``'s does, so an
+    unseated roster can be built here too.
+    """
+
+    def __init__(self, name, position=None):
         self.name = name
         self.position = position
         self.hand = Hand()
@@ -180,6 +184,75 @@ def test_players_are_sorted_by_position(players):
     expected_positions = list(Position)
     actual_positions = [player.position for player in game.players]
     assert actual_positions == expected_positions
+
+def test_unseated_players_are_seated_in_list_order():
+    """Four players naming no seat are seated from the list order.
+
+    The order is ``list(Position)`` — the anticlockwise turn order, not
+    the compass order — so the list reads as "these four sit down around
+    the table in this order".
+    """
+    players = [DummyPlayer(f"Player{i}") for i in range(4)]
+    game = Game(players)  # type: ignore
+
+    assert [p.position for p in players] == list(Position)
+    # And the Game agrees: its seat index maps each seat to that player.
+    assert [game.players_by_position[seat].name for seat in Position] == [
+        "Player0", "Player1", "Player2", "Player3"
+    ]
+
+
+def test_unseated_seating_partners_the_first_and_third_players():
+    """List-order seating makes players 0/2 partners, and 1/3.
+
+    A consequence of seating in turn order rather than compass order, and
+    the reason the ordering is spelled out rather than left implicit: a
+    caller reading N-E-S-W into the list would get the partnerships it
+    did not ask for.
+    """
+    players = [DummyPlayer(f"Player{i}") for i in range(4)]
+    game = Game(players)  # type: ignore
+
+    rosters = {
+        frozenset(player.name for player in team.players) for team in game.teams
+    }
+    assert rosters == {
+        frozenset({"Player0", "Player2"}),
+        frozenset({"Player1", "Player3"}),
+    }
+
+
+def test_half_seated_roster_is_rejected():
+    """A list mixing seated and unseated players raises.
+
+    Completing the gaps would decide partnerships the caller only
+    specified half of, so the ambiguity is refused outright.
+    """
+    players = [
+        DummyPlayer("Seated", Position.NORTH),
+        DummyPlayer("Unseated1"),
+        DummyPlayer("Unseated2"),
+        DummyPlayer("Unseated3"),
+    ]
+
+    with pytest.raises(ValueError, match="all have a position or all have none"):
+        Game(players)  # type: ignore
+
+
+def test_unseated_ai_players_build_a_playable_game():
+    """The real engine player type seats itself too.
+
+    ``AiPlayer`` is what a simulation or training harness constructs, and
+    its strategies read the seat off the player at decision time — so
+    seating assigned by ``Game`` after construction is what they see.
+    """
+    players = [AiPlayer(f"Bot{i}") for i in range(4)]
+    game = Game(players)
+
+    assert {p.position for p in game.players} == set(Position)
+    assert all(p.team is not None for p in game.players)
+    assert game.players[0].cardplay.position is game.players[0].position
+
 
 def test_teams_are_created_correctly(game):
     """

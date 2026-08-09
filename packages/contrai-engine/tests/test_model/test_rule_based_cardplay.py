@@ -23,6 +23,7 @@ from contrai_core import (
     Position,
     seal_bid,
 )
+from contrai_core.rules import rules_for
 from contrai_core.types import Suit, Rank, TrumpVariant
 
 
@@ -232,6 +233,132 @@ class TestSubsequentLead:
         )
         result = north.cardplay.choose_card(obs)
         assert (result.suit, result.rank) == (Suit.CLUBS, Rank.EIGHT)
+
+
+class TestSubsequentLeadSparesTrump:
+    """Trump is held back once both opponents are proven trump-void.
+
+    A plain-suit winner is only safe because nobody can cut it, while a
+    trump held against void opponents wins whenever it is finally led.
+    So the ace / master search that picks the lead must run on plain
+    cards only in that position — otherwise the seat cashes a trump ace
+    where a plain ace does the same job, and hands the trump length back.
+
+    Every hand below is three spades (trump) and two diamonds, so the
+    "ace from the longest suit" tie-break points at the *trump* ace: the
+    suit-length rule alone would pick it, and only the trump-void filter
+    keeps it back.
+    """
+
+    def _both_opponents_void(self, players):
+        """A completed trick proving East and West hold no trump.
+
+        Both were compelled to discard off the hearts lead with no
+        partner already master, which proves a void in the led suit and
+        in trump at once.
+        """
+        return (
+            Play(players["N"], _c(Suit.HEARTS, Rank.ACE)),
+            Play(players["E"], _c(Suit.CLUBS, Rank.SEVEN)),
+            Play(players["S"], _c(Suit.HEARTS, Rank.KING)),
+            Play(players["W"], _c(Suit.DIAMONDS, Rank.SEVEN)),
+        )
+
+    def _clean_trick(self, players):
+        """A completed trick nobody was compelled to discard into."""
+        return (
+            Play(players["N"], _c(Suit.HEARTS, Rank.KING)),
+            Play(players["E"], _c(Suit.HEARTS, Rank.SEVEN)),
+            Play(players["S"], _c(Suit.HEARTS, Rank.QUEEN)),
+            Play(players["W"], _c(Suit.HEARTS, Rank.EIGHT)),
+        )
+
+    def _two_ace_hand(self):
+        """Three trump (spades) holding the ace, two diamonds holding one."""
+        return [
+            _c(Suit.SPADES, Rank.ACE),
+            _c(Suit.SPADES, Rank.KING),
+            _c(Suit.SPADES, Rank.QUEEN),
+            _c(Suit.DIAMONDS, Rank.ACE),
+            _c(Suit.DIAMONDS, Rank.SEVEN),
+        ]
+
+    def test_declaring_side_cashes_the_plain_ace_not_the_trump_ace(
+        self, players
+    ):
+        """Our contract, opponents out of trump: the plain ace goes out.
+
+        The trump pull stops (nothing left to pull), and the ace that
+        follows must come from a plain suit even though trump is the
+        longer holding.
+        """
+        north = players["N"]
+        obs = _obs(
+            north,
+            self._two_ace_hand(),
+            _contract(north, 100, Suit.SPADES),
+            completed_tricks=[self._both_opponents_void(players)],
+        )
+        result = north.cardplay.choose_card(obs)
+        assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.ACE)
+
+    def test_defender_cashes_the_plain_ace_not_the_trump_ace(self, players):
+        """The same restraint applies when the opponents declared.
+
+        Holding trump back against void opponents is worth just as much
+        on defence — only the pull branch above asks who declared.
+        """
+        north, east = players["N"], players["E"]
+        obs = _obs(
+            north,
+            self._two_ace_hand(),
+            _contract(east, 100, Suit.SPADES),
+            completed_tricks=[self._both_opponents_void(players)],
+        )
+        result = north.cardplay.choose_card(obs)
+        assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.ACE)
+
+    def test_trump_ace_still_leads_while_an_opponent_may_ruff(self, players):
+        """Opponents may still hold trump — the unrestricted search stands.
+
+        Read as a defender so the trump-pull branch is out of the way and
+        the ace choice is the only thing under test: with a ruff still
+        possible the trump ace is back in the running, and the longest
+        suit wins the tie as before.
+        """
+        north, east = players["N"], players["E"]
+        obs = _obs(
+            north,
+            self._two_ace_hand(),
+            _contract(east, 100, Suit.SPADES),
+            completed_tricks=[self._clean_trick(players)],
+        )
+        result = north.cardplay.choose_card(obs)
+        assert (result.suit, result.rank) == (Suit.SPADES, Rank.ACE)
+
+    def test_all_trump_hand_leads_the_cheapest_trump(self, players):
+        """Nothing plain left: spend the cheapest trump, not the ace.
+
+        With the opponents void, every trump in hand takes the trick, so
+        the seat has no reason to lead the ace. The plain-only filter
+        deliberately leaves no candidate here rather than falling back to
+        the full set — the cheap-trump default below it is the better
+        lead, and it is what must fire.
+        """
+        north = players["N"]
+        hand = [
+            _c(Suit.SPADES, Rank.ACE),
+            _c(Suit.SPADES, Rank.KING),
+            _c(Suit.SPADES, Rank.SEVEN),
+        ]
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.SPADES),
+            completed_tricks=[self._both_opponents_void(players)],
+        )
+        result = north.cardplay.choose_card(obs)
+        assert (result.suit, result.rank) == (Suit.SPADES, Rank.SEVEN)
 
 
 # ---------------------------------------------------------------------------
@@ -1334,20 +1461,27 @@ class TestPureHelpers:
 
     def test_is_master_card_reads_the_fallen_map(self, strat):
         fallen = self._fallen(Suit.HEARTS, {Rank.ACE, Rank.QUEEN, Rank.EIGHT})
+        spades = rules_for(Suit.SPADES)
         # ♥10's only higher card (♥A) has fallen → master.
-        assert strat._is_master_card(_c(Suit.HEARTS, Rank.TEN), Suit.SPADES, fallen) is True
+        assert strat._is_master_card(_c(Suit.HEARTS, Rank.TEN), spades, fallen) is True
         # ♥K still has ♥10 out → not master.
-        assert strat._is_master_card(_c(Suit.HEARTS, Rank.KING), Suit.SPADES, fallen) is False
+        assert strat._is_master_card(_c(Suit.HEARTS, Rank.KING), spades, fallen) is False
 
     def test_master_check_respects_trump_vs_normal_order(self, strat):
         # The ladders live on the TrumpRules seam now; the master check
         # must still rank a trump 9 above the Ace and a plain 9 below it.
-        # ♥ trump: once the Jack falls, the ♥9 is master (A is beneath it).
+        # It is handed the round's rules object, so the two regimes are
+        # two different ladders rather than one suit comparison.
         fallen = self._fallen(Suit.HEARTS, {Rank.JACK})
-        assert strat._is_master_card(_c(Suit.HEARTS, Rank.NINE), Suit.HEARTS, fallen) is True
+        # ♥ trump: once the Jack falls, the ♥9 is master (A is beneath it).
+        assert strat._is_master_card(
+            _c(Suit.HEARTS, Rank.NINE), rules_for(Suit.HEARTS), fallen
+        ) is True
         # Plain ♥ (spades trump): J and A still out → the ♥9 is nowhere
         # near master on the plain ladder.
-        assert strat._is_master_card(_c(Suit.HEARTS, Rank.NINE), Suit.SPADES, fallen) is False
+        assert strat._is_master_card(
+            _c(Suit.HEARTS, Rank.NINE), rules_for(Suit.SPADES), fallen
+        ) is False
 
     def test_team_winning_reads_the_led_suit_master(self, strat):
         # The helpers receive sealed observation records in production,

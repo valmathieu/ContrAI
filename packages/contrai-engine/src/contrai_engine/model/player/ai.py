@@ -25,14 +25,17 @@ class AiPlayer(Player):
     :func:`make_ai_player`) to mix and match levels.
     """
 
-    def __init__(self, name, position: Position,
+    def __init__(self, name, position: Position | None = None,
                  bidding=RuleBasedBiddingStrategy,
                  cardplay=RuleBasedCardPlayStrategy):
         """Build an AI player with injected strategies.
 
         Args:
             name: Display name.
-            position: The seat this player occupies.
+            position: The seat this player occupies. Omit it to leave the
+                bot unseated and let ``Game`` assign the seat — the
+                strategies read the seat off the player at decision time,
+                never at construction.
             bidding: A factory ``player -> BiddingStrategy``. Defaults to
                 :class:`RuleBasedBiddingStrategy` (the ``"expert"`` level).
             cardplay: A factory ``player -> CardPlayStrategy``. Defaults to
