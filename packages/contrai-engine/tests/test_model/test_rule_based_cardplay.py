@@ -23,6 +23,7 @@ from contrai_core import (
     Position,
     seal_bid,
 )
+from contrai_core.rules import rules_for
 from contrai_core.types import Suit, Rank, TrumpVariant
 
 
@@ -1460,20 +1461,27 @@ class TestPureHelpers:
 
     def test_is_master_card_reads_the_fallen_map(self, strat):
         fallen = self._fallen(Suit.HEARTS, {Rank.ACE, Rank.QUEEN, Rank.EIGHT})
+        spades = rules_for(Suit.SPADES)
         # ♥10's only higher card (♥A) has fallen → master.
-        assert strat._is_master_card(_c(Suit.HEARTS, Rank.TEN), Suit.SPADES, fallen) is True
+        assert strat._is_master_card(_c(Suit.HEARTS, Rank.TEN), spades, fallen) is True
         # ♥K still has ♥10 out → not master.
-        assert strat._is_master_card(_c(Suit.HEARTS, Rank.KING), Suit.SPADES, fallen) is False
+        assert strat._is_master_card(_c(Suit.HEARTS, Rank.KING), spades, fallen) is False
 
     def test_master_check_respects_trump_vs_normal_order(self, strat):
         # The ladders live on the TrumpRules seam now; the master check
         # must still rank a trump 9 above the Ace and a plain 9 below it.
-        # ♥ trump: once the Jack falls, the ♥9 is master (A is beneath it).
+        # It is handed the round's rules object, so the two regimes are
+        # two different ladders rather than one suit comparison.
         fallen = self._fallen(Suit.HEARTS, {Rank.JACK})
-        assert strat._is_master_card(_c(Suit.HEARTS, Rank.NINE), Suit.HEARTS, fallen) is True
+        # ♥ trump: once the Jack falls, the ♥9 is master (A is beneath it).
+        assert strat._is_master_card(
+            _c(Suit.HEARTS, Rank.NINE), rules_for(Suit.HEARTS), fallen
+        ) is True
         # Plain ♥ (spades trump): J and A still out → the ♥9 is nowhere
         # near master on the plain ladder.
-        assert strat._is_master_card(_c(Suit.HEARTS, Rank.NINE), Suit.SPADES, fallen) is False
+        assert strat._is_master_card(
+            _c(Suit.HEARTS, Rank.NINE), rules_for(Suit.SPADES), fallen
+        ) is False
 
     def test_team_winning_reads_the_led_suit_master(self, strat):
         # The helpers receive sealed observation records in production,

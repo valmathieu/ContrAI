@@ -282,22 +282,17 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
 
         # Play master card from the longest suit
         master_cards = [
-            c for c in winner_candidates if self._is_master_card(c, trump_suit, fallen)
+            c for c in winner_candidates if self._is_master_card(c, rules, fallen)
         ]
         if master_cards:
             return max(master_cards, key=lambda c: count_suit(hand, c.suit))
 
-        # Default: play the lowest value card (excluding trump unless only trumps available)
+        # Default: give up the cheapest card, sparing trump unless the hand
+        # holds nothing else to give.
         non_trump_cards = [c for c in playable_cards if not rules.is_trump(c.suit)]
-
-        if not non_trump_cards:
-            # Only trump cards available, use all playable cards
-            cards_to_consider = playable_cards
-        else:
-            # Use non-trump cards
-            cards_to_consider = non_trump_cards
-
-        return self._lowest_value_card(cards_to_consider, hand, rules)
+        return self._lowest_value_card(
+            non_trump_cards or playable_cards, hand, rules
+        )
 
     def _play_following_card(
         self,
@@ -374,7 +369,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
                 return min(same_suit_cards, key=rules.points)
             non_master = [
                 c for c in same_suit_cards
-                if not self._is_master_card(c, trump_suit, fallen)
+                if not self._is_master_card(c, rules, fallen)
             ]
             candidates = non_master or same_suit_cards
             return max(candidates, key=rules.points)
@@ -386,7 +381,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         if non_trump_cards:
             non_master_non_trump = [
                 c for c in non_trump_cards
-                if not self._is_master_card(c, trump_suit, fallen)
+                if not self._is_master_card(c, rules, fallen)
             ]
             candidates = non_master_non_trump or non_trump_cards
             if cut_expected:
@@ -479,7 +474,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         # 4. Can't follow or usefully ruff — give up the cheapest card
         # (excluding masters).
         non_master_cards = [
-            c for c in playable_cards if not self._is_master_card(c, trump_suit, fallen)
+            c for c in playable_cards if not self._is_master_card(c, rules, fallen)
         ]
         if non_master_cards:
             return self._lowest_value_card(
@@ -662,12 +657,23 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             for seat, void_suits in voids.items()
         )
 
-    def _is_master_card(self, card, trump_suit, fallen: dict[Suit, set]) -> bool:
+    def _is_master_card(
+        self,
+        card: Card,
+        rules: TrumpRules,
+        fallen: dict[Suit, set],
+    ) -> bool:
         """Check if a card is currently the master (highest remaining) in its suit.
+
+        Takes the round's :class:`~contrai_core.rules.TrumpRules` rather
+        than its trump suit: the ladder is the only thing this question
+        needs, every caller already holds one, and resolving it here
+        would mean re-resolving it per card — this runs inside list
+        comprehensions over the legal set.
 
         Args:
             card: The candidate card.
-            trump_suit: The round's trump, or ``None`` with no contract.
+            rules: The round's regime, supplying the in-suit ladder.
             fallen: The fallen-card map from :meth:`_derive_tracking`.
         """
 
@@ -677,9 +683,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         # The rules ladder knows which ranks outrank this card within its
         # own suit — the trump ladder for a trump card, the plain one
         # otherwise.
-        higher_ranks = rules_for(trump_suit).higher_ranks(
-            card.rank, card.suit
-        )
+        higher_ranks = rules.higher_ranks(card.rank, card.suit)
 
         # Check if all higher cards have fallen
         return all(rank in suit_fallen for rank in higher_ranks)
