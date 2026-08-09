@@ -21,11 +21,11 @@ from rich.text import Text
 from contrai_core import (
     Auction,
     Card,
+    Play,
     Position,
     Rank,
     Suit,
     TeamSide,
-    Trick,
 )
 from contrai_core.bid import ContractBid, DoubleBid, PassBid
 from contrai_engine.model.game import GameOverStatus
@@ -314,9 +314,8 @@ class TestOnCardPlayedPacing:
                             lambda s: sleep_calls.append(s))
         monkeypatch.setenv("CONTRAI_AI_CARD_DELAY", "0.01")
 
-        trick = Trick()
         view = RichView()
-        view.on_card_played(north, Card(Suit.HEARTS, Rank.ACE), trick)
+        view.on_card_played(north, Card(Suit.HEARTS, Rank.ACE), ())
 
         assert sleep_calls == [0.01]
 
@@ -331,7 +330,7 @@ class TestOnCardPlayedPacing:
         human = HumanPlayer("You", Position.SOUTH)
         human.team = four_players[0].team
         view = RichView()
-        view.on_card_played(human, Card(Suit.HEARTS, Rank.ACE), Trick())
+        view.on_card_played(human, Card(Suit.HEARTS, Rank.ACE), ())
         assert sleep_calls == []
 
 
@@ -371,7 +370,7 @@ class TestEventLog:
     def test_on_card_played_logs(self, monkeypatch, four_players):
         view = self._make_view(monkeypatch)
         north, *_ = four_players
-        view.on_card_played(north, Card(Suit.HEARTS, Rank.JACK), Trick())
+        view.on_card_played(north, Card(Suit.HEARTS, Rank.JACK), ())
         # Card log: "N plays J♥."
         assert any("plays" in line.plain for line in view.event_log)
         assert any("J♥" in line.plain for line in view.event_log)
@@ -385,21 +384,21 @@ class TestEventLog:
         class _StubRound:
             def __init__(self, contract):
                 self.contract = contract
-                self.tricks = []
-                self.team_tricks = {}
+                self.play_state = None
 
         class _StubContract:
             suit = Suit.HEARTS
 
-        trick = Trick()
-        # Build a real-ish trick. With Hearts trump, J♥(20)+A♥(11)+K♥(4)+Q♥(3)=38.
-        trick.add_play(north, Card(Suit.HEARTS, Rank.JACK))
-        trick.add_play(east, Card(Suit.HEARTS, Rank.ACE))
-        trick.add_play(south, Card(Suit.HEARTS, Rank.KING))
-        trick.add_play(west, Card(Suit.HEARTS, Rank.QUEEN))
+        # A real-ish trick. With Hearts trump, J♥(20)+A♥(11)+K♥(4)+Q♥(3)=38.
+        plays = (
+            Play(north, Card(Suit.HEARTS, Rank.JACK)),
+            Play(east, Card(Suit.HEARTS, Rank.ACE)),
+            Play(south, Card(Suit.HEARTS, Rank.KING)),
+            Play(west, Card(Suit.HEARTS, Rank.QUEEN)),
+        )
         # Avoid blocking on console.input — patch it.
         view.console.input = lambda *_a, **_kw: ""
-        view.on_trick_complete(trick, north, _StubRound(_StubContract()))
+        view.on_trick_complete(plays, north, _StubRound(_StubContract()))
 
         win_line = view.event_log[-1].plain
         assert "wins trick" in win_line
@@ -556,10 +555,10 @@ class TestBeloteAnnouncement:
     ):
         view = self._make_view(monkeypatch)
         north, *_ = four_players
-        trick = Trick()
-        # Empty trick is fine — the badge is keyed off belote_by_position.
+        # An empty trick is fine — the badge is keyed off
+        # belote_by_position.
         diamond = _render_diamond(
-            trick,
+            (),
             Suit.HEARTS,
             pending_position=None,
             winner_position=None,
@@ -581,7 +580,7 @@ class TestBeloteAnnouncement:
         lives only in the event log, not under the seat."""
         view = self._make_view(monkeypatch)
         diamond = _render_diamond(
-            Trick(),
+            (),
             Suit.HEARTS,
             pending_position=None,
             winner_position=None,
@@ -595,7 +594,7 @@ class TestBeloteAnnouncement:
     def test_diamond_no_badge_when_state_empty(self, monkeypatch):
         view = self._make_view(monkeypatch)
         diamond = _render_diamond(
-            Trick(),
+            (),
             Suit.HEARTS,
             pending_position=None,
             winner_position=None,
@@ -674,7 +673,7 @@ class TestBiddingDiamond:
         north, east, south, west = four_players
         panel = _panel_current_trick(
             self._StubRound(),
-            trick=None,
+            plays=None,
             phase="bidding",
             current_player=south,
             trick_winner=None,
@@ -692,13 +691,11 @@ class TestPanelRoundTitle:
 
     class _StubRound:
         # Minimal stand-in. _panel_round only reads round_number,
-        # contract, dealer, tricks during this phase path.
+        # contract and dealer during this phase path.
         def __init__(self, round_number):
             self.round_number = round_number
             self.contract = None
             self.dealer = None
-            self.tricks = []
-            self.team_tricks = {}
 
     def test_title_contains_round_number(self):
         view = RichView()
@@ -717,37 +714,36 @@ class TestTrickPanelTitles:
     """Trick panel titles use the (#N) format."""
 
     class _StubRound:
-        def __init__(self, tricks_done):
+        def __init__(self):
             self.round_number = 1
             self.contract = None
             self.dealer = None
-            self.tricks = [object()] * tricks_done
-            self.team_tricks = {}
             self.belote_state = {}
 
     def test_current_trick_title_uses_hash_format(self):
         view = RichView()
-        # 4 tricks done, currently playing trick #5.
         panel = _panel_current_trick(
-            self._StubRound(tricks_done=4),
-            trick=Trick(),
+            self._StubRound(),
+            plays=(),
             phase="playing",
             current_player=None,
             trick_winner=None,
+            trick_index=5,
         )
         assert "Current trick (#5)" in panel.title.plain
 
     def test_last_trick_title_uses_hash_format(self, monkeypatch, four_players):
+        """The echo is numbered one below the trick on the table."""
         from contrai_engine.view import rich_view
 
         monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
         view = RichView()
         north, *_ = four_players
-        trick = Trick()
         # Stub a completed trick.
-        view.last_completed_trick = (trick, north)
-        round_ = self._StubRound(tricks_done=7)
-        panel = _panel_last_trick(round_, view.last_completed_trick)
+        view.last_completed_trick = ((), north)
+        panel = _panel_last_trick(
+            self._StubRound(), view.last_completed_trick, trick_index=8
+        )
         assert "Last trick (#7)" in panel.title.plain
 
     def test_last_trick_title_bare_when_no_round(self):
@@ -805,7 +801,7 @@ class TestPanelHandPersistence:
         view, human = self._build_view_with_human()
         human.hand.clear()
         panel = _panel_hand(
-            human, trick=None, playable_cards=None,
+            human, plays=None, playable_cards=None,
             phase="trick_won", round_=None, interactive=False,
         )
         text = panel.renderable.plain
@@ -823,12 +819,9 @@ class TestPanelHandPersistence:
         ])
         # Pretend hearts is trump and clubs were led — interactive mode
         # would emit "must trump"; non-interactive mode must not.
-        from contrai_core.trick import Trick as _Trick
-
-        trick = _Trick()
-        trick.add_play(human, Card(Suit.CLUBS, Rank.KING))
+        plays = (Play(human, Card(Suit.CLUBS, Rank.KING)),)
         panel = _panel_hand(
-            human, trick=trick, playable_cards=[list(human.hand)[1]],
+            human, plays=plays, playable_cards=[list(human.hand)[1]],
             phase="playing", round_=None, interactive=False,
         )
         text = panel.renderable.plain
@@ -846,17 +839,14 @@ class TestPanelHandPersistence:
             Card(Suit.HEARTS, Rank.JACK),
             Card(Suit.HEARTS, Rank.ACE),
         ])
-        from contrai_core.trick import Trick as _Trick
-
         west_stub = type("_W", (), {"position": Position.WEST, "team": None})()
-        trick = _Trick()
-        trick.add_play(west_stub, Card(Suit.CLUBS, Rank.KING))
+        plays = (Play(west_stub, Card(Suit.CLUBS, Rank.KING)),)
         # Stub a round with hearts trump so the explain helper knows
         # the human's hearts are trumps and emits the "must trump" hint.
         contract_stub = type("_C", (), {"suit": Suit.HEARTS})()
         round_stub = type("_R", (), {"contract": contract_stub})()
         panel = _panel_hand(
-            human, trick=trick, playable_cards=list(human.hand),
+            human, plays=plays, playable_cards=list(human.hand),
             phase="playing", round_=round_stub, interactive=True,
         )
         text = panel.renderable.plain
@@ -935,7 +925,7 @@ class TestRenderInGameHandSlot:
         view._render_in_game(
             phase="trick_won",
             current_player=None,
-            current_trick=None,
+            current_plays=None,
             trick_winner=None,
             prompt_question=Text(""),
             mandatory=False,
@@ -1260,8 +1250,7 @@ class TestOnTrickCompleteAutoplay:
 
     class _StubRound:
         contract = None
-        tricks = []
-        team_tricks = {}
+        play_state = None
 
     def test_autoplay_never_calls_console_input(
         self, monkeypatch, four_players, _forbid_console_input
@@ -1273,16 +1262,17 @@ class TestOnTrickCompleteAutoplay:
         view = RichView(options=DebugOptions(autoplay=True))
         view.console.input = _forbid_console_input
 
-        trick = Trick()
-        trick.add_play(north, Card(Suit.HEARTS, Rank.JACK))
-        trick.add_play(east, Card(Suit.HEARTS, Rank.ACE))
-        trick.add_play(south, Card(Suit.HEARTS, Rank.KING))
-        trick.add_play(west, Card(Suit.HEARTS, Rank.QUEEN))
+        plays = (
+            Play(north, Card(Suit.HEARTS, Rank.JACK)),
+            Play(east, Card(Suit.HEARTS, Rank.ACE)),
+            Play(south, Card(Suit.HEARTS, Rank.KING)),
+            Play(west, Card(Suit.HEARTS, Rank.QUEEN)),
+        )
 
-        view.on_trick_complete(trick, north, self._StubRound())
+        view.on_trick_complete(plays, north, self._StubRound())
 
         # Did not hang, and still rotated the last-completed trick.
-        assert view.last_completed_trick == (trick, north)
+        assert view.last_completed_trick == (plays, north)
 
     def test_autoplay_pauses_using_trick_env_delay(
         self, monkeypatch, four_players, _forbid_console_input
@@ -1297,10 +1287,9 @@ class TestOnTrickCompleteAutoplay:
         view = RichView(options=DebugOptions(autoplay=True))
         view.console.input = _forbid_console_input
 
-        trick = Trick()
-        trick.add_play(north, Card(Suit.HEARTS, Rank.JACK))
+        plays = (Play(north, Card(Suit.HEARTS, Rank.JACK)),)
 
-        view.on_trick_complete(trick, north, self._StubRound())
+        view.on_trick_complete(plays, north, self._StubRound())
 
         assert sleep_calls == [0.02]
 
@@ -1319,10 +1308,9 @@ class TestOnTrickCompleteAutoplay:
         view = RichView(options=DebugOptions(debug=True, autoplay=True))
         view.console.input = _forbid_console_input
 
-        trick = Trick()
-        trick.add_play(north, Card(Suit.HEARTS, Rank.JACK))
+        plays = (Play(north, Card(Suit.HEARTS, Rank.JACK)),)
 
-        view.on_trick_complete(trick, north, self._StubRound())
+        view.on_trick_complete(plays, north, self._StubRound())
 
         assert sleep_calls == [0.0]
 
@@ -1337,10 +1325,9 @@ class TestOnTrickCompleteAutoplay:
         view.console.input = _forbid_console_input
         captured = _capture_prints(view)
 
-        trick = Trick()
-        trick.add_play(north, Card(Suit.HEARTS, Rank.JACK))
+        plays = (Play(north, Card(Suit.HEARTS, Rank.JACK)),)
 
-        view.on_trick_complete(trick, north, self._StubRound())
+        view.on_trick_complete(plays, north, self._StubRound())
 
         assert any(t.startswith("(autoplay) ") for t in captured)
 

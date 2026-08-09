@@ -280,6 +280,20 @@ class Round:
             player.hand.clear()
             player.hand.extend(self.play_state.hand_of(player))
 
+    def _trick_plays(self) -> list[Play]:
+        """The trick on the table as core :class:`Play` records.
+
+        The view hooks speak the core record type, while the mutable
+        mirror still holds bare ``(player, card)`` pairs — so they are
+        re-wrapped on the way out. A ``Play`` unpacks exactly like the
+        pair it replaces, so nothing downstream can tell the difference;
+        the wrapping exists only until the mirror is gone.
+        """
+        return [
+            Play(player, card)
+            for player, card in self.current_trick.get_plays()
+        ]
+
     def play_trick(self, view=None) -> None:
         """
         Play a single trick.
@@ -332,7 +346,7 @@ class Round:
             # bare first-playable fallback for objects that lack it.
             if view is not None and getattr(player, 'is_human', False):
                 card = view.request_card_action(
-                    player, self.current_trick, self.contract, playable_cards
+                    player, self._trick_plays(), self.contract, playable_cards
                 )
             elif hasattr(player, 'choose_card'):
                 # Hand the AI a frozen observation projected from the
@@ -364,7 +378,7 @@ class Round:
             # Notify the view that a card just landed on the table.
             # Lets interactive views render the AI action and pause.
             if view is not None and hasattr(view, 'on_card_played'):
-                view.on_card_played(player, card, self.current_trick)
+                view.on_card_played(player, card, self._trick_plays())
 
             # Belote / rebelote announcement. Fires only when the holder
             # plays one of the K/Q of trump. Each card fires at most once.
@@ -416,7 +430,7 @@ class Round:
         # Used by interactive views (e.g. RichView) to pause for "Press Enter"
         # between tricks. Skipped silently when no such hook exists.
         if view is not None and hasattr(view, 'on_trick_complete'):
-            view.on_trick_complete(self.current_trick, winner, self)
+            view.on_trick_complete(self._trick_plays(), winner, self)
 
         return
 

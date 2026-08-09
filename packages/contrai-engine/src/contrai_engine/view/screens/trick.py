@@ -8,15 +8,15 @@ builders; ``RichView._render_in_game`` feeds them state and prints.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Sequence
 
 from contrai_core import (
     BasePlayer,
     Card,
+    Play,
     Position,
     Suit,
     TeamSide,
-    Trick,
 )
 from rich.align import Align
 from rich.box import ROUNDED
@@ -61,12 +61,19 @@ if TYPE_CHECKING:
     from contrai_engine.model.round import Round
 
 
-def _panel_round(round_: Optional[Round], phase: str) -> Panel:
+def _panel_round(
+    round_: Optional[Round], phase: str, trick_index: int = 1
+) -> Panel:
     """Top-right Round info panel: contract, trump, and phase status.
 
     During bidding the third line names the dealer; during play it
     shows the current trick index and both teams' running card points.
     The border and title turn gold once a contract (trump) is active.
+
+    ``trick_index`` is the 1-based index of the trick on the table,
+    resolved once per frame by
+    :func:`~contrai_engine.view.state_helpers._trick_index` — the panel
+    does not see the trick itself, so it cannot derive it.
     """
     body = Text()
     contract = round_.contract if round_ else None
@@ -92,11 +99,8 @@ def _panel_round(round_: Optional[Round], phase: str) -> Panel:
         body.append("Dealer:   ", style=DIM)
         body.append(dealer_name, style=FG)
     else:
-        tricks_done = len(round_.tricks) if round_ else 0
-        current_idx = tricks_done + (1 if phase == "playing" else 0)
-        current_idx = min(current_idx, 8)
         body.append("Trick:    ", style=DIM)
-        body.append(f"{current_idx} of 8\n", style=FG)
+        body.append(f"{trick_index} of 8\n", style=FG)
         # Round running points (cards collected by each team so far).
         ns_pts, ew_pts = _round_running_points(round_)
         body.append("Round pts: ", style=DIM)
@@ -155,12 +159,16 @@ def _round_running_points(round_: Optional[Round]) -> tuple[int, int]:
 
 def _panel_last_trick(
     round_: Optional[Round],
-    last_completed_trick: Optional[tuple[Trick, BasePlayer]],
+    last_completed_trick: Optional[tuple[Sequence[Play], BasePlayer]],
+    trick_index: int = 1,
 ) -> Panel:
     """Narrow left panel echoing the previous completed trick, dimmed.
 
     Renders a compact card diamond with the winner highlighted, or a
     ``(none)`` placeholder before the round's first trick completes.
+
+    ``trick_index`` is the index of the trick *on the table*; the one
+    echoed here is the one before it.
     """
     if not last_completed_trick:
         body = Text("(none)", style=DIM, justify="center")
@@ -173,10 +181,10 @@ def _panel_last_trick(
             width=22,
             height=8,
         )
-    trick, winner = last_completed_trick
+    plays, winner = last_completed_trick
     trump = round_.contract.suit if round_ and round_.contract else None
     body = _render_diamond(
-        trick,
+        plays,
         trump,
         pending_position=None,
         winner_position=winner.position if winner else None,
@@ -187,9 +195,9 @@ def _panel_last_trick(
     body.append("\n")
     body.append("Won: ", style=DIM)
     body.append(_position_short(winner.position), style=f"bold {GOLD}")
-    # Last trick number is the just-completed trick — that's the
-    # length of tricks (the freshly appended one we are echoing).
-    last_idx = len(round_.tricks) if round_ else 0
+    # The trick echoed here is the one *before* whatever is on the
+    # table, so it is numbered one below it.
+    last_idx = trick_index - 1
     title = Text(
         f"Last trick (#{last_idx})" if last_idx else "Last trick",
         style=DIM,
@@ -206,11 +214,12 @@ def _panel_last_trick(
 
 def _panel_current_trick(
     round_: Optional[Round],
-    trick: Optional[Trick],
+    plays: Optional[Sequence[Play]],
     phase: str,
     current_player: Optional[BasePlayer],
     trick_winner: Optional[BasePlayer],
     bidding_history: Optional[list] = None,
+    trick_index: int = 1,
 ) -> Panel:
     """Main table panel: the current trick (or the auction) as a diamond.
 
@@ -219,12 +228,15 @@ def _panel_current_trick(
     in-progress trick with the acting seat marked ``?``; at the
     trick-won pause the winner is highlighted instead. A footer line
     names whose turn it is (or who won).
+
+    ``plays`` is ``None`` when no trick is on the table at all (the
+    bidding phase, or a frame before the play state exists); an empty
+    sequence is a real, not-yet-led trick and still renders the
+    diamond.
     """
     title_suffix = ""
     if round_ and phase in ("playing", "trick_won"):
-        trick_idx = len(round_.tricks) + (0 if phase == "trick_won" else 1)
-        trick_idx = min(max(1, trick_idx), 8)
-        title_suffix = f" (#{trick_idx})"
+        title_suffix = f" (#{trick_index})"
 
     if phase == "bidding":
         # Reuse the table slot for the auction: each seat shows the
@@ -253,7 +265,7 @@ def _panel_current_trick(
             height=8,
         )
 
-    if trick is None:
+    if plays is None:
         body = Text("(none)", style=DIM, justify="center")
         body = Align.center(body, vertical="middle")
         return Panel(
@@ -273,7 +285,7 @@ def _panel_current_trick(
     )
     winner_position = trick_winner.position if trick_winner else None
     body = _render_diamond(
-        trick,
+        plays,
         trump,
         pending_position=pending_position,
         winner_position=winner_position,
@@ -301,7 +313,7 @@ def _panel_current_trick(
 
 
 def _render_diamond(
-    trick: Trick,
+    plays: Sequence[Play],
     trump: Optional[Suit],
     *,
     pending_position: Optional[Position],
@@ -311,6 +323,11 @@ def _render_diamond(
     belote_by_position: Optional[dict[Position, str]] = None,
 ) -> Text:
     """Render the 4-player diamond: N top, E right, S bottom, W left.
+
+    ``plays`` are the core ``(player, card)`` records of the trick being
+    drawn, in play order — an in-progress trick and a completed
+    :class:`~contrai_core.TrickRecord` unpack identically, so both reach
+    here unchanged.
 
     ``belote_by_position`` maps a :class:`~contrai_core.Position` member
     to either ``"belote"`` or ``"rebelote"`` for seats that have
@@ -331,7 +348,6 @@ def _render_diamond(
         t.append("Belote", style=f"bold {GOLD}")
         return t
 
-    plays = trick.get_plays() if trick else []
     plays_by_pos: dict[Position, tuple[BasePlayer, Card]] = {}
     led_position: Optional[Position] = None
     for i, (player, card) in enumerate(plays):
@@ -445,7 +461,7 @@ def _render_diamond(
 
 def _panel_hand(
     player: BasePlayer,
-    trick: Optional[Trick],
+    plays: Optional[Sequence[Play]],
     playable_cards: Optional[list[Card]],
     phase: str,
     round_: Optional[Round],
@@ -506,8 +522,8 @@ def _panel_hand(
             "(no card-play obligation yet — bidding phase)",
             style=DIM, justify="center",
         )
-    elif phase == "playing" and interactive and trick is not None:
-        hint = _explain_constraint(player, trick, playable_cards or [], trump_suit)
+    elif phase == "playing" and interactive and plays is not None:
+        hint = _explain_constraint(player, plays, playable_cards or [], trump_suit)
         hint.justify = "center"
     else:
         hint = Text(f"{len(sorted_hand)} cards remaining",
