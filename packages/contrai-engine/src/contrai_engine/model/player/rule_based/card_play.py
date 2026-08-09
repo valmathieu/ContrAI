@@ -210,33 +210,80 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         fallen: dict[Suit, set],
         voids: dict[Position, set[Suit]],
     ) -> Card:
-        """Play when leading subsequent tricks."""
+        """Play when leading subsequent tricks.
+
+        The ladder, strongest option first:
+
+        1. **Pull trump** — only when our side declared *and* an opponent
+           may still hold a trump. Drawing their trump protects the
+           plain-suit winners we intend to cash later.
+        2. **Cash an ace**, then a master, from the longest suit — the
+           cards that win their suit outright.
+        3. **Concede cheaply** otherwise, sparing trump.
+
+        Whether an opponent may still ruff decides more than step 1: once
+        both opponents are proven trump-void, our own trump can no longer
+        be taken off us, so it wins whenever we finally choose to lead it.
+        A plain-suit ace, by contrast, is only safe *because* nobody can
+        cut it — that safety is exactly what expires the moment an
+        opponent regains a trump. So the ace/master search at step 2 runs
+        on plain cards only in that case, keeping trump back as the
+        guaranteed late winner instead of spending it on a trick a plain
+        ace would have taken just as well.
+
+        The distinction is independent of who declared: a defender
+        leading against a trump-void declaring side has the same reason
+        to hold its trump back. Only step 1 asks about the contract.
+
+        Args:
+            observation: The frozen play-phase view for this seat.
+            fallen: The fallen-card map from :meth:`_derive_tracking`.
+            voids: The per-seat proven-void suits from
+                :meth:`_derive_tracking`, keyed by :class:`Position`.
+        """
 
         contract = observation.contract
         playable_cards = observation.legal_cards
         hand = observation.hand
         trump_suit = observation.trump_suit
         rules = rules_for(trump_suit)
+        opponents_might_ruff = self._opponents_might_have_trump(
+            trump_suit, fallen, voids, hand
+        )
 
         # If the team has the contract and opponents might still have
         # trump, play the strongest trump
         if (
             contract
             and self.position.is_teammate(contract.declarer)
-            and self._opponents_might_have_trump(trump_suit, fallen, voids, hand)
+            and opponents_might_ruff
         ):
             trump_cards = [c for c in playable_cards if rules.is_trump(c.suit)]
             if trump_cards:
                 return max(trump_cards, key=rules.rank_in_suit)
 
-        # TODO: exclude trump from logic if we know opponents have no trump left
-        # No trump left with opponents - play ace from the longest suit
-        aces = [c for c in playable_cards if c.rank == Rank.ACE]
+        # Opponents proven out of trump: search plain cards only, so a
+        # trump ace is never cashed where a plain one does the same job.
+        # No fallback to the full set when nothing plain is left — a hand
+        # of pure trump facing void opponents wins the trick with *any*
+        # trump, so the cheap-trump default below is the better lead.
+        # A round with no trump at all (no contract, or NO_TRUMP) answers
+        # False here too, and its filter is a no-op: nothing is trump.
+        winner_candidates = (
+            playable_cards
+            if opponents_might_ruff
+            else [c for c in playable_cards if not rules.is_trump(c.suit)]
+        )
+
+        # Play ace from the longest suit
+        aces = [c for c in winner_candidates if c.rank == Rank.ACE]
         if aces:
             return max(aces, key=lambda c: count_suit(hand, c.suit))
 
         # Play master card from the longest suit
-        master_cards = [c for c in playable_cards if self._is_master_card(c, trump_suit, fallen)]
+        master_cards = [
+            c for c in winner_candidates if self._is_master_card(c, trump_suit, fallen)
+        ]
         if master_cards:
             return max(master_cards, key=lambda c: count_suit(hand, c.suit))
 
