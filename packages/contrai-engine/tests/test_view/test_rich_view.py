@@ -516,8 +516,6 @@ class TestBeloteAnnouncement:
         def __init__(self, contract, belote_state):
             self.contract = contract
             self.belote_state = belote_state
-            self.tricks = []
-            self.team_tricks = {}
 
     def test_on_belote_announced_logs_belote(self, monkeypatch, four_players):
         view = self._make_view(monkeypatch)
@@ -614,8 +612,6 @@ class TestBiddingDiamond:
             self.round_number = 1
             self.contract = None
             self.dealer = None
-            self.tricks = []
-            self.team_tricks = {}
             self.belote_state = {}
 
     def test_each_seat_shows_its_latest_bid(self, four_players):
@@ -1339,7 +1335,6 @@ class TestShowRoundRecapAutoplay:
         round_number = 3
         contract = None
         round_scores = {TeamSide.NS: 0, TeamSide.EW: 0}
-        team_tricks = {}
 
     def test_autoplay_never_calls_console_input(
         self, monkeypatch, _forbid_console_input
@@ -1607,8 +1602,6 @@ class TestDebugStrip:
         round_number = 1
         contract = None
         dealer = None
-        tricks = []
-        team_tricks = {}
 
     class _StubGame:
         def __init__(self, players):
