@@ -255,10 +255,6 @@ package "model/round/ package" as p_round {
         + contract : Contract?
         + auction : Auction?
         + play_state : PlayState?
-        + tricks : list<Trick>
-        + current_trick : Trick?
-        + last_trick_winner : Player?
-        + team_tricks : dict<TeamSide, list<Trick>>
         + round_scores : dict<TeamSide, int>
         + contract_made : bool?
         + unannounced_slam : UnannouncedSlam?
@@ -269,7 +265,7 @@ package "model/round/ package" as p_round {
         + deal_cards() : None
         + manage_bidding(view=None) : Contract?
         + play_trick(view=None) : None
-        + play_all_tricks(view=None) : dict<str, list<Trick>>
+        + play_all_tricks(view=None) : None
         + calculate_round_scores() : dict<TeamSide, int>
         + handle_failed_contract() : dict<TeamSide, int>
         --
@@ -278,6 +274,7 @@ package "model/round/ package" as p_round {
         - _is_belote_event(player, card) : bool
         - _transition_belote_state(player) : str?
         - _sync_hands() : None
+        - _trick_after_play() : Sequence<Play>
     }
 
     ' --- scoring.py: the pure scoring transformation ---
@@ -570,8 +567,8 @@ Game "1" o-- "0..1" Player : dealer
 Game "1" *-- "0..1" Round : current_round
 Game "1" o-- "0..1" Contract : current_contract
 
-' Round composes Tricks, references Contract / Auction / PlayState
-Round "1" *-- "0..8" Trick : tricks
+' Round references Contract / Auction / PlayState — the play phase
+' itself lives entirely on play_state, so no Tricks are held here.
 Round "1" o-- "0..1" Contract : contract
 Round "1" o-- "0..1" Auction : auction
 Round "1" o-- "0..1" PlayState : play_state
