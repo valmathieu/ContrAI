@@ -36,7 +36,6 @@ class Team      <<from contrai-core>> #E1F0FF
 class Deck      <<from contrai-core>> #E1F0FF
 class Contract  <<from contrai-core>> #E1F0FF
 class Auction   <<from contrai-core>> #E1F0FF
-class Trick     <<from contrai-core>> #E1F0FF
 class PlayState <<from contrai-core>> #E1F0FF
 enum Suit       <<from contrai-core>> #E1F0FF
 class "ContractSuit" as p_contractsuit <<from contrai-core>> #E1F0FF
@@ -300,9 +299,10 @@ package "model/round/ package" as p_round {
       ""IllegalBidError"" on an illegal bid —
       no silent force-Pass.
       ----
-      Trick-winner determination delegates to
-      ""Trick.get_current_winner(contract.suit)""
-      in contrai-core — no engine-side duplicate.
+      The trick winner is read off
+      ""play_state.trick_winners[-1]"" — ""apply""
+      already adjudicated it, so there is no
+      engine-side duplicate of the rule.
       ----
       The trick loop is driven by the immutable
       core ""contrai_core.play.PlayState"":
@@ -334,9 +334,9 @@ package "model/round/ package" as p_round {
       * ""view.on_contract_established(self)""
         (once, immediately after the final
         Contract is built)
-      * ""view.on_card_played(player, card, trick)""
+      * ""view.on_card_played(player, card, plays)""
       * ""view.on_belote_announced(player, kind, self)""
-      * ""view.on_trick_complete(trick, winner, self)""
+      * ""view.on_trick_complete(plays, winner, self)""
       ""Game.manage_round"" additionally fires
       ""view.on_round_dealt(round_)"" after the deal
       and ""view.on_all_pass_redeal()"" when
@@ -384,7 +384,7 @@ package "view/ package" as p_view {
         + console : rich.Console
         + target_score : int
         + history : list<RoundSummary>
-        + last_completed_trick : (Trick, BasePlayer)?
+        + last_completed_trick : (Sequence<Play>, BasePlayer)?
         + game : Game?
         + event_log : list<Text>
         --
@@ -392,14 +392,14 @@ package "view/ package" as p_view {
         + reset_for_rematch() : None
         ..  engine hooks ..
         + request_bid_action(player, auction: Auction) : Bid
-        + request_card_action(player, trick, contract, playable_cards) : Card
+        + request_card_action(player, plays, contract, playable_cards) : Card
         + on_round_dealt(round_) : None
         + on_all_pass_redeal() : None
         + on_bid_made(player, bid, history) : None
         + on_contract_established(round_) : None
-        + on_card_played(player, card, trick) : None
+        + on_card_played(player, card, plays) : None
         + on_belote_announced(player, kind, round_) : None
-        + on_trick_complete(trick, winner, round_) : None
+        + on_trick_complete(plays, winner, round_) : None
         + on_round_complete(round_, running_scores) : None
         ..  CLI flow screens ..
         + show_landing(selected_target=1500) : int
@@ -471,6 +471,8 @@ package "view/ package" as p_view {
         (the prompt hint reads
         ""Auction.legal_actions"" directly)
       * state_helpers — ""_current_winner"",
+        ""_trick_index"" (which of the eight
+        tricks is on the table),
         ""_explain_constraint"",
         ""_sort_hand_for_display"",
         ""_belote_by_position"", ""_resolve_delay""

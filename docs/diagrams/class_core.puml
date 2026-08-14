@@ -611,11 +611,17 @@ package "contract.py / trick.py" as p_contract {
       takes trump as a **required** argument
       (resolved through ""rules_for"", like every
       trick rule) and
-      works on **partial** tricks. The engine
-      builds ""Trick()"" bare and passes the
-      contract's suit for trick-winner
-      determination, the partner-master legality
-      check, and the view's live winner highlight.
+      works on **partial** tricks.
+      **Nothing in the workspace builds one**
+      today: the play phase is ""PlayState"" end
+      to end, and the
+      trick-winner rule is reached through
+      ""PlayState.trick~_winners"", the
+      partner-master legality check and the view's
+      live winner highlight, all of which call the
+      module-level function directly. It stays a
+      public core type with its own tests; whether
+      it still earns its place is open.
       The winner rule itself is the module-level
       ""current_winner(plays, trump_suit)""
       function — ""get_current_winner"" delegates
