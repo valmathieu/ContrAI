@@ -1,24 +1,25 @@
 """Small game-state readers for the Rich terminal UI.
 
 Pure functions that read a slice of round/trick state and answer one
-question the screens need: who is currently winning the trick, what
-constraint applies to the human's playable cards, how to order the hand
-for display, which seats have announced belote, and the env-tunable AI
-pacing delay. No I/O beyond ``os.environ`` (read-only, for pacing).
+question the screens need: who is currently winning the trick, which
+trick of the eight is on the table, what constraint applies to the
+human's playable cards, how to order the hand for display, which seats
+have announced belote, and the env-tunable AI pacing delay. No I/O
+beyond ``os.environ`` (read-only, for pacing).
 """
 
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import Optional, Sequence
 
 from contrai_core import (
     BasePlayer,
     Card,
     ContractSuit,
     NoTrumpRules,
+    Play,
     Position,
-    Trick,
     rules_for,
 )
 from contrai_core.trick import current_winner
@@ -48,26 +49,56 @@ def _sort_hand_for_display(
 
 
 def _current_winner(
-    plays: list[tuple[BasePlayer, Card]], trump_suit: Optional[ContractSuit]
+    plays: Sequence[Play], trump_suit: Optional[ContractSuit]
 ) -> Optional[BasePlayer]:
     """Return the player currently winning the (possibly incomplete) trick.
 
     Thin wrapper around :func:`contrai_core.trick.current_winner` — the
-    module-level winner rule already accepts a raw ``plays`` list (the
-    shape ``_render_diamond`` uses), so no ``Trick`` needs synthesizing
-    at render time.
+    module-level winner rule already accepts a raw sequence of
+    ``(player, card)`` records (the shape ``_render_diamond`` uses), so
+    no trick container needs synthesizing at render time.
     """
-    return current_winner(plays, trump_suit)
+    return current_winner(list(plays), trump_suit)
+
+
+def _trick_index(round_, plays: Sequence[Play]) -> int:
+    """The 1-based index of the trick currently on the table.
+
+    Derived from the round's authoritative play state: the count of
+    completed tricks, plus one for the trick in progress. A trick whose
+    fourth card has just landed is *already* folded into that completed
+    history — the play state advances the instant the last card is
+    applied, before the view is notified — so a full four-play sequence
+    must not be counted a second time.
+
+    Args:
+        round_: The active round, or ``None`` before one exists.
+        plays: The plays of the trick being rendered.
+
+    Returns:
+        The trick index, clamped to the 1-8 range. Falls back to ``1``
+        when there is no round or its play phase has not been seeded
+        yet — the next trick to be played is always the first one.
+    """
+    play_state = getattr(round_, "play_state", None) if round_ else None
+    if play_state is None:
+        return 1
+    index = play_state.trick_number + (0 if len(plays) == 4 else 1)
+    return min(max(index, 1), 8)
 
 
 def _explain_constraint(
     player: BasePlayer,
-    trick: Trick,
+    plays: Sequence[Play],
     playable: list[Card],
     trump_suit: Optional[ContractSuit],
 ) -> Text:
-    """Build the hint line under the hand explaining *why* this is playable."""
-    plays = trick.get_plays() if trick else []
+    """Build the hint line under the hand explaining *why* this is playable.
+
+    ``plays`` are the core ``(player, card)`` records of the trick on the
+    table — the same shape a completed :class:`~contrai_core.TrickRecord`
+    iterates as, so an in-progress and a finished trick read alike.
+    """
     if not plays:
         return Text("your lead — anything goes", style=GREEN_FG)
 

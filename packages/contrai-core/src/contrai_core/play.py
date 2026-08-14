@@ -14,7 +14,8 @@ search or reinforcement-learning game-state interface wants:
   obligation-breaking play.
 - Derived views (:attr:`PlayState.trick_number`,
   :attr:`PlayState.current_trick`, :attr:`PlayState.completed_tricks`,
-  :attr:`PlayState.trick_winners`, :attr:`PlayState.to_act`,
+  :attr:`PlayState.trick_winners`, :attr:`PlayState.card_points_by_side`,
+  :attr:`PlayState.trick_counts_by_side`, :attr:`PlayState.to_act`,
   :meth:`PlayState.is_terminal`) recomputed from the flat play history.
 - :meth:`PlayState.with_hands` to fork the same public state onto
   replacement hands — the determinization primitive search-based AIs need.
@@ -40,6 +41,7 @@ from typing import TYPE_CHECKING, NamedTuple, Optional
 from .bid import seal_bid
 from .exceptions import IllegalPlayError, PlayRuleViolation
 from .rules import NoTrumpRules, TrumpRules, rules_for
+from .team_side import TeamSide
 from .trick import TrickRecord, current_winner
 
 if TYPE_CHECKING:
@@ -238,6 +240,59 @@ class PlayState:
             current_winner(list(trick), trump_suit)
             for trick in self.completed_tricks
         )
+
+    @property
+    def card_points_by_side(self) -> dict[TeamSide, int]:
+        """Trump-aware card points captured by each side so far.
+
+        Each completed trick's whole pile is credited to the side of the
+        seat that won it, scored through the contract's
+        :class:`~contrai_core.TrumpRules` — so the 9 and the Jack of
+        trump carry their trump values and every other card its plain
+        one. The in-progress trick contributes nothing: nobody has
+        captured it yet.
+
+        This is the **raw pile only**. The last-trick bonus and the
+        Belote bonus are contract-conversion rules, not facts about
+        which cards were captured, and belong to whoever scores the
+        round.
+
+        Returns:
+            Every :class:`~contrai_core.TeamSide` member as a key, so
+            callers index directly rather than going through ``.get``;
+            a side that has captured nothing maps to ``0``. Over a
+            completed round the two values sum to 152 — the deck's card
+            points, before any bonus.
+        """
+
+        rules = rules_for(self._trump_suit)
+        points = {side: 0 for side in TeamSide}
+        for trick, winner in zip(self.completed_tricks, self.trick_winners):
+            points[winner.position.team_side] += sum(
+                rules.points(play.card) for play in trick
+            )
+        return points
+
+    @property
+    def trick_counts_by_side(self) -> dict[TeamSide, int]:
+        """Completed tricks captured by each side so far.
+
+        The same tally as :attr:`card_points_by_side` counting tricks
+        instead of points, credited off the same
+        :attr:`trick_winners` derivation — so the two can never
+        disagree about who took what.
+
+        Returns:
+            Every :class:`~contrai_core.TeamSide` member as a key,
+            mapping to the number of completed tricks that side won;
+            ``0`` for a side that has won none. The two values sum to
+            :attr:`trick_number`.
+        """
+
+        counts = {side: 0 for side in TeamSide}
+        for winner in self.trick_winners:
+            counts[winner.position.team_side] += 1
+        return counts
 
     @property
     def to_act(self) -> Optional[BasePlayer]:

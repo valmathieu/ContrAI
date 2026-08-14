@@ -162,8 +162,10 @@ package "position.py / team_side.py" as p_position {
       Team **identity**, as a value. This is what
       every score dictionary is keyed by —
       ""RoundScore.scores"", ""Round.round~_scores"",
-      ""Round.team~_tricks"", ""Game.scores"",
-      ""GameOverStatus"" — and what a persisted
+      ""PlayState.card~_points~_by~_side"",
+      ""PlayState.trick~_counts~_by~_side"",
+      ""Game.scores"", ""GameOverStatus"" — and
+      what a persisted
       game record or a training label serializes.
       Plain Enum, **not** a StrEnum, for the same
       reason as ""Position"": ""TeamSide.NS"" never
@@ -656,6 +658,8 @@ package "play.py" as p_play {
         + current_trick : tuple<Play>            <<property>>
         + completed_tricks : tuple<TrickRecord<Play>> <<property>>
         + trick_winners : tuple<BasePlayer>      <<property>>
+        + card_points_by_side : dict<TeamSide, int> <<property>>
+        + trick_counts_by_side : dict<TeamSide, int> <<property>>
         + to_act : BasePlayer?                   <<property>>
     }
 
@@ -685,9 +689,15 @@ package "play.py" as p_play {
       alongside hands), not a player-keyed map —
       BasePlayer hashing is identity-based.
       Derived views (trick_number, current_trick,
-      completed_tricks, trick_winners, to_act,
-      is_terminal()) recompute from plays on every
-      access — slots=True forbids caching them.
+      completed_tricks, trick_winners,
+      card_points_by_side, trick_counts_by_side,
+      to_act, is_terminal()) recompute from plays
+      on every access — slots=True forbids caching
+      them. The two per-side tallies credit each
+      completed trick to its winner's side; they
+      carry the raw pile only, since the last-trick
+      and Belote bonuses are contract-conversion
+      rules the engine's scorer owns.
       legal_actions(player) enforces only the
       follow/trump obligations, deliberately no
       turn check — mirroring Auction.legal_actions.

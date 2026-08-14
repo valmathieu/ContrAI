@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from contrai_core import Suit, TeamSide, rules_for
+from contrai_core import Suit, TeamSide
 from rich.box import ROUNDED
 from rich.panel import Panel
 from rich.text import Text
@@ -195,12 +195,21 @@ def _recap_breakdown(round_) -> dict:
     the engine's round_score for that team.
     """
     contract = getattr(round_, "contract", None)
-    trump = contract.suit if contract else None
-    team_tricks = getattr(round_, "team_tricks", {}) or {}
-    last_trick_side = None
-    last_trick_winner = getattr(round_, "last_trick_winner", None)
-    if last_trick_winner is not None:
-        last_trick_side = last_trick_winner.position.team_side
+    # The captured piles, the trick tallies and who took the last trick
+    # are all derived by the core play state — the recap reads them
+    # rather than re-summing a pile of its own, so the numbers under
+    # "Outcome" are the same ones the scorer worked from.
+    play_state = getattr(round_, "play_state", None)
+    card_points = (
+        play_state.card_points_by_side if play_state is not None else {}
+    )
+    trick_counts = (
+        play_state.trick_counts_by_side if play_state is not None else {}
+    )
+    trick_winners = play_state.trick_winners if play_state is not None else ()
+    last_trick_side = (
+        trick_winners[-1].position.team_side if trick_winners else None
+    )
 
     belote_side = _belote_side_in_round(round_)
 
@@ -224,15 +233,9 @@ def _recap_breakdown(round_) -> dict:
         is_slam_family = False
         slam_substitute = 0
 
-    rules = rules_for(trump)
     out = {}
     for side in TeamSide:
-        tricks = team_tricks.get(side, [])
-        raw_card_pts = sum(
-            rules.points(card)
-            for tr in tricks
-            for _, card in tr.get_plays()
-        )
+        raw_card_pts = card_points.get(side, 0)
         raw_last_trick = 10 if side is last_trick_side else 0
         raw_belote = 20 if side is belote_side else 0
 
@@ -332,7 +335,7 @@ def _recap_breakdown(round_) -> dict:
             "last_trick": display_last_trick,
             "last_trick_bonus": raw_last_trick if last_trick_counts else 0,
             "belote": raw_belote if belote_count else 0,
-            "trick_count": len(tricks),
+            "trick_count": trick_counts.get(side, 0),
             "cards_count": cards_count,
             "last_trick_counts": last_trick_counts,
             "belote_count": belote_count,

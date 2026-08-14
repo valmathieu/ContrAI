@@ -121,7 +121,7 @@ end note
 loop trick_num in 0..7
     ref over R, P : **seq_trick** — to_act, legal_actions,\nchoose/request, apply, _sync_hands
 end
-R --> G : team_tricks: dict<str, list<Trick>>
+R --> G : return  (None — the played-out round\nis left on ""play_state"")
 
 == Scoring ==
 

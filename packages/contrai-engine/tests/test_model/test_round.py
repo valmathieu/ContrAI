@@ -5,8 +5,8 @@ driven by the immutable core :class:`PlayState`:
 
     * ``play_trick`` rejecting an illegal card with ``IllegalPlayError``
       (raised by the core state machine, no longer by the engine);
-    * the mirror bookkeeping — the players' hands and ``current_trick``
-      kept in lock-step with the authoritative ``play_state``;
+    * the mirror bookkeeping — the players' hands kept in lock-step
+      with the authoritative ``play_state``;
     * card identity flowing unbroken from the seed to the playable set;
     * auction retention and play-state seeding across the lifecycle;
     * belote / rebelote detection and the announcement state machine;
@@ -34,7 +34,6 @@ from contrai_core.deck import Deck
 from contrai_core.play import PlayState
 from contrai_core.team import Team
 from contrai_core.exceptions import IllegalPlayError, PlayRuleViolation
-from contrai_core.trick import Trick
 from contrai_core.types import Rank, Suit, TrumpVariant
 
 from contrai_engine.model.player import AiPlayer, HumanPlayer
@@ -57,8 +56,11 @@ class _StubDeck:
         """Swallow the returned trick cards."""
 
 
-def _make_round(players_dict, hands, contract, plays, deck=None):
+def _make_round(players_dict, hands, contract, deck=None):
     """Build a ``Round`` wired to the supplied state.
+
+    ``play_trick`` seeds the play state lazily from the hands, so the
+    round needs nothing beyond the seating, the contract and the deal.
 
     Args:
         players_dict: mapping of seat letter → Player (from the
@@ -66,24 +68,19 @@ def _make_round(players_dict, hands, contract, plays, deck=None):
         hands: mapping of seat letter → list of Cards in that player's
             hand.
         contract: a Contract object (provides trump) or None.
-        plays: ordered list of (seat_letter, Card) tuples — the cards
-            already played in the current trick.
         deck: optional deck object; tests that run ``play_trick`` to
             completion pass a ``_StubDeck`` so the end-of-trick
             ``add_cards`` call has something to land on.
 
     Returns:
-        A Round whose ``current_trick`` reflects ``plays`` and whose
-        ``players_order`` is the four players in N/E/S/W order.
+        A Round whose ``players_order`` is the four players in N/E/S/W
+        order.
     """
     order = [players_dict[s] for s in ("N", "E", "S", "W")]
     for seat, cards in hands.items():
         players_dict[seat].hand = Hand(cards)
     round_ = Round(order, dealer=players_dict["N"], deck=deck, round_number=1)
     round_.contract = contract
-    round_.current_trick = Trick()
-    for seat, card in plays:
-        round_.current_trick.add_play(players_dict[seat], card)
     return round_
 
 
@@ -104,7 +101,6 @@ class TestPlayTrickRejectsIllegalCard:
             players,
             {"N": [n_card], "E": [e_illegal, e_follow], "S": [], "W": []},
             contract,
-            [],  # play_trick starts a fresh trick itself
         )
         # Scripted choices: N leads its only heart, E tries the illegal trump.
         players["N"].choose_card = (
@@ -207,7 +203,7 @@ class TestSyncHandsMirrorsPlayState:
             "W": Card(Suit.DIAMONDS, Rank.TEN),
         }
         hands = {seat: [played[seat], spares[seat]] for seat in played}
-        round_ = _make_round(players, hands, contract, [], deck=_StubDeck())
+        round_ = _make_round(players, hands, contract, deck=_StubDeck())
         for seat, card in played.items():
             players[seat].choose_card = (
                 lambda observation, _card=card: _card
@@ -245,7 +241,7 @@ class TestCardIdentityFlowsFromSeed:
             "S": [Card(Suit.HEARTS, Rank.EIGHT)],
             "W": [Card(Suit.HEARTS, Rank.NINE)],
         }
-        round_ = _make_round(players, hands, contract, [], deck=_StubDeck())
+        round_ = _make_round(players, hands, contract, deck=_StubDeck())
 
         captured: dict[str, list] = {}
 
@@ -342,7 +338,6 @@ class TestPlayStateSeeding:
             players,
             {seat: [card] for seat, card in cards.items()},
             contract,
-            [],
             deck=_StubDeck(),
         )
         for seat, card in cards.items():
@@ -379,7 +374,6 @@ class TestPlayThroughReachesTerminal:
 
         assert round_.play_state.is_terminal()
         assert len(round_.play_state.completed_tricks) == 8
-        assert len(round_.tricks) == 8
         for player in order:
             assert len(player.hand) == 0
 
@@ -406,7 +400,6 @@ class TestPlayTrickHandsObservation:
             players,
             {seat: [card] for seat, card in cards.items()},
             contract,
-            [],
             deck=_StubDeck(),
         )
 
@@ -462,7 +455,6 @@ class TestPlayTrickHandsObservation:
             players,
             {seat: [card] for seat, card in cards.items()},
             contract,
-            [],
             deck=_StubDeck(),
         )
         assert round_.auction is None  # nothing retained
@@ -504,7 +496,6 @@ class TestBeloteHolderDetection:
                 "W": [],
             },
             contract,
-            [],
         )
         round_._detect_belote_holder()
         assert round_.belote_holder is players["S"]
@@ -520,7 +511,6 @@ class TestBeloteHolderDetection:
                 "W": [],
             },
             contract,
-            [],
         )
         round_._detect_belote_holder()
         assert round_.belote_holder is None
@@ -541,7 +531,6 @@ class TestBeloteHolderDetection:
                 "W": [],
             },
             contract,
-            [],
         )
         round_._detect_belote_holder()
         assert round_.belote_holder is None
@@ -566,7 +555,6 @@ class TestBeloteTransition:
                 "W": [],
             },
             contract,
-            [],
         )
         round_.belote_holder = players["S"]
         return round_
@@ -764,7 +752,7 @@ class TestTrickCompletedLogging:
             "S": [Card(Suit.SPADES, Rank.ACE)],
             "W": [Card(Suit.SPADES, Rank.SEVEN)],
         }
-        round_ = _make_round(players, hands, contract, [], deck=_StubDeck())
+        round_ = _make_round(players, hands, contract, deck=_StubDeck())
         for seat, cards in hands.items():
             players[seat].choose_card = (
                 lambda observation, _card=cards[0]: _card

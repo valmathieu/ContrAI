@@ -196,12 +196,13 @@ class TestFullRoundLifecycleHappyPath:
         assert round_.belote_holder is None
 
         # --- Play -------------------------------------------------------
-        team_tricks = round_.play_all_tricks(None)
+        round_.play_all_tricks(None)
 
         assert round_.play_state.is_terminal()
         assert len(round_.play_state.completed_tricks) == 8
-        assert len(round_.tricks) == 8
-        assert sum(len(tricks) for tricks in team_tricks.values()) == 8
+        # Every completed trick has a winner, and each winner has a side.
+        assert len(round_.play_state.trick_winners) == 8
+        assert sum(round_.play_state.trick_counts_by_side.values()) == 8
         for seat in ("N", "E", "S", "W"):
             assert len(players[seat].hand) == 0
         # The trick-return ritual: every played card lands back in the
@@ -336,7 +337,7 @@ class TestFullRoundLifecycleBelote:
         round_.play_all_tricks(None)
 
         assert round_.play_state.is_terminal()
-        assert len(round_.tricks) == 8
+        assert len(round_.play_state.completed_tricks) == 8
         for seat in ("N", "E", "S", "W"):
             assert len(players[seat].hand) == 0
 

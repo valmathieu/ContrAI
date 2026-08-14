@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Sequence
 
 from contrai_core.bid import (
     Bid,
@@ -33,8 +33,8 @@ from contrai_core import (
     BasePlayer,
     Card,
     Contract,
+    Play,
     TeamSide,
-    Trick,
     rules_for,
 )
 from contrai_engine.options import DebugOptions
@@ -93,6 +93,7 @@ from contrai_engine.view.screens.trick import (
 from contrai_engine.view.state_helpers import (
     _resolve_delay,
     _sort_hand_for_display,
+    _trick_index,
 )
 from contrai_engine.view.theme import (
     DEFAULT_TARGET,
@@ -169,7 +170,9 @@ class RichView:
         self.console: Console = Console()
         self.target_score: int = DEFAULT_TARGET
         self.history: list[RoundSummary] = []
-        self.last_completed_trick: Optional[tuple[Trick, BasePlayer]] = None
+        self.last_completed_trick: Optional[
+            tuple[Sequence[Play], BasePlayer]
+        ] = None
         self.game: Optional[Game] = None
         # Rolling narrative log shown below the hand. Captures the last
         # ``LOG_MAX`` events (deal, bids, plays, trick winners, redeal,
@@ -257,11 +260,15 @@ class RichView:
     def request_card_action(
         self,
         player: BasePlayer,
-        trick: Trick,
+        plays: Sequence[Play],
         contract: Contract,
         playable_cards: list[Card],
     ) -> Card:
-        """Prompt the human for a card. Loops until input parses."""
+        """Prompt the human for a card. Loops until input parses.
+
+        ``plays`` are the core ``(player, card)`` records of the trick
+        so far — empty when the human is on lead.
+        """
         trump_suit = contract.suit if contract else None
         # See ``request_bid_action``: the rejection rides inside the next
         # frame's Prompt panel so the ``console.clear()`` on re-render
@@ -272,7 +279,7 @@ class RichView:
             self._render_in_game(
                 phase="playing",
                 current_player=player,
-                current_trick=trick,
+                current_plays=plays,
                 playable_cards=playable_cards,
                 prompt_question=_card_prompt_text(
                     playable_cards, len(sorted_hand)
@@ -294,13 +301,17 @@ class RichView:
             return card
 
     def on_trick_complete(
-        self, trick: Trick, winner: BasePlayer, round_: "Round"
+        self, plays: Sequence[Play], winner: BasePlayer, round_: "Round"
     ) -> None:
         """Record the winner in the log, render the trick-won state, wait
-        for Enter (or a timed pause under autoplay)."""
+        for Enter (or a timed pause under autoplay).
+
+        ``plays`` are the four core play records of the trick just
+        completed.
+        """
         trump = round_.contract.suit if round_ and round_.contract else None
         rules = rules_for(trump)
-        trick_points = sum(rules.points(card) for _, card in trick.get_plays())
+        trick_points = sum(rules.points(play.card) for play in plays)
         self._log(self._format_trick_won_log(winner, trick_points))
         prompt_question = _trick_won_prompt_text(winner)
         if self.options.autoplay:
@@ -308,14 +319,14 @@ class RichView:
         # State 3: full trick shown, winner highlighted, Press Enter.
         self._render_in_game(
             phase="trick_won",
-            current_trick=trick,
+            current_plays=plays,
             trick_winner=winner,
             prompt_question=prompt_question,
             mandatory=False,
         )
         self._wait_or_pause(GOLD, "CONTRAI_AUTOPLAY_PAUSE", 1.2)
         # Rotate: this is now the "last trick" for the next panel.
-        self.last_completed_trick = (trick, winner)
+        self.last_completed_trick = (plays, winner)
 
     def on_round_dealt(self, round_: "Round") -> None:
         """Engine hook: cards have just been dealt for a new round."""
@@ -369,16 +380,20 @@ class RichView:
         self._pause("CONTRAI_AI_BID_DELAY", 1.4)
 
     def on_card_played(
-        self, player: BasePlayer, card: Card, trick: Trick
+        self, player: BasePlayer, card: Card, plays: Sequence[Play]
     ) -> None:
-        """Record the card in the event log; render+pause for AI players."""
+        """Record the card in the event log; render+pause for AI players.
+
+        ``plays`` are the core play records of the trick on the table,
+        this card included.
+        """
         self._log(self._format_card_log(player, card))
         if getattr(player, "is_human", False):
             return
         self._render_in_game(
             phase="playing",
             current_player=None,
-            current_trick=trick,
+            current_plays=plays,
             prompt_question=_ai_card_announcement(player, card),
             mandatory=False,
         )
@@ -618,7 +633,7 @@ class RichView:
         *,
         phase: str,
         current_player: Optional[BasePlayer] = None,
-        current_trick: Optional[Trick] = None,
+        current_plays: Optional[Sequence[Play]] = None,
         playable_cards: Optional[list[Card]] = None,
         bidding_history: Optional[list] = None,
         trick_winner: Optional[BasePlayer] = None,
@@ -636,19 +651,27 @@ class RichView:
         """
         self.console.clear()
         round_ = self.game.current_round if self.game else None
+        # Which of the eight tricks is on the table. Resolved once here
+        # — the Round and Last-trick panels never see the trick itself,
+        # so they cannot work it out on their own, and deriving it three
+        # times would risk three answers.
+        trick_index = _trick_index(round_, current_plays or ())
         # Top row: game score + round info
         scores = (
             self.game.scores if self.game
             else {side: 0 for side in TeamSide}
         )
         top_left = _panel_game_score(scores, self.target_score)
-        top_right = _panel_round(round_, phase)
+        top_right = _panel_round(round_, phase, trick_index)
         self.console.print(_two_column(top_left, top_right, left_width=24))
         # Middle row: last trick + current trick
-        mid_left = _panel_last_trick(round_, self.last_completed_trick)
+        mid_left = _panel_last_trick(
+            round_, self.last_completed_trick, trick_index
+        )
         mid_right = _panel_current_trick(
-            round_, current_trick, phase, current_player, trick_winner,
+            round_, current_plays, phase, current_player, trick_winner,
             bidding_history=bidding_history,
+            trick_index=trick_index,
         )
         self.console.print(_two_column(mid_left, mid_right, left_width=24))
         # Debug strip: every seat's hand face up, plus the still-in-play
@@ -674,7 +697,7 @@ class RichView:
                 current_player is not None and current_player is human
             )
             hand_panel = _panel_hand(
-                human, current_trick, playable_cards, phase, round_,
+                human, current_plays, playable_cards, phase, round_,
                 interactive=is_human_turn,
             )
         else:

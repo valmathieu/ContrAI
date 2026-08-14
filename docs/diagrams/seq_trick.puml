@@ -30,7 +30,6 @@ skinparam note {
 
 participant "Round" as R <<engine>>
 participant "PlayState" as PS <<from contrai-core>> #E1F0FF
-participant "Trick" as T <<from contrai-core>> #E1F0FF
 participant "Player" as P <<engine>>
 participant "Hand" as H <<from contrai-core>> #E1F0FF
 participant "Deck" as D <<from contrai-core>> #E1F0FF
@@ -45,18 +44,12 @@ note over R, PS
   through ""play_all_tricks""), Round seeds it here
   from the current contract, seating and hands via
   the bare (unvalidated) ""PlayState"" constructor.
-end note
 
-R -> T : new Trick()
-activate T
-note right of T
-  ""Trick()"" is a bare container — it stores no
-  trump. Round passes ""self.contract.suit"" into
-  ""Trick.get_current_winner(trump_suit)"" when it
-  needs the winner; see "Winner + bookkeeping".
-  ""current_trick"" is a **mutable mirror**, kept in
-  lock-step with ""play_state"" for the view — it is
-  never the source of legality or turn order.
+  Round holds **no trick state of its own**. The
+  in-progress trick, the completed ones, their
+  winners and each side's captured pile are all
+  derived views on ""play_state"" — nothing to build
+  here, and nothing that can fall out of step.
 end note
 
 == Four players play in order ==
@@ -71,7 +64,7 @@ loop **for _ in range(4)**
     ref over PS : **Legality** — see note at the foot of the diagram
 
     alt view ≠ None AND player.is_human
-        R -->> V : view.request_card_action(player,\n  current_trick, contract, playable_cards)
+        R -->> V : view.request_card_action(player,\n  play_state.current_trick, contract, playable_cards)
         note right of V
           RichView renders the
           mid-trick screen, parses
@@ -130,13 +123,26 @@ loop **for _ in range(4)**
       preserves object identity and card references
       so the view keeps matching cards by identity.
       ""play_state"" stays the single source of truth
-      for every seat's remaining cards; ""Hand"" is a
-      mirror kept in lock-step for the view, never
-      read to decide legality.
+      for every seat's remaining cards; ""Hand"" is the
+      one mirror the engine still keeps in lock-step
+      for the view, never read to decide legality.
     end note
-    R -> T : current_trick.add_play(player, card)
 
-    R -->> V : view.on_card_played(player, played_card,\n                       current_trick)
+    R -> R : plays = _trick_after_play()
+    note right of R
+      ""play_state.current_trick"" — except after the
+      fourth card, where the state has //already//
+      closed the trick, leaving that view empty and
+      the trick itself in ""completed_tricks[-1]"".
+      That is exactly the frame the view must draw,
+      so the just-closed trick is handed back.
+      Read only //after// an ""apply"": before one, an
+      empty current trick means the seat is on lead,
+      which is why the prompt above reads
+      ""play_state.current_trick"" directly instead.
+    end note
+
+    R -->> V : view.on_card_played(player, played_card,\n                       plays)
     note right of V
       RichView logs "X plays Y" in the
       event log. For AI players it
@@ -165,28 +171,28 @@ end
 
 == Winner + bookkeeping ==
 
-R -> T : winner = current_trick.get_current_winner(contract.suit)
-note right of T
-  Trump comes from ""self.contract.suit"".
-  Trump beats non-trump; within the same suit,
-  the higher ""rules_for(trump).trick_rank"" wins.
-  The rule lives on
-  ""Trick.get_current_winner(trump_suit)"" in contrai-core.
+R -> R : completed = _trick_after_play()
+R -> PS : trick_winners[-1]
+PS --> R : winner
+note right of PS
+  Nothing is re-adjudicated here. ""apply"" closed
+  the trick, so the play state already knows who
+  took it: trump beats non-trump and, within a
+  suit, the higher ""rules_for(trump).trick_rank""
+  wins. Each side's captured pile and trick count
+  come off the same derivation
+  (""card~_points~_by~_side"" /
+  ""trick~_counts~_by~_side""), which is what the
+  scorer and both screens read.
 end note
 
-R -> R : last_trick_winner = winner
-R -> R : tricks.append(current_trick)
-R -> R : team_tricks[winner.position.team_side]\n  .append(current_trick)
-
-R -> T : current_trick.get_plays()
-T --> R : list<(Player, Card)>
-R -> R : trick_cards = [card for _, card in plays]\ntrick_cards.reverse()  (last played → first back in)
+R -> R : trick_cards = [play.card for play in completed]\ntrick_cards.reverse()  (last played → first back in)
 R -> D : deck.add_cards(trick_cards)
 
 == View callback (gated on hasattr) ==
 
 alt view ≠ None AND hasattr(view, 'on_trick_complete')
-    R -->> V : view.on_trick_complete(\n  current_trick, winner, self\n)
+    R -->> V : view.on_trick_complete(\n  completed, winner, self\n)
     note right of V
       RichView renders the
       **trick-won** screen with
@@ -194,16 +200,14 @@ alt view ≠ None AND hasattr(view, 'on_trick_complete')
       and the winner highlighted,
       then blocks on "Press
       [Enter] to continue…".
+      The four ""Play"" records it
+      is handed unpack as
+      ""(player, card)"" pairs.
     end note
     V -->> R : (returns)
 end
 
-' current_trick is retained in ``tricks`` / ``team_tricks`` — its bar
-' closes here because the diagram scope ends, not because the Trick
-' is destroyed.
-deactivate T
-
-[<-- R : return  (None — winner published on last_trick_winner)
+[<-- R : return  (None — the trick and its winner\nare already on ""play_state"")
 deactivate R
 
 note over R, PS
