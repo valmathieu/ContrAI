@@ -16,6 +16,7 @@ from rich.box import ROUNDED
 from rich.panel import Panel
 from rich.text import Text
 
+from contrai_engine.model.round.scoring import unannounced_slam_substitute
 from contrai_engine.view.formatting import (
     _format_contract_short,
     _format_trump_label,
@@ -157,8 +158,8 @@ def _recap_breakdown(round_) -> dict:
                       for the side winning the contract; 0 otherwise).
         card_points:  trump-aware per-card points summed across the
                       team's tricks for numeric
-                      contracts, *or* the flat substitute
-                      ``slam_card_substitute * multiplier`` credited
+                      contracts, *or* the flat, unmultiplied
+                      ``slam_card_substitute`` credited
                       to the side winning a Slam-family contract.
                       The ``card_points_substituted`` flag tells the
                       renderer which kind it is.
@@ -263,17 +264,18 @@ def _recap_breakdown(round_) -> dict:
             last_trick_counts = False
         elif is_slam_family:
             # Slam family: the 162 of trick-card points is replaced
-            # by a flat substitute equal to the contract base. The
-            # at-risk amount on each half (contract / substitute)
-            # scales with the multiplier and goes to the side that
-            # wins the contract. Belote (+20) still applies on top
-            # for whichever team holds it. The last-trick bonus does
-            # NOT — the substitute already covers the 162.
+            # by a flat substitute equal to the contract base. Only
+            # the announced half (contract) scales with the
+            # multiplier — the substitute stays flat, just as the
+            # numeric 160 does — and the whole amount goes to the
+            # side that wins the contract. Belote (+20) still applies
+            # on top for whichever team holds it. The last-trick bonus
+            # does NOT — the substitute already covers the 162.
             card_points_substituted = True
             last_trick_counts = False
             if is_winner:
                 contract_row = base * mult
-                card_points_value = slam_substitute * mult
+                card_points_value = slam_substitute
                 cards_count = True
             else:
                 card_points_value = 0
@@ -289,12 +291,16 @@ def _recap_breakdown(round_) -> dict:
                 if is_attacker and unannounced_slam is not None:
                     # Unannounced slam: the declarer's 162 pile
                     # (last-trick bonus included) is replaced by the
-                    # flat 250 substitute, mirroring the
-                    # announced-Slam shape.
-                    card_points_value = 250
+                    # flat substitute the tag names — 250 for a team
+                    # sweep, 500 for the declarer's own — mirroring
+                    # the announced-Slam shape.
+                    sweep_substitute = unannounced_slam_substitute(
+                        unannounced_slam
+                    )
+                    card_points_value = sweep_substitute
                     card_points_substituted = True
                     last_trick_counts = False
-                    display_trick_points = 250
+                    display_trick_points = sweep_substitute
                     display_last_trick = 0
             else:
                 # Failed → defender takes the whole pile + contract;

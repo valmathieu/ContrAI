@@ -218,23 +218,24 @@ class TestContractSlamHelpers:
 
     def test_at_risk_total_slam_normal(self, slam_contract):
         # The full at-risk amount for a Slam at normal multiplier:
-        # (base + substitute) × 1 = 250 + 250 = 500.
+        # substitute + base × 1 = 250 + 250 = 500.
         amount = (
-            slam_contract.get_base_points()
-            + slam_contract.get_slam_card_substitute()
-        ) * slam_contract.get_multiplier()
+            slam_contract.get_slam_card_substitute()
+            + slam_contract.get_base_points() * slam_contract.get_multiplier()
+        )
         assert amount == 500
 
     def test_at_risk_total_solo_slam_doubled(self, north, south):
-        # Solo Slam doubled: (500 + 500) × 2 = 2000.
+        # Solo Slam doubled: only the announced half is multiplied, so
+        # 500 + 500 × 2 = 1500 — not (500 + 500) × 2.
         contract = Contract(
             ContractBid(north, SlamLevel.SOLO_SLAM, Suit.HEARTS), double_player=south
         )
         amount = (
-            contract.get_base_points()
-            + contract.get_slam_card_substitute()
-        ) * contract.get_multiplier()
-        assert amount == 2000
+            contract.get_slam_card_substitute()
+            + contract.get_base_points() * contract.get_multiplier()
+        )
+        assert amount == 1500
 
 
 # ---------------------------------------------------------------------------

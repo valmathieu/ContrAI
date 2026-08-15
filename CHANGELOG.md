@@ -52,6 +52,8 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) The AI no longer hands the opponents a Ten it did not have to — it discards its cheapest card instead of emptying its shortest suit. Over 300 rounds that concedes 36% fewer points on those discards.
 - (engine) The AI no longer spends a trump on a trick a plain card would have taken, keeping trump back when both opponents are proven void. The inference reaches defenders too, not just the declaring side.
 - (engine) Under a no-trump contract the AI no longer records seats as "void in No Trump" — a suit no card can be held in — so its void map stays clean.
+- (engine) Doubled Slam-family rounds mark the right amount. Only the announced half takes the multiplier — the flat substitute that stands in for the trick pile does not — so a doubled Slam is 750 and a redoubled one 1250, against 1000 and 2000 before; Solo Slam reads 1500 and 2500 instead of 2000 and 4000.
+- (engine) A declarer who sweeps all eight tricks without announcing anything now marks the 500 substitute of the Solo Slam that was there for the taking. Only a sweep split with the partner marks 250, where both did before.
 
 ## [0.2.0] - 2026-07-25
 

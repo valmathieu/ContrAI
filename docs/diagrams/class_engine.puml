@@ -355,7 +355,7 @@ package "model/round/ package" as p_round {
       from ""trick_winners"" — never the
       view-facing mirrors.
       Four scoring shapes (numeric share-pile,
-      unannounced-Slam 250 substitute, doubled
+      unannounced-Slam 250 / 500 substitute, doubled
       winner-takes-all, Slam / Solo Slam grid),
       belote +20 to the K+Q holder layered on
       every shape. ""UnannouncedSlam"" tags an

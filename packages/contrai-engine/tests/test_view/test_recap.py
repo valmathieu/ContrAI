@@ -527,7 +527,7 @@ class TestRoundRecapPanel:
             team_tricks={TeamSide.NS: ns_tricks, TeamSide.EW: []},
             contract_made=True,
         )
-        round_.unannounced_slam = UnannouncedSlam.GRAND_SLAM  # north swept personally
+        round_.unannounced_slam = UnannouncedSlam.SLAM  # the team swept, not one seat
         # The bonus would be +10 — it must fold into the substitute.
         round_.play_state.trick_winners = (north,)
         breakdown = _recap_breakdown(round_)
@@ -559,18 +559,53 @@ class TestRoundRecapPanel:
         )
         assert "+10" not in last_trick_line
 
+    def test_recap_grand_slam_substitutes_500(self, four_players):
+        """A declarer's personal sweep earns the 500 substitute — the
+        Solo Slam they could have announced — so the recap's Tricks
+        points row reads 500, not the team sweep's 250."""
+        north, *_ = four_players
+        contract = self._StubContract(100, Suit.SPADES, TeamSide.NS)
+        ns_tricks = []
+        for _ in range(8):
+            tr = Trick()
+            tr.add_play(north, Card(Suit.CLUBS, Rank.SEVEN))
+            ns_tricks.append(tr)
+        round_ = self._StubRound(
+            round_number=6,
+            contract=contract,
+            round_scores={TeamSide.NS: 600, TeamSide.EW: 0},
+            team_tricks={TeamSide.NS: ns_tricks, TeamSide.EW: []},
+            contract_made=True,
+        )
+        round_.unannounced_slam = UnannouncedSlam.GRAND_SLAM
+        round_.play_state.trick_winners = (north,)
+        ns = _recap_breakdown(round_)[TeamSide.NS]
+        assert ns["trick_points"] == 500
+        assert ns["card_points"] == 500
+        assert ns["card_points_substituted"] is True
+        assert ns["contract"] == 100
+        # Same invariant as the team-sweep case: the rows sum to score.
+        assert (
+            ns["contract"]
+            + ns["card_points"]
+            + ns["last_trick_bonus"]
+            + ns["belote"]
+            == 600
+        )
+
     @pytest.mark.parametrize(
-        "marker, expected_tag",
+        "marker, expected_tag, substitute",
         [
-            (UnannouncedSlam.SLAM, "Slam"),
-            (UnannouncedSlam.GRAND_SLAM, "Grand Slam"),
+            (UnannouncedSlam.SLAM, "Slam", 250),
+            (UnannouncedSlam.GRAND_SLAM, "Grand Slam", 500),
         ],
     )
     def test_recap_unannounced_slam_tags_the_trick_points_row(
-        self, four_players, marker, expected_tag
+        self, four_players, marker, expected_tag, substitute
     ):
         """The unannounced-Slam marker surfaces its label on the Trick
-        points row to explain the 250 substitute."""
+        points row to explain the substitute it stands for — the team
+        sweep's 250 or the declarer's own 500."""
         view = RichView()
         north, *_ = four_players
         contract = self._StubContract(90, Suit.HEARTS, TeamSide.NS)
@@ -579,19 +614,20 @@ class TestRoundRecapPanel:
             tr = Trick()
             tr.add_play(north, Card(Suit.CLUBS, Rank.SEVEN))
             ns_tricks.append(tr)
+        score = 90 + substitute
         round_ = self._StubRound(
             round_number=7,
             contract=contract,
-            round_scores={TeamSide.NS: 340, TeamSide.EW: 0},
+            round_scores={TeamSide.NS: score, TeamSide.EW: 0},
             team_tricks={TeamSide.NS: ns_tricks, TeamSide.EW: []},
             contract_made=True,
         )
         round_.unannounced_slam = marker
         text = _panel_round_recap(
-            round_, {TeamSide.NS: 340, TeamSide.EW: 0}
+            round_, {TeamSide.NS: score, TeamSide.EW: 0}
         ).renderable.plain
         assert expected_tag in text
-        assert "250" in text
+        assert str(substitute) in text
 
     def test_recap_shows_last_trick_bonus_for_last_trick_winner(self, four_players):
         view = RichView()
@@ -705,8 +741,9 @@ class TestRoundRecapPanel:
         assert breakdown[TeamSide.NS]["card_points"] == 0
 
     def test_recap_contract_row_uses_solo_slam_doubled_grid(self, four_players):
-        """Doubled Solo Slam made: both halves scale with the multiplier.
-        Contract = 500 * 2 = 1000; substitute = 500 * 2 = 1000; sum = 2000."""
+        """Doubled Solo Slam made: only the announced half scales.
+        Contract = 500 * 2 = 1000; substitute stays flat at 500;
+        sum = 1500."""
         view = RichView()
         contract = self._StubContract(
             SlamLevel.SOLO_SLAM, Suit.SPADES, TeamSide.EW, double=True
@@ -714,12 +751,12 @@ class TestRoundRecapPanel:
         round_ = self._StubRound(
             round_number=3,
             contract=contract,
-            round_scores={TeamSide.NS: 0, TeamSide.EW: 2000},
+            round_scores={TeamSide.NS: 0, TeamSide.EW: 1500},
             team_tricks={TeamSide.NS: [], TeamSide.EW: []},
         )
         breakdown = _recap_breakdown(round_)
         assert breakdown[TeamSide.EW]["contract"] == 1000
-        assert breakdown[TeamSide.EW]["card_points"] == 1000
+        assert breakdown[TeamSide.EW]["card_points"] == 500
         assert breakdown[TeamSide.EW]["card_points_substituted"] is True
 
     def test_recap_contract_row_includes_full_bonus_when_doubled_made(
