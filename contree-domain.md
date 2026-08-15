@@ -100,7 +100,7 @@ beaten only by the trump suit.
 2. For subsequent rounds:
    - The dealer is the next player along in the turn direction (to the right of the previous dealer by default).
    - The deck is **not** reshuffled between rounds by default. The collected
-     pile is simply *cut* by the player on the dealer's other side (to the dealer's left when play runs anticlockwise) and then dealt. The *cut* cannot be made before the first three card and after the three last cards (to avoid people cheating).
+     pile is simply *cut* by the player on the dealer's other side (to the dealer's left when play runs anticlockwise) and then dealt. The *cut* must leave at least three cards on either side of it — a sliver off the top or the bottom would leave the rest of the pile in its known order, so the three-card margin is an anti-cheating convention.
    - **Table option — reshuffle every round** (off by default, §9): the deck is shuffled before every deal instead of merely cut.
 3. Dealing pattern: groups of **3-2-3** cards to each player, in the turn order (anticlockwise by default). Other patterns — 4-4 (the *Corsica* deal), 2-3-3, 3-3-2 — are acceptable as long as everyone agrees in advance; they are catalogued in §9 but are not part of the canonical rule set.
 4. After dealing, each player has 8 cards. No card is turned up; all 32 are
@@ -142,19 +142,19 @@ The first player to speak is the one after the dealer in the turn direction — 
   
   - Maximum numeric bid — the ladder top depends on the trump choice and, at all trump, on the agreed belote regime (§6.6):
   
-  | Trump choice                        | Ladder top | Theoretical max take  |
+  | Trump choice                        | Ladder top | Highest take possible |
   | ----------------------------------- | ---------- | --------------------- |
-  | Suit (♠ ♥ ♦ ♣)                      | 180        | 160 + 20 Belote = 180 |
-  | No trump                            | 160        | 160 (no Belote)       |
-  | All trump — no-belote regime        | 160        | 160                   |
-  | All trump — single belote (default) | 180        | 160 + 20 = 180        |
-  | All trump — four belotes            | 240        | 160 + 80 = 240        |
+  | Suit (♠ ♥ ♦ ♣)                      | 180        | 162 + 20 Belote = 182 |
+  | No trump                            | 160        | 162 (no Belote)       |
+  | All trump — no-belote regime        | 160        | 162                   |
+  | All trump — single belote (default) | 180        | 162 + 20 = 182        |
+  | All trump — four belotes            | 240        | 162 + 80 = 242        |
   
-  > The top steps of each ladder are only feasible with the required **Belote** in hand — the cards alone cap at 152 + 10 = 162. The auction does **not** enforce that at bid time: announcing a top step without the Belote is legal but commits the bidder to a contract they cannot make on cards alone, which will *fail* at scoring.
+  > The ladder top is simply the last 10-point step at or below that ceiling, which is why the two columns never match exactly. Cards plus the last-trick bonus cap at 152 + 10 = **162**, so a mode with no Belote available stops the ladder at 160; each Belote the regime allows lifts the ceiling by 20 (182, then 242) and the ladder along with it (180, then 240). The steps above 160 are therefore only feasible with the required **Belote** in hand. The auction does **not** enforce that at bid time: announcing one of them without the Belote is legal but commits the bidder to a contract they cannot make on cards alone, which will *fail* at scoring.
 
-- **Bid Slam**. A special bid declaring your team will take **all 8 tricks**. Contract base value **250** points. Slam outranks any numeric bid: once declared, no further contract bid is legal (numeric, Slam, or Solo Slam). *Double* and *redouble* are available against a Slam by default but this can be turn off (see §5.3).
+- **Bid Slam**. A special bid declaring your team will take **all 8 tricks**. Contract base value **250** points. Slam outranks any numeric bid: once declared, no further contract bid is legal (numeric, Slam, or Solo Slam). *Double* and *redouble* are available against a Slam by default but this can be turned off (see §5.3).
 
-- **Bid Solo Slam**. A stronger all-tricks bid declaring that the **bidder personally** will win every one of the 8 tricks — their partner may play normally but is forbidden from winning any trick. Contract base value **500** points. Solo Slam outranks any numeric bid, but it **cannot be announced after a Slam** — once a Slam is on the table, the auction is closed to further contract bids (asymmetric block). *Double* and *redouble* are available against a Solo Slam by default but this can be turn off (see §5.3).
+- **Bid Solo Slam**. A stronger all-tricks bid declaring that the **bidder personally** will win every one of the 8 tricks — their partner may play normally but is forbidden from winning any trick. Contract base value **500** points. Solo Slam outranks any numeric bid, but it **cannot be announced after a Slam** — once a Slam is on the table, the auction is closed to further contract bids. A Solo Slam closes the ladder in exactly the same way: once it is announced, no further contract bid is legal either. What is *asymmetric* is only the Slam → Solo Slam direction — Slam blocks the higher-ranked Solo Slam, where plain precedence would have let it through. *Double* and *redouble* are available against a Solo Slam by default but this can be turned off (see §5.3).
 
 > Slam-family bids exist under every trump choice (suit, no trump, all trump), with the same base values. Some tables disallow the **Solo Slam** bid altogether — its availability is agreed before the game (allowed by default, §9).
 
@@ -173,15 +173,16 @@ Doubling offers an opportunity to increase to points at stake during a round. Th
 
 - **Double**: an opponent of the current bidder may call *double* instead of passing or bidding. This **freezes** the auction at the current contract and **doubles** the point value at stake (both for success and for failure).
 - **Redouble**: the bidder's team may respond to a double with a *redouble*, which **quadruples** the point value at stake. Either player on the bidding team may do this.
-- *Double* can only be called on the most recent numeric bid (it cannot be used to reopen a finished auction).
+- *Double* can only be called on the most recent contract bid — numeric or Slam-family alike, subject to the two switches below (it cannot be used to reopen a finished auction).
 - **Intervening passes do not close the Double/ Redouble window.** Both *double* (by an opposing player) and *redouble* (by the bidding team) remain legal up until the auction terminates on three consecutive passes per §5.4 — players who passed earlier may re-enter and call *double* or *redouble*, consistent with the general re-entry rule in §5.2.
 - **Table options (§9):** *Slam can be doubled* and *Solo Slam can be doubled* are two independent switches, both **on** by default. Turning one off forbids *double* — and therefore *redouble* — against that contract entirely; the other contract is unaffected.
 
 ### 5.4. End of bidding
 
-The auction ends when three consecutive players pass after the last bid (or
-fewer if the bid has been doubled / redoubled and the appropriate replies
-given).
+The auction ends when three consecutive players pass after the last bid —
+always there, and only there. A *double* or a *redouble* freezes the contract
+but does not close the auction: the reply window of §5.3 stays open until those
+three passes land.
 
 - The team holding the final bid becomes the **declarer** / *attacker* .
 - The other team is the **defense**.
@@ -207,7 +208,7 @@ The legal-move rules of contrée are strict. Given the suit led (the first card 
 
 1. **Follow suit.** If you have any card in the led suit, you must play one.
 2. **Trump if you cannot follow.** If you have no card in the led suit, you must play a trump, *unless* exception applies (bullet 4 or under-trump exemption option).
-3. **Overtrump if a trump has been played to this trick.** If trumps have already been played and you must trump, you must play a trump *higher* than the highest trump already on the table, if you have one. Otherwise you can discard.
+3. **Overtrump if a trump has been played to this trick.** If trumps have already been played and you must trump, you must play a trump *higher* than the highest trump already on the table, if you have one. If you hold no trump able to beat it, you must still play a trump — an *under-trump* — and you may choose which one, unless the under-trump exemption below is active.
 4. **Partner exception.** If your partner is currently winning the trick (their card is the strongest played so far), you are *not* obligated to trump or to overtrump if you can't provide a card from the led suit. You may discard freely.Here, discard means playing any card, including trumps even if it's not mandatory to play one. Often discarding is used to play cards that owns a lot of points or to create trump opportunities by discard a card from a singleton.
 5. **Discard.** If you have neither the led suit nor a trump (and no obligation forces a trump), you may play any card.
 
@@ -221,6 +222,8 @@ When trump is led, the follow-suit rule (1) applies as usual. In addition, every
 
 - **No trump:** there is no trump suit. Follow the led suit if you can; otherwise discard freely, no trumping, no over-trumping, no partner exception to worry about. The highest card of the led suit (§3.4 order) wins the trick.
 - **All trump:** every suit is trump, and every trick behaves like §6.3 in the led suit: follow it *and* play a card **higher** than the best one already on the table if you can; if you cannot beat it, you must still follow. When you are void in the led suit you discard freely — cards of the other suits can never win the trick, so there is no cross-suit cutting. The highest card of the led suit (§3.3 order) wins.
+
+Both modes leave the **under-trump exemption** (§6.2, §9.5) inert, for opposite reasons: at no trump there is no trump to be forced into playing, and at all trump a player void in the led suit already discards freely, so no losing trump was ever owed. The switch changes nothing in either — it is a suit-contract rule.
 
 ### 6.5. Winning a trick
 
@@ -314,7 +317,7 @@ A double turns the round into a single stake, **winner takes all**. The winning 
 | **on** (default)                       | flat **160**          | `A × M`                    | `160 + A × M`   |
 | off                                    | `160 × M`             | `A × M`                    | `(160 + A) × M` |
 
-The default value of `A` is the contract `C`.
+`A` is the announced-points component. It is the contract value `C` — on a made contract always, and on a failed one too. Exactly one switch ever changes it: *any failure marks 160* (off by default, see the end of this section), which replaces `C` with a flat **160**, and only on failures.
 
 - Worked example, default: contract `100 ♥ ×2` made → declarer 360, defense 0; the same contract failed → defense 360, declarer 0.
 - The second row for the same contract made → declarer 520, defense 0; the same contract failed → defense 520, declarer 0.
@@ -325,14 +328,15 @@ The default value of `A` is the contract `C`.
 
 If the declaring team wins **all 8 tricks** on a numeric contract *without having bid a Slam*, its made-points component is not the pile but a flat **250** substitute, which absorbs the 152 card points and the 10-point last-trick bonus alike: the declarer marks `A + 250`, the defense marks nothing, and the contract is necessarily **made** (sweeping every trick cannot fail any contract). This mirrors the announced-Slam shape while keeping the numeric contract value `A` as the announced component.
 
-- If the team split the 8 tricks between them, the substitute is **250**. If one of the contracting player swept all 8 **personally**, it is **500** (if the Solo Slam is authorized).
+- If the two partners split the 8 tricks between them, the substitute is **250**. If the **declarer** personally took all 8, it is **500** (where the Solo Slam bid is authorized, §9.4) — the sweep the declarer could have announced as a Solo Slam. A *partner's* solo sweep is not that shape and scores the ordinary **250** team substitute.
 - **Declaring team only.** If the *defense* takes all 8 tricks the declarer has simply failed — mark it as an ordinary failed contract, not as a slam.
 - **Un-doubled only.** A doubled or redoubled sweep uses the winner-takes-all grid above, pile flat at 160; the substitute does **not** apply.
 - **Table option — unannounced-slam substitute** (on by default, §9): switched off, a sweep marks the ordinary pile like any other made contract.
 - **Belote (+20)** still layers on top for the holding team, as everywhere.
 
 > Worked example: contract `100 ♠`, declaring team sweeps all 8 → declarer
-> 350 (`100 + 250`), defense 0; if one of the contracting player took them all alone → 600 (`100 + 500`).
+> 350 (`100 + 250`), defense 0; if the **declarer** took all 8 alone → 600
+> (`100 + 500`).
 
 #### Slam and Solo Slam
 
@@ -416,7 +420,7 @@ contract value — are already round, so in practice only a shared pile moves.
 
 **Table option — the attack must out-score the defense** (on by default, §9): to make its contract the attack must not only reach `C` but also score **strictly more than the defense** (`P_attack > P_defense`), Belote included on both sides whenever it counts toward the contract (§6.6).
 
-A **dispute** is an exact tie — 81 / 81, or 91 / 91 when a Belote counts on each side. The option settles it on its own, so there is nothing further to agree:
+A **dispute** is an exact tie. On cards alone that is 81 / 81 (the pile being 162). When **one** side's Belote counts it is 91 / 91 — 71 + 20 against 91, out of 182. And where the all-trump *four*-belote regime (§6.6) puts a Belote on each side, 101 / 101 — 81 + 20 each, out of 202. The option settles the tie on its own, so there is nothing further to agree:
 
 - **On** (default): the attack has not out-scored the defense, so the contract **fails** and ordinary failed-contract marking applies.
 - **Off**: only `P_attack ≥ C` matters, so a tie leaves the contract made whenever the attack reached its value, and each team marks its own points as usual.
@@ -447,6 +451,8 @@ The master list. Every switch named anywhere in this document appears here with 
 - **interface aid** — not a rule of the game at all, a convenience of the interface.
 
 Defaults are in **bold**.
+
+The *documented only* rows are tracked together as a deferred-variants checklist in [issue #12](https://github.com/valmathieu/ContrAI/issues/12), one entry each; any of them can be split off and implemented on its own whenever it becomes interesting.
 
 ### 9.1. General
 
