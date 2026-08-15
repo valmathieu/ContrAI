@@ -47,3 +47,7 @@ CLAUDE.md
 # session artifacts, not repo docs - keep them local.
 docs/superpowers/
 docs/plans/
+
+# One design doc per major feature branch, holding the architectural rationale
+# and the feature roadmap. Local by design - they track a branch, not the repo.
+*_DESIGN.md
