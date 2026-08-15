@@ -11,6 +11,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 ### Added
 
 - (core) `RuleConfig` — frozen dataclass of the 22 table-rule knobs of §9 with its three enums, the `classic` preset and `InvalidRuleConfigError`. No knob changes behaviour yet. See [core docs](docs/core/index.md).
+- (core) `PlayState.rules` — the play state carries its `RuleConfig` (default `RuleConfig()`) through `start`, `apply` and `with_hands`; not consulted yet.
 
 ## [0.3.0] - 2026-08-15
 

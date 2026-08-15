@@ -20,6 +20,7 @@ from contrai_core import (
     PlayRuleViolation,
     PlayState,
     Rank,
+    RuleConfig,
     Suit,
     TeamSide,
     TrickRecord,
@@ -568,3 +569,37 @@ class TestNoTrumpDegrade:
             Card(Suit.HEARTS, Rank.SEVEN),
             Card(Suit.HEARTS, Rank.ACE),
         }
+
+
+# ---------------------------------------------------------------------------
+# The table ruleset rides along on the state
+# ---------------------------------------------------------------------------
+
+
+class TestRulesField:
+    def test_default_is_the_classic_config(self, players):
+        contract, seating, hands, _ = _deal(players)
+        assert PlayState.start(contract, seating, hands).rules == RuleConfig()
+        assert PlayState(contract, seating, hands).rules == RuleConfig()
+
+    def test_start_records_an_explicit_config(self, players):
+        contract, seating, hands, _ = _deal(players)
+        rules = RuleConfig(target_score=1000)
+        assert PlayState.start(contract, seating, hands, rules=rules).rules is rules
+
+    def test_apply_and_with_hands_propagate_rules(self, players):
+        contract, seating, hands, by_seat = _deal(players)
+        rules = RuleConfig(target_score=1000)
+        state = PlayState.start(contract, seating, hands, rules=rules)
+        after = state.apply(Play(seating[0], by_seat["N"][0]))
+        assert after.rules is rules
+        assert after.with_hands(after.hands).rules is rules
+
+    def test_rules_do_not_change_legality_yet(self, players):
+        # Step-1 contract: carried, not consulted.
+        contract, seating, hands, _ = _deal(players)
+        plain = PlayState.start(contract, seating, hands)
+        other = PlayState.start(contract, seating, hands,
+                                rules=RuleConfig(under_trump_exemption=False))
+        for p in seating:
+            assert plain.legal_actions(p) == other.legal_actions(p)

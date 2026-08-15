@@ -729,8 +729,9 @@ package "play.py" as p_play {
         + players : tuple<BasePlayer>
         + hands : tuple<tuple<Card>>
         + plays : tuple<Play> = ()
+        + rules : RuleConfig = RuleConfig()
         --
-        + {static} start(contract, players, hands) : PlayState
+        + {static} start(contract, players, hands, rules=None) : PlayState
         + hand_of(player: BasePlayer) : tuple<Card>
         + legal_actions(player: BasePlayer) : tuple<Card>
         + apply(play: Play) : PlayState <<raises IllegalPlayError>>
@@ -791,6 +792,8 @@ package "play.py" as p_play {
       replacement hands — the determinization
       primitive a future search-based AI would
       sample from; no search runs on it yet.
+      Carries the table ""RuleConfig"" through
+      ""apply"" / ""with_hands""; nothing reads it yet.
     end note
 
     note bottom of PlayObservation
@@ -912,6 +915,7 @@ RuleConfig --> AllTrumpBelote : all_trump_belote
 RuleConfig --> Rounding       : rounding
 RuleConfig ..> InvalidRuleConfigError : <<raises in post-init>>
 p_rule_config_fn ..> RuleConfig : <<PRESETS>>
+PlayState "1" o-- "1" RuleConfig : rules
 
 ' Inheritance — Bid hierarchy
 Bid <|-- PassBid

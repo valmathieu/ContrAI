@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, NamedTuple, Optional
 
 from .bid import seal_bid
 from .exceptions import IllegalPlayError, PlayRuleViolation
+from .rule_config import RuleConfig
 from .rules import NoTrumpRules, TrumpRules, rules_for
 from .team_side import TeamSide
 from .trick import TrickRecord, current_winner
@@ -131,12 +132,17 @@ class PlayState:
         hands: Per-seat remaining cards, parallel to ``players``.
         plays: The flat chronological play history. Every four plays form
             one trick. Defaults to empty — a fresh play phase.
+        rules: The table ruleset this play phase runs under. Carried, not
+            yet consulted — no legality or scoring decision reads a knob
+            of it today. Part of value equality, so two states played
+            under different rulesets never compare equal.
     """
 
     contract: Contract
     players: tuple[BasePlayer, ...]
     hands: tuple[tuple[Card, ...], ...]
     plays: tuple[Play, ...] = field(default=())
+    rules: RuleConfig = field(default_factory=RuleConfig)
 
     # ------------------------------------------------------------------
     # Construction helpers
@@ -148,6 +154,7 @@ class PlayState:
         contract: Contract,
         players: tuple[BasePlayer, ...],
         hands: tuple[tuple[Card, ...], ...],
+        rules: RuleConfig | None = None,
     ) -> "PlayState":
         """Seed a validated play phase from a fresh deal.
 
@@ -155,6 +162,9 @@ class PlayState:
             contract: The established contract supplying the trump suit.
             players: The four players in seating order.
             hands: Per-seat starting hands, parallel to ``players``.
+            rules: The table ruleset this play phase runs under. ``None``
+                (the default) means :class:`~contrai_core.RuleConfig`'s
+                own defaults — the §9 catalogue.
 
         Returns:
             A fresh :class:`PlayState` with no plays yet.
@@ -189,7 +199,13 @@ class PlayState:
                 "across the hands."
             )
 
-        return cls(contract=contract, players=players, hands=hands, plays=())
+        return cls(
+            contract=contract,
+            players=players,
+            hands=hands,
+            plays=(),
+            rules=rules if rules is not None else RuleConfig(),
+        )
 
     # ------------------------------------------------------------------
     # Derived trick views
@@ -449,7 +465,8 @@ class PlayState:
         Returns:
             A new :class:`PlayState` with the play appended and the card
             removed from the player's hand (the relative order of the
-            remaining cards is preserved). The receiver is unchanged.
+            remaining cards is preserved). Contract, players and rules
+            carry over unchanged. The receiver is unchanged.
 
         Raises:
             IllegalPlayError: Carrying the offending :class:`PlayRuleViolation`
@@ -492,6 +509,7 @@ class PlayState:
             players=self.players,
             hands=new_hands,
             plays=self.plays + (play,),
+            rules=self.rules,
         )
 
     # ------------------------------------------------------------------
@@ -503,10 +521,11 @@ class PlayState:
     ) -> "PlayState":
         """Fork this state onto replacement hands.
 
-        The public history — contract, players, plays — is preserved; only
-        the per-seat hands change. This is the determinization primitive a
-        search-based AI uses to sample worlds consistent with what it has
-        seen.
+        The public history — contract, players, plays **and rules** — is
+        preserved; only the per-seat hands change. This is the
+        determinization primitive a search-based AI uses to sample worlds
+        consistent with what it has seen: every sampled world must be
+        played under the same table ruleset as the real one.
 
         Args:
             hands: Replacement per-seat hands, parallel to ``players``.
@@ -545,6 +564,7 @@ class PlayState:
             players=self.players,
             hands=new_hands,
             plays=self.plays,
+            rules=self.rules,
         )
 
     # ------------------------------------------------------------------
