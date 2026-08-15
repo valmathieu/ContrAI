@@ -31,8 +31,8 @@ class UnannouncedSlam(Enum):
     after play, when the declaring team takes all 8 tricks on an
     un-doubled numeric (80-180) contract without having announced
     anything. The round still scores on the numeric path — the bidder's
-    contract value plus a flat 250 substitute for the trick pile — *not*
-    the Slam at-risk grid.
+    contract value plus a flat substitute for the trick pile, 250 or 500
+    depending on the member below — *not* the Slam at-risk grid.
 
     This is deliberately distinct from :class:`contrai_core.SlamLevel`: that
     enum is a *declared bid value*; this is a post-play classification, and
@@ -74,6 +74,31 @@ class RoundScore:
     unannounced_slam: Optional[UnannouncedSlam]
 
 
+def unannounced_slam_substitute(tag: Optional[UnannouncedSlam]) -> int:
+    """The flat amount an unannounced sweep puts in place of the pile.
+
+    A sweep the declaring team never announced still marks a flat
+    substitute rather than its 162 of cards, and *which* flat amount
+    depends on who did the sweeping: a split team sweep marks the 250
+    of the Slam it could have bid, while the declarer's personal sweep
+    marks the 500 of the Solo Slam that was there for the taking. A
+    partner's solo sweep is not that shape and stays on the team's 250.
+
+    Args:
+        tag: The round's :class:`UnannouncedSlam` classification, or
+            ``None`` for an ordinary round.
+
+    Returns:
+        500 for a declarer's personal sweep, 250 for a team sweep, and
+        0 when there was no sweep at all (the pile is counted for real).
+    """
+    if tag is UnannouncedSlam.GRAND_SLAM:
+        return SlamLevel.SOLO_SLAM.base_value
+    if tag is UnannouncedSlam.SLAM:
+        return SlamLevel.SLAM.base_value
+    return 0
+
+
 def count_player_tricks(
     trick_winners: Sequence['BasePlayer'], player: 'Player'
 ) -> int:
@@ -110,12 +135,14 @@ def score_round(round_: 'Round') -> RoundScore:
       *all 8 tricks* on a numeric contract without having bid a
       Slam, the trick pile (152 cards + the 10-point last-trick
       bonus = 162) is
-      replaced by a flat **250** substitute: the declarer scores
-      ``C + 250`` (+ Belote), the defense scores nothing, and the
-      contract is necessarily made. The personal-trick predicate
+      replaced by a flat substitute: the declarer scores
+      ``C + substitute`` (+ Belote), the defense scores nothing, and
+      the contract is necessarily made. The personal-trick predicate
       tags it :attr:`UnannouncedSlam.GRAND_SLAM` when the
-      *contracting player* won all 8, else
-      :attr:`UnannouncedSlam.SLAM`. Only un-doubled — a
+      *contracting player* won all 8 — worth **500**, the Solo Slam
+      that was there for the taking — else
+      :attr:`UnannouncedSlam.SLAM` and the team's **250** (see
+      :func:`unannounced_slam_substitute`). Only un-doubled — a
       doubled/redoubled sweep keeps the winner-takes-all shape below.
     - **Numeric, doubled / redoubled (M > 1).** Winner-takes-all:
       the side that wins the round takes the whole pile, the loser
@@ -124,10 +151,11 @@ def score_round(round_: 'Round') -> RoundScore:
       contree-domain.md §7.2.
     - **Slam / Solo Slam.** A symmetric grid that replaces the
       162-point pile with a flat substitute equal to the base: the
-      winning side scores ``(base + substitute) × M`` (500 / 1000 /
-      2000 for Slam; 1000 / 2000 / 4000 for Solo Slam). Solo Slam
-      additionally requires the *contracting player personally* to
-      win every trick.
+      winning side scores ``substitute + base × M`` (500 / 750 /
+      1250 for Slam; 1000 / 1500 / 2500 for Solo Slam). Only the
+      announced half is multiplied, mirroring the flat 160 of the
+      numeric grid. Solo Slam additionally requires the *contracting
+      player personally* to win every trick.
 
     Across every shape the **Belote bonus (+20)** is credited to the
     team *holding* both K and Q of trump (``round_.belote_holder`` — not
@@ -199,10 +227,13 @@ def score_round(round_: 'Round') -> RoundScore:
     # ----- Slam / Solo Slam scoring path -----
     # The 162 of trick-card points is replaced by a flat substitute
     # equal to the contract base (see Contract.get_slam_card_substitute).
-    # The full at-risk amount is (base + substitute) × multiplier,
-    # giving 500 / 1000 / 2000 for Slam and 1000 / 2000 / 4000 for
-    # Solo Slam at normal / doubled / redoubled. The grid is symmetric:
-    # whichever side wins the contract scores the at-risk amount.
+    # Only the *announced* half takes the multiplier — the substitute
+    # stands in for the made-points component, which stays flat exactly
+    # as the numeric 160 does — so the at-risk amount is
+    # substitute + base × multiplier, giving 500 / 750 / 1250 for Slam
+    # and 1000 / 1500 / 2500 for Solo Slam at normal / doubled /
+    # redoubled. The grid is symmetric: whichever side wins the
+    # contract scores the at-risk amount.
     if round_.contract.is_slam_family():
         contract_made = team_trick_counts[contract_side] == 8
 
@@ -217,7 +248,7 @@ def score_round(round_: 'Round') -> RoundScore:
 
         base = round_.contract.get_base_points()
         substitute = round_.contract.get_slam_card_substitute()
-        at_risk = (base + substitute) * multiplier
+        at_risk = substitute + base * multiplier
         if contract_made:
             team_scores[contract_side] = at_risk
         else:
@@ -242,12 +273,12 @@ def score_round(round_: 'Round') -> RoundScore:
     # numeric contract. Recognised only un-doubled — the
     # doubled/redoubled path keeps its winner-takes-all 160 + C×M
     # shape regardless. The trick pile (152 cards + the 10-point
-    # last-trick bonus) is replaced by a flat 250 substitute and the
+    # last-trick bonus) is replaced by a flat substitute and the
     # contract is necessarily made. GRAND_SLAM when the contracting
     # player won all 8 personally (the Solo Slam predicate), else plain
-    # SLAM. The 250 substitute is the same flat amount a *declared* Slam
-    # is worth, so it reads from the SlamLevel single source of truth.
-    UNANNOUNCED_SLAM_SUBSTITUTE = SlamLevel.SLAM.base_value
+    # SLAM — and the tag picks the substitute, since the sweep the
+    # declarer could have announced is worth 500 where the team's is
+    # worth 250 (see unannounced_slam_substitute).
     unannounced_slam: Optional[UnannouncedSlam] = None
     declarer_slam = (
         multiplier == 1
@@ -276,10 +307,11 @@ def score_round(round_: 'Round') -> RoundScore:
         # Un-doubled: the two sides share the pile.
         if contract_made:
             # On an unannounced Slam the 162 pile (last-trick bonus
-            # included) is swapped for the flat 250 substitute; otherwise the
-            # declarer adds its real captured card points.
+            # included) is swapped for the flat substitute its tag
+            # names; otherwise the declarer adds its real captured
+            # card points.
             attacker_pile = (
-                UNANNOUNCED_SLAM_SUBSTITUTE
+                unannounced_slam_substitute(unannounced_slam)
                 if declarer_slam
                 else team_card_points[contract_side]
             )

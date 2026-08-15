@@ -207,7 +207,7 @@ class ContractBid(Bid[ActorT]):
         still outrank the numeric ceiling of 180.)
 
         The final at-risk amount on a Slam-family round is
-        ``(base + substitute) × multiplier`` where ``substitute``
+        ``substitute + base × multiplier`` where ``substitute``
         equals the base — see :meth:`contrai_core.Contract.get_base_points`
         and :meth:`contrai_core.Contract.get_slam_card_substitute`.
         """

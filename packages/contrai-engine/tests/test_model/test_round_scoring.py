@@ -1,11 +1,11 @@
 """Tests for round scoring — ``Round.calculate_round_scores`` and the
 underlying pure :func:`contrai_engine.model.round.scoring.score_round`.
 
-The scoring rules come from ``contree-domain.md`` §6.5, §7: the numeric
-(80-180) share-the-pile path, the unannounced-Slam 250 substitute, the
-doubled/redoubled winner-takes-all path, and the symmetric Slam / Solo
-Slam grid — with the Belote (+20) bonus layered onto every shape for the
-team *holding* K + Q of trump.
+The scoring rules come from ``contree-domain.md`` §6.6, §7: the numeric
+(80-180) share-the-pile path, the unannounced-Slam 250 / 500 substitute,
+the doubled/redoubled winner-takes-all path, and the symmetric Slam /
+Solo Slam grid — with the Belote (+20) bonus layered onto every shape for
+the team *holding* K + Q of trump.
 
 These build a ``Round`` directly and seed its authoritative
 ``play_state`` with synthesised four-play tricks via the bare
@@ -28,7 +28,11 @@ from contrai_core.team_side import TeamSide
 from contrai_core.types import Rank, Suit
 
 from contrai_engine.model.round import Round, UnannouncedSlam
-from contrai_engine.model.round.scoring import RoundScore, score_round
+from contrai_engine.model.round.scoring import (
+    RoundScore,
+    score_round,
+    unannounced_slam_substitute,
+)
 
 _ORDER = ("N", "E", "S", "W")
 
@@ -161,7 +165,12 @@ class TestScoreRoundResult:
 
 
 class TestSlamScoring:
-    """Symmetric grid: 500 / 1000 / 2000 to the winning side."""
+    """Symmetric grid: 500 / 750 / 1250 to the winning side.
+
+    Only the announced half takes the multiplier — the flat substitute
+    that replaces the pile does not — so the grid is ``250 + 250 × M``
+    rather than ``500 × M``.
+    """
 
     def test_slam_made_normal_attacker_scores_500(self, players):
         contract = _contract(players["N"], SlamLevel.SLAM, Suit.SPADES)
@@ -181,7 +190,7 @@ class TestSlamScoring:
         assert scores[TeamSide.NS] == 0
         assert scores[TeamSide.EW] == 500
 
-    def test_slam_made_doubled_attacker_scores_1000(self, players):
+    def test_slam_made_doubled_attacker_scores_750(self, players):
         contract = Contract(
             ContractBid(players["N"], SlamLevel.SLAM, Suit.SPADES),
             double_player=players["E"],
@@ -190,10 +199,10 @@ class TestSlamScoring:
             players, contract=contract, trick_winners=["N"] * 8
         )
         scores = round_.calculate_round_scores()
-        assert scores[TeamSide.NS] == 1000
+        assert scores[TeamSide.NS] == 750  # 250 + 250*2
         assert scores[TeamSide.EW] == 0
 
-    def test_slam_failed_doubled_defender_scores_1000(self, players):
+    def test_slam_failed_doubled_defender_scores_750(self, players):
         contract = Contract(
             ContractBid(players["N"], SlamLevel.SLAM, Suit.SPADES),
             double_player=players["E"],
@@ -202,9 +211,9 @@ class TestSlamScoring:
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
         scores = round_.calculate_round_scores()
         assert scores[TeamSide.NS] == 0
-        assert scores[TeamSide.EW] == 1000
+        assert scores[TeamSide.EW] == 750  # 250 + 250*2
 
-    def test_slam_made_redoubled_attacker_scores_2000(self, players):
+    def test_slam_made_redoubled_attacker_scores_1250(self, players):
         contract = Contract(
             ContractBid(players["N"], SlamLevel.SLAM, Suit.SPADES),
             double_player=players["E"],
@@ -214,10 +223,10 @@ class TestSlamScoring:
             players, contract=contract, trick_winners=["N"] * 8
         )
         scores = round_.calculate_round_scores()
-        assert scores[TeamSide.NS] == 2000
+        assert scores[TeamSide.NS] == 1250  # 250 + 250*4
         assert scores[TeamSide.EW] == 0
 
-    def test_slam_failed_redoubled_defender_scores_2000(self, players):
+    def test_slam_failed_redoubled_defender_scores_1250(self, players):
         contract = Contract(
             ContractBid(players["N"], SlamLevel.SLAM, Suit.SPADES),
             double_player=players["E"],
@@ -227,7 +236,7 @@ class TestSlamScoring:
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
         scores = round_.calculate_round_scores()
         assert scores[TeamSide.NS] == 0
-        assert scores[TeamSide.EW] == 2000
+        assert scores[TeamSide.EW] == 1250  # 250 + 250*4
 
     def test_slam_team_partner_wins_a_trick_still_makes(self, players):
         """Plain Slam only cares about the TEAM winning all 8. The
@@ -243,7 +252,11 @@ class TestSlamScoring:
 
 
 class TestSoloSlamScoring:
-    """Bidder-personally rule + 1000 / 2000 / 4000 symmetric grid."""
+    """Bidder-personally rule + 1000 / 1500 / 2500 symmetric grid.
+
+    Same shape as the Slam grid — ``500 + 500 × M``, the substitute
+    staying flat while the announced half takes the multiplier.
+    """
 
     def test_solo_slam_made_bidder_takes_all_8(self, players):
         contract = _contract(players["N"], SlamLevel.SOLO_SLAM, Suit.SPADES)
@@ -274,7 +287,7 @@ class TestSoloSlamScoring:
         assert scores[TeamSide.NS] == 0
         assert scores[TeamSide.EW] == 1000
 
-    def test_solo_slam_made_doubled_scores_2000(self, players):
+    def test_solo_slam_made_doubled_scores_1500(self, players):
         contract = Contract(
             ContractBid(players["N"], SlamLevel.SOLO_SLAM, Suit.SPADES),
             double_player=players["E"],
@@ -283,10 +296,10 @@ class TestSoloSlamScoring:
             players, contract=contract, trick_winners=["N"] * 8
         )
         scores = round_.calculate_round_scores()
-        assert scores[TeamSide.NS] == 2000
+        assert scores[TeamSide.NS] == 1500  # 500 + 500*2
         assert scores[TeamSide.EW] == 0
 
-    def test_solo_slam_made_redoubled_scores_4000(self, players):
+    def test_solo_slam_made_redoubled_scores_2500(self, players):
         contract = Contract(
             ContractBid(players["N"], SlamLevel.SOLO_SLAM, Suit.SPADES),
             double_player=players["E"],
@@ -296,10 +309,10 @@ class TestSoloSlamScoring:
             players, contract=contract, trick_winners=["N"] * 8
         )
         scores = round_.calculate_round_scores()
-        assert scores[TeamSide.NS] == 4000
+        assert scores[TeamSide.NS] == 2500  # 500 + 500*4
         assert scores[TeamSide.EW] == 0
 
-    def test_solo_slam_failed_redoubled_defender_scores_4000(self, players):
+    def test_solo_slam_failed_redoubled_defender_scores_2500(self, players):
         contract = Contract(
             ContractBid(players["N"], SlamLevel.SOLO_SLAM, Suit.SPADES),
             double_player=players["E"],
@@ -309,7 +322,7 @@ class TestSoloSlamScoring:
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
         scores = round_.calculate_round_scores()
         assert scores[TeamSide.NS] == 0
-        assert scores[TeamSide.EW] == 4000
+        assert scores[TeamSide.EW] == 2500  # 500 + 500*4
 
 
 class TestSlamFamilyBeloteLayering:
@@ -699,11 +712,12 @@ class TestNumericDoubledScoring:
 #
 # When the declaring team wins all 8 tricks on an *un-doubled* numeric
 # contract without having bid a Slam, the 162-point pile (152 cards + 10
-# last-trick bonus) is replaced by a flat 250 substitute: the declarer scores
-# contract value + 250 (+ belote), the defence scores nothing, and the
+# last-trick bonus) is replaced by a flat substitute: the declarer scores
+# contract value + substitute (+ belote), the defence scores nothing, and the
 # contract is necessarily made. The round is flagged UnannouncedSlam.GRAND_SLAM
-# when the contracting player personally won all 8 tricks, else
-# UnannouncedSlam.SLAM. A doubled/redoubled sweep keeps the winner-takes-all
+# when the contracting player personally won all 8 tricks — worth the 500 of
+# the Solo Slam they could have announced — else UnannouncedSlam.SLAM and the
+# team's 250. A doubled/redoubled sweep keeps the winner-takes-all
 # 160 + C×M shape, and a defence sweep is unaffected (declaring team only).
 
 
@@ -713,6 +727,20 @@ class TestUnannouncedSlamEnum:
     def test_member_labels_via_str(self):
         assert str(UnannouncedSlam.SLAM) == "Slam"
         assert str(UnannouncedSlam.GRAND_SLAM) == "Grand Slam"
+
+
+class TestUnannouncedSlamSubstitute:
+    """The tag → flat-substitute mapping shared by scorer and recap."""
+
+    def test_team_sweep_substitutes_250(self):
+        assert unannounced_slam_substitute(UnannouncedSlam.SLAM) == 250
+
+    def test_declarer_sweep_substitutes_500(self):
+        assert unannounced_slam_substitute(UnannouncedSlam.GRAND_SLAM) == 500
+
+    def test_no_sweep_substitutes_nothing(self):
+        # An ordinary round has no tag, so nothing replaces its pile.
+        assert unannounced_slam_substitute(None) == 0
 
 
 class TestUnannouncedSlamScoring:
@@ -730,28 +758,30 @@ class TestUnannouncedSlamScoring:
         assert scores[TeamSide.NS] == 350  # 100 + 250
         assert scores[TeamSide.EW] == 0
 
-    def test_bidder_personal_sweep_is_grand_slam(self, players):
-        """N wins all 8 personally → UnannouncedSlam.GRAND_SLAM (same 250 substitute)."""
+    def test_bidder_personal_sweep_scores_the_500_substitute(self, players):
+        """N wins all 8 personally → UnannouncedSlam.GRAND_SLAM, and the
+        substitute is the 500 of the Solo Slam the declarer could have
+        announced — not the 250 a split team sweep earns."""
         contract = _contract(players["N"], 100, Suit.SPADES)
         round_ = _slam_round(
             players, contract=contract, trick_winners=["N"] * 8
         )
         scores = round_.calculate_round_scores()
         assert round_.unannounced_slam is UnannouncedSlam.GRAND_SLAM
-        assert scores[TeamSide.NS] == 350  # 100 + 250
+        assert scores[TeamSide.NS] == 600  # 100 + 500
         assert scores[TeamSide.EW] == 0
 
     def test_unannounced_slam_forces_made_below_threshold(self, players):
         """The filler tricks carry 0 card points, so a 180 contract could
         never clear its threshold on cards — but sweeping every trick
-        makes it outright → 180 + 250 = 430."""
+        makes it outright. N sweeps personally → 180 + 500 = 680."""
         contract = _contract(players["N"], 180, Suit.SPADES)
         round_ = _slam_round(
             players, contract=contract, trick_winners=["N"] * 8
         )
         scores = round_.calculate_round_scores()
         assert round_.contract_made is True
-        assert scores[TeamSide.NS] == 430  # 180 + 250
+        assert scores[TeamSide.NS] == 680  # 180 + 500
         assert scores[TeamSide.EW] == 0
 
     def test_unannounced_slam_layers_belote_on_top(self, players):

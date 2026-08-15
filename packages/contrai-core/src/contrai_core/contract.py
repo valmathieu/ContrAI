@@ -140,9 +140,10 @@ class Contract:
             at-risk amount — the actual card pile (normally up to
             162) is replaced by a flat substitute equal to the base.
             See :meth:`get_slam_card_substitute`. The full at-risk
-            amount is ``(base + substitute) × multiplier`` and is
-            awarded to whichever side wins the contract (attacker
-            if made, defender if failed).
+            amount is ``substitute + base × multiplier`` — only the
+            announced half is multiplied — and is awarded to
+            whichever side wins the contract (attacker if made,
+            defender if failed).
         """
         return self.contract_bid.get_numeric_value()
 
@@ -157,9 +158,10 @@ class Contract:
         returns 0.
 
         The Slam-family at-risk amount is
-        ``(get_base_points() + get_slam_card_substitute()) × get_multiplier()``,
-        i.e. ``500 / 1000 / 2000`` for Slam at normal / doubled /
-        redoubled and ``1000 / 2000 / 4000`` for Solo Slam.
+        ``get_slam_card_substitute() + get_base_points() × get_multiplier()``
+        — the substitute stays flat while the announced half takes the
+        multiplier — i.e. ``500 / 750 / 1250`` for Slam at normal /
+        doubled / redoubled and ``1000 / 1500 / 2500`` for Solo Slam.
 
         Returns:
             250 for Slam, 500 for Solo Slam, 0 otherwise.
