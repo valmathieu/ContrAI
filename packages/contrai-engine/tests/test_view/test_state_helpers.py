@@ -1,20 +1,22 @@
 """Tests for the game-state readers in :mod:`contrai_engine.view.state_helpers`.
 
 These read a slice of round/trick state: the display-order hand sort, the
-live trick-winner highlight, the green "↑ playable …" constraint hint, and
-the env-tunable AI pacing delay.
+live trick-winner highlight, the green "↑ playable …" constraint hint, the
+belote-badge projection, and the env-tunable AI pacing delay.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from contrai_core import Card, Rank, Suit, Trick
+from contrai_core import Card, Play, Position, Rank, Suit
 from contrai_engine.view.state_helpers import (
+    _belote_by_position,
     _current_winner,
     _explain_constraint,
     _resolve_delay,
     _sort_hand_for_display,
+    _trick_index,
 )
 
 
@@ -176,6 +178,61 @@ class TestCurrentWinner:
 
 
 # ======================================================================
+# _trick_index
+# ======================================================================
+
+
+class TestTrickIndex:
+    """Which of the eight tricks is on the table."""
+
+    class _StubPlayState:
+        def __init__(self, trick_number):
+            self.trick_number = trick_number
+
+    class _StubRound:
+        def __init__(self, trick_number=None):
+            self.play_state = (
+                TestTrickIndex._StubPlayState(trick_number)
+                if trick_number is not None
+                else None
+            )
+
+    @staticmethod
+    def _plays(count):
+        """``count`` placeholder plays — only the length is read."""
+        return (None,) * count
+
+    def test_no_round_falls_back_to_the_first_trick(self):
+        assert _trick_index(None, ()) == 1
+
+    def test_unseeded_play_state_falls_back_to_the_first_trick(self):
+        """Bidding: the round exists but play has not been seeded."""
+        assert _trick_index(self._StubRound(), ()) == 1
+
+    @pytest.mark.parametrize("played", [0, 1, 2, 3])
+    def test_an_in_progress_trick_is_the_next_one(self, played):
+        """Two tricks completed → the one being played is the third."""
+        round_ = self._StubRound(trick_number=2)
+        assert _trick_index(round_, self._plays(played)) == 3
+
+    def test_a_just_completed_trick_is_not_counted_twice(self):
+        """The play state advances the instant the fourth card lands.
+
+        At that moment the trick still on the table is the one the
+        state has just folded into its completed history, so counting
+        it again would number it one too high.
+        """
+        round_ = self._StubRound(trick_number=3)
+        assert _trick_index(round_, self._plays(4)) == 3
+
+    def test_clamps_to_the_eight_tricks_of_a_round(self):
+        round_ = self._StubRound(trick_number=8)
+        assert _trick_index(round_, self._plays(4)) == 8
+        # Past the last trick there is no ninth to advance to.
+        assert _trick_index(round_, ()) == 8
+
+
+# ======================================================================
 # _explain_constraint
 # ======================================================================
 
@@ -183,18 +240,15 @@ class TestCurrentWinner:
 class TestExplainConstraint:
     """Human-readable hint under the hand row."""
 
-    def _make_trick(self, *plays):
-        t = Trick()
-        for player, card in plays:
-            t.add_play(player, card)
-        return t
+    def _plays(self, *plays):
+        """The trick on the table, as the core ``Play`` records the hint reads."""
+        return tuple(Play(player, card) for player, card in plays)
 
     def test_empty_trick_is_your_lead(self, four_players):
         _, _, south, _ = four_players
         south.hand.clear()
         south.hand.append(Card(Suit.SPADES, Rank.ACE))
-        empty = Trick()
-        result = _explain_constraint(south, empty, list(south.hand), Suit.HEARTS)
+        result = _explain_constraint(south, (), list(south.hand), Suit.HEARTS)
         assert "your lead" in result.plain.lower()
 
     def test_must_follow_led_suit(self, four_players):
@@ -206,9 +260,9 @@ class TestExplainConstraint:
             Card(Suit.SPADES, Rank.JACK),
             Card(Suit.HEARTS, Rank.ACE),
         ])
-        trick = self._make_trick((west, Card(Suit.SPADES, Rank.KING)))
+        plays = self._plays((west, Card(Suit.SPADES, Rank.KING)))
         playable = south.hand.cards_of_suit(Suit.SPADES)
-        result = _explain_constraint(south, trick, playable, Suit.HEARTS)
+        result = _explain_constraint(south, plays, playable, Suit.HEARTS)
         assert "must follow" in result.plain
         assert "♠" in result.plain
 
@@ -221,9 +275,9 @@ class TestExplainConstraint:
             Card(Suit.HEARTS, Rank.ACE),
             Card(Suit.DIAMONDS, Rank.QUEEN),
         ])
-        trick = self._make_trick((west, Card(Suit.CLUBS, Rank.KING)))
+        plays = self._plays((west, Card(Suit.CLUBS, Rank.KING)))
         playable = south.hand.cards_of_suit(Suit.HEARTS)  # only trumps legal
-        result = _explain_constraint(south, trick, playable, Suit.HEARTS)
+        result = _explain_constraint(south, plays, playable, Suit.HEARTS)
         assert "must trump" in result.plain
         # The leader's position label should appear in the hint.
         assert "W" in result.plain
@@ -236,9 +290,60 @@ class TestExplainConstraint:
             Card(Suit.DIAMONDS, Rank.QUEEN),
             Card(Suit.DIAMONDS, Rank.TEN),
         ])
-        trick = self._make_trick((west, Card(Suit.CLUBS, Rank.KING)))
+        plays = self._plays((west, Card(Suit.CLUBS, Rank.KING)))
         # Playable list includes non-trump (Round logic decides — when partner
         # leads, the engine returns the full hand). Here we simulate "free".
         playable = list(south.hand)
-        result = _explain_constraint(south, trick, playable, Suit.HEARTS)
+        result = _explain_constraint(south, plays, playable, Suit.HEARTS)
         assert "free discard" in result.plain
+
+
+class TestBeloteByPosition:
+    """`_belote_by_position` — projects belote state onto seat keys.
+
+    The trick diamond renders its ★ badge per *seat*, but the round tracks
+    belote per *player*. This is the one place that re-keys, so its three
+    empty-result paths are what the badge relies on to stay silent.
+    """
+
+    class _StubRound:
+        """A round exposing only ``belote_state``, or not even that."""
+
+        def __init__(self, belote_state=None, *, has_attribute=True):
+            if has_attribute:
+                self.belote_state = belote_state
+
+    def test_no_active_round_yields_an_empty_map(self):
+        """Before the first deal there is no round to read."""
+
+        assert _belote_by_position(None) == {}
+
+    def test_a_round_without_belote_state_yields_an_empty_map(self):
+        """The attribute is read defensively, so its absence is not a crash."""
+
+        assert _belote_by_position(self._StubRound(has_attribute=False)) == {}
+
+    def test_a_none_belote_state_yields_an_empty_map(self):
+        assert _belote_by_position(self._StubRound(None)) == {}
+
+    def test_an_empty_belote_state_yields_an_empty_map(self):
+        """Nothing declared yet — the badge stays off."""
+
+        assert _belote_by_position(self._StubRound({})) == {}
+
+    def test_a_populated_state_is_rekeyed_by_position(self, four_players):
+        north, _east, south, _west = four_players
+        round_ = self._StubRound({north: "belote", south: "rebelote"})
+
+        assert _belote_by_position(round_) == {
+            Position.NORTH: "belote",
+            Position.SOUTH: "rebelote",
+        }
+
+    def test_values_are_preserved_verbatim(self, four_players):
+        """The helper re-keys; it must not reinterpret the kind string."""
+
+        _north, east, *_ = four_players
+        round_ = self._StubRound({east: "★ Belote"})
+
+        assert _belote_by_position(round_)[Position.EAST] == "★ Belote"

@@ -28,7 +28,7 @@ skinparam ArrowColor #3F8C3D
 ' =========================================================
 ' Domain primitives — models/
 ' =========================================================
-package "src.models" as models {
+package "contrai_analyzer.models" as models {
 
     enum SuitSlot <<enum>> {
         TRUMP   = "trump"
@@ -77,7 +77,7 @@ package "src.models" as models {
 ' =========================================================
 ' Probability core — engine/
 ' =========================================================
-package "src.engine" as engine {
+package "contrai_analyzer.engine" as engine {
 
     class ProbabilityEngine {
         + hand : Hand
@@ -107,7 +107,7 @@ package "src.engine" as engine {
 ' =========================================================
 ' Bidding truth-table — bidding/
 ' =========================================================
-package "src.bidding" as bidding {
+package "contrai_analyzer.bidding" as bidding {
 
     class BidSuggestion <<dataclass>> {
         + value : int
@@ -141,9 +141,9 @@ BiddingEvaluator ..> BidSuggestion : <<returns>>
 ' Banner note — deliberate independence
 ' =========================================================
 note as N_independence
-  **Deliberately independent of `contrai-core`.**
-  Zero imports from `contrai_core` across all files.
-  `SuitSlot` (TRUMP / BLUE / GREEN / PURPLE) is a
+  **Deliberately independent of ""contrai-core"".**
+  Zero imports from ""contrai_core"" across all files.
+  ""SuitSlot"" (TRUMP / BLUE / GREEN / PURPLE) is a
   **suit-agnostic** probability abstraction — what matters
   for combinatorial math is whether a slot is trump,
   not which French suit it represents.

@@ -1,6 +1,6 @@
 [project]
 name = "contrai-engine"
-version = "0.2.0"
+version = "0.3.0"
 description = "Add your description here"
 requires-python = ">=3.14"
 dependencies = [
@@ -10,7 +10,8 @@ dependencies = [
 ]
 [project.optional-dependencies]
 test = [
-  "pytest>=8.4"
+  "pytest>=8.4",
+  "pytest-cov>=6.0"
 ]
 
 [project.scripts]

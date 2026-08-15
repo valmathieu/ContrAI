@@ -8,32 +8,44 @@ scenarios.
 
 import pytest
 
-from contrai_core import BasePlayer, Card, Rank, Suit, TrickStateError, Trick
+from contrai_core import (
+    BasePlayer,
+    Card,
+    ObservedPlay,
+    Play,
+    Position,
+    Rank,
+    Suit,
+    TrickRecord,
+    TrickStateError,
+    Trick,
+    TrumpVariant,
+)
 from contrai_core.trick import current_winner
 
 
 @pytest.fixture
 def north():
     """North-seat player."""
-    return BasePlayer("North", "North")
+    return BasePlayer("North", Position.NORTH)
 
 
 @pytest.fixture
 def east():
     """East-seat player."""
-    return BasePlayer("East", "East")
+    return BasePlayer("East", Position.EAST)
 
 
 @pytest.fixture
 def south():
     """South-seat player."""
-    return BasePlayer("South", "South")
+    return BasePlayer("South", Position.SOUTH)
 
 
 @pytest.fixture
 def west():
     """West-seat player."""
-    return BasePlayer("West", "West")
+    return BasePlayer("West", Position.WEST)
 
 
 # ---------------------------------------------------------------------------
@@ -242,13 +254,13 @@ class TestTrickCurrentWinner:
         assert trick.get_current_winner(None) is north
 
     def test_no_trump_enum_treated_as_non_trump(self, north, east):
-        """``Suit.NO_TRUMP`` is what the engine passes for a no-trump
+        """``TrumpVariant.NO_TRUMP`` is what the engine passes for a no-trump
         contract; no card carries that suit, so play reduces to the
         follow-suit rule exactly as passing ``None`` does."""
         trick = Trick()
         trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
         trick.add_play(east, Card(Suit.SPADES, Rank.SEVEN))
-        assert trick.get_current_winner(Suit.NO_TRUMP) is north
+        assert trick.get_current_winner(TrumpVariant.NO_TRUMP) is north
 
     def test_higher_trump_takes_over(self, north, east, south):
         trick = Trick()
@@ -323,3 +335,101 @@ class TestCurrentWinnerParity:
         trick.add_play(east, Card(Suit.DIAMONDS, Rank.ACE))
         assert current_winner(trick.plays, Suit.SPADES) == trick.get_current_winner(Suit.SPADES)
         assert current_winner(trick.plays, Suit.SPADES) is north
+
+
+# ---------------------------------------------------------------------------
+# TrickRecord — the immutable completed-trick value
+# ---------------------------------------------------------------------------
+
+
+def _four_plays(north, east, south, west):
+    """A completed heart trick as Play records; East's Ace wins plain."""
+    return (
+        Play(north, Card(Suit.HEARTS, Rank.SEVEN)),
+        Play(east, Card(Suit.HEARTS, Rank.ACE)),
+        Play(south, Card(Suit.HEARTS, Rank.KING)),
+        Play(west, Card(Suit.CLUBS, Rank.SEVEN)),
+    )
+
+
+class TestTrickRecordConstruction:
+    def test_takes_a_single_iterable_of_four(self, north, east, south, west):
+        plays = _four_plays(north, east, south, west)
+        record = TrickRecord(iter(plays))
+        assert tuple(record) == plays
+
+    @pytest.mark.parametrize("count", [0, 1, 3, 5])
+    def test_rejects_anything_but_four_plays(
+        self, count, north, east, south, west
+    ):
+        plays = (_four_plays(north, east, south, west) * 2)[:count]
+        with pytest.raises(TrickStateError, match="exactly 4"):
+            TrickRecord(plays)
+
+    def test_is_a_tuple_and_compares_like_one(self, north, east, south, west):
+        plays = _four_plays(north, east, south, west)
+        record = TrickRecord(plays)
+        assert isinstance(record, tuple)
+        assert record == plays
+        # Unpacks and slices exactly like the bare tuple it types.
+        first, *_rest = record
+        assert first is record[0]
+        assert record[1:3] == plays[1:3]
+
+    def test_is_immutable(self, north, east, south, west):
+        record = TrickRecord(_four_plays(north, east, south, west))
+        with pytest.raises(TypeError):
+            record[0] = None
+        # __slots__ = () — no attribute can be stashed on a record.
+        with pytest.raises(AttributeError):
+            record.cached_winner = None
+
+
+class TestTrickRecordLedSuit:
+    def test_led_suit_is_the_first_cards_suit(self, north, east, south, west):
+        record = TrickRecord(_four_plays(north, east, south, west))
+        assert record.led_suit is Suit.HEARTS
+
+
+class TestTrickRecordWinner:
+    def test_winner_returns_the_winning_play_record(
+        self, north, east, south, west
+    ):
+        record = TrickRecord(_four_plays(north, east, south, west))
+        best = record.winner(None)
+        # The record itself comes back — not just the who-slot — and it is
+        # the very object held in the trick.
+        assert best is record[1]
+        assert best.player is east
+
+    def test_winner_is_trump_aware(self, north, east, south, west):
+        record = TrickRecord(_four_plays(north, east, south, west))
+        # West's lone club is the only trump under a clubs contract.
+        assert record.winner(Suit.CLUBS) is record[3]
+
+    def test_no_trump_variant_matches_none(self, north, east, south, west):
+        record = TrickRecord(_four_plays(north, east, south, west))
+        assert record.winner(TrumpVariant.NO_TRUMP) is record.winner(None)
+
+    def test_winner_works_on_observed_play_records(self):
+        # The record type is generic: sealed (position, card) observation
+        # records rank exactly like live-player plays.
+        record = TrickRecord(
+            (
+                ObservedPlay(Position.NORTH, Card(Suit.HEARTS, Rank.SEVEN)),
+                ObservedPlay(Position.EAST, Card(Suit.HEARTS, Rank.ACE)),
+                ObservedPlay(Position.SOUTH, Card(Suit.HEARTS, Rank.KING)),
+                ObservedPlay(Position.WEST, Card(Suit.CLUBS, Rank.SEVEN)),
+            )
+        )
+        assert record.winner(None).position is Position.EAST
+        assert record.winner(Suit.CLUBS).position is Position.WEST
+        assert record.led_suit is Suit.HEARTS
+
+    def test_agrees_with_current_winner(self, north, east, south, west):
+        plays = _four_plays(north, east, south, west)
+        record = TrickRecord(plays)
+        for trump in (None, Suit.CLUBS, Suit.HEARTS, TrumpVariant.NO_TRUMP):
+            assert record.winner(trump)[0] is current_winner(
+                list(plays), trump
+            )

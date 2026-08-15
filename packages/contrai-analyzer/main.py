@@ -13,10 +13,10 @@ import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
 
-from src.models.deck import SuitSlot, Rank, Card
-from src.models.hand import Hand
-from src.engine.probability_engine import ProbabilityEngine
-from src.bidding.evaluator import BiddingEvaluator
+from contrai_analyzer.models.deck import SuitSlot, Rank, Card
+from contrai_analyzer.models.hand import Hand
+from contrai_analyzer.engine.probability_engine import ProbabilityEngine
+from contrai_analyzer.bidding.evaluator import BiddingEvaluator
 
 
 # ---------------------------------------------------------------------------

@@ -4,21 +4,42 @@ Public API — consumers can ``from contrai_core import Card, Suit, Rank, …``
 without knowing the internal module layout.
 """
 
-from .types import Suit, Rank, CARD_SUITS
+from .types import (
+    Suit,
+    TrumpVariant,
+    ContractSuit,
+    Rank,
+    CONTRACT_SUITS,
+    is_trump,
+    trump_suits,
+)
+from .rules import TrumpRules, SingleSuitRules, NoTrumpRules, rules_for
+from .team_side import TeamSide
+from .position import Position
 from .card import Card
+from .card_queries import count_suit, cards_of_suit, has_suit, has_card
 from .deck import Deck
 from .hand import Hand
 from .team import Team
 from .player import BasePlayer
-from .bid import Bid, PassBid, ContractBid, DoubleBid, RedoubleBid, SlamLevel
+from .bid import (
+    Bid,
+    PassBid,
+    ContractBid,
+    DoubleBid,
+    RedoubleBid,
+    SlamLevel,
+    seal_bid,
+)
 from .auction import Auction
-from .contract import Contract
-from .trick import Trick
-from .play import Play, PlayState, PlayObservation
+from .contract import Contract, ObservedContract
+from .trick import Trick, TrickRecord
+from .play import Play, ObservedPlay, PlayState, PlayObservation
 from .exceptions import (
     ContraiError,
     InvalidPlayerCountError,
     InvalidCardCountError,
+    InvalidCardError,
     IllegalBidError,
     PlayRuleViolation,
     IllegalPlayError,
@@ -28,9 +49,23 @@ from .exceptions import (
 
 __all__ = [
     "Suit",
+    "TrumpVariant",
+    "ContractSuit",
     "Rank",
-    "CARD_SUITS",
+    "CONTRACT_SUITS",
+    "is_trump",
+    "trump_suits",
+    "TrumpRules",
+    "SingleSuitRules",
+    "NoTrumpRules",
+    "rules_for",
+    "TeamSide",
+    "Position",
     "Card",
+    "count_suit",
+    "cards_of_suit",
+    "has_suit",
+    "has_card",
     "Deck",
     "Hand",
     "Team",
@@ -41,15 +76,20 @@ __all__ = [
     "DoubleBid",
     "RedoubleBid",
     "SlamLevel",
+    "seal_bid",
     "Auction",
     "Contract",
+    "ObservedContract",
     "Trick",
+    "TrickRecord",
     "Play",
+    "ObservedPlay",
     "PlayState",
     "PlayObservation",
     "ContraiError",
     "InvalidPlayerCountError",
     "InvalidCardCountError",
+    "InvalidCardError",
     "IllegalBidError",
     "PlayRuleViolation",
     "IllegalPlayError",

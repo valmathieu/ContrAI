@@ -17,11 +17,10 @@ A [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/) with f
 
 Requires **Python 3.14**. Dependency management via [uv](https://docs.astral.sh/uv/).
 
-The workspace `pyproject.toml` is virtual (no top-level project), so after `uv sync` the workspace members must be editable-installed explicitly:
+The root `pyproject.toml` declares a `contrai-workspace` project that depends on all four members, so a single `uv sync` installs them editable along with their test extras and the docs group:
 
 ```bash
 uv sync
-uv pip install -e packages/contrai-core -e packages/contrai-engine -e packages/contrai-analyzer -e packages/contrai-scraper
 
 uv run --package contrai-engine main.py            # run the engine CLI
 uv run --package contrai-analyzer streamlit run main.py

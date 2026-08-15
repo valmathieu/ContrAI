@@ -34,8 +34,18 @@ package "types.py" as p_types {
         HEARTS    = "Hearts"
         DIAMONDS  = "Diamonds"
         CLUBS     = "Clubs"
+        --
+        + ~__str~__() : str
+    }
+
+    ' ALL_TRUMP is declared but unwired: PlantUML cannot grey a single
+    ' member line (HTML colour tags are ignored inside an enum body), so
+    ' the <<future>> stereotype plus the note below carry that status.
+    enum TrumpVariant <<enum>> {
         NO_TRUMP  = "NoTrump"
-        ALL_TRUMP = "AllTrump"
+        ALL_TRUMP = "AllTrump" <<future — unbookable, raises>>
+        --
+        + ~__str~__() : str
     }
 
     enum Rank <<enum>> {
@@ -43,17 +53,169 @@ package "types.py" as p_types {
         JACK, QUEEN, KING, ACE
     }
 
+    class "ContractSuit" as p_contractsuit <<type alias>> {
+        Suit | TrumpVariant
+        --
+        + {static} CONTRACT_SUITS : tuple<ContractSuit>
+        --
+        + is_trump(card_suit: Suit,\n  contract_suit: ContractSuit?) : bool
+        + trump_suits(contract_suit: ContractSuit?)\n  : tuple<Suit>
+    }
+
     note bottom of Suit
-      Module constant:
-      **CARD_SUITS** : tuple[Suit, Suit, Suit, Suit]
-      = (SPADES, HEARTS, DIAMONDS, CLUBS)
-      —— the 4 real suits; NO_TRUMP and
-      ALL_TRUMP are contract-only suits
-      (sans atout / tout atout variants —
-      see contree-domain.md §9, §13).
-      ALL_TRUMP is currently inert: it is
-      reserved in the enum but no engine
-      logic produces or consumes it.
+      Exactly the four card-bearing suits, so
+      ""tuple(Suit)"" is safe wherever a real card
+      suit is meant —— the deck, the display order,
+      the AI's suit search, the fallen/void maps.
+      Definition order IS the suit preference.
+    end note
+
+    note bottom of p_contractsuit
+      **The only place the two suit types meet.**
+      ""is_trump"" replaces the ""card.suit == trump_suit""
+      that used to be written out at every boundary:
+      that comparison is right for ""NO_TRUMP"" only by
+      accident (no card carries it, so trump branches
+      collapse to follow-suit) and answered the same
+      for ""ALL_TRUMP"", which silently played an
+      all-trump round as a no-trump one.
+      ""is_trump"" raises ""NotImplementedError"" there.
+      ""trump_suits"" is the enumerating sibling, for
+      callers asking //is anything trump at all//.
+      ----
+      Plain ""Suit | TrumpVariant"" assignment, **not**
+      a PEP 695 ""type"" alias. ""isinstance(x, ContractSuit)""
+      works on the plain form and raises ""TypeError"" on
+      the alias form. No type checker is configured here,
+      so ""isinstance"" narrowing is the only guardrail
+      there is.
+    end note
+}
+
+' =========================================================
+' Trick-rules seam (rules.py)
+' =========================================================
+package "rules.py" as p_rules {
+    abstract class TrumpRules <<abstract, sealed>> {
+        + {abstract} is_trump(suit: Suit) : bool
+        + {abstract} points(card: Card) : int
+        + {abstract} rank_in_suit(card: Card) : int
+        + {abstract} trick_rank(card: Card, led_suit: Suit)\n  : (int, int)?
+        + {abstract} belote_suits : tuple<Suit> <<property>>
+        + {abstract} higher_ranks(rank: Rank, suit: Suit)\n  : tuple<Rank>
+    }
+
+    class SingleSuitRules <<frozen dataclass>> {
+        + suit : Suit
+    }
+
+    class NoTrumpRules <<frozen dataclass>> {
+    }
+
+    class "rules.py" as p_rules_fn <<module>> {
+        rules_for(contract_suit: ContractSuit?) : TrumpRules
+    }
+
+    note bottom of TrumpRules
+      **The per-contract trick-rules seam.** One object
+      answers every regime-dependent card question —
+      trumpness, points, in-suit ranking, trick
+      competition, belote applicability — so a future
+      contract regime is a new leaf + tables, not a
+      sweep over call sites.
+      **No global order scale**: the trump and plain
+      orderings overlap, so cross-suit competition goes
+      through the led-suit-aware ""trick_rank"" —
+      ""(1, trump_rank)"" / ""(0, plain_rank)"" / ""None""
+      (cannot take the trick); the lexicographic max
+      over a trick is the winner. ""rank_in_suit"" is
+      same-suit-only by documented contract.
+      **Sealed**: ""~__init_subclass~__"" rejects
+      out-of-module subclasses — isinstance narrowing
+      over the leaves stays exhaustive.
+      **Singletons**: ""rules_for"" hands out one shared
+      instance per regime (""None"" and ""NO_TRUMP""
+      resolve to the //same// no-trump object) and
+      raises ""NotImplementedError"" for ""ALL_TRUMP""
+      — the all-trump firewall lives here.
+      Follow/trump //obligations// stay in
+      ""PlayState.legal_actions""; rules objects supply
+      predicates and comparators only.
+    end note
+}
+
+' =========================================================
+' Seats & sides (position.py, team_side.py)
+' =========================================================
+package "position.py / team_side.py" as p_position {
+    enum TeamSide <<enum>> {
+        NS = "NS"
+        EW = "EW"
+        --
+        + positions : tuple<Position,Position> <<property>>
+        + opponent : TeamSide               <<property>>
+        --
+        + __str__() : str
+    }
+
+    note bottom of TeamSide
+      Team **identity**, as a value. This is what
+      every score dictionary is keyed by —
+      ""RoundScore.scores"", ""Round.round~_scores"",
+      ""PlayState.card~_points~_by~_side"",
+      ""PlayState.trick~_counts~_by~_side"",
+      ""Game.scores"", ""GameOverStatus"" — and
+      what a persisted
+      game record or a training label serializes.
+      Plain Enum, **not** a StrEnum, for the same
+      reason as ""Position"": ""TeamSide.NS"" never
+      compares equal to ""North-South"", so an old
+      name-keyed lookup misses loudly instead of
+      resolving by accident.
+      Display names (""North-South"" / ""N-S"") are
+      view presentation only, never identity.
+    end note
+
+    enum Position <<enum>> {
+        NORTH = "North"
+        WEST  = "West"
+        SOUTH = "South"
+        EAST  = "East"
+        --
+        + next : Position                   <<property>>
+        + partner : Position                <<property>>
+        + opponents : tuple<Position,Position> <<property>>
+        + team_side : TeamSide              <<property>>
+        + french_name : str                 <<property>>
+        --
+        + is_teammate(other: Position) : bool
+        + {static} from_french(name: str) : Position
+        + __str__() : str
+    }
+
+    note bottom of Position
+      The four table seats as a strict enum.
+      Definition order **is** the anticlockwise
+      turn order (N → W → S → E), so
+      ""list(Position)"" is the canonical
+      seating and ""next"" / ""partner"" /
+      ""opponents"" / ""team~_side"" all derive from
+      that one ordering instead of each
+      re-encoding seat arithmetic.
+      ""is~_teammate"" is the //same side?//
+      boolean, expressed on top of ""team~_side"";
+      ""team~_side"" is the //which side?// value.
+      Deliberately a plain Enum, **not** a
+      StrEnum: a Position member never compares
+      equal to a bare seat string, so a stray
+      string comparison can never silently pass.
+      ""french_name"" / ""from_french"" map to
+      the scraper's DOM ids (nord / ouest /
+      sud / est) via the module-level
+      ""~_TO~_FRENCH"" / ""~_FROM~_FRENCH""
+      tables — kept outside the class body
+      because Enum would turn a class-level
+      dict into a fifth member.
     end note
 }
 
@@ -62,20 +224,26 @@ package "types.py" as p_types {
 ' =========================================================
 package "card.py / deck.py" as p_card {
     class Card <<frozen dataclass>> {
-        + suit : Suit
+        + suit : Suit <<a real card suit only>>
         + rank : Rank
         --
-        + get_points(trump_suit: Suit? = None) : int
-        + get_order(trump_suit: Suit? = None)  : int
+        + {static} SUIT_SYMBOLS  : dict<Suit, str>
+        --
+        + ~__post_init~__() : None <<rejects a non-Suit>>
+        + __str__() : str
     }
 
     note bottom of Card
-      Immutable value object: equality and
-      hashing are by ``(suit, rank)``, so
-      distinct instances of the same physical
-      card are equal and hashable. No ``__lt__`` —
-      strength is parametric via
-      ``get_order(trump_suit)``.
+      Immutable value object — **pure identity**:
+      equality and hashing are by ""(suit, rank)"",
+      so distinct instances of the same physical
+      card are equal and hashable. No ""~__lt~__""
+      and no call-time trump API: whether a card
+      is trump, what it scores and how strong it
+      is are //contract// questions, answered by
+      the ""TrumpRules"" object from
+      ""rules_for(contract_suit)"" (rules.py),
+      which owns the point/order tables.
     end note
 
     class Deck {
@@ -96,7 +264,8 @@ package "hand.py" as p_hand {
     class Hand {
         + cards : list<Card>
         --
-        .. list-compatible API ..
+        + __init__(cards: Iterable<Card>? = None)
+        .. mutation and inspection ..
         + append(card: Card) : None
         + extend(cards: Iterable<Card>) : None
         + remove(card: Card) : None
@@ -104,14 +273,63 @@ package "hand.py" as p_hand {
         + __contains__(card) : bool
         + __iter__() : Iterator<Card>
         + __len__() : int
-        + __getitem__(idx) : Card | list<Card>
         .. query helpers ..
         + count_suit(suit: Suit) : int
-        + count_rank(rank: Rank) : int
+        + has_suit(suit: Suit) : bool
         + has_card(suit: Suit, rank: Rank) : bool
         + cards_of_suit(suit: Suit) : list<Card>
-        + is_complete() : bool
     }
+
+    note bottom of Hand
+      Wraps a ""list[Card]"" and forwards the
+      mutation and inspection operations the
+      engine relies on. The surface stops there:
+      a hand is a //bag// a seat draws from and
+      plays out of, not a sequence to address by
+      position. There is no ""~__getitem~__"" —
+      a caller wanting a list-shaped view writes
+      ""list(hand)"". No size invariant is
+      enforced anywhere either.
+      ----
+      The four query helpers hold no logic of
+      their own: each is a one-line delegate to
+      ""card_queries"", which is what lets the
+      frozen ""tuple[Card, ...]"" of the play path
+      ask the same questions through the same
+      implementation.
+    end note
+}
+
+' =========================================================
+' Shared card queries (card_queries.py)
+' =========================================================
+package "card_queries.py" as p_queries {
+    class "card_queries.py" as p_cardqueries <<module>> {
+        + count_suit(cards: Iterable<Card>,\n  suit: Suit) : int
+        + cards_of_suit(cards: Iterable<Card>,\n  suit: Suit) : list<Card>
+        + has_suit(cards: Iterable<Card>,\n  suit: Suit) : bool
+        + has_card(cards: Iterable<Card>,\n  suit: Suit, rank: Rank) : bool
+    }
+
+    note bottom of p_cardqueries
+      One implementation of the four suit
+      questions, over //any// collection of cards.
+      Two containers ask them and neither can
+      replace the other: the mutable ""Hand"" a
+      seat plays out of, and the frozen
+      ""tuple[Card, ...]"" carried by
+      ""PlayState.hands"" / ""PlayObservation.hand"",
+      whose immutability is what makes a
+      determinization fork safe to hand to a
+      search. Sharing the functions is what keeps
+      the tuple side from re-implementing the
+      comprehensions ad hoc and drifting.
+      ----
+      ""has_card"" asks through membership
+      (""Card(suit, rank) in cards""), so ""Card""
+      value-equality stays the single source of
+      truth for //do I hold this//.
+    end note
 }
 
 ' =========================================================
@@ -119,75 +337,108 @@ package "hand.py" as p_hand {
 ' =========================================================
 package "team.py / player.py" as p_team {
     class Team {
-        + name : str
+        + name : str <<display label, **not** identity>>
         + players : list<BasePlayer>
-        + total_score : int
         --
         + __init__(name: str, players: list<BasePlayer>)
-        + add_points(points: int) : None
-        + get_partner(player: BasePlayer) : BasePlayer?
-        + contains_player(player: BasePlayer) : bool
+        + __str__() : str
+        + __repr__() : str
     }
+
+    note bottom of Team
+      The two-player roster and its display
+      name — nothing more. Identity is
+      ""TeamSide"", reached from the seat
+      (""player.position.team~_side""), and
+      cumulative scoring belongs to the
+      engine's ""Game.scores"". Partner and
+      same-side questions are answered by
+      ""Position"", so nothing here re-derives
+      the pairing from the roster list.
+    end note
 
     class BasePlayer {
         + name : str
-        + position : str
+        + position : Position?
         + hand : Hand
         + team : Team?
         --
-        + __init__(name: str, position: str)
+        + __init__(name: str, position: Position = None)
     }
+
+    note bottom of BasePlayer
+      Identity and table state only — pure
+      data. The decision hooks
+      (""choose_bid"" / ""choose_card"") live
+      on the engine-side subclasses.
+      The seat is optional: a player built
+      without one is //unseated// until the
+      engine's ""Game"" seats the roster.
+    end note
 }
 
 ' =========================================================
 ' Bid hierarchy (bid.py) — frozen dataclass sum type
 ' =========================================================
 package "bid.py" as p_bid {
-    class Bid <<frozen dataclass>> {
-        + player : BasePlayer  ' field(compare=False)
+    class Bid<ActorT> <<frozen dataclass>> {
+        + player : ActorT <<compare=False>>
     }
 
     class PassBid <<frozen dataclass>> {
-        + __str__() : str  ' "Pass"
+        + __str__() : str <<"Pass">>
     }
 
     enum SlamLevel {
-        SLAM       ' (250, "Slam")
-        SOLO_SLAM  ' (500, "Solo Slam")
+        SLAM      = (250, "Slam")
+        SOLO_SLAM = (500, "Solo Slam")
         --
-        + base_value : int  ' single source of truth for 250 / 500
+        + base_value : int <<250 / 500>>
         + label : str
-        + __str__() : str   ' the label
+        + __str__() : str <<the label>>
     }
 
     class ContractBid <<frozen dataclass>> {
         + {static} VALID_VALUES = [80..180, SlamLevel.SLAM, SlamLevel.SOLO_SLAM]
-        + {static} VALID_SUITS = list(Suit)
+        + {static} VALID_SUITS = CONTRACT_SUITS - ALL_TRUMP
         + value : int | SlamLevel
-        + suit : Suit
+        + suit : ContractSuit
         --
-        + __post_init__() : None  ' validates value + suit
-        + get_numeric_value() : int   ' SlamLevel → base_value
-        + __gt__(other) : bool         ' strict numeric ordering
+        + ~__post_init~__() : None <<rejects ALL_TRUMP by name>>
+        + get_numeric_value() : int <<SlamLevel → base_value>>
+        + __gt__(other) : bool <<strict numeric ordering>>
         + __str__() : str
     }
 
     class DoubleBid <<frozen dataclass>> {
-        + __str__() : str  ' "Double"
+        + __str__() : str <<"Double">>
     }
 
     class RedoubleBid <<frozen dataclass>> {
-        + __str__() : str  ' "Redouble"
+        + __str__() : str <<"Redouble">>
+    }
+
+    class "bid.py" as p_bid_fn <<module>> {
+        seal_bid(bid: Bid<BasePlayer>) : Bid<Position> <<reseats onto the bidder's seat>>
     }
 
     note bottom of Bid
       Pure value carriers — no auction-state
-      behaviour. ``player`` is excluded from
-      ``__eq__`` and ``__hash__`` (matching
-      bid equality on *what was announced*,
+      behaviour. ""player"" is excluded from
+      ""~__eq~__"" and ""~__hash~__"" (matching
+      bid equality on //what was announced//,
       not who announced it). All four
-      variants are ``@dataclass(frozen=True,
-      slots=True)``.
+      variants are frozen, slotted dataclasses.
+      ""SlamLevel"" owns the 250 / 500 base
+      values as data, so nothing downstream
+      re-derives them from a string.
+      Generic over ""ActorT"", who made the bid:
+      an ""Auction"" holds ""Bid<BasePlayer>"",
+      a ""PlayObservation"" holds ""Bid<Position>"".
+      ""seal~_bid()"" projects one to the other via
+      ""dataclasses.replace"", so the concrete
+      variant survives — and since the actor is
+      ""compare=False"", so does equality.
     end note
 }
 
@@ -201,7 +452,7 @@ package "auction.py" as p_auction {
         + {static} empty() : Auction
         + is_legal(bid: Bid) : bool
         + legal_actions(player: BasePlayer) : tuple<Bid>
-        + apply(bid: Bid) : Auction    ' raises IllegalBidError
+        + apply(bid: Bid) : Auction <<raises IllegalBidError>>
         + is_terminal() : bool
         + contract() : Contract?
         --
@@ -218,15 +469,18 @@ package "auction.py" as p_auction {
       Immutable bidding-phase state.
       Owns the chronological bid history
       and the contrée rules (see
-      ``contree-domain.md §5.2`` and §5.3).
-      ``is_legal`` / ``legal_actions``
-      replace ``Bid.is_valid_after`` and
-      ``BidValidator``; ``apply`` raises
-      :class:`IllegalBidError` rather than
-      silently downgrading an illegal bid
-      to a Pass.
-      The shape (``legal_actions`` +
-      ``apply``) mirrors MCTS / RL game-state
+      ""contree-domain.md §5.2"" and §5.3):
+      value precedence, the Double / Redouble
+      freeze, and the Slam-blocks-Solo-Slam
+      asymmetry.
+      Bids themselves stay dumb value
+      carriers: every legality question is
+      answered here, by ""is_legal"" /
+      ""legal_actions"", and ""apply"" raises
+      ""IllegalBidError"" rather than silently
+      downgrading an illegal bid to a Pass.
+      The shape (""legal_actions"" +
+      ""apply"") mirrors MCTS / RL game-state
       interfaces, so the auction phase is
       ready to drop into a future
       imperfect-information state object.
@@ -242,20 +496,72 @@ package "contract.py / trick.py" as p_contract {
         + player : BasePlayer
         + team : Team
         + value : int | SlamLevel
-        + suit : Suit
-        + double : bool
-        + redouble : bool
-        + double_player : BasePlayer?     ' who called Coinche
-        + redouble_player : BasePlayer?   ' who called Surcoinche
+        + suit : ContractSuit
+        + double_player : BasePlayer?   <<who called Coinche>>
+        + redouble_player : BasePlayer? <<who called Surcoinche>>
         --
-        + __init__(contract_bid, double=False, redouble=False, double_player=None, redouble_player=None)
-        + get_multiplier() : int           ' 1, 2, or 4
+        + double : bool    <<property>>
+        + redouble : bool  <<property>>
+        --
+        + __init__(contract_bid, double_player=None, redouble_player=None)
+        + get_multiplier() : int <<1, 2, or 4>>
         + is_slam() : bool
         + is_solo_slam() : bool
         + is_slam_family() : bool
-        + get_base_points() : int           ' Slam → 250, SoloSlam → 500
-        + get_slam_card_substitute() : int  ' Slam → 250, SoloSlam → 500, else 0
+        + get_base_points() : int <<Slam → 250, Solo Slam → 500>>
+        + get_slam_card_substitute() : int <<250 / 500, else 0>>
+        + observed() : ObservedContract <<seals onto seats>>
+        + __str__() : str
+        + __eq__(other) : bool
     }
+
+    class ObservedContract <<frozen dataclass>> {
+        + declarer : Position
+        + value : int | SlamLevel
+        + suit : ContractSuit
+        + doubled_by : Position?   <<who called Coinche>>
+        + redoubled_by : Position? <<who called Surcoinche>>
+        --
+        + double : bool    <<property>>
+        + redouble : bool  <<property>>
+        --
+        + get_multiplier() : int <<1, 2, or 4>>
+        + is_slam() : bool
+        + is_solo_slam() : bool
+        + is_slam_family() : bool
+        + __str__() : str
+    }
+
+    note bottom of ObservedContract
+      What a ""PlayObservation"" carries in place
+      of a live ""Contract"": the same terms with
+      every person named by seat, so neither the
+      declarer's hand nor — via ""Contract.team"" —
+      the whole declaring pair is reachable.
+      No ""team"" field: a seat's side is derivable
+      with ""position.is~_teammate(declarer)"", and
+      a second copy of the pairing would only be
+      something else to keep consistent.
+      The scoring helpers are deliberately **not**
+      mirrored — scoring reads the authoritative
+      ""Contract"" off the round, never a
+      projection.
+    end note
+
+    note bottom of Contract
+      The doubled / redoubled state is
+      **derived**, not stored: ""double"" and
+      ""redouble"" are properties reading
+      ""double_player"" / ""redouble_player"",
+      so an "anonymous double" is
+      unrepresentable and there is no boolean
+      flag to keep in sync. The constructor
+      rejects a redouble without a double.
+      ""~__eq~__"" is defined without
+      ""~__hash~__"", so a Contract — and
+      anything holding one, e.g. PlayState —
+      is unhashable by design.
+    end note
 
     class Trick {
         + plays : list<(BasePlayer, Card)>
@@ -265,26 +571,63 @@ package "contract.py / trick.py" as p_contract {
         + get_cards() : list<Card>
         + get_led_suit() : Suit?
         + get_plays() : list<(BasePlayer, Card)>
-        + get_current_winner(trump_suit: Suit?) : BasePlayer?
+        + get_current_winner(trump_suit: ContractSuit?) : BasePlayer?
         + is_complete() : bool
         + __len__() : int
     }
 
+    class "trick.py" as p_trick_fn <<module>> {
+        current_winner(plays, trump_suit) : PlayerT? <<generic over the plays' "who" slot>>
+        - _best_play(plays, trump_suit) : (PlayerT, Card)? <<the shared winner ladder>>
+    }
+
+    class TrickRecord <<tuple subclass>> {
+        + ~__new~__(plays: Iterable<RecordT>) <<exactly 4, else TrickStateError>>
+        --
+        + led_suit : Suit                       <<property>>
+        + winner(trump_suit: ContractSuit?) : RecordT
+    }
+
+    note bottom of TrickRecord
+      A **completed** trick as an immutable value: a
+      thin ""tuple"" subclass (""~__slots~__ = ()"", no
+      caching) holding exactly four play records, so it
+      iterates, unpacks and compares exactly like the
+      bare 4-tuples it types. Generic over the record
+      type: ""Play"" in ""PlayState.completed_tricks"",
+      sealed ""ObservedPlay"" in
+      ""PlayObservation.completed_tricks"".
+      ""winner(trump_suit)"" returns the winning
+      //record// (not just the who-slot) and takes the
+      contract's trump — not a rules object — so call
+      sites never re-signature when contract regimes
+      arrive. Both it and ""current_winner"" delegate
+      to the one private ""~_best~_play"" ladder.
+    end note
+
     note bottom of Trick
       A dumb container of plays — it does **not**
-      store trump. `get_current_winner(trump_suit)`
+      store trump. ""get_current_winner(trump_suit)""
       takes trump as a **required** argument
-      (like `Card.get_order`/`get_points`) and
-      works on **partial** tricks. The engine
-      builds `Trick()` bare and passes the
-      contract's suit for trick-winner
-      determination, the partner-master legality
-      check, and the view's live winner highlight.
+      (resolved through ""rules_for"", like every
+      trick rule) and
+      works on **partial** tricks.
+      **Nothing in the workspace builds one**
+      today: the play phase is ""PlayState"" end
+      to end, and the
+      trick-winner rule is reached through
+      ""PlayState.trick~_winners"", the
+      partner-master legality check and the view's
+      live winner highlight, all of which call the
+      module-level function directly. It stays a
+      public core type with its own tests; whether
+      it still earns its place is open.
       The winner rule itself is the module-level
-      `current_winner(plays, trump_suit)` function
-      below — `get_current_winner` delegates to it,
-      and `PlayState` (play.py) calls it directly —
-      one implementation, not two that could drift.
+      ""current_winner(plays, trump_suit)""
+      function — ""get_current_winner"" delegates
+      to it and ""PlayState"" (play.py) calls it
+      directly — one implementation, not two
+      that could drift.
     end note
 }
 
@@ -298,6 +641,11 @@ package "play.py" as p_play {
         + card : Card
     }
 
+    class ObservedPlay <<namedtuple>> {
+        + position : Position
+        + card : Card
+    }
+
     class PlayState <<frozen dataclass>> {
         + contract : Contract
         + players : tuple<BasePlayer>
@@ -307,32 +655,34 @@ package "play.py" as p_play {
         + {static} start(contract, players, hands) : PlayState
         + hand_of(player: BasePlayer) : tuple<Card>
         + legal_actions(player: BasePlayer) : tuple<Card>
-        + apply(play: Play) : PlayState        ' raises IllegalPlayError
+        + apply(play: Play) : PlayState <<raises IllegalPlayError>>
         + with_hands(hands: tuple<tuple<Card>>) : PlayState
         + observe(player, bids=()) : PlayObservation
         + is_terminal() : bool
         --
         + trick_number : int                    <<property>>
         + current_trick : tuple<Play>            <<property>>
-        + completed_tricks : tuple<tuple<Play>>  <<property>>
+        + completed_tricks : tuple<TrickRecord<Play>> <<property>>
         + trick_winners : tuple<BasePlayer>      <<property>>
+        + card_points_by_side : dict<TeamSide, int> <<property>>
+        + trick_counts_by_side : dict<TeamSide, int> <<property>>
         + to_act : BasePlayer?                   <<property>>
     }
 
     class PlayObservation <<frozen dataclass>> {
-        + player : BasePlayer
+        + position : Position
         + hand : tuple<Card>
-        + contract : Contract
-        + bids : tuple<Bid>
-        + completed_tricks : tuple<tuple<Play>>
-        + current_trick : tuple<Play>
+        + contract : ObservedContract?
+        + bids : tuple<Bid<Position>>
+        + completed_tricks : tuple<TrickRecord<ObservedPlay>>
+        + current_trick : tuple<ObservedPlay>
         + legal_cards : tuple<Card>
         --
         + trick_number : int            <<property>>
-        + trump_suit : Suit?            <<property>>
+        + trump_suit : ContractSuit?    <<property>>
         + led_suit : Suit?              <<property>>
         + played_cards : tuple<Card>    <<property>>
-        + current_winner : BasePlayer?  <<property>>
+        + current_winner : Position?    <<property>>
     }
 
     note bottom of PlayState
@@ -341,10 +691,19 @@ package "play.py" as p_play {
       search forks inject arbitrary mid-round
       states directly); start() validates a fresh
       deal (4 players, 4×8 cards, 32 distinct).
+      Per-seat state is parallel tuples (players
+      alongside hands), not a player-keyed map —
+      BasePlayer hashing is identity-based.
       Derived views (trick_number, current_trick,
-      completed_tricks, trick_winners, to_act,
-      is_terminal()) recompute from plays on every
-      access — slots=True forbids caching them.
+      completed_tricks, trick_winners,
+      card_points_by_side, trick_counts_by_side,
+      to_act, is_terminal()) recompute from plays
+      on every access — slots=True forbids caching
+      them. The two per-side tallies credit each
+      completed trick to its winner's side; they
+      carry the raw pile only, since the last-trick
+      and Belote bonuses are contract-conversion
+      rules the engine's scorer owns.
       legal_actions(player) enforces only the
       follow/trump obligations, deliberately no
       turn check — mirroring Auction.legal_actions.
@@ -360,12 +719,19 @@ package "play.py" as p_play {
       The imperfect-information projection
       PlayState.observe(player, bids) builds: own
       hand + public trick history + own legal
-      cards, never another seat's hand. Caveat:
-      Play.player is a live BasePlayer reference,
-      so a strategy reaching through
-      play.player.hand could still see another
-      seat's cards — sealing that off (e.g. an
-      opaque seat id) is a noted follow-up.
+      cards, never another seat's hand.
+      **Every** seat it names is a ""Position"":
+      the observer, the trick records
+      (""ObservedPlay""), the contract
+      (""ObservedContract""), each bidder
+      (""Bid<Position>"" via ""seal~_bid""). No live
+      ""BasePlayer"" is reachable by any object
+      path — one surviving reference would reopen
+      ""hand"" and, via ""team.players"", the
+      partner's hand too.
+      ""observe()"" still takes the live player: it
+      needs the identity to look up the hand and
+      the legal actions. Only the output is sealed.
     end note
 }
 
@@ -373,8 +739,8 @@ package "play.py" as p_play {
 ' Exceptions (exceptions.py)
 ' =========================================================
 package "exceptions.py" as p_exc {
-    class "Exception" as Exception <<stdlib>> #DDDDDD
-    class "ValueError" as ValueError <<stdlib>> #DDDDDD
+    class "Exception" as Exception <<stdlib>> #EEEEEE
+    class "ValueError" as ValueError <<stdlib>> #EEEEEE
 
     class ContraiError <<base>>
 
@@ -395,6 +761,10 @@ package "exceptions.py" as p_exc {
     class InvalidCardCountError {
         + expected_count : int
         + actual_count   : int
+        + context : str
+    }
+
+    class InvalidCardError {
         + context : str
     }
 
@@ -420,12 +790,15 @@ package "exceptions.py" as p_exc {
     }
 
     ' Every domain error dual-inherits (ContraiError, ValueError);
-    ' ValueError stays in the MRO so legacy except-ValueError keeps working.
+    ' ValueError stays in the MRO so an except-ValueError handler
+    ' keeps catching the whole family.
     ContraiError            --|> Exception
     InvalidPlayerCountError --|> ContraiError
     InvalidPlayerCountError --|> ValueError
     InvalidCardCountError   --|> ContraiError
     InvalidCardCountError   --|> ValueError
+    InvalidCardError        --|> ContraiError
+    InvalidCardError        --|> ValueError
     IllegalBidError         --|> ContraiError
     IllegalBidError         --|> ValueError
     IllegalPlayError        --|> ContraiError
@@ -441,53 +814,101 @@ package "exceptions.py" as p_exc {
 ' Relationships
 ' =========================================================
 
+' Inheritance — TrumpRules sealed hierarchy
+TrumpRules <|-- SingleSuitRules
+TrumpRules <|-- NoTrumpRules
+SingleSuitRules --> Suit : suit
+p_rules_fn ..> TrumpRules : <<resolves singleton>>
+TrumpRules ..> Card : points / rank_in_suit / trick_rank
+
 ' Inheritance — Bid hierarchy
 Bid <|-- PassBid
 Bid <|-- ContractBid
 Bid <|-- DoubleBid
 Bid <|-- RedoubleBid
 
-' Card composes enums (by-reference)
+' The ContractSuit union is made of the two enums
+p_contractsuit ..> Suit          : <<union member>>
+p_contractsuit ..> TrumpVariant  : <<union member>>
+
+' Card composes enums (by-reference). Card.suit is a Suit and never a
+' TrumpVariant — __post_init__ enforces it.
 Card --> Suit
 Card --> Rank
+Card ..> InvalidCardError        : <<raises on a non-Suit suit>>
 
 ' Hand owns Cards
 Hand "1" *-- "0..8" Card : cards
 
+' Hand's query helpers hold no logic — they forward to the shared
+' functions the frozen play-path tuples read through as well.
+Hand ..> p_cardqueries : <<delegates>>
+p_cardqueries ..> Card : <<scans, builds for has_card>>
+
 ' Deck owns the full 32-card set
 Deck "1" *-- "32" Card : cards
 
-' Player owns its Hand, references Team
+' Player owns its Hand, references Team, is seated at a Position
 BasePlayer "1" *-- "1" Hand : hand
 BasePlayer "1" o-- "0..1" Team : team
+BasePlayer --> Position : position
 
 ' Team aggregates exactly 2 players
 Team "1" o-- "2" BasePlayer : players
 
-' Bid references BasePlayer
-Bid "1" o-- "1" BasePlayer : player
-ContractBid --> Suit : suit
+' A seat knows its side; the side knows its two seats. One derivation,
+' read both ways — Team is not on this path at all.
+Position --> TeamSide : team_side
+
+' Bid's actor slot holds a live player in an auction, a bare seat once
+' seal_bid() has projected it for an observation (see the Bid note)
+Bid "1" o-- "1" BasePlayer : player <<ActorT = BasePlayer>>
+ContractBid --> p_contractsuit : suit
 ContractBid ..> SlamLevel : value (all-tricks bids)
 
 ' Auction composes a tuple of Bids and materialises a Contract
 Auction "1" *-- "0..N" Bid       : bids
 Auction ..> Contract             : <<materialises>>
-Auction ..> IllegalBidError      : <<raises (apply)>>
+Auction ..> IllegalBidError      : <<raises on apply>>
 
 ' Contract references ContractBid + BasePlayer + Team
 Contract "1" o-- "1" ContractBid : contract_bid
 Contract "1" o-- "1" BasePlayer  : player
 Contract "1" o-- "1" Team        : team
-Contract --> Suit                : suit
+Contract --> p_contractsuit      : suit
+
+' ObservedContract is the sealed counterpart: the same terms with every
+' person named by seat, so no hand crosses observe()
+Contract ..> ObservedContract       : <<observed()>>
+ObservedContract --> Position       : declarer / doubled_by / redoubled_by
+ObservedContract --> p_contractsuit : suit
 
 ' Trick composes (player, card) plays; trump arrives via get_current_winner
 Trick "1" *-- "0..4" Card        : (via plays)
 Trick "1" o-- "0..4" BasePlayer  : (via plays)
-Trick ..> Suit                   : get_current_winner(trump_suit)
+Trick ..> p_contractsuit         : get_current_winner(trump_suit)
+Trick ..> p_trick_fn             : <<delegates>>
+
+' TrickRecord types every completed trick in the play-phase histories
+TrickRecord ..> p_trick_fn       : winner <<delegates>>
+PlayState ..> TrickRecord        : <<builds completed_tricks>>
+PlayObservation "1" *-- "0..8" TrickRecord : completed_tricks
 
 ' Play is a (player, card) pair — same ownership split as Trick's plays
 Play "1" o-- "1" BasePlayer : player
 Play "1" *-- "1" Card       : card
+
+' ObservedPlay is the sealed observation-facing record: the seat's
+' Position replaces the live BasePlayer, so no hand crosses observe()
+ObservedPlay --> Position   : position
+ObservedPlay "1" *-- "1" Card : card
+PlayObservation "1" *-- "0..32" ObservedPlay : completed_tricks / current_trick
+
+' ...and the rest of the observation is sealed the same way: the observer
+' is a bare seat (Position, reached via ObservedPlay above), the contract
+' and the auction are their sealed forms
+PlayObservation "1" o-- "0..1" ObservedContract : contract
+PlayObservation "1" *-- "0..N" Bid              : bids <<Bid<Position>>>
 
 ' PlayState references the established contract + seated players,
 ' composes the flat play history, and holds per-seat remaining hands
@@ -496,14 +917,15 @@ PlayState "1" o-- "4" BasePlayer  : players
 PlayState "1" *-- "0..32" Card    : hands
 PlayState "1" *-- "0..32" Play    : plays
 PlayState ..> PlayObservation     : <<observe>>
+PlayState ..> p_trick_fn          : <<winner rule>>
 
 ' Operations raising exceptions
 Team ..> InvalidPlayerCountError : <<raises>>
 Deck ..> InvalidPlayerCountError : <<raises>>
 Deck ..> InvalidCardCountError   : <<raises>>
-ContractBid ..> InvalidContractError : <<raises (__post_init__)>>
-Contract ..> InvalidContractError    : <<raises (redouble w/o double)>>
-Trick ..> TrickStateError            : <<raises (add_play)>>
-PlayState ..> IllegalPlayError       : <<raises (apply)>>
+ContractBid ..> InvalidContractError : <<raises in post-init>>
+Contract ..> InvalidContractError    : <<redouble w/o double>>
+Trick ..> TrickStateError            : <<raises on add_play>>
+PlayState ..> IllegalPlayError       : <<raises on apply>>
 
 @enduml

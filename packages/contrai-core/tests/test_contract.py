@@ -1,13 +1,17 @@
 """Tests for the Contract class.
 
 Covers contract construction (direct + legacy), multiplier semantics,
-Slam / Solo Slam vs numeric base-points logic, and equality.
+Slam / Solo Slam vs numeric base-points logic, and equality — plus
+``ObservedContract``, the seat-keyed projection ``Contract.observed()``
+builds for the imperfect-information observation surface.
 
 Note: whether a contract was *made* is decided in
 ``Round.calculate_round_scores`` — it requires trick counts (and, for
 Solo Slam, per-player trick counts) that ``Contract`` does not see, so
 ``Contract`` deliberately exposes no ``is_made`` predicate.
 """
+
+import dataclasses
 
 import pytest
 
@@ -17,6 +21,7 @@ from contrai_core import (
     ContractBid,
     InvalidContractError,
     PassBid,
+    Position,
     SlamLevel,
     Suit,
     Team,
@@ -26,13 +31,19 @@ from contrai_core import (
 @pytest.fixture
 def north():
     """North-seat declarer-to-be, initially without a team."""
-    return BasePlayer("North", "North")
+    return BasePlayer("North", Position.NORTH)
 
 
 @pytest.fixture
 def south():
     """South-seat partner, initially without a team."""
-    return BasePlayer("South", "South")
+    return BasePlayer("South", Position.SOUTH)
+
+
+@pytest.fixture
+def east():
+    """East-seat opponent — the coincheur in the doubled-contract cases."""
+    return BasePlayer("East", Position.EAST)
 
 
 @pytest.fixture
@@ -207,23 +218,24 @@ class TestContractSlamHelpers:
 
     def test_at_risk_total_slam_normal(self, slam_contract):
         # The full at-risk amount for a Slam at normal multiplier:
-        # (base + substitute) × 1 = 250 + 250 = 500.
+        # substitute + base × 1 = 250 + 250 = 500.
         amount = (
-            slam_contract.get_base_points()
-            + slam_contract.get_slam_card_substitute()
-        ) * slam_contract.get_multiplier()
+            slam_contract.get_slam_card_substitute()
+            + slam_contract.get_base_points() * slam_contract.get_multiplier()
+        )
         assert amount == 500
 
     def test_at_risk_total_solo_slam_doubled(self, north, south):
-        # Solo Slam doubled: (500 + 500) × 2 = 2000.
+        # Solo Slam doubled: only the announced half is multiplied, so
+        # 500 + 500 × 2 = 1500 — not (500 + 500) × 2.
         contract = Contract(
             ContractBid(north, SlamLevel.SOLO_SLAM, Suit.HEARTS), double_player=south
         )
         amount = (
-            contract.get_base_points()
-            + contract.get_slam_card_substitute()
-        ) * contract.get_multiplier()
-        assert amount == 2000
+            contract.get_slam_card_substitute()
+            + contract.get_base_points() * contract.get_multiplier()
+        )
+        assert amount == 1500
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +247,9 @@ class TestContractDunders:
     def test_str_normal(self, north):
         contract = Contract(ContractBid(north, 100, Suit.SPADES))
         assert "100" in str(contract)
-        assert str(Suit.SPADES) in str(contract)
+        # Literal, not str(Suit.SPADES): comparing the rendering against
+        # itself would pass no matter what __str__ returned.
+        assert "Spades" in str(contract)
         assert north.name in str(contract)
         assert "Doubled" not in str(contract)
         assert "Redoubled" not in str(contract)
@@ -267,3 +281,111 @@ class TestContractDunders:
     def test_inequality_against_non_contract(self, numeric_contract, north):
         assert numeric_contract != PassBid(north)
         assert numeric_contract != "100 Spades"
+
+
+# ---------------------------------------------------------------------------
+# ObservedContract — the seat-keyed projection
+# ---------------------------------------------------------------------------
+
+
+class TestObservedContract:
+    """``Contract.observed()`` must keep the terms and drop the people.
+
+    The projection is what a ``PlayObservation`` carries, so it has to
+    answer every contract question a card-play strategy asks while
+    holding no reference through which another seat's hand is reachable.
+    """
+
+    def test_declarer_is_the_bidders_seat(self, numeric_contract):
+        assert numeric_contract.observed().declarer is Position.NORTH
+
+    def test_terms_are_preserved(self, numeric_contract):
+        observed = numeric_contract.observed()
+        assert observed.value == 100
+        assert observed.suit is Suit.SPADES
+
+    def test_undoubled_contract_has_no_callers(self, numeric_contract):
+        observed = numeric_contract.observed()
+        assert observed.doubled_by is None
+        assert observed.redoubled_by is None
+        assert observed.double is False
+        assert observed.redouble is False
+
+    def test_doubler_and_redoubler_become_seats(self, north, south, east):
+        contract = Contract(
+            ContractBid(north, 110, Suit.CLUBS),
+            double_player=east,
+            redouble_player=south,
+        )
+        observed = contract.observed()
+        assert observed.doubled_by is Position.EAST
+        assert observed.redoubled_by is Position.SOUTH
+        assert observed.double is True
+        assert observed.redouble is True
+
+    @pytest.mark.parametrize(
+        "doubler, redoubler, expected",
+        [(None, None, 1), ("east", None, 2), ("east", "south", 4)],
+    )
+    def test_multiplier_matches_the_source_contract(
+        self, north, south, east, doubler, redoubler, expected
+    ):
+        seats = {"east": east, "south": south, None: None}
+        contract = Contract(
+            ContractBid(north, 100, Suit.SPADES),
+            double_player=seats[doubler],
+            redouble_player=seats[redoubler],
+        )
+        observed = contract.observed()
+        assert observed.get_multiplier() == contract.get_multiplier() == expected
+
+    def test_slam_predicates_match_the_source_contract(
+        self, numeric_contract, slam_contract, solo_slam_contract
+    ):
+        for contract in (numeric_contract, slam_contract, solo_slam_contract):
+            observed = contract.observed()
+            assert observed.is_slam() == contract.is_slam()
+            assert observed.is_solo_slam() == contract.is_solo_slam()
+            assert observed.is_slam_family() == contract.is_slam_family()
+
+    def test_slam_value_survives_as_the_enum_member(self, slam_contract):
+        assert slam_contract.observed().value is SlamLevel.SLAM
+
+    def test_no_live_reference_is_carried(self, north, south, east, team_ns):
+        contract = Contract(
+            ContractBid(north, 110, Suit.CLUBS),
+            double_player=east,
+            redouble_player=south,
+        )
+        observed = contract.observed()
+        for gone in ("player", "team", "double_player", "redouble_player"):
+            assert not hasattr(observed, gone)
+        assert not any(
+            isinstance(getattr(observed, f), (BasePlayer, Team))
+            for f in observed.__dataclass_fields__
+        )
+
+    def test_scoring_helpers_are_not_mirrored(self, numeric_contract):
+        # Scoring reads the authoritative Contract off the round, never
+        # an observation — mirroring these here would be dead weight.
+        observed = numeric_contract.observed()
+        assert not hasattr(observed, "get_base_points")
+        assert not hasattr(observed, "get_slam_card_substitute")
+
+    def test_is_frozen(self, numeric_contract):
+        observed = numeric_contract.observed()
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            observed.declarer = Position.WEST
+
+    def test_compares_by_value(self, north):
+        a = Contract(ContractBid(north, 100, Suit.SPADES)).observed()
+        b = Contract(ContractBid(north, 100, Suit.SPADES)).observed()
+        c = Contract(ContractBid(north, 110, Suit.SPADES)).observed()
+        assert a == b
+        assert a != c
+
+    def test_str_names_the_declaring_seat(self, north, east):
+        contract = Contract(
+            ContractBid(north, 100, Suit.SPADES), double_player=east
+        )
+        assert str(contract.observed()) == "100 Spades by North (Doubled)"

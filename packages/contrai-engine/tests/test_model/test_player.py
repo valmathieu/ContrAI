@@ -9,6 +9,7 @@ from contrai_engine.model.player import (
 from contrai_core import (
     Auction,
     PassBid,
+    Position,
 )
 
 
@@ -23,11 +24,11 @@ class TestIsHumanProperty:
 
     def test_human_player_is_human(self):
         """HumanPlayer reports is_human True."""
-        assert HumanPlayer("Alice", "North").is_human is True
+        assert HumanPlayer("Alice", Position.NORTH).is_human is True
 
     def test_ai_player_is_not_human(self):
         """AiPlayer reports is_human False."""
-        assert AiPlayer("Bot", "South").is_human is False
+        assert AiPlayer("Bot", Position.SOUTH).is_human is False
 
 
 class TestAiPlayerStrategyInjection:
@@ -35,7 +36,7 @@ class TestAiPlayerStrategyInjection:
 
     def test_default_strategies_are_rule_based(self):
         """An AiPlayer built with defaults gets the rule-based pair."""
-        player = AiPlayer("Bot", "South")
+        player = AiPlayer("Bot", Position.SOUTH)
         assert isinstance(player.bidding, RuleBasedBiddingStrategy)
         assert isinstance(player.cardplay, RuleBasedCardPlayStrategy)
         # Each strategy reads player state live through its back-reference.
@@ -44,7 +45,7 @@ class TestAiPlayerStrategyInjection:
 
     def test_choose_bid_delegates_to_bidding_strategy(self):
         """AiPlayer.choose_bid routes straight to the injected strategy."""
-        player = AiPlayer("Bot", "South")
+        player = AiPlayer("Bot", Position.SOUTH)
         sentinel = PassBid(player)
         calls = []
 
@@ -60,7 +61,7 @@ class TestAiPlayerStrategyInjection:
 
     def test_choose_card_delegates_to_cardplay_strategy(self):
         """AiPlayer.choose_card routes the observation straight to the strategy."""
-        player = AiPlayer("Bot", "South")
+        player = AiPlayer("Bot", Position.SOUTH)
         sentinel = object()
         calls = []
 
@@ -82,7 +83,7 @@ class TestAiPlayerStrategyInjection:
         class StubCardPlay(RuleBasedCardPlayStrategy):
             """Marker subclass to prove the factory was honored."""
 
-        player = AiPlayer("Bot", "South", bidding=StubBidding, cardplay=StubCardPlay)
+        player = AiPlayer("Bot", Position.SOUTH, bidding=StubBidding, cardplay=StubCardPlay)
         assert type(player.bidding) is StubBidding
         assert type(player.cardplay) is StubCardPlay
         assert player.bidding._player is player

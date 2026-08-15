@@ -20,20 +20,24 @@ a rule-derived invariant (the exact total ``score_round`` guarantees for a
 *made*, un-doubled, non-sweep numeric contract: ``contract_value + 162``,
 plus 20 when a team holds the belote) and a regression pin on the concrete
 per-team split. The bidding table's outcome is derived by hand in the
-docstrings below and asserted exactly; the card-by-card play is a
-deterministic function of the stacked hands (see ``rule_based/card_play.py``'s
-``RuleBasedCardPlayStrategy``), but tracing that decision tree by hand
-across 8 tricks is impractical — the concrete numbers are pinned from an
-actual (deterministic, reproducible) run and guarded by the invariant, so
-a scoring-rule regression still fails loudly even if the exact split ever
-drifts.
+docstrings below and asserted exactly; the card-by-card play is a function
+of the stacked hands plus the seeded RNG the strategy breaks ties with (see
+``rule_based/card_play.py``'s ``RuleBasedCardPlayStrategy``, and the
+``pinned_rng`` fixture in ``conftest.py`` that pins the draw), but tracing
+that decision tree by hand across 8 tricks is impractical — the concrete
+numbers are pinned from an actual reproducible run and guarded by the
+invariant, so a scoring-rule regression still fails loudly even if the
+exact split ever drifts.
 """
 
 from __future__ import annotations
 
+from contrai_core.bid import ContractBid
 from contrai_core.card import Card
+from contrai_core.contract import Contract
 from contrai_core.deck import Deck
-from contrai_core.types import Rank, Suit
+from contrai_core.team_side import TeamSide
+from contrai_core.types import Rank, Suit, TrumpVariant
 
 from contrai_engine.model.round import Round
 
@@ -113,7 +117,8 @@ def _stack_deck(hands: dict[str, list[Card]]) -> Deck:
 #      ``contract`` away from N/110/Spades and fail loudly there.
 #
 # N/S hold 6 of the 8 trumps (missing only the Queen and King, the two
-# lowest-ranked trumps - see ``Card.TRUMP_ORDER``), so the contract is
+# lowest-ranked trumps on the trump ladder - see
+# ``rules_for(trump).rank_in_suit``), so the contract is
 # expected to be comfortably made; the exact card-by-card play (and hence
 # the precise score split) is pinned from an actual run - see the module
 # docstring.
@@ -193,12 +198,13 @@ class TestFullRoundLifecycleHappyPath:
         assert round_.belote_holder is None
 
         # --- Play -------------------------------------------------------
-        team_tricks = round_.play_all_tricks(None)
+        round_.play_all_tricks(None)
 
         assert round_.play_state.is_terminal()
         assert len(round_.play_state.completed_tricks) == 8
-        assert len(round_.tricks) == 8
-        assert sum(len(tricks) for tricks in team_tricks.values()) == 8
+        # Every completed trick has a winner, and each winner has a side.
+        assert len(round_.play_state.trick_winners) == 8
+        assert sum(round_.play_state.trick_counts_by_side.values()) == 8
         for seat in ("N", "E", "S", "W"):
             assert len(players[seat].hand) == 0
         # The trick-return ritual: every played card lands back in the
@@ -219,13 +225,14 @@ class TestFullRoundLifecycleHappyPath:
         # and no belote
         # is in play here.
         assert sum(scores.values()) == contract.value + 162
-        assert scores["North-South"] > scores["East-West"]
+        assert scores[TeamSide.NS] > scores[TeamSide.EW]
         # Regression pin: the concrete split observed from this exact
-        # stacked deal (deterministic - no RNG is reachable from either
-        # strategy). Re-run twice to confirm before trusting a change to
+        # stacked deal, under the RNG the ``pinned_rng`` fixture seeds -
+        # the card-play strategy draws from it to break ties nothing else
+        # separates. Re-run twice to confirm before trusting a change to
         # these numbers reflects a real scoring-rule change and not a
         # stacking edit.
-        assert scores == {"North-South": 259, "East-West": 13}
+        assert scores == {TeamSide.NS: 258, TeamSide.EW: 14}
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +339,7 @@ class TestFullRoundLifecycleBelote:
         round_.play_all_tricks(None)
 
         assert round_.play_state.is_terminal()
-        assert len(round_.tricks) == 8
+        assert len(round_.play_state.completed_tricks) == 8
         for seat in ("N", "E", "S", "W"):
             assert len(players[seat].hand) == 0
 
@@ -351,10 +358,10 @@ class TestFullRoundLifecycleBelote:
         # credits it to the holder's team independent of who wins the
         # round or which cards capture the K/Q).
         assert sum(scores.values()) == contract.value + 162 + 20
-        assert scores["North-South"] > scores["East-West"]
+        assert scores[TeamSide.NS] > scores[TeamSide.EW]
         # Regression pin: the concrete split observed from this exact
-        # stacked deal (deterministic - no RNG is reachable).
-        assert scores == {"North-South": 278, "East-West": 14}
+        # stacked deal, under the RNG the ``pinned_rng`` fixture seeds.
+        assert scores == {TeamSide.NS: 278, TeamSide.EW: 14}
 
 
 # ---------------------------------------------------------------------------
@@ -450,10 +457,97 @@ class TestFullRoundLifecycleAllPass:
 
         # Zero scores for both teams - no contract means nothing was at
         # stake, not merely "no score attribute published".
-        assert scores == {"North-South": 0, "East-West": 0}
+        assert scores == {TeamSide.NS: 0, TeamSide.EW: 0}
         assert round_.round_scores == scores
         # calculate_round_scores was never called on this path - the
         # made/failed and unannounced-Slam signals stay at their
         # pre-round default.
         assert round_.contract_made is None
         assert round_.unannounced_slam is None
+
+
+# ---------------------------------------------------------------------------
+# No trump: the contract mode the auction cannot reach by itself.
+# ---------------------------------------------------------------------------
+
+
+class TestFullRoundLifecycleNoTrump:
+    """A no-trump round dealt, played out and scored on the §3.4 scale.
+
+    The auction cannot get here on its own: ``RuleBasedBiddingStrategy``
+    only ever names a real ``Suit`` — its ``BIDDING_TABLE`` is
+    suit-shaped — so the contract is injected between the deal and the
+    play instead of coming out of ``manage_bidding``. Everything
+    downstream is the real lifecycle: ``play_all_tricks`` seeds the play
+    state from the dealt hands, the four ``AiPlayer`` seats choose their
+    own cards through ``RuleBasedCardPlayStrategy``, and
+    ``calculate_round_scores`` runs the real scoring rules.
+
+    The assertions are rule-derived rather than card-by-card. Which
+    cards the strategy picks depends on the stacked hands and the pinned
+    RNG, but the deck *total* does not: 152 points live in the cards
+    under every contract mode (contree-domain.md §3.5), so a no-trump
+    round that fails to distribute 162 is exactly the defect this
+    scenario guards against.
+    """
+
+    # Any legal 32-card split will do — the contract is injected, so the
+    # hands' bidding properties are irrelevant here. Reusing the
+    # happy-path deal keeps one stacked layout to maintain instead of
+    # two.
+    HANDS = TestFullRoundLifecycleHappyPath.HANDS
+
+    def test_no_trump_round_distributes_the_whole_162(self, players):
+        order = [players[s] for s in ("N", "E", "S", "W")]
+        round_ = Round(
+            order, dealer=players["W"], deck=_stack_deck(self.HANDS), round_number=1
+        )
+
+        # --- Deal ---------------------------------------------------
+        round_.deal_cards()
+        for seat, expected in self.HANDS.items():
+            assert list(players[seat].hand) == expected, f"seat {seat} mis-dealt"
+
+        # --- Contract, injected (see the class docstring) -------------
+        round_.contract = Contract(
+            ContractBid(players["N"], 100, TrumpVariant.NO_TRUMP)
+        )
+        # The one step ``manage_bidding`` would run after fixing the
+        # contract. No suit is trump, so no suit can carry a belote and
+        # the scoring below stays free of the +20 (contree-domain.md §3.5).
+        round_._detect_belote_holder()
+        assert round_.belote_holder is None
+
+        # --- Play -------------------------------------------------------
+        round_.play_all_tricks(None)
+
+        assert round_.play_state.is_terminal()
+        assert len(round_.play_state.completed_tricks) == 8
+        for seat in ("N", "E", "S", "W"):
+            assert len(players[seat].hand) == 0
+
+        # The fix, end to end: a no-trump deck is worth 152 in cards like
+        # every other mode — 19/10/4/3/2 per suit, not the plain
+        # 11/10/4/3/2 that summed to 120 and left the round 32 short.
+        assert sum(round_.play_state.card_points_by_side.values()) == 152
+
+        # --- Scoring ------------------------------------------------
+        scores = round_.calculate_round_scores()
+
+        assert round_.unannounced_slam is None
+        # Rule-derived invariant (scoring.py), belote-free by
+        # construction: a made un-doubled numeric contract splits
+        # contract_value + 162 between the two sides, and a failed one
+        # hands the defense 160 + contract_value with nothing to the
+        # declarer. Either way the total is a function of the deck, which
+        # is what a mis-scaled no-trump table would break.
+        expected_total = (
+            round_.contract.value + 162
+            if round_.contract_made
+            else 160 + round_.contract.value
+        )
+        assert sum(scores.values()) == expected_total
+        # Regression pin: the concrete outcome observed from this exact
+        # stacked deal under the ``pinned_rng`` fixture's seed.
+        assert round_.contract_made is True
+        assert scores == {TeamSide.NS: 218, TeamSide.EW: 44}

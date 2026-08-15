@@ -1,7 +1,10 @@
 """Bid hierarchy — pure value carriers for the bidding phase.
 
-Each :class:`Bid` is a frozen dataclass attached to the player who made
-it. The four concrete variants are:
+Each :class:`Bid` is a frozen dataclass attached to whoever made it —
+a live :class:`~contrai_core.BasePlayer` in an auction, a bare
+:class:`~contrai_core.Position` once projected into an observation. The
+hierarchy is generic over that slot (:data:`ActorT`) rather than
+duplicated, so both sides speak the same four variants:
 
 - :class:`PassBid` — the player declines to act.
 - :class:`ContractBid` — a numeric contract or *Slam* / *Solo Slam*
@@ -25,15 +28,25 @@ bid-to-wire bridge, future MCTS / RL agents) actually want.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, Generic, TypeVar
 
 from .exceptions import InvalidContractError
-from .types import Suit
+from .types import CONTRACT_SUITS, ContractSuit, TrumpVariant
 
 if TYPE_CHECKING:
     from .player import BasePlayer
+    from .position import Position
+
+#: The type naming *who* made a bid. A bid is the same announcement
+#: whoever holds the slot, so the hierarchy is generic over it rather
+#: than duplicated per actor kind: auction-side code speaks
+#: ``Bid[BasePlayer]`` (the live player, whose team and hand the engine
+#: needs), while the sealed observation surface speaks ``Bid[Position]``
+#: (a bare seat token, through which no hand is reachable). See
+#: :meth:`contrai_core.PlayState.observe`.
+ActorT = TypeVar("ActorT", "BasePlayer", "Position")
 
 
 class SlamLevel(Enum):
@@ -41,11 +54,11 @@ class SlamLevel(Enum):
 
     A Slam-family contract's *identity* is the kind of declaration — not
     the number of points it is worth. Each member therefore owns its
-    :attr:`base_value` as data: this is the single source of truth for
-    the 250 / 500 that used to be re-derived from string sentinels all
-    over the codebase. The base value drives auction precedence (both
-    members outrank the 180 numeric ceiling) and doubles as the
-    slam-family scoring substitute — see
+    :attr:`base_value` as data: one source of truth for the 250 / 500,
+    rather than a constant each caller re-derives for itself. The base
+    value drives auction precedence (both members outrank the 180
+    numeric ceiling) and doubles as the slam-family scoring
+    substitute — see
     :meth:`ContractBid.get_numeric_value`,
     :meth:`contrai_core.Contract.get_base_points`, and
     :meth:`contrai_core.Contract.get_slam_card_substitute`.
@@ -72,28 +85,41 @@ class SlamLevel(Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class Bid:
+class Bid(Generic[ActorT]):
     """Common base class for all bid variants.
 
-    Holds the player who made the bid. Concrete subclasses add their
-    own payload fields (a numeric value + suit for :class:`ContractBid`,
+    Holds whoever made the bid. Concrete subclasses add their own
+    payload fields (a numeric value + suit for :class:`ContractBid`,
     nothing for the other three).
 
-    Equality on bids is *type + payload*, not player identity. Two
+    Generic over :data:`ActorT`, the type filling the ``player`` slot.
+    An auction holds ``Bid[BasePlayer]``; the imperfect-information
+    :class:`contrai_core.PlayObservation` holds ``Bid[Position]``,
+    projected seat by seat so a strategy reading the auction history
+    cannot reach a live player — and through it another seat's hand.
+    Parameterizing beats duplicating the four variants into a parallel
+    "observed bid" hierarchy: the announcement is identical either way,
+    and every ``isinstance`` / ``match`` over the sum type keeps working
+    on both sides of the projection.
+
+    Equality on bids is *type + payload*, not actor identity. Two
     ``PassBid`` instances from different players still compare equal —
     a bid identifies *what was announced*, not *who announced it*. The
     ``player`` field is therefore excluded from the auto-generated
-    ``__eq__`` / ``__hash__`` via :func:`dataclasses.field`.
+    ``__eq__`` / ``__hash__`` via :func:`dataclasses.field`. That also
+    makes a bid equal to its own sealed projection, since sealing
+    rewrites only the excluded field.
 
     Attributes:
-        player: The player who made the bid.
+        player: Whoever made the bid — a live ``BasePlayer`` in an
+            auction, a bare ``Position`` in an observation.
     """
 
-    player: "BasePlayer" = field(compare=False)
+    player: ActorT = field(compare=False)
 
 
 @dataclass(frozen=True, slots=True)
-class PassBid(Bid):
+class PassBid(Bid[ActorT]):
     """The player declines to bid this turn.
 
     Always a legal action in any :class:`contrai_core.Auction` state.
@@ -104,12 +130,12 @@ class PassBid(Bid):
 
 
 @dataclass(frozen=True, slots=True)
-class ContractBid(Bid):
+class ContractBid(Bid[ActorT]):
     """A numeric contract or *Slam* / *Solo Slam* announcement.
 
     Validated at construction via ``__post_init__``: the value must be
-    one of the table-defined steps and the suit must be a known
-    :class:`Suit`.
+    one of the table-defined steps and the suit must be a bookable trump
+    (see :attr:`VALID_SUITS`).
 
     The two all-tricks contracts are the :class:`SlamLevel` enum members:
 
@@ -124,32 +150,45 @@ class ContractBid(Bid):
     Attributes:
         value: A numeric step (80, 90, 100, …, 180), or a
             :class:`SlamLevel` member for the all-tricks contracts.
-        suit: The trump suit — any :class:`Suit`, including
-            ``Suit.NO_TRUMP``.
+        suit: The trump — one of the four :class:`Suit` members or
+            ``TrumpVariant.NO_TRUMP``. See :attr:`VALID_SUITS`.
     """
 
     VALID_VALUES: ClassVar[list] = [
         80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180,
         SlamLevel.SLAM, SlamLevel.SOLO_SLAM,
     ]
-    VALID_SUITS: ClassVar[list] = list(Suit)
+    #: The bookable trumps: every contract suit except ``ALL_TRUMP``, which
+    #: is unimplemented. Keeping the exclusion here rather than in the
+    #: auction is what keeps it out of the action space by construction —
+    #: :meth:`contrai_core.Auction.legal_actions` iterates this list.
+    VALID_SUITS: ClassVar[list] = [
+        suit for suit in CONTRACT_SUITS if suit is not TrumpVariant.ALL_TRUMP
+    ]
 
     value: int | SlamLevel
-    suit: Suit
+    suit: ContractSuit
 
     def __post_init__(self) -> None:
         """Reject unknown values / suits at construction time.
 
         Raises:
             InvalidContractError: If ``value`` is not on
-                :attr:`VALID_VALUES` or ``suit`` is not a :class:`Suit`
-                member.
+                :attr:`VALID_VALUES`, or ``suit`` is not a bookable trump.
+                ``TrumpVariant.ALL_TRUMP`` is rejected by its own branch so
+                the message can say why it is refused rather than merely
+                listing what is allowed.
         """
 
         if self.value not in self.VALID_VALUES:
             raise InvalidContractError(
                 f"Invalid contract value: {self.value}. "
                 f"Must be one of {self.VALID_VALUES}"
+            )
+        if self.suit is TrumpVariant.ALL_TRUMP:
+            raise InvalidContractError(
+                "All-trump contracts are not implemented and cannot be "
+                "bid. Bid a suit or no-trump instead."
             )
         if self.suit not in self.VALID_SUITS:
             raise InvalidContractError(
@@ -168,7 +207,7 @@ class ContractBid(Bid):
         still outrank the numeric ceiling of 180.)
 
         The final at-risk amount on a Slam-family round is
-        ``(base + substitute) × multiplier`` where ``substitute``
+        ``substitute + base × multiplier`` where ``substitute``
         equals the base — see :meth:`contrai_core.Contract.get_base_points`
         and :meth:`contrai_core.Contract.get_slam_card_substitute`.
         """
@@ -193,7 +232,7 @@ class ContractBid(Bid):
 
 
 @dataclass(frozen=True, slots=True)
-class DoubleBid(Bid):
+class DoubleBid(Bid[ActorT]):
     """A *contre* — doubles the contract's stake (×2)."""
 
     def __str__(self) -> str:
@@ -201,8 +240,35 @@ class DoubleBid(Bid):
 
 
 @dataclass(frozen=True, slots=True)
-class RedoubleBid(Bid):
+class RedoubleBid(Bid[ActorT]):
     """A *surcontre* — quadruples the contract's stake (×4)."""
 
     def __str__(self) -> str:
         return "Redouble"
+
+
+def seal_bid(bid: Bid[BasePlayer]) -> Bid[Position]:
+    """Project a bid onto its bidder's seat, dropping the live player.
+
+    The bid-side half of the observation trust boundary: a live
+    :class:`~contrai_core.BasePlayer` in the ``player`` slot is an
+    object path to ``player.hand`` and, via ``player.team``, to the
+    partner's hand as well. Replacing it with the bare
+    :class:`~contrai_core.Position` leaves exactly the public fact —
+    *this seat announced this* — that a player at the table has.
+
+    Rebuilt with :func:`dataclasses.replace`, so the concrete variant
+    survives: a :class:`ContractBid` seals to a ``ContractBid``, and
+    every ``isinstance`` / ``match`` over the sum type reads the same on
+    both sides. Since ``player`` is ``compare=False``, the sealed bid
+    also compares equal to the one it came from.
+
+    Args:
+        bid: The auction-side bid to project.
+
+    Returns:
+        The same announcement by the same variant, its ``player`` slot
+        holding the bidder's seat.
+    """
+
+    return replace(bid, player=bid.player.position)

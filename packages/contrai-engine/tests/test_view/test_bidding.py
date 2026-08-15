@@ -9,7 +9,7 @@ double/redouble branches, the past-180 Slam-only tail).
 
 from __future__ import annotations
 
-from contrai_core import Auction, Suit
+from contrai_core import Auction, Position, Suit
 from contrai_core.bid import ContractBid, DoubleBid, PassBid
 
 from contrai_engine.view.screens.bidding import (
@@ -47,7 +47,7 @@ class TestRenderBiddingDiamond:
         north, east, *_ = four_players
         history = [ContractBid(north, 80, Suit.HEARTS), PassBid(east)]
         text = _render_bidding_diamond(
-            history, pending_position="East", width=42
+            history, pending_position=Position.EAST, width=42
         ).plain
         # East already passed, but as the seat about to act it reads "?".
         assert "E ?" in text
@@ -57,7 +57,7 @@ class TestRenderBiddingDiamond:
         north, *_ = four_players
         history = [ContractBid(north, 80, Suit.HEARTS)]
         text = _render_bidding_diamond(
-            history, pending_position="East", width=42
+            history, pending_position=Position.EAST, width=42
         ).plain
         assert "S ·" in text
         assert "W ·" in text

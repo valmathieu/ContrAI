@@ -1,13 +1,13 @@
 """Tests for BasePlayer data class."""
 
-from contrai_core import BasePlayer, Hand, Team
+from contrai_core import BasePlayer, Hand, Position, Team
 
 
 def test_base_player_initialization():
     """A BasePlayer is created with name and position; hand and team start empty."""
-    player = BasePlayer("Corentin", "North")
+    player = BasePlayer("Corentin", Position.NORTH)
     assert player.name == "Corentin"
-    assert player.position == "North"
+    assert player.position is Position.NORTH
     assert isinstance(player.hand, Hand)
     assert len(player.hand) == 0
     assert player.team is None
@@ -15,7 +15,7 @@ def test_base_player_initialization():
 
 def test_base_player_hand_is_mutable():
     """The hand attribute can be appended to and cleared in place."""
-    player = BasePlayer("Samuel", "South")
+    player = BasePlayer("Samuel", Position.SOUTH)
     player.hand.append("placeholder_card")
     assert len(player.hand) == 1
     player.hand.clear()
@@ -24,8 +24,8 @@ def test_base_player_hand_is_mutable():
 
 def test_base_player_team_settable():
     """The team attribute can be assigned after init."""
-    player = BasePlayer("Nabil", "East")
-    partner = BasePlayer("Alexandre", "West")
+    player = BasePlayer("Nabil", Position.EAST)
+    partner = BasePlayer("Alexandre", Position.WEST)
     team = Team("EW", [player, partner])
     player.team = team
     assert player.team is team
@@ -33,18 +33,41 @@ def test_base_player_team_settable():
 
 def test_two_players_have_independent_hands():
     """Each BasePlayer instance gets its own Hand (no shared mutable default)."""
-    p1 = BasePlayer("P1", "North")
-    p2 = BasePlayer("P2", "South")
+    p1 = BasePlayer("P1", Position.NORTH)
+    p2 = BasePlayer("P2", Position.SOUTH)
     p1.hand.append("card_for_p1")
     assert len(p2.hand) == 0
 
 
-def test_all_table_positions_construct():
-    """The four documented positions are all valid construction arguments.
+def test_base_player_is_unseated_without_a_position():
+    """The seat is optional: an unnamed one leaves the player unseated.
 
-    AiPlayer._get_partner_position relies on exactly these four strings,
-    so any drift here would silently break partner lookup.
+    Identity and table state are separable — a roster can exist before
+    anyone sits down, and the engine's ``Game`` is what seats it.
     """
-    for position in ("North", "South", "East", "West"):
+    player = BasePlayer("Corentin")
+    assert player.position is None
+    assert player.name == "Corentin"
+    assert isinstance(player.hand, Hand)
+
+
+def test_base_player_seat_is_settable_after_construction():
+    """An unseated player takes its seat by assignment.
+
+    This is the hook the engine's seating uses; nothing about the seat is
+    frozen at construction.
+    """
+    player = BasePlayer("Samuel")
+    player.position = Position.WEST
+    assert player.position is Position.WEST
+
+
+def test_all_table_positions_construct():
+    """Every Position member is a valid construction argument.
+
+    BasePlayer places no narrower restriction on the seat than "is a
+    Position member" — this pins that all four are equally constructible.
+    """
+    for position in Position:
         player = BasePlayer("Hugo", position)
-        assert player.position == position
+        assert player.position is position

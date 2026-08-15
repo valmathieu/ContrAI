@@ -1,78 +1,58 @@
-"""Team class for the contrée game, representing a team of two players."""
+"""Team: the two-player roster sharing a side of the table.
+
+A ``Team`` says *who plays with whom* and what that pairing is called on
+screen. It deliberately carries no identity and no score: the identity
+is :class:`~contrai_core.team_side.TeamSide`, and cumulative scoring is
+the engine's business (``Game.scores``, keyed by that enum).
+"""
 
 from __future__ import annotations
 
 from .exceptions import InvalidPlayerCountError
-from .player import BasePlayer
+
 
 class Team:
-    """
-    Represents a team of two players in the contrée game.
+    """A pair of players seated across from each other.
+
+    Team identity lives in :class:`~contrai_core.team_side.TeamSide`, not
+    here: :attr:`name` is a display label, so two teams sharing a name
+    are not thereby the same team, and nothing may key a dictionary by
+    it. The seat arithmetic that answers "who is my partner?" and "are we
+    on the same side?" belongs to
+    :class:`~contrai_core.position.Position` (:attr:`~Position.partner`,
+    :meth:`~Position.is_teammate`, :attr:`~Position.team_side`), which
+    derives all of it from one seating order.
 
     Attributes:
-        name (str): The name of the team (e.g., "North-South", "East-West").
-        players (list[Player]): List of two players that form the team.
-        total_score (int): The cumulative score of the team across all rounds.
+        name: Display name of the team, e.g. ``"North-South"``.
+        players: The two players forming the team.
     """
 
     def __init__(self, name, players):
-        """
-        Initialize a team with a name and two players.
+        """Initialize a team with a display name and two players.
 
         Args:
-            name (str): The name of the team
-            players (list[Player]): List of exactly 2 players
+            name: Display name of the team.
+            players: List of exactly 2 players.
 
         Raises:
-            InvalidPlayerCountError: If the number of players is not exactly 2.
+            InvalidPlayerCountError: If the number of players is not
+                exactly 2.
         """
+
         if len(players) != 2:
             raise InvalidPlayerCountError(2, len(players), "Creating team")
 
         self.name = name
-        self.players = players  # list of Player
-        self.total_score = 0
-
-    def add_points(self, points: int):
-        """
-        Add points to the team's total score.
-
-        Args:
-            points (int): Points to add to the team's score
-        """
-        self.total_score += points
-
-    def get_partner(self, player: BasePlayer) -> BasePlayer | None:
-        """
-        Get the partner of a given player within this team.
-
-        Args:
-            player (Player): The player whose partner to find
-
-        Returns:
-            Player: The partner player, or None if the player is not in this team
-        """
-        if player not in self.players:
-            return None
-        return self.players[0] if self.players[1] == player else self.players[1]
-
-    def contains_player(self, player: BasePlayer) -> bool:
-        """
-        Check if a player belongs to this team.
-
-        Args:
-            player (Player): The player to check
-
-        Returns:
-            bool: True if the player is in this team, False otherwise
-        """
-        return player in self.players
+        self.players = players
 
     def __str__(self):
-        """String representation of the team."""
+        """Human-readable roster: ``"North-South: Alice & Bob"``."""
+
         player_names = [player.name for player in self.players]
-        return f"{self.name}: {' & '.join(player_names)} ({self.total_score} pts)"
+        return f"{self.name}: {' & '.join(player_names)}"
 
     def __repr__(self):
         """Developer representation of the team."""
-        return f"Team('{self.name}', {len(self.players)} players, {self.total_score} pts)"
+
+        return f"Team('{self.name}', {len(self.players)} players)"

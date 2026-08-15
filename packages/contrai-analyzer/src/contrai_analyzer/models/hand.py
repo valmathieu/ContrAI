@@ -2,7 +2,7 @@
 Hand representation and validation for a player's hand.
 """
 
-from src.models.deck import Card, SuitSlot, Rank
+from contrai_analyzer.models.deck import Card, SuitSlot, Rank
 
 
 class Hand:

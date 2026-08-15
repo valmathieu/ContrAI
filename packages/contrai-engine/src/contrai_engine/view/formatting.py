@@ -14,8 +14,12 @@ from contrai_core import (
     BasePlayer,
     Card,
     Contract,
+    ContractSuit,
+    Position,
     Rank,
     Suit,
+    TeamSide,
+    TrumpVariant,
 )
 from contrai_core.bid import (
     Bid,
@@ -39,27 +43,27 @@ from contrai_engine.view.theme import (
 )
 
 
-def _position_short(position: str) -> str:
-    """Single-letter seat label: ``"North"`` -> ``"N"``."""
-    return POSITION_SHORT.get(position, position[:1])
+def _position_short(position: Position) -> str:
+    """Single-letter seat label: ``Position.NORTH`` -> ``"N"``."""
+    return POSITION_SHORT[position]
 
 
-def _position_color(position: str) -> str:
+def _position_color(position: Position) -> str:
     """Seat color by team: blue for N/S seats, orange for E/W."""
-    return BLUE if position in ("North", "South") else ORANGE
+    return _team_color(position.team_side)
 
 
-def _team_color(team_name: str) -> str:
+def _team_color(side: TeamSide) -> str:
     """Team color: blue for North-South, orange for East-West."""
-    return BLUE if team_name == "North-South" else ORANGE
+    return BLUE if side is TeamSide.NS else ORANGE
 
 
-def _team_abbr(team_name: str) -> str:
-    """Scoreboard abbreviation: ``"North-South"`` -> ``"N-S"``."""
-    return TEAM_ABBR.get(team_name, team_name)
+def _team_abbr(side: TeamSide) -> str:
+    """Scoreboard abbreviation: ``TeamSide.NS`` -> ``"N-S"``."""
+    return TEAM_ABBR[side]
 
 
-def _suit_glyph(suit: Suit) -> str:
+def _suit_glyph(suit: ContractSuit) -> str:
     """Unicode suit glyph (``♠``/``♥``/``♦``/``♣``), falling back to the enum value."""
     return Card.SUIT_SYMBOLS.get(suit, suit.value)
 
@@ -84,7 +88,7 @@ def _rank_short(rank: Rank) -> str:
     return RANK_SHORT.get(rank, rank.value)
 
 
-def _suit_color(suit: Suit) -> str:
+def _suit_color(suit: ContractSuit) -> str:
     """Suit color: red for hearts/diamonds, plain foreground otherwise."""
     return RED if suit in (Suit.HEARTS, Suit.DIAMONDS) else FG
 
@@ -159,8 +163,8 @@ def _format_contract_short(
         t.append_text(taker)
     else:
         # Defensive fallback: name the team if the player is missing.
-        t.append(_team_abbr(contract.team.name),
-                 style=f"bold {_team_color(contract.team.name)}")
+        side = contract.team.players[0].position.team_side
+        t.append(_team_abbr(side), style=f"bold {_team_color(side)}")
     # Double / redouble: multiplier plus the player who called it.
     if contract.redouble:
         caller = _seat_letter(getattr(contract, "redouble_player", None))
@@ -177,7 +181,7 @@ def _format_contract_short(
     return t
 
 
-def _format_trump_label(suit: Optional[Suit]) -> Text:
+def _format_trump_label(suit: Optional[ContractSuit]) -> Text:
     """``"♥ Hearts"`` with the glyph in suit color.
 
     Args:
@@ -188,7 +192,7 @@ def _format_trump_label(suit: Optional[Suit]) -> Text:
     t = Text()
     t.append(_suit_glyph(suit), style=_suit_color(suit))
     t.append(" ", style=FG)
-    label = "No Trump" if suit == Suit.NO_TRUMP else suit.value
+    label = "No Trump" if suit is TrumpVariant.NO_TRUMP else suit.value
     t.append(label, style="bold")
     return t
 

@@ -5,8 +5,8 @@ driven by the immutable core :class:`PlayState`:
 
     * ``play_trick`` rejecting an illegal card with ``IllegalPlayError``
       (raised by the core state machine, no longer by the engine);
-    * the mirror bookkeeping — the players' hands and ``current_trick``
-      kept in lock-step with the authoritative ``play_state``;
+    * the mirror bookkeeping — the players' hands kept in lock-step
+      with the authoritative ``play_state``;
     * card identity flowing unbroken from the seed to the playable set;
     * auction retention and play-state seeding across the lifecycle;
     * belote / rebelote detection and the announcement state machine;
@@ -21,9 +21,11 @@ The legal-play oracle itself lives in ``contrai-core``'s
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
-from contrai_core import Hand
+from contrai_core import Hand, Position
 from contrai_core.auction import Auction
 from contrai_core.bid import ContractBid, DoubleBid, PassBid
 from contrai_core.card import Card
@@ -32,8 +34,7 @@ from contrai_core.deck import Deck
 from contrai_core.play import PlayState
 from contrai_core.team import Team
 from contrai_core.exceptions import IllegalPlayError, PlayRuleViolation
-from contrai_core.trick import Trick
-from contrai_core.types import Rank, Suit
+from contrai_core.types import Rank, Suit, TrumpVariant
 
 from contrai_engine.model.player import AiPlayer, HumanPlayer
 from contrai_engine.model.round import Round
@@ -55,8 +56,11 @@ class _StubDeck:
         """Swallow the returned trick cards."""
 
 
-def _make_round(players_dict, hands, contract, plays, deck=None):
+def _make_round(players_dict, hands, contract, deck=None):
     """Build a ``Round`` wired to the supplied state.
+
+    ``play_trick`` seeds the play state lazily from the hands, so the
+    round needs nothing beyond the seating, the contract and the deal.
 
     Args:
         players_dict: mapping of seat letter → Player (from the
@@ -64,24 +68,19 @@ def _make_round(players_dict, hands, contract, plays, deck=None):
         hands: mapping of seat letter → list of Cards in that player's
             hand.
         contract: a Contract object (provides trump) or None.
-        plays: ordered list of (seat_letter, Card) tuples — the cards
-            already played in the current trick.
         deck: optional deck object; tests that run ``play_trick`` to
             completion pass a ``_StubDeck`` so the end-of-trick
             ``add_cards`` call has something to land on.
 
     Returns:
-        A Round whose ``current_trick`` reflects ``plays`` and whose
-        ``players_order`` is the four players in N/E/S/W order.
+        A Round whose ``players_order`` is the four players in N/E/S/W
+        order.
     """
     order = [players_dict[s] for s in ("N", "E", "S", "W")]
     for seat, cards in hands.items():
         players_dict[seat].hand = Hand(cards)
     round_ = Round(order, dealer=players_dict["N"], deck=deck, round_number=1)
     round_.contract = contract
-    round_.current_trick = Trick()
-    for seat, card in plays:
-        round_.current_trick.add_play(players_dict[seat], card)
     return round_
 
 
@@ -102,7 +101,6 @@ class TestPlayTrickRejectsIllegalCard:
             players,
             {"N": [n_card], "E": [e_illegal, e_follow], "S": [], "W": []},
             contract,
-            [],  # play_trick starts a fresh trick itself
         )
         # Scripted choices: N leads its only heart, E tries the illegal trump.
         players["N"].choose_card = (
@@ -125,10 +123,10 @@ class TestPlayTrickHumanUsesView:
     ``HumanPlayer.choose_card`` (which only returns None by design)."""
 
     def test_human_card_comes_from_view_not_choose_card(self):
-        human = HumanPlayer("H", "North")
-        east = AiPlayer("E", "East")
-        south = AiPlayer("S", "South")
-        west = AiPlayer("W", "West")
+        human = HumanPlayer("H", Position.NORTH)
+        east = AiPlayer("E", Position.EAST)
+        south = AiPlayer("S", Position.SOUTH)
+        west = AiPlayer("W", Position.WEST)
         order = [human, east, south, west]
         ns = Team("North-South", [human, south])
         ew = Team("East-West", [east, west])
@@ -205,7 +203,7 @@ class TestSyncHandsMirrorsPlayState:
             "W": Card(Suit.DIAMONDS, Rank.TEN),
         }
         hands = {seat: [played[seat], spares[seat]] for seat in played}
-        round_ = _make_round(players, hands, contract, [], deck=_StubDeck())
+        round_ = _make_round(players, hands, contract, deck=_StubDeck())
         for seat, card in played.items():
             players[seat].choose_card = (
                 lambda observation, _card=card: _card
@@ -243,7 +241,7 @@ class TestCardIdentityFlowsFromSeed:
             "S": [Card(Suit.HEARTS, Rank.EIGHT)],
             "W": [Card(Suit.HEARTS, Rank.NINE)],
         }
-        round_ = _make_round(players, hands, contract, [], deck=_StubDeck())
+        round_ = _make_round(players, hands, contract, deck=_StubDeck())
 
         captured: dict[str, list] = {}
 
@@ -321,7 +319,7 @@ class TestPlayStateSeeding:
         round_.contract = _contract(players["N"], 100, Suit.SPADES)
         # Corrupt the deal: one seat now holds only 7 cards. A validated
         # seeding (PlayState.start) must reject it.
-        players["N"].hand.remove(players["N"].hand[0])
+        players["N"].hand.remove(next(iter(players["N"].hand)))
 
         with pytest.raises(ValueError):
             round_.play_all_tricks()
@@ -340,7 +338,6 @@ class TestPlayStateSeeding:
             players,
             {seat: [card] for seat, card in cards.items()},
             contract,
-            [],
             deck=_StubDeck(),
         )
         for seat, card in cards.items():
@@ -377,7 +374,6 @@ class TestPlayThroughReachesTerminal:
 
         assert round_.play_state.is_terminal()
         assert len(round_.play_state.completed_tricks) == 8
-        assert len(round_.tricks) == 8
         for player in order:
             assert len(player.hand) == 0
 
@@ -404,7 +400,6 @@ class TestPlayTrickHandsObservation:
             players,
             {seat: [card] for seat, card in cards.items()},
             contract,
-            [],
             deck=_StubDeck(),
         )
 
@@ -460,7 +455,6 @@ class TestPlayTrickHandsObservation:
             players,
             {seat: [card] for seat, card in cards.items()},
             contract,
-            [],
             deck=_StubDeck(),
         )
         assert round_.auction is None  # nothing retained
@@ -502,7 +496,6 @@ class TestBeloteHolderDetection:
                 "W": [],
             },
             contract,
-            [],
         )
         round_._detect_belote_holder()
         assert round_.belote_holder is players["S"]
@@ -518,13 +511,12 @@ class TestBeloteHolderDetection:
                 "W": [],
             },
             contract,
-            [],
         )
         round_._detect_belote_holder()
         assert round_.belote_holder is None
 
     def test_no_holder_at_no_trump(self, players):
-        contract = _contract(players["N"], 100, Suit.NO_TRUMP)
+        contract = _contract(players["N"], 100, TrumpVariant.NO_TRUMP)
         round_ = _make_round(
             players,
             {
@@ -539,7 +531,6 @@ class TestBeloteHolderDetection:
                 "W": [],
             },
             contract,
-            [],
         )
         round_._detect_belote_holder()
         assert round_.belote_holder is None
@@ -564,7 +555,6 @@ class TestBeloteTransition:
                 "W": [],
             },
             contract,
-            [],
         )
         round_.belote_holder = players["S"]
         return round_
@@ -643,7 +633,7 @@ class TestManageBiddingAutoPasses:
           5. W: pass    (now passes_count = 3 → bidding ends)
         """
         # Make S a HumanPlayer so the view path is exercised.
-        human = HumanPlayer("You", "South")
+        human = HumanPlayer("You", Position.SOUTH)
         human.team = players["S"].team  # same N-S team
         players["S"] = human
 
@@ -689,4 +679,120 @@ class TestManageBiddingAutoPasses:
         assert contract.double is True
         # And the critical assertion: S was never prompted.
         assert prompts == []
+
+
+# ---------------------------------------------------------------------------
+# Debug-logging diagnostics (stdlib logging, model-side)
+# ---------------------------------------------------------------------------
+
+
+class TestContractFixedLogging:
+    """``manage_bidding`` logs the fixed contract once bidding closes."""
+
+    def test_contract_fixed_logs_at_debug(self, players, caplog):
+        w, n, e, s = players["W"], players["N"], players["E"], players["S"]
+        scripted = {
+            n: [ContractBid(n, 80, Suit.HEARTS)],
+            e: [PassBid(e)],
+            s: [PassBid(s)],
+            w: [PassBid(w)],
+        }
+        for ai, choices in scripted.items():
+            queue = list(choices)
+            ai.choose_bid = lambda _auction, _p=ai, _q=queue: (
+                _q.pop(0) if _q else PassBid(_p)
+            )
+
+        round_ = _empty_round(players)  # order N, E, S, W
+
+        with caplog.at_level(logging.DEBUG, logger="contrai_engine"):
+            contract = round_.manage_bidding()
+
+        assert contract is not None
+        records = [
+            record for record in caplog.records
+            if record.name == "contrai_engine.model.round.round"
+        ]
+        assert len(records) == 1
+        assert records[0].levelno == logging.DEBUG
+        assert records[0].getMessage() == "contract fixed: 80 Hearts by N"
+
+    def test_all_pass_does_not_log_contract_fixed(self, players, caplog):
+        """An all-passed auction never fixes a contract, so the
+        "contract fixed" line must never appear."""
+        for ai in players.values():
+            ai.choose_bid = lambda _auction, _p=ai: PassBid(_p)
+
+        round_ = _empty_round(players)
+
+        with caplog.at_level(logging.DEBUG, logger="contrai_engine"):
+            contract = round_.manage_bidding()
+
+        assert contract is None
+        assert not any(
+            "contract fixed" in record.getMessage() for record in caplog.records
+        )
+
+
+class TestTrickCompletedLogging:
+    """``play_trick`` logs the winner and point total once a trick closes."""
+
+    def _all_trump_trick(self, players):
+        """A one-round-of-spades trick: every seat holds a single trump
+        card, so follow-suit is trivial and the point/winner arithmetic is
+        easy to state by hand.
+
+        J♠ (20) + 9♠ (14) + A♠ (11) + 7♠ (0) = 45 trump points; the Jack of
+        trump outranks every other trump card, so North (the leader) wins.
+        """
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        hands = {
+            "N": [Card(Suit.SPADES, Rank.JACK)],
+            "E": [Card(Suit.SPADES, Rank.NINE)],
+            "S": [Card(Suit.SPADES, Rank.ACE)],
+            "W": [Card(Suit.SPADES, Rank.SEVEN)],
+        }
+        round_ = _make_round(players, hands, contract, deck=_StubDeck())
+        for seat, cards in hands.items():
+            players[seat].choose_card = (
+                lambda observation, _card=cards[0]: _card
+            )
+        return round_
+
+    def test_trick_completed_logs_winner_and_points_at_debug(
+        self, players, caplog
+    ):
+        round_ = self._all_trump_trick(players)
+
+        with caplog.at_level(logging.DEBUG, logger="contrai_engine"):
+            round_.play_trick()
+
+        records = [
+            record for record in caplog.records
+            if record.name == "contrai_engine.model.round.round"
+        ]
+        assert len(records) == 1
+        assert records[0].levelno == logging.DEBUG
+        assert records[0].getMessage() == (
+            "trick 1 complete: winner North, 45 points"
+        )
+
+    def test_trick_completed_emits_no_debug_log_by_default(
+        self, players, caplog
+    ):
+        """Test that no trick-completed record is captured at the default
+        log level. A caplog assertion only observes the emitted record, so
+        this can't distinguish "the guard skipped the points sum" from
+        "the sum ran but the disabled logger call no-opped it" — it
+        confirms the observable, back-compat-relevant behavior: nothing is
+        emitted for contrai_engine.model.round.round when DEBUG is not
+        active."""
+        round_ = self._all_trump_trick(players)
+
+        round_.play_trick()
+
+        assert not any(
+            record.name == "contrai_engine.model.round.round"
+            for record in caplog.records
+        )
 

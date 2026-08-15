@@ -11,9 +11,9 @@ from collections import Counter
 import pytest
 
 from contrai_core import (
-    CARD_SUITS,
     Card,
     Deck,
+    Hand,
     InvalidCardCountError,
     InvalidPlayerCountError,
     Rank,
@@ -28,10 +28,10 @@ def deck():
     return Deck()
 
 class DummyPlayer:
-    """Minimal player stand-in: just the ``hand`` list ``deal`` fills."""
+    """Minimal player stand-in: just the ``Hand`` ``deal`` fills."""
 
     def __init__(self):
-        self.hand = []
+        self.hand = Hand()
 
 def test_deck_initialization(deck):
     """
@@ -49,7 +49,7 @@ def test_deck_has_all_card_combinations():
     the suit × rank product — no ``str()`` projection needed.
     """
     deck = Deck()
-    expected_cards = {Card(suit, rank) for suit in CARD_SUITS for rank in Rank}
+    expected_cards = {Card(suit, rank) for suit in Suit for rank in Rank}
     assert set(deck.cards) == expected_cards
 
 def test_shuffle_changes_order(deck):

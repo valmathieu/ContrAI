@@ -14,14 +14,19 @@ search or reinforcement-learning game-state interface wants:
   obligation-breaking play.
 - Derived views (:attr:`PlayState.trick_number`,
   :attr:`PlayState.current_trick`, :attr:`PlayState.completed_tricks`,
-  :attr:`PlayState.trick_winners`, :attr:`PlayState.to_act`,
+  :attr:`PlayState.trick_winners`, :attr:`PlayState.card_points_by_side`,
+  :attr:`PlayState.trick_counts_by_side`, :attr:`PlayState.to_act`,
   :meth:`PlayState.is_terminal`) recomputed from the flat play history.
 - :meth:`PlayState.with_hands` to fork the same public state onto
   replacement hands — the determinization primitive search-based AIs need.
 - :meth:`PlayState.observe` to project the full state — which holds every
   seat's hand — down to a :class:`PlayObservation`, the imperfect-
-  information view a single player is allowed to see. This is the input
-  surface handed to AI card-play strategies, never the raw ``PlayState``.
+  information view a single player is allowed to see. Every person the
+  observation names is named by seat: its trick records are sealed to
+  :class:`ObservedPlay` ``(position, card)`` pairs, its contract to an
+  :class:`~contrai_core.ObservedContract`, its auction to
+  ``Bid[Position]`` records. This is the input surface handed to AI
+  card-play strategies, never the raw ``PlayState``.
 
 Play records are plain ``(player, card)`` pairs, so the same tuples flow
 through the derived views and the winner rule (:func:`current_winner`) that
@@ -33,16 +38,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, NamedTuple, Optional
 
+from .bid import seal_bid
 from .exceptions import IllegalPlayError, PlayRuleViolation
-from .trick import current_winner
+from .rules import NoTrumpRules, TrumpRules, rules_for
+from .team_side import TeamSide
+from .trick import TrickRecord, current_winner
 
 if TYPE_CHECKING:
     from .bid import Bid
     from .card import Card
-    from .contract import Contract
+    from .contract import Contract, ObservedContract
     from .player import BasePlayer
+    from .position import Position
     from .team import Team
-    from .types import Suit
+    from .types import ContractSuit, Suit
 
 
 class Play(NamedTuple):
@@ -58,8 +67,31 @@ class Play(NamedTuple):
         card: The card that was played.
     """
 
-    player: "BasePlayer"
-    card: "Card"
+    player: BasePlayer
+    card: Card
+
+
+class ObservedPlay(NamedTuple):
+    """A single card play as an observation reports it: seat + card.
+
+    The observation-facing counterpart of :class:`Play`. Where a ``Play``
+    holds a live :class:`BasePlayer` reference — through which a consumer
+    could reach ``player.hand`` and read cards it is not entitled to —
+    an ``ObservedPlay`` carries only the seat's opaque :class:`Position`,
+    so no hand is reachable through a trick record.
+
+    Unpacks as a ``(position, card)`` pair, mirroring how :class:`Play`
+    unpacks as ``(player, card)`` — consumers iterating ``(who, card)``
+    pairs stay drop-in compatible, they just receive a seat identifier
+    for ``who``.
+
+    Attributes:
+        position: The seat that played the card.
+        card: The card that was played.
+    """
+
+    position: Position
+    card: Card
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,9 +133,9 @@ class PlayState:
             one trick. Defaults to empty — a fresh play phase.
     """
 
-    contract: "Contract"
-    players: tuple["BasePlayer", ...]
-    hands: tuple[tuple["Card", ...], ...]
+    contract: Contract
+    players: tuple[BasePlayer, ...]
+    hands: tuple[tuple[Card, ...], ...]
     plays: tuple[Play, ...] = field(default=())
 
     # ------------------------------------------------------------------
@@ -113,9 +145,9 @@ class PlayState:
     @classmethod
     def start(
         cls,
-        contract: "Contract",
-        players: tuple["BasePlayer", ...],
-        hands: tuple[tuple["Card", ...], ...],
+        contract: Contract,
+        players: tuple[BasePlayer, ...],
+        hands: tuple[tuple[Card, ...], ...],
     ) -> "PlayState":
         """Seed a validated play phase from a fresh deal.
 
@@ -186,15 +218,21 @@ class PlayState:
         return self.plays[self.trick_number * 4:]
 
     @property
-    def completed_tricks(self) -> tuple[tuple[Play, ...], ...]:
-        """The completed tricks, each a tuple of exactly four plays."""
+    def completed_tricks(self) -> tuple[TrickRecord[Play], ...]:
+        """The completed tricks, each a :class:`TrickRecord` of four plays.
+
+        Each record iterates and unpacks exactly like the bare four-play
+        tuple it types, and additionally knows its :attr:`~TrickRecord.led_suit`
+        and :meth:`~TrickRecord.winner`.
+        """
 
         return tuple(
-            self.plays[i:i + 4] for i in range(0, self.trick_number * 4, 4)
+            TrickRecord(self.plays[i:i + 4])
+            for i in range(0, self.trick_number * 4, 4)
         )
 
     @property
-    def trick_winners(self) -> tuple["BasePlayer", ...]:
+    def trick_winners(self) -> tuple[BasePlayer, ...]:
         """The winning player of each completed trick, in trick order."""
 
         trump_suit = self._trump_suit
@@ -204,7 +242,60 @@ class PlayState:
         )
 
     @property
-    def to_act(self) -> Optional["BasePlayer"]:
+    def card_points_by_side(self) -> dict[TeamSide, int]:
+        """Trump-aware card points captured by each side so far.
+
+        Each completed trick's whole pile is credited to the side of the
+        seat that won it, scored through the contract's
+        :class:`~contrai_core.TrumpRules` — so the 9 and the Jack of
+        trump carry their trump values and every other card its plain
+        one. The in-progress trick contributes nothing: nobody has
+        captured it yet.
+
+        This is the **raw pile only**. The last-trick bonus and the
+        Belote bonus are contract-conversion rules, not facts about
+        which cards were captured, and belong to whoever scores the
+        round.
+
+        Returns:
+            Every :class:`~contrai_core.TeamSide` member as a key, so
+            callers index directly rather than going through ``.get``;
+            a side that has captured nothing maps to ``0``. Over a
+            completed round the two values sum to 152 — the deck's card
+            points, before any bonus.
+        """
+
+        rules = rules_for(self._trump_suit)
+        points = {side: 0 for side in TeamSide}
+        for trick, winner in zip(self.completed_tricks, self.trick_winners):
+            points[winner.position.team_side] += sum(
+                rules.points(play.card) for play in trick
+            )
+        return points
+
+    @property
+    def trick_counts_by_side(self) -> dict[TeamSide, int]:
+        """Completed tricks captured by each side so far.
+
+        The same tally as :attr:`card_points_by_side` counting tricks
+        instead of points, credited off the same
+        :attr:`trick_winners` derivation — so the two can never
+        disagree about who took what.
+
+        Returns:
+            Every :class:`~contrai_core.TeamSide` member as a key,
+            mapping to the number of completed tricks that side won;
+            ``0`` for a side that has won none. The two values sum to
+            :attr:`trick_number`.
+        """
+
+        counts = {side: 0 for side in TeamSide}
+        for winner in self.trick_winners:
+            counts[winner.position.team_side] += 1
+        return counts
+
+    @property
+    def to_act(self) -> Optional[BasePlayer]:
         """The player whose turn it is, or ``None`` once the phase is over.
 
         Within a trick the turn rotates in seating order from that trick's
@@ -228,7 +319,7 @@ class PlayState:
     # Hand lookup
     # ------------------------------------------------------------------
 
-    def hand_of(self, player: "BasePlayer") -> tuple["Card", ...]:
+    def hand_of(self, player: BasePlayer) -> tuple[Card, ...]:
         """Return ``player``'s remaining cards.
 
         Args:
@@ -247,7 +338,7 @@ class PlayState:
     # Legality
     # ------------------------------------------------------------------
 
-    def legal_actions(self, player: "BasePlayer") -> tuple["Card", ...]:
+    def legal_actions(self, player: BasePlayer) -> tuple[Card, ...]:
         """Enumerate every card ``player`` may legally play right now.
 
         This is player-parametric and enforces **no** turn order — it
@@ -284,7 +375,7 @@ class PlayState:
         if not hand:
             return ()
 
-        trump_suit = self._trump_suit
+        rules = rules_for(self._trump_suit)
         trick = self.current_trick
         if not trick:
             # First to play in this trick — anything goes.
@@ -292,17 +383,15 @@ class PlayState:
 
         lead_suit = trick[0].card.suit
         lead_suit_cards = tuple(card for card in hand if card.suit == lead_suit)
-        trump_cards = (
-            tuple(card for card in hand if card.suit == trump_suit)
-            if trump_suit
-            else ()
-        )
+        # No regime guard needed: ``rules.is_trump`` already answers False
+        # for every card when no suit is trump.
+        trump_cards = tuple(card for card in hand if rules.is_trump(card.suit))
 
         # Rule 1/2 — follow suit, over-trumping when the led suit is trump.
         if lead_suit_cards:
-            if trump_suit and lead_suit == trump_suit:
+            if rules.is_trump(lead_suit):
                 higher = _higher_trumps_than_played(
-                    lead_suit_cards, trick, trump_suit
+                    lead_suit_cards, trick, rules
                 )
                 return higher if higher else lead_suit_cards
             return lead_suit_cards
@@ -310,25 +399,28 @@ class PlayState:
         # Rule 4 — partner-master exemption. Applies only while the partner
         # is *currently* winning; a partner since over-trumped no longer
         # shields the player from the trump obligation.
-        current_master = current_winner(list(trick), trump_suit)
+        current_master = current_winner(list(trick), self._trump_suit)
         if current_master is not None and current_master.team == player.team:
             return tuple(hand)
 
-        # No trump suit (or the led suit is trump and we are void in it):
-        # nothing to over-trump, free discard.
-        if not trump_suit or lead_suit == trump_suit:
+        # No trump suit at all (or the led suit is trump and we are void in
+        # it): nothing to trump with, free discard. The regime test is an
+        # ``isinstance`` check against the sealed no-trump leaf — an enum
+        # member is always truthy, so no bare ``if not trump_suit`` can
+        # distinguish a NO_TRUMP contract from a suit one.
+        if isinstance(rules, NoTrumpRules) or rules.is_trump(lead_suit):
             return tuple(hand)
 
         # Rule 3 — trump obligation. If an opponent has ruffed, beat them.
         highest_opponent_trump = _highest_opponent_trump(
-            trick, player.team, trump_suit
+            trick, player.team, rules
         )
         if highest_opponent_trump is not None:
             higher_trumps = tuple(
                 card
                 for card in trump_cards
-                if card.get_order(trump_suit)
-                > highest_opponent_trump.get_order(trump_suit)
+                if rules.rank_in_suit(card)
+                > rules.rank_in_suit(highest_opponent_trump)
             )
             if higher_trumps:
                 return higher_trumps
@@ -407,7 +499,7 @@ class PlayState:
     # ------------------------------------------------------------------
 
     def with_hands(
-        self, hands: tuple[tuple["Card", ...], ...]
+        self, hands: tuple[tuple[Card, ...], ...]
     ) -> "PlayState":
         """Fork this state onto replacement hands.
 
@@ -460,7 +552,7 @@ class PlayState:
     # ------------------------------------------------------------------
 
     def observe(
-        self, player: "BasePlayer", bids: tuple["Bid", ...] = ()
+        self, player: BasePlayer, bids: tuple[Bid, ...] = ()
     ) -> "PlayObservation":
         """Project this state down to what ``player`` is allowed to see.
 
@@ -468,15 +560,28 @@ class PlayState:
         ``PlayState`` holds every seat's hand, but a card-play strategy
         must reason from only what its own seat has observed. The
         resulting :class:`PlayObservation` carries ``player``'s own hand,
-        the public trick history, and ``player``'s legal plays right now
-        — nothing else.
+        the public trick history, the contract and auction, and
+        ``player``'s legal plays right now — nothing else.
+
+        Every person the observation would otherwise name is re-recorded
+        as a bare seat on the way out: the trick history as
+        :class:`ObservedPlay` ``(position, card)`` pairs, the contract as
+        an :class:`~contrai_core.ObservedContract`, each bid via
+        :func:`~contrai_core.seal_bid`. No live :class:`BasePlayer`
+        survives the projection, so no other seat's hand is reachable
+        through what is handed over — not directly, and not through
+        ``player.team.players`` either.
+
+        The observing player is still passed in live: the state needs the
+        identity to look up the hand and the legal actions. Only what
+        comes back out is sealed.
 
         Args:
             player: The observing seat.
             bids: The auction history to attach to the observation,
-                passed through unchanged. ``PlayState`` has no notion of
-                the auction itself — the caller (the engine's ``Round``)
-                supplies it. Defaults to an empty tuple.
+                sealed onto seats on the way in. ``PlayState`` has no
+                notion of the auction itself — the caller (the engine's
+                ``Round``) supplies it. Defaults to an empty tuple.
 
         Returns:
             A :class:`PlayObservation` seeded from this state, from
@@ -487,12 +592,15 @@ class PlayState:
         """
 
         return PlayObservation(
-            player=player,
+            position=player.position,
             hand=self.hand_of(player),
-            contract=self.contract,
-            bids=tuple(bids),
-            completed_tricks=self.completed_tricks,
-            current_trick=self.current_trick,
+            contract=self.contract.observed() if self.contract else None,
+            bids=tuple(seal_bid(bid) for bid in bids),
+            completed_tricks=tuple(
+                TrickRecord(_seal_plays(trick))
+                for trick in self.completed_tricks
+            ),
+            current_trick=_seal_plays(self.current_trick),
             legal_cards=self.legal_actions(player),
         )
 
@@ -501,12 +609,12 @@ class PlayState:
     # ------------------------------------------------------------------
 
     @property
-    def _trump_suit(self) -> Optional["Suit"]:
+    def _trump_suit(self) -> Optional[ContractSuit]:
         """The contract's trump suit, or ``None`` when there is no contract."""
 
         return self.contract.suit if self.contract else None
 
-    def _seat_of(self, player: "BasePlayer") -> int:
+    def _seat_of(self, player: BasePlayer) -> int:
         """Return the seat index of ``player`` by identity.
 
         Args:
@@ -524,7 +632,7 @@ class PlayState:
                 return seat
         raise ValueError(f"Player {player!r} is not seated in this state.")
 
-    def _leader_of_current_trick(self) -> "BasePlayer":
+    def _leader_of_current_trick(self) -> BasePlayer:
         """Return the player who led the in-progress trick.
 
         Trick 0 is led by ``players[0]``; every later trick is led by the
@@ -550,41 +658,48 @@ class PlayObservation:
     never accidentally read another seat's hand through the object it was
     given.
 
-    Trust-boundary caveat: the :class:`Play` records carried in
-    ``completed_tricks`` and ``current_trick`` hold live ``BasePlayer``
-    references (``Play.player``), so a strategy that reaches through
-    ``play.player.hand`` could technically still see another seat's cards
-    — this observation seals what is *handed over*, not every object path
-    reachable from it. Sealing that off (e.g. replacing ``Play.player``
-    with an opaque seat identifier for observations) is a noted follow-up,
-    not something this projection solves.
+    **Every seat is named by :class:`~contrai_core.Position` and nothing
+    else** — the observer itself, the trick records, the contract's
+    declarer and doublers, and each bidder in the auction. No live
+    :class:`BasePlayer` is reachable by any object path from an
+    observation, which is what makes that guarantee hold: a
+    ``BasePlayer`` exposes ``.hand`` directly and, through ``.team``,
+    the partner's hand as well, so a single surviving reference would
+    reopen the whole leak. The hidden state a search or learning agent
+    must infer therefore cannot be read off its own input, and an
+    evaluation result cannot be quietly invalidated by a policy that
+    found the shortcut.
 
     Attributes:
-        player: The observer — the seat this observation is from the
-            point of view of.
+        position: The observer's seat — the point of view this
+            observation is from.
         hand: The observer's own remaining cards, and only the observer's;
             no other seat's hand is reachable from this field.
-        contract: The established contract, supplying the trump suit,
-            value, and bidder.
-        bids: The auction history, passed through unchanged from whatever
-            :meth:`PlayState.observe` was given — the play state itself
-            has no notion of the auction.
-        completed_tricks: The completed tricks, each a tuple of four
-            plays, exactly as :attr:`PlayState.completed_tricks` reports —
-            this history is public.
-        current_trick: The plays made so far in the in-progress trick —
-            also public.
+        contract: The established contract as an
+            :class:`~contrai_core.ObservedContract`, supplying the trump
+            suit, value, and the declarer's seat. ``None`` when the state
+            carries no contract.
+        bids: The auction history sealed onto seats — the same four
+            variants an :class:`~contrai_core.Auction` holds, each with
+            a :class:`~contrai_core.Position` in place of the bidder.
+        completed_tricks: The completed tricks, each a
+            :class:`~contrai_core.TrickRecord` of four
+            :class:`ObservedPlay` records mirroring
+            :attr:`PlayState.completed_tricks` play for play — this
+            history is public.
+        current_trick: The plays made so far in the in-progress trick,
+            as :class:`ObservedPlay` records — also public.
         legal_cards: The observer's legal plays right now, a subset of
             ``hand``.
     """
 
-    player: "BasePlayer"
-    hand: tuple["Card", ...]
-    contract: "Contract"
-    bids: tuple["Bid", ...]
-    completed_tricks: tuple[tuple[Play, ...], ...]
-    current_trick: tuple[Play, ...]
-    legal_cards: tuple["Card", ...]
+    position: Position
+    hand: tuple[Card, ...]
+    contract: Optional[ObservedContract]
+    bids: tuple[Bid[Position], ...]
+    completed_tricks: tuple[TrickRecord[ObservedPlay], ...]
+    current_trick: tuple[ObservedPlay, ...]
+    legal_cards: tuple[Card, ...]
 
     @property
     def trick_number(self) -> int:
@@ -598,11 +713,11 @@ class PlayObservation:
         return len(self.completed_tricks)
 
     @property
-    def trump_suit(self) -> Optional["Suit"]:
+    def trump_suit(self) -> Optional[ContractSuit]:
         """The contract's trump suit, or ``None`` when there is no contract.
 
         Same rule as the state this observation was derived from: for a
-        ``NO_TRUMP`` contract this is ``Suit.NO_TRUMP`` itself, not
+        ``NO_TRUMP`` contract this is ``TrumpVariant.NO_TRUMP`` itself, not
         ``None`` — no real card ever carries that suit, so every
         trump-related rule (and :func:`current_winner`) already degrades
         correctly when handed it.
@@ -611,7 +726,7 @@ class PlayObservation:
         return self.contract.suit if self.contract else None
 
     @property
-    def led_suit(self) -> Optional["Suit"]:
+    def led_suit(self) -> Optional[Suit]:
         """The suit led in the in-progress trick, or ``None`` if it is empty."""
 
         if not self.current_trick:
@@ -619,7 +734,7 @@ class PlayObservation:
         return self.current_trick[0].card.suit
 
     @property
-    def played_cards(self) -> tuple["Card", ...]:
+    def played_cards(self) -> tuple[Card, ...]:
         """Every publicly seen card, flattened in chronological play order.
 
         Completed tricks first (in trick order), then the in-progress
@@ -631,24 +746,46 @@ class PlayObservation:
         ) + tuple(play.card for play in self.current_trick)
 
     @property
-    def current_winner(self) -> Optional["BasePlayer"]:
-        """The player currently winning the in-progress trick.
+    def current_winner(self) -> Optional[Position]:
+        """The seat currently winning the in-progress trick.
 
         ``None`` while the trick is empty. Computed the same way
         :attr:`PlayState.trick_winners` computes a completed trick's
-        winner — via the module-level :func:`current_winner` — so a
-        partially played trick and a just-completed one agree on who is
-        master.
+        winner — via the module-level :func:`current_winner`, which is
+        generic over the "who" slot of its plays — so a partially played
+        trick and a just-completed one agree on who is master. Reported
+        as a :class:`Position` because that is all the sealed
+        :class:`ObservedPlay` records carry.
         """
 
         return current_winner(list(self.current_trick), self.trump_suit)
 
 
+def _seal_plays(plays: tuple[Play, ...]) -> tuple[ObservedPlay, ...]:
+    """Project :class:`Play` records down to sealed observation records.
+
+    The seat's :class:`Position` replaces the live :class:`BasePlayer`
+    reference — the one object path through which an observation
+    consumer could have reached another seat's hand.
+
+    Args:
+        plays: The play records to seal, in play order.
+
+    Returns:
+        The same plays as :class:`ObservedPlay` ``(position, card)``
+        pairs, order preserved.
+    """
+
+    return tuple(
+        ObservedPlay(play.player.position, play.card) for play in plays
+    )
+
+
 def _higher_trumps_than_played(
-    trumps_in_hand: tuple["Card", ...],
+    trumps_in_hand: tuple[Card, ...],
     plays: tuple[Play, ...],
-    trump_suit: "Suit",
-) -> tuple["Card", ...]:
+    rules: TrumpRules,
+) -> tuple[Card, ...]:
     """Return the held trumps that beat every trump already in ``plays``.
 
     Used by the over-trump rule when the led suit is itself trump. Returns
@@ -659,7 +796,9 @@ def _higher_trumps_than_played(
     Args:
         trumps_in_hand: The candidate trumps from the player's hand.
         plays: The plays of the current trick.
-        trump_suit: The trump suit to rank by.
+        rules: The contract's trick rules, supplying trumpness and the
+            in-suit ranking. All cards compared here are trumps of the
+            same suit, which is exactly what ``rank_in_suit`` orders.
 
     Returns:
         The subset of ``trumps_in_hand`` outranking the best trump played.
@@ -667,10 +806,10 @@ def _higher_trumps_than_played(
 
     best_so_far = None
     for _, card in plays:
-        if card.suit != trump_suit:
+        if not rules.is_trump(card.suit):
             continue
-        if best_so_far is None or card.get_order(trump_suit) > best_so_far.get_order(
-            trump_suit
+        if best_so_far is None or rules.rank_in_suit(card) > rules.rank_in_suit(
+            best_so_far
         ):
             best_so_far = card
     if best_so_far is None:
@@ -678,20 +817,22 @@ def _higher_trumps_than_played(
     return tuple(
         card
         for card in trumps_in_hand
-        if card.get_order(trump_suit) > best_so_far.get_order(trump_suit)
+        if rules.rank_in_suit(card) > rules.rank_in_suit(best_so_far)
     )
 
 
 def _highest_opponent_trump(
-    plays: tuple[Play, ...], player_team: "Team", trump_suit: Optional["Suit"]
-) -> Optional["Card"]:
+    plays: tuple[Play, ...],
+    player_team: Team,
+    rules: TrumpRules,
+) -> Optional[Card]:
     """Return the highest trump an opponent of ``player_team`` has played.
 
     Args:
         plays: The plays of the current trick.
         player_team: The team whose opponents' trumps we scan for.
-        trump_suit: The trump suit to rank by; ``None``/``NO_TRUMP`` yields
-            no trumps at all.
+        rules: The contract's trick rules; under the no-trump regime no
+            card is trump, so the scan finds nothing.
 
     Returns:
         The highest opposing trump card, or ``None`` if none was played.
@@ -699,21 +840,21 @@ def _highest_opponent_trump(
 
     highest = None
     for trick_player, card in plays:
-        if card.suit != trump_suit or trick_player.team == player_team:
+        if not rules.is_trump(card.suit) or trick_player.team == player_team:
             continue
-        if highest is None or card.get_order(trump_suit) > highest.get_order(
-            trump_suit
+        if highest is None or rules.rank_in_suit(card) > rules.rank_in_suit(
+            highest
         ):
             highest = card
     return highest
 
 
 def _classify_violation(
-    player: "BasePlayer",
-    card: "Card",
-    trump_suit: Optional["Suit"],
+    player: BasePlayer,
+    card: Card,
+    trump_suit: Optional[ContractSuit],
     trick: tuple[Play, ...],
-    hand: tuple["Card", ...],
+    hand: tuple[Card, ...],
 ) -> PlayRuleViolation:
     """Classify *why* an in-hand card is an illegal play.
 
@@ -733,22 +874,29 @@ def _classify_violation(
         The :class:`PlayRuleViolation` for the broken obligation.
     """
 
+    rules = rules_for(trump_suit)
     lead_suit = trick[0].card.suit
     lead_suit_cards = [c for c in hand if c.suit == lead_suit]
 
-    # Held the led suit. Trump led + a too-low trump is an over-trump
-    # failure; anything else off-suit is a follow failure.
+    # Held the led suit. Trump led + a too-low card of that suit is an
+    # over-trump failure; anything else off-suit is a follow failure. The
+    # played card is discriminated by its *suit* against the led one —
+    # under a single-suit contract that is the same question as "is it
+    # trump", and it stays the right one for any regime where the led
+    # suit competes on its own scale.
     if lead_suit_cards:
-        if trump_suit and lead_suit == trump_suit and card.suit == trump_suit:
+        if rules.is_trump(lead_suit) and card.suit == lead_suit:
             return PlayRuleViolation.MUST_OVERTRUMP
         return PlayRuleViolation.MUST_FOLLOW_SUIT
 
     # Void in the led suit (partner-master plays are legal, so never reach
     # here). An opponent already ruffed and we under-trumped → over-trump
-    # failure; otherwise we discarded instead of trumping.
+    # failure; otherwise we discarded instead of trumping. Here the
+    # discriminator is genuine trumpness — the card competes as a trump,
+    # wherever the trick was led.
     highest_opponent_trump = _highest_opponent_trump(
-        trick, player.team, trump_suit
+        trick, player.team, rules
     )
-    if highest_opponent_trump is not None and card.suit == trump_suit:
+    if highest_opponent_trump is not None and rules.is_trump(card.suit):
         return PlayRuleViolation.MUST_OVERTRUMP
     return PlayRuleViolation.MUST_TRUMP

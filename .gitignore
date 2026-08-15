@@ -25,6 +25,11 @@ htmlcov/
 # Auto-saved shadows of .ipynb files. Cause noisy diffs and merge conflicts.
 .ipynb_checkpoints/
 
+# ─── Engine debug mode ────────────────────────────────────────────────────
+# Per-run diagnostics written by `contrai --debug` into the working
+# directory. Overwritten on every run - a local artifact, never a repo file.
+contrai-debug.log
+
 # ─── Editors / IDEs ───────────────────────────────────────────────────────
 .idea/
 .vscode/
@@ -34,13 +39,15 @@ htmlcov/
 Thumbs.db
 
 # ─── AI assistants ────────────────────────────────────────────────────────
-# Track shared Claude Code project config (.claude/settings.json, slash
-# commands, hooks) but NOT per-user local overrides (machine-specific paths,
-# personal preferences).
-.claude/settings.local.json
+# The whole Claude Code workspace (settings, skills, worktrees) stays local.
+.claude/
 CLAUDE.md
 
 # Superpowers planning documents (brainstorm specs, implementation plans) are
 # session artifacts, not repo docs - keep them local.
 docs/superpowers/
 docs/plans/
+
+# One design doc per major feature branch, holding the architectural rationale
+# and the feature roadmap. Local by design - they track a branch, not the repo.
+*_DESIGN.md

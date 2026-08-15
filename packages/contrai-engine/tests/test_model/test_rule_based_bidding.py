@@ -17,6 +17,7 @@ from contrai_core import (
     DoubleBid,
     Hand,
     PassBid,
+    Position,
     RedoubleBid,
     SlamLevel,
 )
@@ -41,9 +42,9 @@ class TestAiPlayerBidding:
     @pytest.fixture
     def ai_player(self):
         """Create an AI player for testing"""
-        player = AiPlayer("TestBot", "North")
+        player = AiPlayer("TestBot", Position.NORTH)
         # Create a mock team
-        partner = AiPlayer("Partner", "South")
+        partner = AiPlayer("Partner", Position.SOUTH)
         team = Team("North-South", [player, partner])
         player.team = team
         partner.team = team
@@ -52,8 +53,8 @@ class TestAiPlayerBidding:
     @pytest.fixture
     def ai_opponent_player(self):
         """Create an opponent AI player for testing"""
-        opponent = AiPlayer("Opponent", "West")
-        opponent_partner = AiPlayer("OpponentPartner", "East")
+        opponent = AiPlayer("Opponent", Position.WEST)
+        opponent_partner = AiPlayer("OpponentPartner", Position.EAST)
         opponent_team = Team("East-West", [opponent, opponent_partner])
         opponent.team = opponent_team
         opponent_partner.team = opponent_team
@@ -551,15 +552,15 @@ class TestAiPlayerDoubling:
     @pytest.fixture
     def ai_players_with_teams(self):
         """Create AI players with team setup"""
-        player = AiPlayer("TestBot", "North")
-        partner = AiPlayer("Partner", "South")
+        player = AiPlayer("TestBot", Position.NORTH)
+        partner = AiPlayer("Partner", Position.SOUTH)
         team = Team("North-South", [player, partner])
         player.team = team
         partner.team = team
 
         # Create opponent team
-        opponent1 = AiPlayer("Opponent1", "West")
-        opponent2 = AiPlayer("Opponent2", "East")
+        opponent1 = AiPlayer("Opponent1", Position.WEST)
+        opponent2 = AiPlayer("Opponent2", Position.EAST)
         opponent_team = Team("East-West", [opponent1, opponent2])
         opponent1.team = opponent_team
         opponent2.team = opponent_team
@@ -627,10 +628,10 @@ class TestSupportCeiling:
     @pytest.fixture
     def four_ai_players(self):
         """Four AI players seated N/E/S/W with N-S and E-W teams."""
-        north = AiPlayer("North", "North")
-        east = AiPlayer("East", "East")
-        south = AiPlayer("South", "South")
-        west = AiPlayer("West", "West")
+        north = AiPlayer("North", Position.NORTH)
+        east = AiPlayer("East", Position.EAST)
+        south = AiPlayer("South", Position.SOUTH)
+        west = AiPlayer("West", Position.WEST)
 
         ns_team = Team("North-South", [north, south])
         ew_team = Team("East-West", [east, west])

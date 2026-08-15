@@ -1,5 +1,7 @@
 """Unit tests for the AI level registry + factory."""
 
+from contrai_core.position import Position
+
 from contrai_engine.model.player import (
     AI_LEVELS,
     AiPlayer,
@@ -19,7 +21,7 @@ def test_expert_level_maps_to_rule_based_pair():
 
 def test_make_ai_player_builds_expert_by_default():
     """``make_ai_player`` defaults to the expert level."""
-    player = make_ai_player("Bot", "South")
+    player = make_ai_player("Bot", Position.SOUTH)
     assert isinstance(player, AiPlayer)
     assert isinstance(player.bidding, RuleBasedBiddingStrategy)
     assert isinstance(player.cardplay, RuleBasedCardPlayStrategy)
@@ -27,6 +29,6 @@ def test_make_ai_player_builds_expert_by_default():
 
 def test_make_ai_player_wires_strategies_to_the_player():
     """The built strategies hold a back-reference to the player."""
-    player = make_ai_player("Bot", "South", level="expert")
+    player = make_ai_player("Bot", Position.SOUTH, level="expert")
     assert player.bidding._player is player
     assert player.cardplay._player is player

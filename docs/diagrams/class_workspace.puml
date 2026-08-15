@@ -31,11 +31,13 @@ package "contrai-core\n(shared domain model)" as P_core {
     class "Contract"   as C_contract #E1F0FF
     class "BasePlayer" as C_player   #E1F0FF
     class "Team"       as C_team     #E1F0FF
+    class "Position"   as C_position #E1F0FF
 
     C_hand --> C_card
     C_deck --> C_card
     C_player --> C_hand
     C_player --> C_team
+    C_player --> C_position
     C_trick --> C_card
     C_contract --> C_bid
     C_bid --> C_player
@@ -58,7 +60,7 @@ package "contrai-engine\n(MVC + game loop)" as P_engine {
     E_player <|-- E_ai
     E_game *-- E_round
     E_game *-- E_player
-    E_round ..> E_view : <<consults\nvia hooks>>
+    E_round ..> E_view : <<consults via hooks>>
     E_cli ..> E_game : <<owns loop>>
     E_cli ..> E_view : <<owns screens>>
 }
@@ -81,14 +83,31 @@ package "contrai-analyzer\n(Streamlit hand strength)" as P_analyzer {
 ' contrai-scraper — purple
 ' =========================================================
 package "contrai-scraper\n(Playwright spectator)" as P_scraper {
-    class "main.py" as S_main <<module>> #EDE7F6 {
+    class "cli.py" as S_cli <<module>> #EDE7F6 {
+        + scrape()
         + main()
-        + observe_game(page)
-        + get_players(page)
-        + get_current_round(page)
-        + wait_for_new_round(page, current)
-        + is_game_scrapeable(players)
     }
+    class "session.py" as S_session <<module>> #EDE7F6 {
+        + log_in(page)
+        + open_spectator_mode(page)
+        + find_tournament_table(page) : bool
+    }
+    class "observer.py" as S_observer <<module>> #EDE7F6 {
+        + get_players(page) : dict<str, str>
+        + is_game_scrapeable(players) : bool
+        + get_current_round(page) : int
+        + wait_for_new_round(page, current) : int
+        + observe_game(page)
+    }
+    class "config.py" as S_config <<module>> #EDE7F6 {
+        + {static} TARGET_URL : str
+        + {static} ACCOUNT_EMAIL : str
+        + {static} VERIFICATION_CODE : str
+    }
+
+    S_cli ..> S_session : navigates to a table
+    S_cli ..> S_observer : hands the table over
+    S_session ..> S_config
 }
 
 ' =========================================================
@@ -97,15 +116,18 @@ package "contrai-scraper\n(Playwright spectator)" as P_scraper {
 
 ' Engine extends + uses core
 E_player --|> C_player : <<extends>>
-P_engine ..> P_core : <<uses>>\n(Card, Suit, Rank,\n Bid, Contract, Trick,\n Team, Deck)
+P_engine ..> P_core : uses Card, Suit, TrumpVariant,\nContractSuit, Rank, Position, Bid,\nContract, Trick, Team, Deck,\nis_trump / trump_suits
 
 ' Analyzer deliberately does NOT depend on core
 note as N_analyzer_indep
   **Deliberately independent.**
-  `contrai-analyzer` does not import anything
-  from `contrai_core`. Its `SuitSlot` is a
-  suit-agnostic abstraction for combinatorial
-  math, not a duplicate of core's `Suit`.
+  ""contrai-analyzer"" does not import anything
+  from ""contrai_core"". Its ""SuitSlot"" slots a hand
+  by each suit's //role// relative to trump, for the
+  combinatorial math — it is not a duplicate of
+  core's ""Suit"", which names the four concrete
+  card suits (with ""TrumpVariant"" carrying the
+  trump options that name none).
 end note
 P_analyzer .. N_analyzer_indep
 
@@ -118,7 +140,7 @@ note as N_future
   A multiplayer web server (likely FastAPI +
   WebSockets) will expose trained AI models
   over the network. It will consume
-  `contrai-engine` and the trained models
+  ""contrai-engine"" and the trained models
   from the AI ladder.
 end note
 P_engine .. N_future

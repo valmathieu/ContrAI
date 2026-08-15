@@ -1,6 +1,6 @@
 [project]
 name = "contrai-core"
-version = "0.2.0"
+version = "0.3.0"
 description = "Shared domain model for the ContrAI monorepo"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -8,5 +8,6 @@ dependencies = []
 
 [project.optional-dependencies]
 test = [
-  "pytest>=8.4"
+  "pytest>=8.4",
+  "pytest-cov>=6.0"
 ]

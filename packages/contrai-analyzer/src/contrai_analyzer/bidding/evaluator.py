@@ -8,9 +8,9 @@ probability that an opponent can open in each non-trump slot.
 
 from typing import Optional
 from dataclasses import dataclass
-from src.models.hand import Hand
-from src.models.deck import SuitSlot, Rank
-from src.engine.probability_engine import ProbabilityEngine
+from contrai_analyzer.models.hand import Hand
+from contrai_analyzer.models.deck import SuitSlot, Rank
+from contrai_analyzer.engine.probability_engine import ProbabilityEngine
 
 
 @dataclass

@@ -7,20 +7,34 @@ and the ``manage_round`` lifecycle driven through a ``Round`` double
 (completed contract, score accumulation, all-pass redeal).
 """
 
+import logging
+
 import pytest
+from contrai_engine.debug_state import round_result_lines
 from contrai_engine.model import game as game_module
 from contrai_engine.model.game import Game
+from contrai_engine.model.player import AiPlayer
 from contrai_core.deck import Deck
+from contrai_core.team_side import TeamSide
 from contrai_core.exceptions import InvalidPlayerCountError
+from contrai_core.bid import ContractBid, PassBid
 from contrai_core.card import Card
+from contrai_core.contract import Contract
+from contrai_core.hand import Hand
+from contrai_core.position import Position
+from contrai_core.types import Suit
 
 class DummyPlayer:
-    """Minimal player stand-in: name, seat position, and an empty hand."""
+    """Minimal player stand-in: name, seat position, and an empty hand.
 
-    def __init__(self, name, position):
+    The seat defaults to ``None`` exactly as ``BasePlayer``'s does, so an
+    unseated roster can be built here too.
+    """
+
+    def __init__(self, name, position=None):
         self.name = name
         self.position = position
-        self.hand = []
+        self.hand = Hand()
 
 
 class FakeRound:
@@ -37,6 +51,7 @@ class FakeRound:
     bidding_contract = None
     play_scores: dict[str, int] = {}
     failed_scores: dict[str, int] = {}
+    contract_made = True
 
     def __init__(self, players_order, dealer, deck, round_number):
         self.players_order = players_order
@@ -44,14 +59,21 @@ class FakeRound:
         self.deck = deck
         self.round_number = round_number
         self.calls: list[str] = []
+        # Mirrors the attributes the real Round exposes once bidding/scoring
+        # runs, so debug_state.round_result_lines (read by Game's debug
+        # logging) has something valid to read off this double too.
+        self.contract = None
+        self.round_scores: dict[str, int] = {}
 
     def deal_cards(self):
         """Record the call; no cards actually move."""
         self.calls.append("deal_cards")
 
     def manage_bidding(self, view=None):
-        """Record the call and resolve to the scripted contract."""
+        """Record the call, resolve to the scripted contract, and mirror it
+        onto ``self.contract`` the way the real ``Round`` does."""
         self.calls.append("manage_bidding")
+        self.contract = self.bidding_contract
         return self.bidding_contract
 
     def play_all_tricks(self, view=None):
@@ -60,8 +82,11 @@ class FakeRound:
         return {}
 
     def calculate_round_scores(self):
-        """Record the call and report the scripted completed-round scores."""
+        """Record the call and report the scripted completed-round scores,
+        mirroring them onto ``self.round_scores`` the way the real ``Round``
+        does."""
         self.calls.append("calculate_round_scores")
+        self.round_scores = dict(self.play_scores)
         return dict(self.play_scores)
 
     def handle_failed_contract(self):
@@ -91,10 +116,10 @@ def players():
     Fixture that returns 4 positioned players for testing.
     """
     return [
-        DummyPlayer("North Player", "North"),
-        DummyPlayer("East Player", "East"), 
-        DummyPlayer("South Player", "South"),
-        DummyPlayer("West Player", "West")
+        DummyPlayer("North Player", Position.NORTH),
+        DummyPlayer("East Player", Position.EAST),
+        DummyPlayer("South Player", Position.SOUTH),
+        DummyPlayer("West Player", Position.WEST)
     ]
 
 @pytest.fixture
@@ -117,19 +142,19 @@ def test_game_initialization(game, players):
     
     # Check team formation
     team_names = {team.name for team in game.teams}
-    assert team_names == {"East-West","North-South"}
+    assert team_names == {"East-West", "North-South"}
 
 def test_game_requires_exactly_four_players():
     """
     Test that creating a game with wrong number of players raises InvalidPlayerCountError.
     """
     # Test with too few players
-    players = [DummyPlayer("Player1", "North")]
+    players = [DummyPlayer("Player1", Position.NORTH)]
     with pytest.raises(InvalidPlayerCountError):
         Game(players) # type: ignore
-    
+
     # Test with too many players
-    players = [DummyPlayer(f"Player{i}", "North") for i in range(5)]
+    players = [DummyPlayer(f"Player{i}", Position.NORTH) for i in range(5)]
     with pytest.raises(InvalidPlayerCountError):
         Game(players) # type: ignore
 
@@ -139,10 +164,10 @@ def test_game_requires_correct_positions():
     """
     # Missing West position
     players = [
-        DummyPlayer("Player1", "North"),
-        DummyPlayer("Player2", "East"),
-        DummyPlayer("Player3", "South"),
-        DummyPlayer("Player4", "South")  # Duplicate South, missing West
+        DummyPlayer("Player1", Position.NORTH),
+        DummyPlayer("Player2", Position.EAST),
+        DummyPlayer("Player3", Position.SOUTH),
+        DummyPlayer("Player4", Position.SOUTH)  # Duplicate South, missing West
     ]
     
     with pytest.raises(ValueError, match="Players must have positions"):
@@ -156,9 +181,78 @@ def test_players_are_sorted_by_position(players):
     shuffled_players = [players[2], players[0], players[3], players[1]]  # Different order
     game = Game(shuffled_players) # type: ignore
     
-    expected_positions = ["North", "West", "South", "East"]
+    expected_positions = list(Position)
     actual_positions = [player.position for player in game.players]
     assert actual_positions == expected_positions
+
+def test_unseated_players_are_seated_in_list_order():
+    """Four players naming no seat are seated from the list order.
+
+    The order is ``list(Position)`` — the anticlockwise turn order, not
+    the compass order — so the list reads as "these four sit down around
+    the table in this order".
+    """
+    players = [DummyPlayer(f"Player{i}") for i in range(4)]
+    game = Game(players)  # type: ignore
+
+    assert [p.position for p in players] == list(Position)
+    # And the Game agrees: its seat index maps each seat to that player.
+    assert [game.players_by_position[seat].name for seat in Position] == [
+        "Player0", "Player1", "Player2", "Player3"
+    ]
+
+
+def test_unseated_seating_partners_the_first_and_third_players():
+    """List-order seating makes players 0/2 partners, and 1/3.
+
+    A consequence of seating in turn order rather than compass order, and
+    the reason the ordering is spelled out rather than left implicit: a
+    caller reading N-E-S-W into the list would get the partnerships it
+    did not ask for.
+    """
+    players = [DummyPlayer(f"Player{i}") for i in range(4)]
+    game = Game(players)  # type: ignore
+
+    rosters = {
+        frozenset(player.name for player in team.players) for team in game.teams
+    }
+    assert rosters == {
+        frozenset({"Player0", "Player2"}),
+        frozenset({"Player1", "Player3"}),
+    }
+
+
+def test_half_seated_roster_is_rejected():
+    """A list mixing seated and unseated players raises.
+
+    Completing the gaps would decide partnerships the caller only
+    specified half of, so the ambiguity is refused outright.
+    """
+    players = [
+        DummyPlayer("Seated", Position.NORTH),
+        DummyPlayer("Unseated1"),
+        DummyPlayer("Unseated2"),
+        DummyPlayer("Unseated3"),
+    ]
+
+    with pytest.raises(ValueError, match="all have a position or all have none"):
+        Game(players)  # type: ignore
+
+
+def test_unseated_ai_players_build_a_playable_game():
+    """The real engine player type seats itself too.
+
+    ``AiPlayer`` is what a simulation or training harness constructs, and
+    its strategies read the seat off the player at decision time — so
+    seating assigned by ``Game`` after construction is what they see.
+    """
+    players = [AiPlayer(f"Bot{i}") for i in range(4)]
+    game = Game(players)
+
+    assert {p.position for p in game.players} == set(Position)
+    assert all(p.team is not None for p in game.players)
+    assert game.players[0].cardplay.position is game.players[0].position
+
 
 def test_teams_are_created_correctly(game):
     """
@@ -169,11 +263,23 @@ def test_teams_are_created_correctly(game):
 
     # Check North-South team
     ns_positions = {player.position for player in ns_team.players}
-    assert ns_positions == {"North", "South"}
+    assert ns_positions == {Position.NORTH, Position.SOUTH}
 
     # Check East-West team
     ew_positions = {player.position for player in ew_team.players}
-    assert ew_positions == {"East", "West"}
+    assert ew_positions == {Position.EAST, Position.WEST}
+
+def test_players_by_position_maps_each_seat_to_its_player(game, players):
+    """
+    Test that players_by_position exposes an O(1) lookup from each seat
+    to the player occupying it.
+    """
+    assert game.players_by_position == {
+        Position.NORTH: players[0],
+        Position.EAST: players[1],
+        Position.SOUTH: players[2],
+        Position.WEST: players[3],
+    }
 
 def test_next_dealer_anticlockwise_rotation(game):
     """
@@ -181,10 +287,10 @@ def test_next_dealer_anticlockwise_rotation(game):
     """
     # Set initial dealer manually to North
     game.dealer = game.players[0]  # North (index 0)
-    assert game.dealer.position == "North"
-    
+    assert game.dealer.position == Position.NORTH
+
     # Test the rotation sequence
-    expected_sequence = ["West", "South", "East", "North"]
+    expected_sequence = [Position.WEST, Position.SOUTH, Position.EAST, Position.NORTH]
     
     for expected_position in expected_sequence:
         game.next_dealer()
@@ -231,27 +337,27 @@ def test_check_game_over_not_finished(game):
     """
     Test check_game_over when no team has reached target score.
     """
-    game.scores = {'North-South': 1200, 'East-West': 800}
+    game.scores = {TeamSide.NS: 1200, TeamSide.EW: 800}
 
     result = game.check_game_over(target_score=1500)
 
     assert result.game_over is False
     assert result.winner is None
     assert result.tied_teams is None
-    assert result.final_scores == {'North-South': 1200, 'East-West': 800}
+    assert result.final_scores == {TeamSide.NS: 1200, TeamSide.EW: 800}
 
 def test_check_game_over_winner(game):
     """
     Test check_game_over when a team has won.
     """
-    game.scores = {'North-South': 1600, 'East-West': 1200}
+    game.scores = {TeamSide.NS: 1600, TeamSide.EW: 1200}
 
     result = game.check_game_over(target_score=1500)
 
     assert result.game_over is True
-    assert result.winner == 'North-South'
+    assert result.winner == TeamSide.NS
     assert result.tied_teams is None
-    assert result.final_scores == {'North-South': 1600, 'East-West': 1200}
+    assert result.final_scores == {TeamSide.NS: 1600, TeamSide.EW: 1200}
 
 def test_check_game_over_tie_continues_game(game):
     """
@@ -261,14 +367,14 @@ def test_check_game_over_tie_continues_game(game):
     game continues with tiebreaker rounds until one team leads, so
     ``game_over`` stays False while ``tied_teams`` flags the state.
     """
-    game.scores = {'North-South': 1600, 'East-West': 1600}
+    game.scores = {TeamSide.NS: 1600, TeamSide.EW: 1600}
 
     result = game.check_game_over(target_score=1500)
 
     assert result.game_over is False
     assert result.winner is None
-    assert result.tied_teams == ['North-South', 'East-West']
-    assert result.final_scores == {'North-South': 1600, 'East-West': 1600}
+    assert result.tied_teams == [TeamSide.NS, TeamSide.EW]
+    assert result.final_scores == {TeamSide.NS: 1600, TeamSide.EW: 1600}
 
 
 def test_check_game_over_tie_below_target_not_flagged(game):
@@ -278,7 +384,7 @@ def test_check_game_over_tie_below_target_not_flagged(game):
     ``tied_teams`` only signals the sudden-death state — equal scores
     short of the target are just an unfinished game.
     """
-    game.scores = {'North-South': 1200, 'East-West': 1200}
+    game.scores = {TeamSide.NS: 1200, TeamSide.EW: 1200}
 
     result = game.check_game_over(target_score=1500)
 
@@ -294,12 +400,12 @@ def test_check_game_over_tie_resolved_by_next_round(game):
     After sudden death, both teams sit above the target but one now
     leads — that team wins.
     """
-    game.scores = {'North-South': 1760, 'East-West': 1600}
+    game.scores = {TeamSide.NS: 1760, TeamSide.EW: 1600}
 
     result = game.check_game_over(target_score=1500)
 
     assert result.game_over is True
-    assert result.winner == 'North-South'
+    assert result.winner == TeamSide.NS
     assert result.tied_teams is None
 
 
@@ -307,12 +413,12 @@ def test_check_game_over_default_target_score(game):
     """
     Test that check_game_over uses 1500 as the default target score.
     """
-    game.scores = {'North-South': 1500, 'East-West': 900}
+    game.scores = {TeamSide.NS: 1500, TeamSide.EW: 900}
 
     result = game.check_game_over()
 
     assert result.game_over is True
-    assert result.winner == 'North-South'
+    assert result.winner == TeamSide.NS
 
 
 def test_next_dealer_picks_random_when_none(game, monkeypatch):
@@ -340,7 +446,7 @@ def test_set_players_order_starts_after_dealer(game):
     game.set_players_order()
 
     positions = [player.position for player in game.players_order]
-    assert positions == ["West", "South", "East", "North"]
+    assert positions == [Position.WEST, Position.SOUTH, Position.EAST, Position.NORTH]
 
 
 def test_set_players_order_wraps_around(game):
@@ -354,7 +460,7 @@ def test_set_players_order_wraps_around(game):
     game.set_players_order()
 
     positions = [player.position for player in game.players_order]
-    assert positions == ["North", "West", "South", "East"]
+    assert positions == [Position.NORTH, Position.WEST, Position.SOUTH, Position.EAST]
 
 
 def test_start_new_round_shuffles_first_round_then_cuts(game, monkeypatch):
@@ -381,7 +487,7 @@ def test_manage_round_completed(game, monkeypatch):
     """
     contract = object()
     FakeRound.bidding_contract = contract
-    FakeRound.play_scores = {'North-South': 160, 'East-West': 0}
+    FakeRound.play_scores = {TeamSide.NS: 160, TeamSide.EW: 0}
     monkeypatch.setattr(game_module, 'Round', FakeRound)
 
     view = RecordingView()
@@ -390,7 +496,7 @@ def test_manage_round_completed(game, monkeypatch):
     # manage_round mutates game state in place and returns nothing: the contract
     # is recorded and the round's points are folded into the running totals.
     assert game.current_contract is contract
-    assert game.scores == {'North-South': 160, 'East-West': 0}
+    assert game.scores == {TeamSide.NS: 160, TeamSide.EW: 0}
 
     # The full lifecycle ran, in order.
     assert game.current_round.calls == [
@@ -406,14 +512,14 @@ def test_manage_round_accumulates_scores_across_rounds(game, monkeypatch):
     Test that manage_round adds each round's scores onto the running totals.
     """
     FakeRound.bidding_contract = object()
-    FakeRound.play_scores = {'North-South': 90, 'East-West': 70}
+    FakeRound.play_scores = {TeamSide.NS: 90, TeamSide.EW: 70}
     monkeypatch.setattr(game_module, 'Round', FakeRound)
 
     game.manage_round()
-    assert game.scores == {'North-South': 90, 'East-West': 70}
+    assert game.scores == {TeamSide.NS: 90, TeamSide.EW: 70}
 
     game.manage_round()
-    assert game.scores == {'North-South': 180, 'East-West': 140}
+    assert game.scores == {TeamSide.NS: 180, TeamSide.EW: 140}
 
 
 def test_manage_round_all_pass_redeals(game, monkeypatch):
@@ -423,7 +529,7 @@ def test_manage_round_all_pass_redeals(game, monkeypatch):
     callback fires on the view.
     """
     FakeRound.bidding_contract = None
-    FakeRound.failed_scores = {'North-South': 0, 'East-West': 0}
+    FakeRound.failed_scores = {TeamSide.NS: 0, TeamSide.EW: 0}
     monkeypatch.setattr(game_module, 'Round', FakeRound)
 
     view = RecordingView()
@@ -437,4 +543,175 @@ def test_manage_round_all_pass_redeals(game, monkeypatch):
     assert 'handle_failed_contract' in game.current_round.calls
     # The view was asked to redeal, and the totals were left untouched.
     assert view.redeal_count == 1
-    assert game.scores == {'North-South': 0, 'East-West': 0}
+    assert game.scores == {TeamSide.NS: 0, TeamSide.EW: 0}
+
+
+# ---------------------------------------------------------------------------
+# Debug-logging diagnostics (stdlib logging, model-side)
+# ---------------------------------------------------------------------------
+
+
+def test_start_new_round_logs_deal_snapshot_at_debug(game, caplog):
+    """
+    Test that starting a new round emits a single DEBUG record holding the
+    round header and every seat's freshly dealt hand.
+    """
+    with caplog.at_level(logging.DEBUG, logger="contrai_engine"):
+        game.start_new_round()
+
+    game_records = [
+        record for record in caplog.records
+        if record.name == "contrai_engine.model.game"
+    ]
+    assert len(game_records) == 1
+    assert game_records[0].levelno == logging.DEBUG
+
+    message = game_records[0].getMessage()
+    assert f"Round #{game.round_number} dealt" in message
+    for player in game.players:
+        assert f"{player.position.name[0]}: " in message
+
+
+def test_start_new_round_does_not_log_without_debug_level(game, caplog):
+    """
+    Test that no deal-snapshot record is captured at the default log
+    level. A caplog assertion only observes the emitted record, so this
+    can't distinguish "the guard skipped building the snapshot" from "the
+    snapshot was built but the disabled logger call no-opped it" — it
+    confirms the observable, back-compat-relevant behavior: nothing is
+    emitted for contrai_engine.model.game when DEBUG is not active.
+    """
+    game.start_new_round()
+
+    assert not any(
+        record.name == "contrai_engine.model.game" for record in caplog.records
+    )
+
+
+def test_manage_round_completed_logs_round_result_at_debug(
+    game, players, monkeypatch, caplog
+):
+    """
+    Test that a completed round logs its contract outcome and the running
+    totals at DEBUG, after the round's points are folded into game.scores.
+    """
+    contract = Contract(ContractBid(players[0], 100, Suit.HEARTS))
+    FakeRound.bidding_contract = contract
+    FakeRound.play_scores = {TeamSide.NS: 160, TeamSide.EW: 0}
+    FakeRound.contract_made = True
+    monkeypatch.setattr(game_module, 'Round', FakeRound)
+
+    with caplog.at_level(logging.DEBUG, logger="contrai_engine"):
+        game.manage_round()
+
+    game_records = [
+        record for record in caplog.records
+        if record.name == "contrai_engine.model.game"
+    ]
+    result_messages = [
+        record.getMessage() for record in game_records
+        if record.getMessage().startswith(f"Round #{game.round_number}: contract")
+    ]
+    assert len(result_messages) == 1
+    assert result_messages[0].splitlines() == [
+        f"Round #{game.round_number}: contract 100 ♥ by N — made.",
+        "Round points: NS 160 · EW 0",
+        "Totals: NS 160 · EW 0",
+    ]
+
+
+def test_manage_round_all_pass_logs_redeal_at_debug(game, monkeypatch, caplog):
+    """
+    Test that an all-passed round logs the redeal outcome at DEBUG, joined
+    as a single multi-line record (header line + running totals), with the
+    totals left untouched.
+    """
+    FakeRound.bidding_contract = None
+    FakeRound.failed_scores = {TeamSide.NS: 0, TeamSide.EW: 0}
+    monkeypatch.setattr(game_module, 'Round', FakeRound)
+
+    with caplog.at_level(logging.DEBUG, logger="contrai_engine"):
+        game.manage_round()
+
+    game_records = [
+        record for record in caplog.records
+        if record.name == "contrai_engine.model.game"
+    ]
+    result_messages = [
+        record.getMessage() for record in game_records
+        if "all passed" in record.getMessage()
+    ]
+    assert len(result_messages) == 1
+    assert result_messages[0].splitlines() == [
+        f"Round #{game.round_number}: all passed — redeal.",
+        "Totals: NS 0 · EW 0",
+    ]
+
+
+def test_manage_round_completed_logs_round_result_against_a_genuine_round(
+    caplog
+):
+    """
+    Test that the round-result DEBUG log reflects a *genuine* Round's
+    outcome end to end through the public ``manage_round`` API — real
+    ``Auction``/``PlayState``/``score_round`` machinery, never a
+    hand-scripted double — so a regression in any of those (e.g. a change
+    to ``score_round``'s None-branch reachability, or to ``Contract``'s
+    ``.player`` invariant) would surface here instead of being masked by
+    ``FakeRound``'s fabricated ``contract_made``/``round_scores``.
+    """
+    north = AiPlayer("North", Position.NORTH)
+    east = AiPlayer("East", Position.EAST)
+    south = AiPlayer("South", Position.SOUTH)
+    west = AiPlayer("West", Position.WEST)
+    game = Game([north, east, south, west])
+
+    # Real bidding: North contracts 80 Hearts, everyone else passes —
+    # legal regardless of what the real shuffle actually deals, since bid
+    # legality never depends on hand contents. Whoever the (randomly
+    # chosen) dealer puts first in the cycle, North's single scripted
+    # ContractBid fires on its own first turn and every other seat always
+    # passes (scripted, then falls back to passing once its queue is
+    # empty), so this always converges on "80 Hearts by North".
+    scripted = {
+        north: [ContractBid(north, 80, Suit.HEARTS)],
+        east: [PassBid(east)],
+        south: [PassBid(south)],
+        west: [PassBid(west)],
+    }
+    for ai, choices in scripted.items():
+        queue = list(choices)
+        ai.choose_bid = lambda _auction, _p=ai, _q=queue: (
+            _q.pop(0) if _q else PassBid(_p)
+        )
+    # Real play: every seat always plays its first legal card — the same
+    # deal-content-agnostic strategy
+    # TestPlayThroughReachesTerminal uses in test_round.py.
+    for ai in (north, east, south, west):
+        ai.choose_card = lambda observation: observation.legal_cards[0]
+
+    with caplog.at_level(logging.DEBUG, logger="contrai_engine"):
+        game.manage_round()
+
+    # Sanity: the scripted bid landed a real contract and real scoring ran
+    # (rather than both sides of the comparison below silently reading the
+    # same un-set None).
+    assert game.current_contract is not None
+    assert game.current_round.contract_made is not None
+
+    game_records = [
+        record for record in caplog.records
+        if record.name == "contrai_engine.model.game"
+    ]
+    result_messages = [
+        record.getMessage() for record in game_records
+        if record.getMessage().startswith(f"Round #{game.round_number}: contract")
+    ]
+    assert len(result_messages) == 1
+    # The log must equal what the real round_result_lines projection
+    # produces from this *same* genuine, just-played round and these
+    # *same* running totals — proving Game._log_round_result wires the
+    # real Round through rather than a stand-in.
+    assert result_messages[0] == "\n".join(
+        round_result_lines(game.current_round, game.scores)
+    )

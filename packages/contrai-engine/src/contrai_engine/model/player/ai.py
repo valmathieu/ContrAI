@@ -4,11 +4,12 @@
 strategy and a card-play strategy behind the :mod:`.strategy`
 interfaces, injected at construction, and routes the engine's calls to
 them. The defaults are the expert rule-based strategies, so
-``AiPlayer("Bot", "South")`` keeps producing today's bot.
+``AiPlayer("Bot", Position.SOUTH)`` keeps producing today's bot.
 """
 
 from contrai_core.auction import Auction
 from contrai_core.bid import Bid
+from contrai_core.position import Position
 
 from .base import Player
 from .rule_based import RuleBasedBiddingStrategy, RuleBasedCardPlayStrategy
@@ -24,14 +25,17 @@ class AiPlayer(Player):
     :func:`make_ai_player`) to mix and match levels.
     """
 
-    def __init__(self, name, position,
+    def __init__(self, name, position: Position | None = None,
                  bidding=RuleBasedBiddingStrategy,
                  cardplay=RuleBasedCardPlayStrategy):
         """Build an AI player with injected strategies.
 
         Args:
             name: Display name.
-            position: Seat position (``'North'`` / ``'South'`` / …).
+            position: The seat this player occupies. Omit it to leave the
+                bot unseated and let ``Game`` assign the seat — the
+                strategies read the seat off the player at decision time,
+                never at construction.
             bidding: A factory ``player -> BiddingStrategy``. Defaults to
                 :class:`RuleBasedBiddingStrategy` (the ``"expert"`` level).
             cardplay: A factory ``player -> CardPlayStrategy``. Defaults to

@@ -1,23 +1,25 @@
 """Round scoring — the pure transformation from a played-out round to
 its team scores.
 
-``score_round`` reads the final round state (contract, captured tricks,
-last-trick winner, belote holder) and returns a :class:`RoundScore`
-result; it mutates nothing. The thin ``Round.calculate_round_scores``
-wrapper unpacks that result onto the round's public result attributes.
-Keeping the maths side-effect-free here isolates ~250 lines of scoring
-rules from the lifecycle orchestrator.
+``score_round`` reads the authoritative :class:`contrai_core.PlayState`
+on the round (contract, the per-side captured piles and trick counts,
+and the per-trick winners) plus the round's belote holder, and returns
+a :class:`RoundScore` result; it mutates nothing. The thin
+``Round.calculate_round_scores`` wrapper unpacks that result onto the
+round's public result attributes. Keeping the maths side-effect-free
+here isolates ~250 lines of scoring rules from the lifecycle
+orchestrator.
 """
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, Optional, Sequence, TYPE_CHECKING
 
 from contrai_core.bid import SlamLevel
+from contrai_core.team_side import TeamSide
 
 if TYPE_CHECKING:
-    from contrai_core.trick import Trick
-    from contrai_core.types import Suit
+    from contrai_core.player import BasePlayer
     from ..player import Player
     from .round import Round
 
@@ -29,8 +31,8 @@ class UnannouncedSlam(Enum):
     after play, when the declaring team takes all 8 tricks on an
     un-doubled numeric (80-180) contract without having announced
     anything. The round still scores on the numeric path — the bidder's
-    contract value plus a flat 250 substitute for the trick pile — *not*
-    the Slam at-risk grid.
+    contract value plus a flat substitute for the trick pile, 250 or 500
+    depending on the member below — *not* the Slam at-risk grid.
 
     This is deliberately distinct from :class:`contrai_core.SlamLevel`: that
     enum is a *declared bid value*; this is a post-play classification, and
@@ -59,7 +61,7 @@ class RoundScore:
     :meth:`Round.calculate_round_scores` publishes onto the round:
 
     Attributes:
-        scores: Per-team round scores, keyed by team name.
+        scores: Per-team round scores, keyed by :class:`TeamSide`.
         contract_made: The canonical made/failed signal — ``None`` when
             the round was all-passed (no contract), else a bool.
         unannounced_slam: The :class:`UnannouncedSlam` tag when the
@@ -67,40 +69,55 @@ class RoundScore:
             contract, else ``None``.
     """
 
-    scores: Dict[str, int]
+    scores: Dict[TeamSide, int]
     contract_made: Optional[bool]
     unannounced_slam: Optional[UnannouncedSlam]
 
 
+def unannounced_slam_substitute(tag: Optional[UnannouncedSlam]) -> int:
+    """The flat amount an unannounced sweep puts in place of the pile.
+
+    A sweep the declaring team never announced still marks a flat
+    substitute rather than its 162 of cards, and *which* flat amount
+    depends on who did the sweeping: a split team sweep marks the 250
+    of the Slam it could have bid, while the declarer's personal sweep
+    marks the 500 of the Solo Slam that was there for the taking. A
+    partner's solo sweep is not that shape and stays on the team's 250.
+
+    Args:
+        tag: The round's :class:`UnannouncedSlam` classification, or
+            ``None`` for an ordinary round.
+
+    Returns:
+        500 for a declarer's personal sweep, 250 for a team sweep, and
+        0 when there was no sweep at all (the pile is counted for real).
+    """
+    if tag is UnannouncedSlam.GRAND_SLAM:
+        return SlamLevel.SOLO_SLAM.base_value
+    if tag is UnannouncedSlam.SLAM:
+        return SlamLevel.SLAM.base_value
+    return 0
+
+
 def count_player_tricks(
-    tricks: List['Trick'], trump_suit: Optional['Suit'], player: 'Player'
+    trick_winners: Sequence['BasePlayer'], player: 'Player'
 ) -> int:
     """Count the number of completed tricks personally won by ``player``.
 
-    Walks the round's trick history and asks each trick for its
-    winner via :meth:`contrai_core.Trick.get_current_winner`,
-    forcing the contract's trump suit so trump beats lead-suit
-    regardless of whether the trick had its ``trump_suit`` bound
-    at construction time. Used by the Solo Slam predicate in
-    :func:`score_round`.
+    A straight tally over the per-trick winners the play state already
+    derives (:attr:`contrai_core.PlayState.trick_winners`) — the winner
+    rule itself lives in the core, so nothing is re-adjudicated here.
+    Used by the Solo Slam predicate in :func:`score_round`.
 
     Args:
-        tricks: The round's completed tricks.
-        trump_suit: The contract's trump suit, forced into the winner
-            comparison.
+        trick_winners: The winning player of each completed trick, in
+            trick order.
         player: The player whose personal trick tally we want.
 
     Returns:
         The number of completed tricks won outright by ``player``.
     """
-    if not tricks or trump_suit is None:
-        return 0
-    count = 0
-    for trick in tricks:
-        winner = trick.get_current_winner(trump_suit)
-        if winner is player:
-            count += 1
-    return count
+    return sum(1 for winner in trick_winners if winner is player)
 
 
 def score_round(round_: 'Round') -> RoundScore:
@@ -118,12 +135,14 @@ def score_round(round_: 'Round') -> RoundScore:
       *all 8 tricks* on a numeric contract without having bid a
       Slam, the trick pile (152 cards + the 10-point last-trick
       bonus = 162) is
-      replaced by a flat **250** substitute: the declarer scores
-      ``C + 250`` (+ Belote), the defense scores nothing, and the
-      contract is necessarily made. The personal-trick predicate
+      replaced by a flat substitute: the declarer scores
+      ``C + substitute`` (+ Belote), the defense scores nothing, and
+      the contract is necessarily made. The personal-trick predicate
       tags it :attr:`UnannouncedSlam.GRAND_SLAM` when the
-      *contracting player* won all 8, else
-      :attr:`UnannouncedSlam.SLAM`. Only un-doubled — a
+      *contracting player* won all 8 — worth **500**, the Solo Slam
+      that was there for the taking — else
+      :attr:`UnannouncedSlam.SLAM` and the team's **250** (see
+      :func:`unannounced_slam_substitute`). Only un-doubled — a
       doubled/redoubled sweep keeps the winner-takes-all shape below.
     - **Numeric, doubled / redoubled (M > 1).** Winner-takes-all:
       the side that wins the round takes the whole pile, the loser
@@ -132,10 +151,11 @@ def score_round(round_: 'Round') -> RoundScore:
       contree-domain.md §7.2.
     - **Slam / Solo Slam.** A symmetric grid that replaces the
       162-point pile with a flat substitute equal to the base: the
-      winning side scores ``(base + substitute) × M`` (500 / 1000 /
-      2000 for Slam; 1000 / 2000 / 4000 for Solo Slam). Solo Slam
-      additionally requires the *contracting player personally* to
-      win every trick.
+      winning side scores ``substitute + base × M`` (500 / 750 /
+      1250 for Slam; 1000 / 1500 / 2500 for Solo Slam). Only the
+      announced half is multiplied, mirroring the flat 160 of the
+      numeric grid. Solo Slam additionally requires the *contracting
+      player personally* to win every trick.
 
     Across every shape the **Belote bonus (+20)** is credited to the
     team *holding* both K and Q of trump (``round_.belote_holder`` — not
@@ -144,8 +164,8 @@ def score_round(round_: 'Round') -> RoundScore:
 
     Args:
         round_: The played-out round, read by reference (contract,
-            team_tricks, tricks, last_trick_winner, belote_holder,
-            players_order). Nothing on it is mutated.
+            play_state, belote_holder, players_order). Nothing on it is
+            mutated.
 
     Returns:
         A :class:`RoundScore` carrying the per-team scores, the
@@ -153,48 +173,53 @@ def score_round(round_: 'Round') -> RoundScore:
     """
     if not round_.contract:
         # No contract established, return zero scores.
-        teams = set(player.team for player in round_.players_order)
+        sides = {player.position.team_side for player in round_.players_order}
         return RoundScore(
-            scores={team.name: 0 for team in teams},
+            scores={side: 0 for side in sides},
             contract_made=None,
             unannounced_slam=None,
         )
 
-    contract_team = round_.contract.player.team
     contract_value = round_.contract.value
-    trump_suit = round_.contract.suit
 
-    team_card_points = {team_name: 0 for team_name in round_.team_tricks.keys()}
-    team_scores = {team_name: 0 for team_name in round_.team_tricks.keys()}
+    # The authoritative play history: the per-side captured piles, the
+    # trick counts and the per-trick winners all come straight from the
+    # core play state, which derives them itself — so the scorer and the
+    # screens work from one implementation of "who captured what".
+    # Belote is deliberately NOT part of it: that is a *held-cards*
+    # bonus credited below to the holder's side, independent of who
+    # captured the K/Q.
+    play_state = round_.play_state
+    trick_winners = play_state.trick_winners
+    team_card_points = play_state.card_points_by_side
+    team_trick_counts = play_state.trick_counts_by_side
 
-    # Card points per team (trump-aware). Belote is deliberately NOT
-    # folded in here — it is a *held-cards* bonus credited below to
-    # the holder's team, independent of who captured the K/Q.
-    for team_name, tricks in round_.team_tricks.items():
-        points = 0
-        for trick in tricks:
-            if hasattr(trick, 'get_plays'):
-                for _player, card in trick.get_plays():
-                    points += card.get_points(trump_suit)
-        team_card_points[team_name] = points
+    # Every seat has a Position and every Position has a side, so the
+    # score buckets are derived from the seating rather than from the
+    # mutable Team roster objects.
+    sides = {player.position.team_side for player in round_.players_order}
+    team_scores = {side: 0 for side in sides}
 
     # Add the last-trick bonus (10 points for winning the last trick).
-    if round_.last_trick_winner and round_.last_trick_winner.team:
-        team_card_points[round_.last_trick_winner.team.name] += 10
+    # ``card_points_by_side`` recomputes and hands back a fresh mapping
+    # on every access, so layering the bonus onto it here cannot leak
+    # back into the state.
+    if trick_winners:
+        team_card_points[trick_winners[-1].position.team_side] += 10
 
-    # Belote (+20) belongs to the team *holding* K + Q of trump, not
+    # Belote (+20) belongs to the side *holding* K + Q of trump, not
     # to whoever wins the trick those cards land in. ``belote_holder``
     # is the single player holding both at deal time (None when split,
     # or at No-Trump).
-    belote_team: Optional[str] = None
-    if round_.belote_holder is not None and round_.belote_holder.team is not None:
-        belote_team = round_.belote_holder.team.name
+    belote_side: Optional[TeamSide] = None
+    if round_.belote_holder is not None:
+        belote_side = round_.belote_holder.position.team_side
 
-    def belote_bonus(team_name: str) -> int:
-        """Belote (+20) for ``team_name`` when it holds the pair."""
-        return 20 if team_name == belote_team else 0
+    def belote_bonus(side: TeamSide) -> int:
+        """Belote (+20) for ``side`` when it holds the pair."""
+        return 20 if side is belote_side else 0
 
-    contract_team_name = contract_team.name
+    contract_side = round_.contract.player.position.team_side
 
     # Multiplier for double/redouble (shared by both paths).
     multiplier = round_.contract.get_multiplier()
@@ -202,36 +227,38 @@ def score_round(round_: 'Round') -> RoundScore:
     # ----- Slam / Solo Slam scoring path -----
     # The 162 of trick-card points is replaced by a flat substitute
     # equal to the contract base (see Contract.get_slam_card_substitute).
-    # The full at-risk amount is (base + substitute) × multiplier,
-    # giving 500 / 1000 / 2000 for Slam and 1000 / 2000 / 4000 for
-    # Solo Slam at normal / doubled / redoubled. The grid is symmetric:
-    # whichever side wins the contract scores the at-risk amount.
+    # Only the *announced* half takes the multiplier — the substitute
+    # stands in for the made-points component, which stays flat exactly
+    # as the numeric 160 does — so the at-risk amount is
+    # substitute + base × multiplier, giving 500 / 750 / 1250 for Slam
+    # and 1000 / 1500 / 2500 for Solo Slam at normal / doubled /
+    # redoubled. The grid is symmetric: whichever side wins the
+    # contract scores the at-risk amount.
     if round_.contract.is_slam_family():
-        contract_team_trick_count = len(round_.team_tricks[contract_team_name])
-        contract_made = contract_team_trick_count == 8
+        contract_made = team_trick_counts[contract_side] == 8
 
         # Solo Slam: the bidder *personally* must win all 8 tricks.
         # Even if their team takes every trick collectively, the
         # contract fails when the partner won any of them.
         if round_.contract.is_solo_slam():
             bidder_personal_tricks = count_player_tricks(
-                round_.tricks, trump_suit, round_.contract.player
+                trick_winners, round_.contract.player
             )
             contract_made = contract_made and bidder_personal_tricks == 8
 
         base = round_.contract.get_base_points()
         substitute = round_.contract.get_slam_card_substitute()
-        at_risk = (base + substitute) * multiplier
+        at_risk = substitute + base * multiplier
         if contract_made:
-            team_scores[contract_team_name] = at_risk
+            team_scores[contract_side] = at_risk
         else:
-            for team_name in team_scores:
-                if team_name != contract_team_name:
-                    team_scores[team_name] = at_risk
+            for side in team_scores:
+                if side is not contract_side:
+                    team_scores[side] = at_risk
 
         # Belote (+20) layered on top — independent of who won the contract.
-        if belote_team is not None:
-            team_scores[belote_team] += 20
+        if belote_side is not None:
+            team_scores[belote_side] += 20
 
         return RoundScore(
             scores=team_scores,
@@ -240,26 +267,26 @@ def score_round(round_: 'Round') -> RoundScore:
         )
 
     # ----- Numeric contract scoring path (80-180) -----
-    defender_names = [t for t in team_scores if t != contract_team_name]
+    defender_sides = [side for side in team_scores if side is not contract_side]
 
     # Unannounced Slam: the declaring team swept all 8 tricks on a
     # numeric contract. Recognised only un-doubled — the
     # doubled/redoubled path keeps its winner-takes-all 160 + C×M
     # shape regardless. The trick pile (152 cards + the 10-point
-    # last-trick bonus) is replaced by a flat 250 substitute and the
+    # last-trick bonus) is replaced by a flat substitute and the
     # contract is necessarily made. GRAND_SLAM when the contracting
     # player won all 8 personally (the Solo Slam predicate), else plain
-    # SLAM. The 250 substitute is the same flat amount a *declared* Slam
-    # is worth, so it reads from the SlamLevel single source of truth.
-    UNANNOUNCED_SLAM_SUBSTITUTE = SlamLevel.SLAM.base_value
+    # SLAM — and the tag picks the substitute, since the sweep the
+    # declarer could have announced is worth 500 where the team's is
+    # worth 250 (see unannounced_slam_substitute).
     unannounced_slam: Optional[UnannouncedSlam] = None
     declarer_slam = (
         multiplier == 1
-        and len(round_.team_tricks[contract_team_name]) == 8
+        and team_trick_counts[contract_side] == 8
     )
     if declarer_slam:
         bidder_personal_tricks = count_player_tricks(
-            round_.tricks, trump_suit, round_.contract.player
+            trick_winners, round_.contract.player
         )
         unannounced_slam = (
             UnannouncedSlam.GRAND_SLAM
@@ -272,7 +299,7 @@ def score_round(round_: 'Round') -> RoundScore:
     # bonus when the declarer holds it. An unannounced Slam is made
     # outright — sweeping every trick can never fail.
     attacker_realized = (
-        team_card_points[contract_team_name] + belote_bonus(contract_team_name)
+        team_card_points[contract_side] + belote_bonus(contract_side)
     )
     contract_made = declarer_slam or attacker_realized >= contract_value
 
@@ -280,41 +307,42 @@ def score_round(round_: 'Round') -> RoundScore:
         # Un-doubled: the two sides share the pile.
         if contract_made:
             # On an unannounced Slam the 162 pile (last-trick bonus
-            # included) is swapped for the flat 250 substitute; otherwise the
-            # declarer adds its real captured card points.
+            # included) is swapped for the flat substitute its tag
+            # names; otherwise the declarer adds its real captured
+            # card points.
             attacker_pile = (
-                UNANNOUNCED_SLAM_SUBSTITUTE
+                unannounced_slam_substitute(unannounced_slam)
                 if declarer_slam
-                else team_card_points[contract_team_name]
+                else team_card_points[contract_side]
             )
-            team_scores[contract_team_name] = (
+            team_scores[contract_side] = (
                 contract_value
                 + attacker_pile
-                + belote_bonus(contract_team_name)
+                + belote_bonus(contract_side)
             )
-            for name in defender_names:
-                team_scores[name] = team_card_points[name] + belote_bonus(name)
+            for side in defender_sides:
+                team_scores[side] = team_card_points[side] + belote_bonus(side)
         else:
             # Failed: the defense takes the whole pile plus
             # the contract; the declarer keeps only its Belote bonus.
-            team_scores[contract_team_name] = belote_bonus(contract_team_name)
-            for name in defender_names:
-                team_scores[name] = (160 + contract_value) + belote_bonus(name)
+            team_scores[contract_side] = belote_bonus(contract_side)
+            for side in defender_sides:
+                team_scores[side] = (160 + contract_value) + belote_bonus(side)
     else:
         # Doubled / redoubled: winner-takes-all. The losing side
         # scores nothing but its Belote bonus (always preserved).
         if contract_made:
-            team_scores[contract_team_name] = (
+            team_scores[contract_side] = (
                 160 + contract_value * multiplier
-                + belote_bonus(contract_team_name)
+                + belote_bonus(contract_side)
             )
-            for name in defender_names:
-                team_scores[name] = belote_bonus(name)
+            for side in defender_sides:
+                team_scores[side] = belote_bonus(side)
         else:
-            team_scores[contract_team_name] = belote_bonus(contract_team_name)
-            for name in defender_names:
-                team_scores[name] = (
-                    160 + contract_value * multiplier + belote_bonus(name)
+            team_scores[contract_side] = belote_bonus(contract_side)
+            for side in defender_sides:
+                team_scores[side] = (
+                    160 + contract_value * multiplier + belote_bonus(side)
                 )
 
     return RoundScore(

@@ -9,7 +9,7 @@ rendering or game logic lives here.
 
 from __future__ import annotations
 
-from contrai_core import Suit
+from contrai_core import Position, Suit, TeamSide, TrumpVariant
 from contrai_core.bid import ContractBid
 
 # ---------------------------------------------------------------------------
@@ -46,11 +46,21 @@ TARGET_OPTIONS = [
 ]
 DEFAULT_TARGET = 1500
 
-# Position label mapping: full engine name -> single-letter UI label.
-POSITION_SHORT = {"North": "N", "East": "E", "South": "S", "West": "W"}
+# Position label mapping: seat -> single-letter UI label.
+POSITION_SHORT: dict[Position, str] = {
+    Position.NORTH: "N",
+    Position.EAST: "E",
+    Position.SOUTH: "S",
+    Position.WEST: "W",
+}
 
-# Team -> abbreviation used in scoreboards.
-TEAM_ABBR = {"North-South": "N-S", "East-West": "E-W"}
+# Team side -> the scoreboard abbreviation. This is presentation, not
+# identity: TeamSide is what every score dictionary is keyed by, so
+# rewording a label here can no longer break a lookup.
+TEAM_ABBR: dict[TeamSide, str] = {
+    TeamSide.NS: "N-S",
+    TeamSide.EW: "E-W",
+}
 
 # Bid keyword aliases for parsing.
 PASS_WORDS = {"pass", "p"}
@@ -61,7 +71,9 @@ SUIT_ALIASES = {
     "h": Suit.HEARTS, "hearts": Suit.HEARTS, "heart": Suit.HEARTS, "♥": Suit.HEARTS,
     "d": Suit.DIAMONDS, "diamonds": Suit.DIAMONDS, "diamond": Suit.DIAMONDS, "♦": Suit.DIAMONDS,
     "c": Suit.CLUBS, "clubs": Suit.CLUBS, "club": Suit.CLUBS, "♣": Suit.CLUBS,
-    "nt": Suit.NO_TRUMP, "notrump": Suit.NO_TRUMP, "no-trump": Suit.NO_TRUMP,
+    "nt": TrumpVariant.NO_TRUMP,
+    "notrump": TrumpVariant.NO_TRUMP,
+    "no-trump": TrumpVariant.NO_TRUMP,
 }
 # Derived from ``ContractBid.VALID_VALUES`` so the human-input parser
 # stays in lockstep with the auction's canonical value ladder. The

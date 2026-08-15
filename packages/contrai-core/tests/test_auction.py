@@ -42,10 +42,12 @@ from contrai_core import (
     DoubleBid,
     IllegalBidError,
     PassBid,
+    Position,
     RedoubleBid,
     SlamLevel,
     Suit,
     Team,
+    TrumpVariant,
 )
 
 
@@ -59,25 +61,25 @@ from contrai_core import (
 @pytest.fixture
 def north():
     """North-seat player, initially without a team."""
-    return BasePlayer("North", "North")
+    return BasePlayer("North", Position.NORTH)
 
 
 @pytest.fixture
 def west():
     """West-seat player, initially without a team."""
-    return BasePlayer("West", "West")
+    return BasePlayer("West", Position.WEST)
 
 
 @pytest.fixture
 def south():
     """South-seat player, initially without a team."""
-    return BasePlayer("South", "South")
+    return BasePlayer("South", Position.SOUTH)
 
 
 @pytest.fixture
 def east():
     """East-seat player, initially without a team."""
-    return BasePlayer("East", "East")
+    return BasePlayer("East", Position.EAST)
 
 
 @pytest.fixture
@@ -677,9 +679,16 @@ class TestLegalActions:
         actions = Auction().legal_actions(north)
         # Always starts with the Pass action.
         assert isinstance(actions[0], PassBid)
-        # 13 values × 6 suits = 78 ContractBids legal at start, plus the Pass.
+        # 13 values × 5 bookable trumps = 65 ContractBids legal at start,
+        # plus the Pass. Five, not six: ALL_TRUMP is unimplemented and off
+        # ContractBid.VALID_SUITS, so it is out of the action space by
+        # construction rather than by a filter here.
         contracts = [a for a in actions if isinstance(a, ContractBid)]
-        assert len(contracts) == 13 * 6
+        assert len(contracts) == 13 * 5
+        assert len(ContractBid.VALID_SUITS) == 5
+        # A search-based agent samples this set directly, so an unplayable
+        # contract must not be reachable through it.
+        assert all(bid.suit is not TrumpVariant.ALL_TRUMP for bid in contracts)
         # No Double / Redouble before there's a contract to challenge.
         assert not any(isinstance(a, DoubleBid) for a in actions)
         assert not any(isinstance(a, RedoubleBid) for a in actions)

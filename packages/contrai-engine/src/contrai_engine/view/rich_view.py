@@ -15,9 +15,10 @@ by the end-game scoreboard are tracked here, not in ``Game``.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Sequence
 
 from contrai_core.bid import (
     Bid,
@@ -32,8 +33,11 @@ from contrai_core import (
     BasePlayer,
     Card,
     Contract,
-    Trick,
+    Play,
+    TeamSide,
+    rules_for,
 )
+from contrai_engine.options import DebugOptions
 from contrai_engine.view.bidding_rules import _illegal_bid_reason
 from contrai_engine.view.formatting import (
     _format_card_compact,
@@ -55,6 +59,10 @@ from contrai_engine.view.screens.bidding import (
     _bid_rejection_text,
     _bidding_prompt_text,
     _panel_bidding_history,
+)
+from contrai_engine.view.screens.debug import (
+    _autoplay_pause_text,
+    _panel_debug_hands,
 )
 from contrai_engine.view.screens.endgame import (
     _end_game_prompt_text,
@@ -85,6 +93,7 @@ from contrai_engine.view.screens.trick import (
 from contrai_engine.view.state_helpers import (
     _resolve_delay,
     _sort_hand_for_display,
+    _trick_index,
 )
 from contrai_engine.view.theme import (
     DEFAULT_TARGET,
@@ -103,6 +112,13 @@ if TYPE_CHECKING:
     from contrai_engine.model.game import Game, GameOverStatus
     from contrai_engine.model.round import Round
 
+# A dedicated logger name (rather than ``__name__``, which would be
+# "contrai_engine.view.rich_view") so the debug log file's narrative
+# mirror reads as its own event stream — every line the on-screen event
+# log ever shows, plus the closing game-over summary, independent of any
+# other diagnostics this module might one day emit under its own name.
+logger = logging.getLogger("contrai_engine.view.events")
+
 
 # ---------------------------------------------------------------------------
 # Round summary (UI-side history)
@@ -115,7 +131,7 @@ class RoundSummary:
 
     round_number: int
     contract: Optional[Contract]
-    contract_team_name: Optional[str]
+    contract_side: Optional[TeamSide]
     contract_made: bool
     ns_pts: int
     ew_pts: int
@@ -139,12 +155,24 @@ class RichView:
 
     LOG_MAX = 5
 
-    def __init__(self) -> None:
-        """Create an unattached view: fresh console, empty per-game state."""
+    def __init__(self, options: DebugOptions | None = None) -> None:
+        """Create an unattached view: fresh console, empty per-game state.
+
+        Args:
+            options: Parsed debug-mode flags, or ``None`` for the
+                all-off defaults — the back-compat anchor: constructing
+                ``RichView()`` with no arguments reproduces today's
+                runtime behavior exactly. No file/logging setup happens
+                here; that is the CLI's job, once, before the view is
+                constructed.
+        """
+        self.options: DebugOptions = options or DebugOptions()
         self.console: Console = Console()
         self.target_score: int = DEFAULT_TARGET
         self.history: list[RoundSummary] = []
-        self.last_completed_trick: Optional[tuple[Trick, BasePlayer]] = None
+        self.last_completed_trick: Optional[
+            tuple[Sequence[Play], BasePlayer]
+        ] = None
         self.game: Optional[Game] = None
         # Rolling narrative log shown below the hand. Captures the last
         # ``LOG_MAX`` events (deal, bids, plays, trick winners, redeal,
@@ -232,11 +260,15 @@ class RichView:
     def request_card_action(
         self,
         player: BasePlayer,
-        trick: Trick,
+        plays: Sequence[Play],
         contract: Contract,
         playable_cards: list[Card],
     ) -> Card:
-        """Prompt the human for a card. Loops until input parses."""
+        """Prompt the human for a card. Loops until input parses.
+
+        ``plays`` are the core ``(player, card)`` records of the trick
+        so far — empty when the human is on lead.
+        """
         trump_suit = contract.suit if contract else None
         # See ``request_bid_action``: the rejection rides inside the next
         # frame's Prompt panel so the ``console.clear()`` on re-render
@@ -247,7 +279,7 @@ class RichView:
             self._render_in_game(
                 phase="playing",
                 current_player=player,
-                current_trick=trick,
+                current_plays=plays,
                 playable_cards=playable_cards,
                 prompt_question=_card_prompt_text(
                     playable_cards, len(sorted_hand)
@@ -269,26 +301,32 @@ class RichView:
             return card
 
     def on_trick_complete(
-        self, trick: Trick, winner: BasePlayer, round_: "Round"
+        self, plays: Sequence[Play], winner: BasePlayer, round_: "Round"
     ) -> None:
-        """Record the winner in the log, render the trick-won state, wait for Enter."""
+        """Record the winner in the log, render the trick-won state, wait
+        for Enter (or a timed pause under autoplay).
+
+        ``plays`` are the four core play records of the trick just
+        completed.
+        """
         trump = round_.contract.suit if round_ and round_.contract else None
-        trick_points = sum(card.get_points(trump) for _, card in trick.get_plays())
+        rules = rules_for(trump)
+        trick_points = sum(rules.points(play.card) for play in plays)
         self._log(self._format_trick_won_log(winner, trick_points))
+        prompt_question = _trick_won_prompt_text(winner)
+        if self.options.autoplay:
+            prompt_question = _autoplay_pause_text(prompt_question.plain)
         # State 3: full trick shown, winner highlighted, Press Enter.
         self._render_in_game(
             phase="trick_won",
-            current_trick=trick,
+            current_plays=plays,
             trick_winner=winner,
-            prompt_question=_trick_won_prompt_text(winner),
+            prompt_question=prompt_question,
             mandatory=False,
         )
-        try:
-            self.console.input(Text("> ", style=f"bold {GOLD}").markup)
-        except (EOFError, KeyboardInterrupt):
-            pass
+        self._wait_or_pause(GOLD, "CONTRAI_AUTOPLAY_PAUSE", 1.2)
         # Rotate: this is now the "last trick" for the next panel.
-        self.last_completed_trick = (trick, winner)
+        self.last_completed_trick = (plays, winner)
 
     def on_round_dealt(self, round_: "Round") -> None:
         """Engine hook: cards have just been dealt for a new round."""
@@ -339,23 +377,27 @@ class RichView:
             prompt_question=_ai_bid_announcement(player, bid),
             mandatory=False,
         )
-        time.sleep(_resolve_delay("CONTRAI_AI_BID_DELAY", default=1.4))
+        self._pause("CONTRAI_AI_BID_DELAY", 1.4)
 
     def on_card_played(
-        self, player: BasePlayer, card: Card, trick: Trick
+        self, player: BasePlayer, card: Card, plays: Sequence[Play]
     ) -> None:
-        """Record the card in the event log; render+pause for AI players."""
+        """Record the card in the event log; render+pause for AI players.
+
+        ``plays`` are the core play records of the trick on the table,
+        this card included.
+        """
         self._log(self._format_card_log(player, card))
         if getattr(player, "is_human", False):
             return
         self._render_in_game(
             phase="playing",
             current_player=None,
-            current_trick=trick,
+            current_plays=plays,
             prompt_question=_ai_card_announcement(player, card),
             mandatory=False,
         )
-        time.sleep(_resolve_delay("CONTRAI_AI_CARD_DELAY", default=0.9))
+        self._pause("CONTRAI_AI_CARD_DELAY", 0.9)
 
     def on_belote_announced(
         self, player: BasePlayer, kind: str, round_: "Round"
@@ -383,7 +425,7 @@ class RichView:
         else:
             line.append(".", style=DIM)
         self._log(line)
-        time.sleep(_resolve_delay("CONTRAI_AI_CARD_DELAY", default=0.9))
+        self._pause("CONTRAI_AI_CARD_DELAY", 0.9)
 
     def show_round_recap(
         self,
@@ -396,14 +438,14 @@ class RichView:
         """Full-screen recap shown after each round; waits for Enter.
 
         Follows the trick-won UX pattern: clear, print the recap panel,
-        block on input. Called from the CLI loop after
-        ``on_round_complete`` for *every* round — including the one
-        that just clinched the game. When ``is_final`` is true the
-        prompt switches to "see the final score" so the user knows the
-        next screen is the game-over scoreboard, not another deal.
-        When ``is_tiebreaker`` is true (both teams level at/above the
-        target) the panel carries a sudden-death notice and the prompt
-        deals the tiebreaker round.
+        block on input (or take a timed pause under autoplay). Called
+        from the CLI loop after ``on_round_complete`` for *every* round
+        — including the one that just clinched the game. When
+        ``is_final`` is true the prompt switches to "see the final
+        score" so the user knows the next screen is the game-over
+        scoreboard, not another deal. When ``is_tiebreaker`` is true
+        (both teams level at/above the target) the panel carries a
+        sudden-death notice and the prompt deals the tiebreaker round.
         """
         self.console.clear()
         self.console.print(
@@ -426,30 +468,29 @@ class RichView:
             prompt_text = Text(
                 "Press [Enter] to deal the next round…", style=FG
             )
+        if self.options.autoplay:
+            prompt_text = _autoplay_pause_text(prompt_text.plain)
         self.console.print(_panel_prompt(prompt_text, mandatory=False))
-        try:
-            self.console.input(Text("> ", style=f"bold {GOLD}").markup)
-        except (EOFError, KeyboardInterrupt):
-            pass
+        self._wait_or_pause(GOLD, "CONTRAI_AUTOPLAY_RECAP_PAUSE", 2.5)
 
     def on_round_complete(self, round_: "Round", running_scores: dict) -> None:
         """Append a row to the end-game history."""
         contract = round_.contract
-        ns_pts = round_.round_scores.get("North-South", 0)
-        ew_pts = round_.round_scores.get("East-West", 0)
-        running_ns = running_scores.get("North-South", 0)
-        running_ew = running_scores.get("East-West", 0)
+        ns_pts = round_.round_scores.get(TeamSide.NS, 0)
+        ew_pts = round_.round_scores.get(TeamSide.EW, 0)
+        running_ns = running_scores.get(TeamSide.NS, 0)
+        running_ew = running_scores.get(TeamSide.EW, 0)
         if contract is None:
             made = False
-            contract_team_name = None
+            contract_side = None
         else:
-            contract_team_name = contract.team.name
+            contract_side = contract.player.position.team_side
             made = _contract_made(round_)
         self.history.append(
             RoundSummary(
                 round_number=round_.round_number,
                 contract=contract,
-                contract_team_name=contract_team_name,
+                contract_side=contract_side,
                 contract_made=made,
                 ns_pts=ns_pts,
                 ew_pts=ew_pts,
@@ -464,16 +505,40 @@ class RichView:
     # CLI flow screens
     # ------------------------------------------------------------------
 
+    def _render_landing_splash(self, selected_target: int) -> None:
+        """Print the landing screen's title, subtitle, and setup panels.
+
+        Shared by both the interactive loop and the autoplay branch of
+        :meth:`show_landing` — only the prompt line and how it is
+        waited on differ between the two.
+        """
+        self.console.clear()
+        self.console.print(_landing_title())
+        self.console.print(_landing_subtitle())
+        self.console.print(_landing_suit_ribbon())
+        self.console.print()
+        self.console.print(_panel_game_setup(selected_target))
+        self.console.print(_panel_players(self.options.autoplay))
+
     def show_landing(self, selected_target: int = DEFAULT_TARGET) -> int:
-        """Render the landing screen and return the chosen target score."""
+        """Render the landing screen and return the chosen target score.
+
+        Under autoplay the screen renders once, pauses briefly, and
+        returns ``selected_target`` unchanged — there is no human to
+        type a choice, so the default/passed target stands.
+        """
+        if self.options.autoplay:
+            self._render_landing_splash(selected_target)
+            self.console.print(_panel_prompt(
+                _autoplay_pause_text(
+                    _landing_prompt_text(selected_target).plain
+                ),
+                mandatory=False,
+            ))
+            self._pause("CONTRAI_AUTOPLAY_LANDING_PAUSE", 1.2)
+            return selected_target
         while True:
-            self.console.clear()
-            self.console.print(_landing_title())
-            self.console.print(_landing_subtitle())
-            self.console.print(_landing_suit_ribbon())
-            self.console.print()
-            self.console.print(_panel_game_setup(selected_target))
-            self.console.print(_panel_players())
+            self._render_landing_splash(selected_target)
             self.console.print(_panel_prompt(
                 _landing_prompt_text(selected_target),
                 mandatory=False,
@@ -507,12 +572,39 @@ class RichView:
                 continue
             return target
 
+    def _render_end_game_screen(self, status: GameOverStatus) -> None:
+        """Print the end-game banner and round-by-round summary table.
+
+        Shared by both the interactive loop and the autoplay branch of
+        :meth:`show_end_game` — only the prompt line and how it is
+        waited on differ between the two.
+        """
+        self.console.clear()
+        self.console.print(_panel_game_over_banner(status))
+        self.console.print(_panel_round_summary(self.history))
+
     def show_end_game(self, status: GameOverStatus) -> str:
-        """Render the end-game scoreboard and return 'n'/'r'/'q'."""
+        """Render the end-game scoreboard and return 'n'/'r'/'q'.
+
+        Under autoplay the screen renders once, pauses briefly, logs a
+        ``GAME OVER`` summary line, and returns ``"q"`` — one call from
+        the CLI's game loop is one full unattended game.
+        """
+        if self.options.autoplay:
+            self._render_end_game_screen(status)
+            self.console.print(_panel_prompt(
+                _autoplay_pause_text(_end_game_prompt_text().plain),
+                mandatory=False,
+            ))
+            self._pause("CONTRAI_AUTOPLAY_ENDGAME_PAUSE", 2.0)
+            logger.info(
+                "GAME OVER — winner %s, final scores %s",
+                status.winner,
+                status.final_scores,
+            )
+            return "q"
         while True:
-            self.console.clear()
-            self.console.print(_panel_game_over_banner(status))
-            self.console.print(_panel_round_summary(self.history))
+            self._render_end_game_screen(status)
             self.console.print(_panel_prompt(
                 _end_game_prompt_text(),
                 mandatory=False,
@@ -541,7 +633,7 @@ class RichView:
         *,
         phase: str,
         current_player: Optional[BasePlayer] = None,
-        current_trick: Optional[Trick] = None,
+        current_plays: Optional[Sequence[Play]] = None,
         playable_cards: Optional[list[Card]] = None,
         bidding_history: Optional[list] = None,
         trick_winner: Optional[BasePlayer] = None,
@@ -554,24 +646,46 @@ class RichView:
         ``notice`` is an optional rejection/error line (e.g. an illegal
         bid or out-of-range card index) rendered inside the Prompt panel
         so it survives the ``console.clear()`` that opens every frame.
+        Under debug mode, once a round exists, a face-up strip showing
+        every seat's hand is printed below the middle row.
         """
         self.console.clear()
         round_ = self.game.current_round if self.game else None
+        # Which of the eight tricks is on the table. Resolved once here
+        # — the Round and Last-trick panels never see the trick itself,
+        # so they cannot work it out on their own, and deriving it three
+        # times would risk three answers.
+        trick_index = _trick_index(round_, current_plays or ())
         # Top row: game score + round info
         scores = (
             self.game.scores if self.game
-            else {"North-South": 0, "East-West": 0}
+            else {side: 0 for side in TeamSide}
         )
         top_left = _panel_game_score(scores, self.target_score)
-        top_right = _panel_round(round_, phase)
+        top_right = _panel_round(round_, phase, trick_index)
         self.console.print(_two_column(top_left, top_right, left_width=24))
         # Middle row: last trick + current trick
-        mid_left = _panel_last_trick(round_, self.last_completed_trick)
+        mid_left = _panel_last_trick(
+            round_, self.last_completed_trick, trick_index
+        )
         mid_right = _panel_current_trick(
-            round_, current_trick, phase, current_player, trick_winner,
+            round_, current_plays, phase, current_player, trick_winner,
             bidding_history=bidding_history,
+            trick_index=trick_index,
         )
         self.console.print(_two_column(mid_left, mid_right, left_width=24))
+        # Debug strip: every seat's hand face up, plus the still-in-play
+        # summary. ``round_`` is only ever truthy when ``self.game`` is
+        # set (it is derived from it above), so ``self.game.players`` is
+        # safe here without a separate None check.
+        if self.options.debug and round_:
+            self.console.print(
+                _panel_debug_hands(
+                    self.game.players,
+                    round_.contract.suit if round_.contract else None,
+                    seed=self.options.seed,
+                )
+            )
         # Hand panel — always rendered when a human is seated, so the
         # slot stays put across AI bid frames, AI play frames, and the
         # trick-won pause. ``interactive`` is true only when the human
@@ -583,7 +697,7 @@ class RichView:
                 current_player is not None and current_player is human
             )
             hand_panel = _panel_hand(
-                human, current_trick, playable_cards, phase, round_,
+                human, current_plays, playable_cards, phase, round_,
                 interactive=is_human_turn,
             )
         else:
@@ -617,14 +731,73 @@ class RichView:
         return None
 
     # ------------------------------------------------------------------
+    # Pacing and autoplay pauses
+    # ------------------------------------------------------------------
+
+    def _pause(self, env_var: str, default: float) -> None:
+        """Sleep for a tunable pacing/autoplay delay.
+
+        Args:
+            env_var: Environment variable name that overrides the delay.
+            default: Delay in seconds to use when ``env_var`` is unset —
+                except under debug mode (:attr:`options`.debug), where
+                the default collapses to zero so an unattended debug
+                run races through with no artificial pacing. An
+                explicit ``env_var`` value still wins over that
+                zeroing, so pacing can be forced back on for observation.
+        """
+        time.sleep(
+            _resolve_delay(env_var, 0.0 if self.options.debug else default)
+        )
+
+    def _wait_or_pause(
+        self, prompt_style: str, env_var: str, default: float
+    ) -> None:
+        """Block for Enter, or take a timed autoplay pause instead.
+
+        Under autoplay this delegates to :meth:`_pause`, so a Ctrl+C
+        during the wait propagates uncaught (``time.sleep`` raises
+        ``KeyboardInterrupt`` straight through) — an unattended run must
+        stay interruptible. Outside autoplay this is the interactive
+        prompt used at the trick-won and round-recap pauses: EOF/Ctrl+C
+        are swallowed there, matching the pre-existing idiom at those
+        two call sites specifically (unlike the bid/card/landing/
+        end-game prompts elsewhere in this class, which let EOF/Ctrl+C
+        propagate uncaught).
+
+        Args:
+            prompt_style: Rich style name for the "> " input marker
+                shown while waiting interactively (unused under
+                autoplay).
+            env_var: Environment variable that overrides the autoplay
+                pause duration.
+            default: Autoplay pause duration in seconds when ``env_var``
+                is unset.
+        """
+        if self.options.autoplay:
+            self._pause(env_var, default)
+            return
+        try:
+            self.console.input(Text("> ", style=f"bold {prompt_style}").markup)
+        except (EOFError, KeyboardInterrupt):
+            pass
+
+    # ------------------------------------------------------------------
     # Event log
     # ------------------------------------------------------------------
 
     def _log(self, line: Text) -> None:
-        """Append a styled line and trim to ``LOG_MAX``."""
+        """Append a styled line and trim to ``LOG_MAX``.
+
+        Every line is also mirrored, as plain text, to the
+        ``contrai_engine.view.events`` logger at DEBUG level — an
+        uncapped narrative history for the debug log file, independent
+        of the ``LOG_MAX``-capped list kept here for the on-screen panel.
+        """
         self.event_log.append(line)
         if len(self.event_log) > self.LOG_MAX:
             del self.event_log[: len(self.event_log) - self.LOG_MAX]
+        logger.debug("%s", line.plain)
 
     def _format_bid_log(self, player: BasePlayer, bid: Bid) -> Text:
         """Build the log line for a single bid action."""

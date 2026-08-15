@@ -9,7 +9,7 @@ playable-pill styling, and the per-play prompt texts.
 
 from __future__ import annotations
 
-from contrai_core import Card, Rank, Suit, Trick
+from contrai_core import Card, Play, Position, Rank, Suit, TeamSide, rules_for
 from contrai_engine.model.player import HumanPlayer
 from contrai_engine.view.screens.trick import (
     _ai_card_announcement,
@@ -27,7 +27,7 @@ from contrai_engine.view.theme import GREEN_BG
 
 
 class _StubContract:
-    def __init__(self, value, suit, team_name="North-South", player=None):
+    def __init__(self, value, suit, team_name=TeamSide.NS, player=None):
         self.value = value
         self.suit = suit
         class _T:
@@ -39,14 +39,41 @@ class _StubContract:
         self.redouble = False
 
 
+class _StubPlayState:
+    """Stand-in for the core play state's per-side derivations.
+
+    The screens ask a play state only what each side has captured, so
+    the stub derives those two mappings once from the ``team_tricks``
+    fixture — a mapping of side to the tricks it took, each trick a
+    sequence of :class:`~contrai_core.Play` records.
+    """
+
+    def __init__(self, team_tricks, trump):
+        rules = rules_for(trump)
+        self.card_points_by_side = {
+            side: sum(
+                rules.points(play.card)
+                for trick in team_tricks.get(side, [])
+                for play in trick
+            )
+            for side in TeamSide
+        }
+        self.trick_counts_by_side = {
+            side: len(team_tricks.get(side, [])) for side in TeamSide
+        }
+        self.trick_winners: tuple = ()
+
+
 class _StubRound:
-    def __init__(self, *, contract=None, tricks=None, dealer=None,
+    def __init__(self, *, contract=None, dealer=None,
                  round_number=1, team_tricks=None):
         self.contract = contract
-        self.tricks = tricks if tricks is not None else []
         self.dealer = dealer
         self.round_number = round_number
         self.team_tricks = team_tricks or {}
+        self.play_state = _StubPlayState(
+            self.team_tricks, contract.suit if contract else None
+        )
 
 
 class TestRoundRunningPoints:
@@ -60,17 +87,17 @@ class TestRoundRunningPoints:
         north, east, *_ = four_players
         contract = _StubContract(100, Suit.HEARTS, player=north)
         # N-S captured J♥ (trump jack = 20) + A♠ (11) = 31.
-        ns_trick = Trick()
-        ns_trick.add_play(north, Card(Suit.HEARTS, Rank.JACK))
-        ns_trick.add_play(east, Card(Suit.SPADES, Rank.ACE))
+        ns_trick = (
+            Play(north, Card(Suit.HEARTS, Rank.JACK)),
+            Play(east, Card(Suit.SPADES, Rank.ACE)),
+        )
         # E-W captured a pointless 7♣.
-        ew_trick = Trick()
-        ew_trick.add_play(east, Card(Suit.CLUBS, Rank.SEVEN))
+        ew_trick = (Play(east, Card(Suit.CLUBS, Rank.SEVEN)),)
         round_ = _StubRound(
             contract=contract,
             team_tricks={
-                "North-South": [ns_trick],
-                "East-West": [ew_trick],
+                TeamSide.NS: [ns_trick],
+                TeamSide.EW: [ew_trick],
             },
         )
         assert _round_running_points(round_) == (31, 0)
@@ -93,21 +120,20 @@ class TestPanelRound:
         assert "Trump:" in text
         assert "—" in text
 
-    def test_playing_phase_counts_the_in_flight_trick(self, four_players):
-        north, *_ = four_players
-        contract = _StubContract(100, Suit.HEARTS, player=north)
-        round_ = _StubRound(contract=contract, tricks=[Trick(), Trick()])
-        text = _panel_round(round_, phase="playing").renderable.plain
-        # Two done + the one in flight = trick 3 of 8.
-        assert "3 of 8" in text
+    def test_playing_phase_shows_the_trick_index(self, four_players):
+        """The panel renders the index it is handed, verbatim.
 
-    def test_trick_index_clamps_at_eight(self, four_players):
+        Working out *which* trick is on the table — and clamping it to
+        the eight of a round — is ``_trick_index``'s job; the panel
+        never sees the trick itself.
+        """
         north, *_ = four_players
         contract = _StubContract(100, Suit.HEARTS, player=north)
-        round_ = _StubRound(contract=contract, tricks=[Trick() for _ in range(8)])
-        text = _panel_round(round_, phase="playing").renderable.plain
-        assert "8 of 8" in text
-        assert "9 of 8" not in text
+        round_ = _StubRound(contract=contract)
+        text = _panel_round(
+            round_, phase="playing", trick_index=3
+        ).renderable.plain
+        assert "3 of 8" in text
 
 
 class TestRenderDiamond:
@@ -115,12 +141,13 @@ class TestRenderDiamond:
 
     def test_live_winner_is_the_trump_cutter(self, four_players):
         north, east, *_ = four_players
-        trick = Trick()
-        trick.add_play(north, Card(Suit.SPADES, Rank.ACE))
-        trick.add_play(east, Card(Suit.HEARTS, Rank.SEVEN))  # trump cut
+        plays = (
+            Play(north, Card(Suit.SPADES, Rank.ACE)),
+            Play(east, Card(Suit.HEARTS, Rank.SEVEN)),  # trump cut
+        )
         text = _render_diamond(
-            trick, Suit.HEARTS,
-            pending_position="South", winner_position=None,
+            plays, Suit.HEARTS,
+            pending_position=Position.SOUTH, winner_position=None,
             dimmed=False, width=42,
         ).plain
         assert "E 7♥ ★" in text  # the low trump beats the off-suit ace
@@ -132,12 +159,13 @@ class TestRenderDiamond:
         self, four_players
     ):
         north, east, *_ = four_players
-        trick = Trick()
-        trick.add_play(north, Card(Suit.SPADES, Rank.ACE))
-        trick.add_play(east, Card(Suit.HEARTS, Rank.SEVEN))
+        plays = (
+            Play(north, Card(Suit.SPADES, Rank.ACE)),
+            Play(east, Card(Suit.HEARTS, Rank.SEVEN)),
+        )
         text = _render_diamond(
-            trick, Suit.HEARTS,
-            pending_position=None, winner_position="North",
+            plays, Suit.HEARTS,
+            pending_position=None, winner_position=Position.NORTH,
             dimmed=True, width=18,
         ).plain
         assert "N A♠ ★" in text
@@ -145,11 +173,10 @@ class TestRenderDiamond:
 
     def test_dimmed_rendering_drops_the_led_marker(self, four_players):
         north, *_ = four_players
-        trick = Trick()
-        trick.add_play(north, Card(Suit.SPADES, Rank.ACE))
+        plays = (Play(north, Card(Suit.SPADES, Rank.ACE)),)
         text = _render_diamond(
-            trick, Suit.HEARTS,
-            pending_position=None, winner_position="North",
+            plays, Suit.HEARTS,
+            pending_position=None, winner_position=Position.NORTH,
             dimmed=True, width=18,
         ).plain
         assert "(led)" not in text
@@ -158,17 +185,17 @@ class TestRenderDiamond:
         self, four_players
     ):
         text = _render_diamond(
-            Trick(), Suit.HEARTS,
-            pending_position="North", winner_position=None,
+            (), Suit.HEARTS,
+            pending_position=Position.NORTH, winner_position=None,
             dimmed=False, width=42,
-            belote_by_position={"South": "belote"},
+            belote_by_position={Position.SOUTH: "belote"},
         ).plain
         assert "★ Belote" in text
 
     def test_no_badge_without_announcements(self, four_players):
         text = _render_diamond(
-            Trick(), Suit.HEARTS,
-            pending_position="North", winner_position=None,
+            (), Suit.HEARTS,
+            pending_position=Position.NORTH, winner_position=None,
             dimmed=False, width=42,
         ).plain
         assert "Belote" not in text
@@ -178,7 +205,7 @@ class TestPanelCurrentTrick:
     """Phase routing and the trick-number suffix in the title."""
 
     def test_bidding_phase_flags_the_human_turn(self, four_players):
-        human = HumanPlayer("You", "South")
+        human = HumanPlayer("You", Position.SOUTH)
         panel = _panel_current_trick(
             None, None, "bidding", human, None, bidding_history=[]
         )
@@ -202,10 +229,11 @@ class TestPanelCurrentTrick:
     ):
         north, *_ = four_players
         contract = _StubContract(100, Suit.HEARTS, player=north)
-        round_ = _StubRound(contract=contract, tricks=[Trick() for _ in range(3)])
-        trick = Trick()
-        trick.add_play(north, Card(Suit.SPADES, Rank.ACE))
-        panel = _panel_current_trick(round_, trick, "playing", None, None)
+        round_ = _StubRound(contract=contract)
+        plays = (Play(north, Card(Suit.SPADES, Rank.ACE)),)
+        panel = _panel_current_trick(
+            round_, plays, "playing", None, None, trick_index=4
+        )
         assert "(#4)" in panel.title.plain
 
     def test_title_keeps_the_finished_trick_number_when_won(
@@ -213,10 +241,11 @@ class TestPanelCurrentTrick:
     ):
         north, *_ = four_players
         contract = _StubContract(100, Suit.HEARTS, player=north)
-        round_ = _StubRound(contract=contract, tricks=[Trick() for _ in range(3)])
-        trick = Trick()
-        trick.add_play(north, Card(Suit.SPADES, Rank.ACE))
-        panel = _panel_current_trick(round_, trick, "trick_won", None, north)
+        round_ = _StubRound(contract=contract)
+        plays = (Play(north, Card(Suit.SPADES, Rank.ACE)),)
+        panel = _panel_current_trick(
+            round_, plays, "trick_won", None, north, trick_index=3
+        )
         assert "(#3)" in panel.title.plain
         assert "Won: N" in panel.renderable.plain
 
@@ -231,13 +260,15 @@ class TestPanelLastTrick:
         assert panel.title.plain == "Last trick"
 
     def test_shows_winner_and_trick_number(self, four_players):
+        """The echoed trick is numbered one below the one on the table."""
         north, east, *_ = four_players
         contract = _StubContract(100, Suit.HEARTS, player=north)
-        trick = Trick()
-        trick.add_play(north, Card(Suit.SPADES, Rank.ACE))
-        trick.add_play(east, Card(Suit.SPADES, Rank.SEVEN))
-        round_ = _StubRound(contract=contract, tricks=[trick, Trick()])
-        panel = _panel_last_trick(round_, (trick, north))
+        plays = (
+            Play(north, Card(Suit.SPADES, Rank.ACE)),
+            Play(east, Card(Suit.SPADES, Rank.SEVEN)),
+        )
+        round_ = _StubRound(contract=contract)
+        panel = _panel_last_trick(round_, (plays, north), trick_index=3)
         assert "Won: N" in panel.renderable.plain
         assert "Last trick (#2)" in panel.title.plain
 
@@ -259,7 +290,7 @@ class TestPanelHand:
         _n, _e, south, _w = four_players
         cards = self._stock_hand(south)
         panel = _panel_hand(
-            south, Trick(), cards, "playing", None, interactive=True
+            south, (), cards, "playing", None, interactive=True
         )
         assert "your lead — anything goes" in panel.renderable.plain
 
@@ -268,11 +299,10 @@ class TestPanelHand:
         cards = self._stock_hand(south)
         contract = _StubContract(100, Suit.HEARTS, player=north)
         round_ = _StubRound(contract=contract)
-        trick = Trick()
-        trick.add_play(north, Card(Suit.HEARTS, Rank.SEVEN))
+        plays = (Play(north, Card(Suit.HEARTS, Rank.SEVEN)),)
         playable = [c for c in cards if c.suit == Suit.HEARTS]
         panel = _panel_hand(
-            south, trick, playable, "playing", round_, interactive=True
+            south, plays, playable, "playing", round_, interactive=True
         )
         assert "must follow ♥" in panel.renderable.plain
 
@@ -286,10 +316,9 @@ class TestPanelHand:
         south.hand.extend(cards)
         contract = _StubContract(100, Suit.HEARTS, player=north)
         round_ = _StubRound(contract=contract)
-        trick = Trick()
-        trick.add_play(north, Card(Suit.SPADES, Rank.KING))
+        plays = (Play(north, Card(Suit.SPADES, Rank.KING)),)
         panel = _panel_hand(
-            south, trick, cards, "playing", round_, interactive=True
+            south, plays, cards, "playing", round_, interactive=True
         )
         text = panel.renderable.plain
         assert "must trump" in text
@@ -362,7 +391,7 @@ class TestPromptTexts:
         assert text == "N plays A♠."
 
     def test_trick_won_prompt_congratulates_the_human(self):
-        human = HumanPlayer("You", "South")
+        human = HumanPlayer("You", Position.SOUTH)
         text = _trick_won_prompt_text(human).plain
         assert "You won the trick." in text
 
