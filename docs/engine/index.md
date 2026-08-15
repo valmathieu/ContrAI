@@ -26,7 +26,10 @@ Source at `packages/contrai-engine/src/contrai_engine/`:
   - `state_helpers.py` — small game-state readers (`_current_winner`, `_explain_constraint`, `_sort_hand_for_display`, `_belote_by_position`, `_resolve_delay`)
   - `layout.py` — cross-screen layout (`_two_column`, the Prompt panel, the event-log panel, and the Game-score panel shown in every in-game frame's top-left)
   - `screens/` — one module per screen of the five-screen design: `landing.py`, `bidding.py`, `trick.py`, `recap.py`, `endgame.py`. Each exposes pure `(data) -> Panel/Text` builders; `RichView` composes and prints them.
-- `cli.py` — `contrai` console-script entry point: landing → game-loop → end-game
+- `cli.py` — `contrai` console-script entry point: landing → game-loop → end-game; also parses the three debug-mode flags (see [Debug mode](#cli))
+- `options.py` — `DebugOptions`, the frozen value object the `--debug` / `--seed` / `--autoplay` flags parse into. Stdlib-only, read by the CLI and the view, **never** by the model
+- `log_setup.py` — the one place that attaches a logging handler: a DEBUG-level `FileHandler` on the `contrai_engine` / `contrai_core` package roots, and a no-op unless `--debug` is set
+- `debug_state.py` — Rich-free plain-text projections shared by the debug view and the log (`sort_cards_trump_first`, `cards_still_in_play`, `hand_snapshot`, `deal_lines`, `round_result_lines`)
 - `tests/` — pytest suite (`test_model/`, `test_view/`)
 
 Everything else (`Card`, `Deck`, `Hand`, `Suit`, `TrumpVariant`, `Rank`, `Bid`, `Contract`, `Trick`, `Team`, exceptions) is imported directly from `contrai_core`. There are no back-compat re-exports under the engine namespace anymore.
@@ -45,6 +48,10 @@ Everything else (`Card`, `Deck`, `Hand`, `Suit`, `TrumpVariant`, `Rank`, `Bid`, 
 The first concrete level is the rule-based pair (`rule_based.py`): `RuleBasedBiddingStrategy` implements the expert bidding table (80–160 plus Slam and Solo Slam) and `RuleBasedCardPlayStrategy` the card-play strategy from the functional specs (`SF-09`, `SF-10`). Future AI levels (MCTS, learned policies — AI roadmap §6) are new strategy classes, never edits to `AiPlayer`; a thin `AI_LEVELS` registry + `make_ai_player(name, position, level="expert")` factory (`levels.py`) gives ergonomic difficulty selection on top, while the raw `AiPlayer(..., bidding=…, cardplay=…)` form stays available for mix-and-match (e.g. rule-based bidding + a learned card-play). The strategy object is also the natural home for a future explainability rule-trace (§6.1). `choose_card` takes a single frozen `contrai_core.PlayObservation` — the seat's own hand, the public trick history, the contract/auction, and its legal cards right now — projected by `PlayState.observe()`. Because that observation is the *only* input a card-play strategy ever receives, and every seat it names is a bare `Position` (the observer, the `ObservedPlay` trick records, the `ObservedContract`, each `Bid[Position]`), a strategy is sealed off from another seat's hand by construction — no live player object, and therefore no hand, is reachable by *any* path from what it is handed. `RuleBasedCardPlayStrategy` is stateless between calls: it derives whatever card tracking it needs (which cards have fallen, which seats are known void in trump — keyed by `Position`, with partner/opponent checks done as seat arithmetic on `Position.partner` / `Position.opponents`, and "did my side declare this?" as `Position.is_teammate(contract.declarer)`) by replaying the observation's public trick history fresh on every turn (`_derive_tracking`), rather than carrying counters across calls or rounds. The trump-void inference stays compelled-only — a seat discarding behind its master partner is *not* marked void, since that discard is voluntary; on a trump lead the proof is unconditional, because holding trump forces playing it.
 
 When the AI's team is currently winning the trick (`_play_when_team_winning`) and the AI cannot follow the led suit, the rule is *don't waste trumps*: prefer a non-trump discard over playing a trump card, even though a trump would add more points to the pile. Within the non-trump discard pool the AI prefers non-master cards (preserving cards that can still win their suit later) and picks the highest-points to maximise this trick's value. Only when the hand has nothing left but trumps does the AI play one — and it picks the lowest trump in that case, so the Jack or 9 of trump aren't dumped onto an already-won trick.
+
+**Discarding is by cost, not by suit length.** When the seat can neither follow nor usefully ruff, it gives up its *cheapest* card outright. The previous rule emptied whichever suit the seat happened to be shortest in, which is a shape heuristic answering a points question: it would walk a short suit down to its Ten while a worthless 7 sat untouched in a longer one, handing the opponents 10 points for nothing. Measured over 300 rounds, discarding by cost concedes **36% fewer points** on those discards and halves the ten-or-better cards thrown away. Ties break to the longest suit, then to a draw — the draw matters because a deterministic tie-break makes a seat's discards readable from its hand order, which is information the opponents should not get for free.
+
+**Trump is held back against trump-void opponents.** Leading a later trick with both opponents proven out of trump, the seat searches only *plain* suits for the ace or master to cash: an unbeatable trump is worth more kept than spent, since nobody can take it off the seat later. Previously the trump ace went out whenever trump happened to be the seat's longest suit, and a hand of nothing but trump led its ace rather than its cheapest card. The inference is also symmetric — holding trump back against trump-void opponents is worth exactly the same on either side of the contract — but the seat used to ask the question only when its *own* side had declared, so defenders never got the benefit. Both sides run it now.
 
 ## CLI
 
@@ -69,6 +76,29 @@ Per-round summaries shown on the end-game scoreboard are tracked **view-side** (
 
 ```bash
 CONTRAI_AI_BID_DELAY=0.5  CONTRAI_AI_CARD_DELAY=0.3  uv run contrai
+```
+
+**Debug mode.** Three orthogonal flags, parsed by `cli.py` into a single frozen `DebugOptions` (`options.py`):
+
+```bash
+uv run contrai --debug              # face-up hands + diagnostics to contrai-debug.log
+uv run contrai --seed 42            # reproducible deal and dealer rotation
+uv run contrai --autoplay           # one unattended game, an AI at every seat
+```
+
+`DebugOptions` is stdlib-only and readable from the CLI (which parses the flags) and the view (which decides whether to draw face-up hands) — but **never from the model layer, which stays unaware that a debug mode exists at all**. `DebugOptions()` with no arguments reproduces normal runtime behaviour exactly, so the whole feature is off by default rather than branched around.
+
+Seeding is *generate-then-seed*: an explicit `--seed` always wins and is applied as-is; absent one, `--debug` generates a fresh seed, applies it, and records it back onto the options — so a debug run is reproducible *after the fact*, even when the user didn't think to ask for it. With neither flag set the global RNG is left untouched, so a normal run is bit-for-bit what it was before the feature existed.
+
+Logging is treated as infrastructure, not presentation: model and view code only ever emits through the standard `logging` module, and no module attaches a handler or sets a level itself. `log_setup.py` is the one place that does — a no-op unless `--debug` is set, at which point a single DEBUG-level `FileHandler` (writing `contrai-debug.log`, overwritten per run, UTF-8) is attached to both the `contrai_engine` and `contrai_core` package-root loggers. `debug_state.py` holds the Rich-free plain-text projections the debug view and the log share (`sort_cards_trump_first`, `cards_still_in_play`, `hand_snapshot`, `deal_lines`, `round_result_lines`), so the diagnostics render identically to a terminal panel and to a log file.
+
+Under `--autoplay` every screen that would block on Enter pauses on a timer instead, each with its own override: `CONTRAI_AUTOPLAY_PAUSE` (trick won, 1.2 s), `CONTRAI_AUTOPLAY_RECAP_PAUSE` (round recap, 2.5 s), `CONTRAI_AUTOPLAY_LANDING_PAUSE` (1.2 s) and `CONTRAI_AUTOPLAY_ENDGAME_PAUSE` (2.0 s). Zeroing all four alongside the two AI delays is the workspace's unattended smoke test — it exercises the real wiring end to end, which is what covers the pure-Rich rendering that unit tests deliberately skip:
+
+```bash
+CONTRAI_AUTOPLAY_PAUSE=0 CONTRAI_AUTOPLAY_RECAP_PAUSE=0 \
+CONTRAI_AUTOPLAY_LANDING_PAUSE=0 CONTRAI_AUTOPLAY_ENDGAME_PAUSE=0 \
+CONTRAI_AI_CARD_DELAY=0 CONTRAI_AI_BID_DELAY=0 \
+uv run contrai --autoplay --seed 42
 ```
 
 **Play legality at the play boundary.** Card-play legality now lives entirely in `contrai_core.play.PlayState`: `Round.play_trick` reads the active player and their legal cards off `play_state.to_act` / `play_state.legal_actions(player)`, then advances the state with `play_state.apply(Play(player, card))`. `apply` is the single legality-enforcing transition — it checks turn order, then hand membership, then the follow/trump obligations — and raises `IllegalPlayError` (carrying the offending card, a `PlayRuleViolation` reason, and the legal alternatives) on an out-of-turn, not-held, or obligation-breaking play, instead of being **silently corrected** to a legal fallback. Both `AiPlayer.choose_card` (fed the `PlayObservation` projected from that same state) and `RichView.request_card_action` are contracted to only ever return a card from the legal set, so the raise is a safety net surfacing wiring bugs (cf. the `AiPlayer` cleanup in the open work) rather than a path hit in normal play — the headless 4-AI smoke run confirms it never fires.
