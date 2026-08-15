@@ -350,19 +350,33 @@ class TestCapturedPileDerivations:
         assert sum(counts.values()) == state.trick_number == 8
 
     def test_no_trump_regime_rescales_the_pile(self, players):
-        """The same 32 plays score differently with no suit as trump.
+        """The same 32 plays, scored on the no-trump scale.
 
-        Only the ♥ tricks move: the J and the 9 lose their trump values
-        (20 → 2, 14 → 0) and stop outranking the ace, so the ♥ ace
-        trick swaps from North to South — still N-S, but worth 23
-        rather than 55. The deck is now worth a flat 4 × 30 = 120.
+        Two things move relative to a ♥ contract. The ♥ J and 9 lose
+        their trump values (20 → 2, 14 → 0) and stop outranking the
+        ace, so the ♥ ace trick is won by South rather than North —
+        still N-S, but a different seat. And every ace is worth 19
+        instead of 11, which is what keeps the deck at 152: four suits
+        of 38 rather than four of 30.
+
+        The split happens to land on the same 115 / 37 as the ♥
+        contract above. That is arithmetic coincidence, not a weak
+        assertion — every trick falls to the same *side* under both
+        regimes, and both decks are worth 152 — so the winner check
+        below is what actually pins the regime difference.
         """
         state = self._state(players, _SPLIT_ROUND, trump=TrumpVariant.NO_TRUMP)
         points = state.card_points_by_side
-        assert points == {TeamSide.NS: 83, TeamSide.EW: 37}
-        assert sum(points.values()) == 120
-        # The trick split is unchanged; only the scale moved.
+        # Three 28-point ace tricks (19+4+3+2) to N-S, three 10-point
+        # ten tricks to E-W, the ♥ ace trick (2+0+19+10 = 31) to N-S
+        # and the ♥ king trick (4+3 = 7) to E-W.
+        assert points == {TeamSide.NS: 115, TeamSide.EW: 37}
+        assert sum(points.values()) == 152
+        # The trick split is unchanged; only the scale and one winner moved.
         assert state.trick_counts_by_side == {TeamSide.NS: 4, TeamSide.EW: 4}
+        # The ♥ ace trick (index 6) goes to South here, to North under a
+        # ♥ contract — the ordering difference the regime actually makes.
+        assert state.trick_winners[6] is players["S"]
 
     def test_one_sided_sweep(self, players):
         """East ruffs every trick: E-W takes all 8 and the whole 152."""
@@ -373,6 +387,25 @@ class TestCapturedPileDerivations:
         )
         assert state.card_points_by_side == {TeamSide.NS: 0, TeamSide.EW: 152}
         assert state.trick_counts_by_side == {TeamSide.NS: 0, TeamSide.EW: 8}
+
+    @pytest.mark.parametrize("trump", [*Suit, TrumpVariant.NO_TRUMP])
+    def test_every_regime_splits_the_same_152(self, players, trump):
+        """A played-out round distributes 152 card points in every mode.
+
+        The scales differ — a suit contract has one 62-point trump suit
+        and three 30-point plain ones, no trump four of 38 — but the deck
+        total is the invariant that lets one bidding ladder mean the same
+        thing under every contract (contree-domain.md §3.5). A regime
+        whose table misses 152 puts the upper contract values out of
+        reach, which is exactly how the no-trump defect surfaced.
+
+        Parametrized over every *implemented* ``ContractSuit``:
+        ``ContractBid.VALID_SUITS`` excludes all-trump, so the list here
+        is the four suits plus no trump.
+        """
+        state = self._state(players, _SPLIT_ROUND, trump=trump)
+        assert state.trick_number == 8
+        assert sum(state.card_points_by_side.values()) == 152
 
 
 # ---------------------------------------------------------------------------

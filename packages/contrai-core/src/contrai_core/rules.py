@@ -6,8 +6,8 @@ who takes a trick, where a belote can live — is answered by a
 :class:`TrumpRules` object resolved from the contract's trump via
 :func:`rules_for`. Callers hold one rules object per decision site instead of
 re-deriving trumpness card by card, which is what makes each future contract
-regime (all-trump, a rescored no-trump) a new leaf class plus its tables
-rather than a sweep over every call site.
+regime (all-trump) a new leaf class plus its tables rather than a sweep over
+every call site.
 
 Design invariants:
 
@@ -40,9 +40,14 @@ if TYPE_CHECKING:
     from .card import Card
 
 
-# The four per-card tables, one pair per scale. Trump and plain disagree on
-# both the scoring and the ordering of 9 and Jack — which is exactly why the
-# two scales must never be compared number against number.
+# The five per-card tables: two scoring pairs plus a third scoring scale,
+# and two orderings. Trump and plain disagree on both the scoring and the
+# ordering of 9 and Jack — which is exactly why the two scales must never
+# be compared number against number. No trump borrows the plain *ordering*
+# but scores on its own scale: with no 20-point Jack and no 14-point 9 to
+# carry the difference, the ace is rescaled from 11 to 19 so that a suit
+# is worth 38 and the deck 152, the same total as every other contract
+# mode (contree-domain.md §3.4, §3.5).
 _PLAIN_POINTS = {
     Rank.SEVEN: 0,
     Rank.EIGHT: 0,
@@ -62,6 +67,16 @@ _TRUMP_POINTS = {
     Rank.KING: 4,
     Rank.TEN: 10,
     Rank.ACE: 11,
+}
+_NO_TRUMP_POINTS = {
+    Rank.SEVEN: 0,
+    Rank.EIGHT: 0,
+    Rank.NINE: 0,
+    Rank.JACK: 2,
+    Rank.QUEEN: 3,
+    Rank.KING: 4,
+    Rank.TEN: 10,
+    Rank.ACE: 19,
 }
 _PLAIN_ORDER = {
     Rank.SEVEN: 0,
@@ -144,9 +159,12 @@ class TrumpRules(ABC):
             card: The card to score.
 
         Returns:
-            The card's point value, from the trump table when
-            :meth:`is_trump` answers ``True`` for its suit and from the
-            plain table otherwise.
+            The card's point value on this regime's own scale. A suit
+            contract scores its trump suit from the trump table and the
+            other three from the plain one; no trump scores every suit
+            from a third table of its own. The three disagree, but each
+            regime's 32 cards come to the same 152 points
+            (contree-domain.md §3.5).
         """
 
     @abstractmethod
@@ -259,16 +277,24 @@ class SingleSuitRules(TrumpRules):
 class NoTrumpRules(TrumpRules):
     """The regime with no trump suit: plain follow-suit everywhere.
 
+    Ranking is the plain ladder — no card outranks its suit's ace — but
+    scoring is **not** the plain table: the ace is worth 19, so a suit
+    holds 38 points and the deck 152, matching a suit contract's total
+    (contree-domain.md §3.4). Borrowing the plain table here would leave
+    the deck at 120 and make the upper contract values unreachable.
+
     Also the regime of a round with no established contract yet (the
     ``None`` key of :func:`rules_for`) — with no trump named, every
-    trump-dependent rule collapses to the same plain-suit answers.
+    trump-dependent rule collapses to the same answers. The shared
+    scoring scale is the no-trump one, which is inert: no card points
+    are counted before a contract exists.
     """
 
     def is_trump(self, suit: Suit) -> bool:
         return False
 
     def points(self, card: Card) -> int:
-        return _PLAIN_POINTS[card.rank]
+        return _NO_TRUMP_POINTS[card.rank]
 
     def rank_in_suit(self, card: Card) -> int:
         return _PLAIN_ORDER[card.rank]
@@ -300,7 +326,8 @@ def rules_for(contract_suit: ContractSuit | None) -> TrumpRules:
     The single entry point to the rules hierarchy. ``None`` (no contract
     established yet) resolves to the same no-trump singleton as an explicit
     ``NO_TRUMP`` contract: with no trump named, the two situations play by
-    identical card rules.
+    identical card rules, and they share the no-trump *scoring* scale too —
+    harmless, because no card points are counted before a contract exists.
 
     Args:
         contract_suit: The trump the round's contract settled on, or
