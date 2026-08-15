@@ -6,21 +6,22 @@ This class manages the game state, players, teams, deck, and game logic.
 from __future__ import annotations
 
 import logging
+import random
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from contrai_core.deck import Deck
+from contrai_core.exceptions import InvalidPlayerCountError
 from contrai_core.position import Position
 from contrai_core.team import Team
 from contrai_core.team_side import TeamSide
-from contrai_engine.debug_state import deal_lines, round_result_lines
+
+from ..debug_state import deal_lines, round_result_lines
 from .player import Player
 from .round import Round
-from contrai_core.exceptions import InvalidPlayerCountError
-import random
 
 if TYPE_CHECKING:
-    from contrai_engine.view.rich_view import RichView
+    from ..view.rich_view import RichView
 
 # Logging is infrastructure, not presentation: this module never attaches a
 # handler or configures a level itself (see contrai_engine.log_setup) — it
