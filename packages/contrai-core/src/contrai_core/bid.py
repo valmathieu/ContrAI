@@ -8,7 +8,7 @@ duplicated, so both sides speak the same four variants:
 
 - :class:`PassBid` — the player declines to act.
 - :class:`ContractBid` — a numeric contract or *Slam* / *Solo Slam*
-  announcement with an associated trump suit.
+  bid with an associated trump suit.
 - :class:`DoubleBid` — *contre*.
 - :class:`RedoubleBid` — *surcontre*.
 
@@ -16,7 +16,7 @@ Knowledge about which bids are *legal at which auction state* used to
 live on ``Bid.is_valid_after`` and the ``BidValidator`` utility class.
 That logic now lives on :class:`contrai_core.Auction`, which owns the
 chronological history and the rules in one place. Bids themselves are
-intentionally dumb data carriers — they answer "what was announced",
+intentionally dumb data carriers — they answer "what was bid",
 not "is it legal now".
 
 The variants are deliberately a sum type: any concrete ``Bid`` is one
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from .player import BasePlayer
     from .position import Position
 
-#: The type naming *who* made a bid. A bid is the same announcement
+#: The type naming *who* made a bid. The bid itself is unchanged
 #: whoever holds the slot, so the hierarchy is generic over it rather
 #: than duplicated per actor kind: auction-side code speaks
 #: ``Bid[BasePlayer]`` (the live player, whose team and hand the engine
@@ -98,13 +98,13 @@ class Bid(Generic[ActorT]):
     projected seat by seat so a strategy reading the auction history
     cannot reach a live player — and through it another seat's hand.
     Parameterizing beats duplicating the four variants into a parallel
-    "observed bid" hierarchy: the announcement is identical either way,
+    "observed bid" hierarchy: the bid is identical either way,
     and every ``isinstance`` / ``match`` over the sum type keeps working
     on both sides of the projection.
 
     Equality on bids is *type + payload*, not actor identity. Two
     ``PassBid`` instances from different players still compare equal —
-    a bid identifies *what was announced*, not *who announced it*. The
+    a bid identifies *what was bid*, not *who bid it*. The
     ``player`` field is therefore excluded from the auto-generated
     ``__eq__`` / ``__hash__`` via :func:`dataclasses.field`. That also
     makes a bid equal to its own sealed projection, since sealing
@@ -131,7 +131,7 @@ class PassBid(Bid[ActorT]):
 
 @dataclass(frozen=True, slots=True)
 class ContractBid(Bid[ActorT]):
-    """A numeric contract or *Slam* / *Solo Slam* announcement.
+    """A numeric contract or *Slam* / *Solo Slam* bid.
 
     Validated at construction via ``__post_init__``: the value must be
     one of the table-defined steps and the suit must be a bookable trump
@@ -144,7 +144,7 @@ class ContractBid(Bid[ActorT]):
     - :attr:`SlamLevel.SOLO_SLAM` — the contracting **player
       personally** must win all 8 tricks (their partner may not win
       any). Outranks Slam in raw numeric value, but is asymmetrically
-      blocked once a Slam has been announced (see
+      blocked once a Slam has been bid (see
       :class:`contrai_core.Auction`).
 
     Attributes:
@@ -255,7 +255,7 @@ def seal_bid(bid: Bid[BasePlayer]) -> Bid[Position]:
     object path to ``player.hand`` and, via ``player.team``, to the
     partner's hand as well. Replacing it with the bare
     :class:`~contrai_core.Position` leaves exactly the public fact —
-    *this seat announced this* — that a player at the table has.
+    *this seat bid this* — that a player at the table has.
 
     Rebuilt with :func:`dataclasses.replace`, so the concrete variant
     survives: a :class:`ContractBid` seals to a ``ContractBid``, and
@@ -267,7 +267,7 @@ def seal_bid(bid: Bid[BasePlayer]) -> Bid[Position]:
         bid: The auction-side bid to project.
 
     Returns:
-        The same announcement by the same variant, its ``player`` slot
+        The same bid by the same variant, its ``player`` slot
         holding the bidder's seat.
     """
 

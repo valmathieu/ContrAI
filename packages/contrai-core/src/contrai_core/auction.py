@@ -336,7 +336,7 @@ class Auction:
         can enumerate suits without re-running an identical legality
         probe six times per value. The split also documents the rule:
         contract legality in contrée depends on value precedence and the
-        Double/Redouble freeze state, never on the suit announced.
+        Double/Redouble freeze state, never on the suit bid.
 
         Args:
             value: A numeric step (80, 90, …, 180) or a
@@ -359,7 +359,7 @@ class Auction:
                 return False
         if last_contract_bid is None:
             return True
-        # Once a Slam or SoloSlam has been announced, no further contract
+        # Once a Slam or SoloSlam has been bid, no further contract
         # bid is legal. This is asymmetric for the Slam → SoloSlam
         # progression: Slam (500) blocks SoloSlam (1000) even though the
         # latter outranks it numerically, per the user-confirmed rule.

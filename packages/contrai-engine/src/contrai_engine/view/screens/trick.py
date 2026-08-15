@@ -240,7 +240,7 @@ def _panel_current_trick(
 
     if phase == "bidding":
         # Reuse the table slot for the auction: each seat shows the
-        # player's latest bid so the human can read announces off
+        # player's latest bid so the human can read bids off
         # the diamond the same way they read cards during play.
         body = _render_bidding_diamond(
             bidding_history or [],

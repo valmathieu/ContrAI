@@ -426,8 +426,8 @@ package "bid.py" as p_bid {
       Pure value carriers — no auction-state
       behaviour. ""player"" is excluded from
       ""~__eq~__"" and ""~__hash~__"" (matching
-      bid equality on //what was announced//,
-      not who announced it). All four
+      bid equality on //what was bid//,
+      not who bid it). All four
       variants are frozen, slotted dataclasses.
       ""SlamLevel"" owns the 250 / 500 base
       values as data, so nothing downstream

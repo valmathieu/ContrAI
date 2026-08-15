@@ -25,12 +25,12 @@ if TYPE_CHECKING:
 
 
 class UnannouncedSlam(Enum):
-    """Outcome tag for an *undeclared* all-tricks sweep on a numeric contract.
+    """Outcome tag for an *unannounced* all-tricks sweep on a numeric contract.
 
     Set by :func:`score_round` (via :meth:`Round.calculate_round_scores`)
     after play, when the declaring team takes all 8 tricks on an
-    un-doubled numeric (80-180) contract without having announced
-    anything. The round still scores on the numeric path — the bidder's
+    un-doubled numeric (80-180) contract without having bid a Slam.
+    The round still scores on the numeric path — the bidder's
     contract value plus a flat substitute for the trick pile, 250 or 500
     depending on the member below — *not* the Slam at-risk grid.
 
@@ -77,7 +77,7 @@ class RoundScore:
 def unannounced_slam_substitute(tag: Optional[UnannouncedSlam]) -> int:
     """The flat amount an unannounced sweep puts in place of the pile.
 
-    A sweep the declaring team never announced still marks a flat
+    A sweep the declaring team never bid still marks a flat
     substitute rather than its 162 of cards, and *which* flat amount
     depends on who did the sweeping: a split team sweep marks the 250
     of the Slam it could have bid, while the declarer's personal sweep
@@ -277,7 +277,7 @@ def score_round(round_: 'Round') -> RoundScore:
     # contract is necessarily made. GRAND_SLAM when the contracting
     # player won all 8 personally (the Solo Slam predicate), else plain
     # SLAM — and the tag picks the substitute, since the sweep the
-    # declarer could have announced is worth 500 where the team's is
+    # declarer could have bid is worth 500 where the team's is
     # worth 250 (see unannounced_slam_substitute).
     unannounced_slam: Optional[UnannouncedSlam] = None
     declarer_slam = (

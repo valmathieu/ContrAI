@@ -248,7 +248,7 @@ def _recap_breakdown(round_) -> dict:
         cards_count = True
         last_trick_counts = True
         # Outcome-row display values. Default to the real captured
-        # pile / last-trick bonus; the unannounced-slam branch swaps
+        # pile / last-trick bonus; the unannounced-Slam branch swaps
         # the pile for the flat 250 substitute and folds the
         # last-trick bonus in (shows 0).
         display_trick_points = raw_card_pts
@@ -289,7 +289,7 @@ def _recap_breakdown(round_) -> dict:
                 if is_attacker:
                     contract_row = base
                 if is_attacker and unannounced_slam is not None:
-                    # Unannounced slam: the declarer's 162 pile
+                    # Unannounced Slam: the declarer's 162 pile
                     # (last-trick bonus included) is replaced by the
                     # flat substitute the tag names — 250 for a team
                     # sweep, 500 for the declarer's own — mirroring
@@ -328,7 +328,7 @@ def _recap_breakdown(round_) -> dict:
             # how the contract converts these into score — so it still
             # reflects real captured points in a winner-takes-all round
             # where the Scoring rows are dashed out. The display values
-            # equal the raw ones except on an unannounced slam, where
+            # equal the raw ones except on an unannounced Slam, where
             # the pile reads 250 and the last-trick bonus is folded
             # in (0).
             "round_points": display_trick_points + display_last_trick + raw_belote,

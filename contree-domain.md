@@ -150,11 +150,11 @@ The first player to speak is the one after the dealer in the turn direction — 
   | All trump — single belote (default) | 180        | 162 + 20 = 182        |
   | All trump — four belotes            | 240        | 162 + 80 = 242        |
   
-  > The ladder top is simply the last 10-point step at or below that ceiling, which is why the two columns never match exactly. Cards plus the last-trick bonus cap at 152 + 10 = **162**, so a mode with no Belote available stops the ladder at 160; each Belote the regime allows lifts the ceiling by 20 (182, then 242) and the ladder along with it (180, then 240). The steps above 160 are therefore only feasible with the required **Belote** in hand. The auction does **not** enforce that at bid time: announcing one of them without the Belote is legal but commits the bidder to a contract they cannot make on cards alone, which will *fail* at scoring.
+  > The ladder top is simply the last 10-point step at or below that ceiling, which is why the two columns never match exactly. Cards plus the last-trick bonus cap at 152 + 10 = **162**, so a mode with no Belote available stops the ladder at 160; each Belote the regime allows lifts the ceiling by 20 (182, then 242) and the ladder along with it (180, then 240). The steps above 160 are therefore only feasible with the required **Belote** in hand. The auction does **not** enforce that at bid time: bidding one of them without the Belote is legal but commits the bidder to a contract they cannot make on cards alone, which will *fail* at scoring.
 
-- **Bid Slam**. A special bid declaring your team will take **all 8 tricks**. Contract base value **250** points. Slam outranks any numeric bid: once declared, no further contract bid is legal (numeric, Slam, or Solo Slam). *Double* and *redouble* are available against a Slam by default but this can be turned off (see §5.3).
+- **Bid Slam**. A special bid declaring your team will take **all 8 tricks**. Contract base value **250** points. Slam outranks any numeric bid: once bid, no further contract bid is legal (numeric, Slam, or Solo Slam). *Double* and *redouble* are available against a Slam by default but this can be turned off (see §5.3).
 
-- **Bid Solo Slam**. A stronger all-tricks bid declaring that the **bidder personally** will win every one of the 8 tricks — their partner may play normally but is forbidden from winning any trick. Contract base value **500** points. Solo Slam outranks any numeric bid, but it **cannot be announced after a Slam** — once a Slam is on the table, the auction is closed to further contract bids. A Solo Slam closes the ladder in exactly the same way: once it is announced, no further contract bid is legal either. What is *asymmetric* is only the Slam → Solo Slam direction — Slam blocks the higher-ranked Solo Slam, where plain precedence would have let it through. *Double* and *redouble* are available against a Solo Slam by default but this can be turned off (see §5.3).
+- **Bid Solo Slam**. A stronger all-tricks bid declaring that the **bidder personally** will win every one of the 8 tricks — their partner may play normally but is forbidden from winning any trick. Contract base value **500** points. Solo Slam outranks any numeric bid, but it **cannot be bid after a Slam** — once a Slam is on the table, the auction is closed to further contract bids. A Solo Slam closes the ladder in exactly the same way: once it is bid, no further contract bid is legal either. What is *asymmetric* is only the Slam → Solo Slam direction — Slam blocks the higher-ranked Solo Slam, where plain precedence would have let it through. *Double* and *redouble* are available against a Solo Slam by default but this can be turned off (see §5.3).
 
 > Slam-family bids exist under every trump choice (suit, no trump, all trump), with the same base values. Some tables disallow the **Solo Slam** bid altogether — its availability is agreed before the game (allowed by default, §9).
 
@@ -324,14 +324,14 @@ A double turns the round into a single stake, **winner takes all**. The winning 
 
 **Belote (+20)** is the standing exception to "the loser marks 0": it is always credited to the team **holding** K + Q of trump, except under the belote-loss option (end of §6.6).
 
-#### Unannounced slam
+#### Unannounced Slam
 
 If the declaring team wins **all 8 tricks** on a numeric contract *without having bid a Slam*, its made-points component is not the pile but a flat **250** substitute, which absorbs the 152 card points and the 10-point last-trick bonus alike: the declarer marks `A + 250`, the defense marks nothing, and the contract is necessarily **made** (sweeping every trick cannot fail any contract). This mirrors the announced-Slam shape while keeping the numeric contract value `A` as the announced component.
 
-- If the two partners split the 8 tricks between them, the substitute is **250**. If the **declarer** personally took all 8, it is **500** (where the Solo Slam bid is authorized, §9.4) — the sweep the declarer could have announced as a Solo Slam. A *partner's* solo sweep is not that shape and scores the ordinary **250** team substitute.
-- **Declaring team only.** If the *defense* takes all 8 tricks the declarer has simply failed — mark it as an ordinary failed contract, not as a slam.
+- If the two partners split the 8 tricks between them, the substitute is **250**. If the **declarer** personally took all 8, it is **500** (where the Solo Slam bid is authorized, §9.4) — the sweep the declarer could have bid as a Solo Slam. A *partner's* solo sweep is not that shape and scores the ordinary **250** team substitute.
+- **Declaring team only.** If the *defense* takes all 8 tricks the declarer has simply failed — mark it as an ordinary failed contract, not as a Slam.
 - **Un-doubled only.** A doubled or redoubled sweep uses the winner-takes-all grid above, pile flat at 160; the substitute does **not** apply.
-- **Table option — unannounced-slam substitute** (on by default, §9): switched off, a sweep marks the ordinary pile like any other made contract.
+- **Table option — unannounced-Slam substitute** (on by default, §9): switched off, a sweep marks the ordinary pile like any other made contract.
 - **Belote (+20)** still layers on top for the holding team, as everywhere.
 
 > Worked example: contract `100 ♠`, declaring team sweeps all 8 → declarer
@@ -376,8 +376,8 @@ The grid is **symmetric**: whichever side wins the contract marks the amount (de
 Three switches reshape what a *failed* contract marks (all catalogued in §9):
 
 - **Any failure marks 160** (off by default). Switched on, the announced-points component `A` of a failed contract becomes a flat **160** instead of `C`, so every un-doubled failure marks 320 whatever the contract was worth.
-- **Failed slam marks 250 / 500 — made points** (on by default). Switched off, a failed Slam-family contract falls back to the ordinary flat-160 pile.
-- **Failed slam marks 250 / 500 — announced points** (on by default). Only meaningful when *any failure marks 160* is on, and inert otherwise: under the default the announced component of a failed Slam is already `C`, which is 250 or 500. If this is off the announced part of a failed slam contract is 160.
+- **Failed Slam marks 250 / 500 — made points** (on by default). Switched off, a failed Slam-family contract falls back to the ordinary flat-160 pile.
+- **Failed Slam marks 250 / 500 — announced points** (on by default). Only meaningful when *any failure marks 160* is on, and inert otherwise: under the default the announced component of a failed Slam is already `C`, which is 250 or 500. If this is off the announced part of a failed Slam contract is 160.
 
 ### 7.3. Marking conventions
 
@@ -507,14 +507,14 @@ The *documented only* rows are tracked together as a deferred-variants checklist
 | Announced-points marking                       | **on** / off                       | configurable | §7.3  |
 | Only announced points are multiplied           | **on** / off                       | configurable | §7.2  |
 | Any failure marks 160                          | **off** / on                       | configurable | §7.2  |
-| Unannounced-slam substitute (250 / 500)        | **on** / off                       | configurable | §7.2  |
-| Failed slam marks 250 / 500 — made points      | **on** / off                       | configurable | §7.2  |
-| Failed slam marks 250 / 500 — announced points | **on** / off                       | configurable | §7.2  |
+| Unannounced-Slam substitute (250 / 500)        | **on** / off                       | configurable | §7.2  |
+| Failed Slam marks 250 / 500 — made points      | **on** / off                       | configurable | §7.2  |
+| Failed Slam marks 250 / 500 — announced points | **on** / off                       | configurable | §7.2  |
 | The attack must out-score the defense          | **on** / off                       | configurable | §7.5  |
 | Rounding                                       | **exact** / nearest 10 / nearest 5 | configurable | §7.4  |
 | Win on Belote points alone                     | **on** / off                       | configurable | §8    |
 
-At least one of the two marking conventions must be on, and *failed slam marks 250 / 500 — announced points* has no effect unless *any failure marks 160* is on. Every other combination in this table is free.
+At least one of the two marking conventions must be on, and *failed Slam marks 250 / 500 — announced points* has no effect unless *any failure marks 160* is on. Every other combination in this table is free.
 
 ### 9.7. Table aids
 
@@ -539,12 +539,12 @@ For the bilingual report and for keeping Claude consistent across languages.
 | À la stéphanoise        | Six-card auction deal         | Only 6 of the 8 cards dealt before the auction (§4)                         |
 | À la vache              | Forced dealer bid             | The dealer may not pass if the three players before them did (§5.1)         |
 | Atout                   | Trump                         |                                                                             |
-| Annonce                 | Bid                           | Context: a bidding announcement (the only meaning used in this project)     |
+| Annonce                 | Bid                           | The verb is *to bid*; *announce* survives in Belote and the §7.2 terms      |
 | Annonces (combinaisons) | Melds                         | Belote-style bonuses for combinations held in hand — out of scope (§9.8)    |
 | Belote                  | Belote                        | The K+Q-of-trump bonus                                                      |
 | Capot                   | Slam                          | Taking all 8 tricks (the *team* wins them all)                              |
 | Capot général           | Solo Slam                     | Bidder *personally* takes all 8 tricks (cannot follow a Slam)               |
-| Capot non annoncé       | Unannounced slam              | All 8 tricks swept without having bid a Slam (§7.2)                         |
+| Capot non annoncé       | Unannounced Slam              | All 8 tricks swept without having bid a Slam (§7.2)                         |
 | Chute / Chuter          | Failure / to fail             | Used when the declarer does not make the contract                           |
 | Contrat                 | Contract                      | The bid value                                                               |
 | Contre / Contrer        | Double / to double            |                                                                             |

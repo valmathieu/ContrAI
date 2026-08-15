@@ -451,7 +451,7 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
         That opening bid anchors the support ceiling: the expert table
         always opens at its full evaluation of the suit (there is no
         slow walk-up), so everything our side may legitimately add on
-        top of it is the *other* seat's complement — announced once.
+        top of it is the *other* seat's complement — bid once.
 
         Args:
             bids: Chronological bid history.
@@ -481,7 +481,7 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
 
         Two Pass conditions fall out of the same invariant: we opened
         the suit ourselves (our cards are already priced into the
-        anchor, so there is nothing of ours left to announce), or the
+        anchor, so there is nothing of ours left to bid), or the
         standing contract already reaches the ceiling (our complement
         is spent, whether by our earlier raise or an opponent overbid).
 

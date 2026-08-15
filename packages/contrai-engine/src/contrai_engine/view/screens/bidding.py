@@ -53,7 +53,7 @@ def _render_bidding_diamond(
 
     Mirrors :func:`contrai_engine.view.screens.trick._render_diamond`
     (N top, E right, S bottom, W left) but for the auction: each seat
-    shows that player's most recent bid, so announces map onto the table
+    shows that player's most recent bid, so bids map onto the table
     spatially the same way cards do during play. The seat about to bid
     is marked ``?``; seats that have not bid yet show ``·``.
 
