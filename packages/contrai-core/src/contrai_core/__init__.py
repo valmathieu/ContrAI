@@ -14,6 +14,14 @@ from .types import (
     trump_suits,
 )
 from .rules import TrumpRules, SingleSuitRules, NoTrumpRules, rules_for
+from .rule_config import (
+    TurnDirection,
+    AllTrumpBelote,
+    Rounding,
+    RuleConfig,
+    TARGET_SCORES,
+    PRESETS,
+)
 from .team_side import TeamSide
 from .position import Position
 from .card import Card
@@ -45,6 +53,7 @@ from .exceptions import (
     IllegalPlayError,
     TrickStateError,
     InvalidContractError,
+    InvalidRuleConfigError,
 )
 
 __all__ = [
@@ -59,6 +68,12 @@ __all__ = [
     "SingleSuitRules",
     "NoTrumpRules",
     "rules_for",
+    "TurnDirection",
+    "AllTrumpBelote",
+    "Rounding",
+    "RuleConfig",
+    "TARGET_SCORES",
+    "PRESETS",
     "TeamSide",
     "Position",
     "Card",
@@ -95,4 +110,5 @@ __all__ = [
     "IllegalPlayError",
     "TrickStateError",
     "InvalidContractError",
+    "InvalidRuleConfigError",
 ]

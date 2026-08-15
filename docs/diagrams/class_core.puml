@@ -145,6 +145,84 @@ package "rules.py" as p_rules {
 }
 
 ' =========================================================
+' Table-rule catalogue (rule_config.py)
+' =========================================================
+package "rule_config.py" as p_rule_config {
+    enum TurnDirection <<enum>> {
+        ANTICLOCKWISE = "anticlockwise"
+        CLOCKWISE     = "clockwise"
+    }
+    enum AllTrumpBelote <<enum>> {
+        NONE   = "none"
+        SINGLE = "single"
+        FOUR   = "four"
+    }
+    enum Rounding <<enum>> {
+        EXACT      = "exact"
+        NEAREST_10 = "nearest_10"
+        NEAREST_5  = "nearest_5"
+    }
+
+    class RuleConfig <<frozen dataclass>> {
+        .. §9.1 general ..
+        + target_score : int = 2000
+        + turn_direction : TurnDirection = ANTICLOCKWISE
+        .. §9.2 trump ..
+        + extended_trump_choices : bool = False
+        + all_trump_belote : AllTrumpBelote = SINGLE
+        .. §9.3 deal ..
+        + reshuffle_every_round : bool = False
+        .. §9.4 bidding ..
+        + solo_slam_available : bool = True
+        + slam_can_be_doubled : bool = True
+        + solo_slam_can_be_doubled : bool = True
+        .. §9.5 card play ..
+        + under_trump_exemption : bool = True
+        + solo_slam_gives_the_lead : bool = False
+        + belote_counts_toward_contract : bool = True
+        + belote_lost_when_contract_fails : bool = False
+        .. §9.6 scoring ..
+        + mark_made_points : bool = True
+        + mark_announced_points : bool = True
+        + only_announced_points_multiplied : bool = True
+        + any_failure_marks_160 : bool = False
+        + unannounced_slam_substitute : bool = True
+        + failed_slam_marks_made_points : bool = True
+        + failed_slam_marks_announced_points : bool = True
+        + attack_must_outscore_defense : bool = True
+        + rounding : Rounding = EXACT
+        + win_on_belote_points_alone : bool = True
+        --
+        + {static} classic() : RuleConfig
+    }
+
+    class "rule_config.py" as p_rule_config_fn <<module>> {
+        TARGET_SCORES : tuple<int>
+        PRESETS : Mapping<str, RuleConfig>
+    }
+
+    note bottom of RuleConfig
+      **The table-rule catalogue as one value.** One field
+      per //configurable// row of contree-domain.md §9,
+      named after the doc's own wording; ""RuleConfig()""
+      //is// the §9 default set. Frozen + slotted, so a
+      ruleset is a hashable value a log line or a scraped
+      game can name.
+      **Validation** (""~__post_init~__""): both marking
+      conventions off → ""InvalidRuleConfigError"" (a table
+      marking neither keeps no score); ""target_score""
+      off the 500–5000 ladder → same error. The two inert
+      combinations (failed-Slam announced points without
+      any-failure-160; all-trump belote without extended
+      trump choices) are documented, not rejected.
+      **Presets** are core constructors: ""classic()"" is
+      the defaults; ""PRESETS"" names them for the engine's
+      loader. **No knob is consulted yet** — behaviour
+      lands per knob in later steps.
+    end note
+}
+
+' =========================================================
 ' Seats & sides (position.py, team_side.py)
 ' =========================================================
 package "position.py / team_side.py" as p_position {
@@ -789,6 +867,10 @@ package "exceptions.py" as p_exc {
         + context : str
     }
 
+    class InvalidRuleConfigError {
+        + context : str
+    }
+
     ' Every domain error dual-inherits (ContraiError, ValueError);
     ' ValueError stays in the MRO so an except-ValueError handler
     ' keeps catching the whole family.
@@ -807,6 +889,8 @@ package "exceptions.py" as p_exc {
     TrickStateError         --|> ValueError
     InvalidContractError    --|> ContraiError
     InvalidContractError    --|> ValueError
+    InvalidRuleConfigError  --|> ContraiError
+    InvalidRuleConfigError  --|> ValueError
     IllegalPlayError        --> PlayRuleViolation : reason
 }
 
@@ -820,6 +904,14 @@ TrumpRules <|-- NoTrumpRules
 SingleSuitRules --> Suit : suit
 p_rules_fn ..> TrumpRules : <<resolves singleton>>
 TrumpRules ..> Card : points / rank_in_suit / trick_rank
+
+' The table-rule catalogue: three enums typed onto RuleConfig fields,
+' the presets registry naming ready-made configs.
+RuleConfig --> TurnDirection  : turn_direction
+RuleConfig --> AllTrumpBelote : all_trump_belote
+RuleConfig --> Rounding       : rounding
+RuleConfig ..> InvalidRuleConfigError : <<raises in post-init>>
+p_rule_config_fn ..> RuleConfig : <<PRESETS>>
 
 ' Inheritance — Bid hierarchy
 Bid <|-- PassBid
