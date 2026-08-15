@@ -8,6 +8,10 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-15
+
+Typed-and-sealed release: seats, sides and contract trumps become values rather than strings (`Position`, `TeamSide`, `Suit`/`TrumpVariant`), the trick rules sit behind a single `TrumpRules` seam, `PlayObservation` is fully sealed and the played-out round lives entirely on the core `PlayState`; the CLI gains `--debug`/`--seed`/`--autoplay`, and no-trump and Slam-family scoring are brought in line with the domain reference.
+
 ### Added
 
 - (core) `TrumpRules` — one sealed rules object per contract regime, resolved by `rules_for(contract_suit)`, answering trumpness, points, in-suit ranking, trick competition and belote. A future variant is a new leaf, not a sweep over call sites. See [core docs](docs/core/index.md).
@@ -98,6 +102,7 @@ First playable release: a complete CLI Contrée engine backed by a shared domain
 - (analyzer) Streamlit opening-hand strength dashboard built on the suit-agnostic `SuitSlot` abstraction — hypergeometric distribution plots and a bidding truth-table.
 - (scraper) Playwright spectator-mode scraper v1 for `app.belote-rebelote.fr`: login, Online → Spectator → Contree → Tournament navigation, seat identification, and `#tour` round polling.
 
-[Unreleased]: https://github.com/valmathieu/ContrAI/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/valmathieu/ContrAI/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/valmathieu/ContrAI/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/valmathieu/ContrAI/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/valmathieu/ContrAI/releases/tag/v0.1.0
