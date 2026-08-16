@@ -520,7 +520,9 @@ package "cli.py" as p_cli {
     class "main()" as Cli <<module>> #FFEFD9 {
         + main() : None
         --
-        - _build_game() : Game
+        - _build_parser() : ArgumentParser
+        - _parse_args(argv) : (DebugOptions, RuleConfig)
+        - _build_game(autoplay, rules) : Game
         --
         Drives landing → game loop →
         end-game; routes 'n' / 'r' / 'q'.
@@ -535,6 +537,52 @@ package "cli.py" as p_cli {
       the AiPlayer default).
       TODO marker for a future seat
       picker on the landing screen.
+      ""--rules FILE"" / ""--preset NAME"" are a
+      mutually exclusive pair; whichever is given
+      resolves to the ""RuleConfig"" the ""Game""
+      is built under. A bad ruleset leaves through
+      ""parser.error"" — usage + message, exit 2.
+    end note
+}
+
+' =========================================================
+' ruleset.py — TOML ⇄ RuleConfig, engine-side
+' =========================================================
+package "ruleset.py" as p_ruleset {
+    class "ruleset.py" as Ruleset <<module>> #FFEFD9 {
+        SECTIONS : dict<str, tuple<str>>
+        --
+        parse_ruleset(text) : RuleConfig
+        load_ruleset(path) : RuleConfig
+        dump_ruleset(config) : str
+        resolve_rules(*, preset, rules_path) : RuleConfig
+        --
+        - _coerce(section, key, value) : Any
+        - _format(value) : str
+    }
+
+    class RulesetError <<ValueError>>
+
+    Ruleset ..> RulesetError : <<raises>>
+
+    note bottom of Ruleset
+      **Loading lives in the engine** — core stays
+      I/O-free, so it defines what a ruleset //is//
+      and this module decides how one is //read//.
+      ""SECTIONS"" is the six-section §9 layout, one
+      entry per catalogue subsection; a test asserts
+      it covers every ""RuleConfig"" field exactly once.
+      **Unknown = error**, never a warning: an unknown
+      section or key, a wrong type or an unknown enum
+      token all raise ""RulesetError"", because a
+      typo'd knob that silently kept its default would
+      corrupt a logged experiment. A //missing// key is
+      fine — a file is a partial override on the
+      defaults. A well-formed but impossible table
+      propagates core's ""InvalidRuleConfigError"".
+      ""dump_ruleset"" is the exact inverse, so a
+      resolved ruleset can be archived beside a
+      simulation result or a scraped game.
     end note
 }
 
@@ -590,6 +638,8 @@ Round "1" o-- "1" RuleConfig : rules
 Round ..> RichView : <<human input + hooks>>
 Cli ..> Game : <<owns game loop>>
 Cli ..> RichView : <<owns view + screens>>
+Cli ..> Ruleset : <<--rules / --preset>>
+Ruleset ..> RuleConfig : <<builds / validates>>
 RichView "1" *-- "0..N" RoundSummary : history
 RichView ..> p_view_screens : <<composes + prints>>
 RichView ..> p_view_helpers : <<uses>>

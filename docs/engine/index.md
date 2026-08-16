@@ -26,8 +26,9 @@ Source at `packages/contrai-engine/src/contrai_engine/`:
   - `state_helpers.py` — small game-state readers (`_current_winner`, `_explain_constraint`, `_sort_hand_for_display`, `_belote_by_position`, `_resolve_delay`)
   - `layout.py` — cross-screen layout (`_two_column`, the Prompt panel, the event-log panel, and the Game-score panel shown in every in-game frame's top-left)
   - `screens/` — one module per screen of the five-screen design: `landing.py`, `bidding.py`, `trick.py`, `recap.py`, `endgame.py`. Each exposes pure `(data) -> Panel/Text` builders; `RichView` composes and prints them.
-- `cli.py` — `contrai` console-script entry point: landing → game-loop → end-game; also parses the three debug-mode flags (see [Debug mode](#cli))
+- `cli.py` — `contrai` console-script entry point: landing → game-loop → end-game; also parses the three debug-mode flags and the two mutually exclusive ruleset flags `--rules FILE` / `--preset NAME` (see [CLI](#cli))
 - `options.py` — `DebugOptions`, the frozen value object the `--debug` / `--seed` / `--autoplay` flags parse into. Stdlib-only, read by the CLI and the view, **never** by the model
+- `ruleset.py` — TOML ⇄ `RuleConfig`: `parse_ruleset` / `load_ruleset` / `dump_ruleset`, the `SECTIONS` layout table, `resolve_rules` (the `--rules` / `--preset` resolution) and `RulesetError`. Stdlib `tomllib`, so no new dependency; loading lives here because core stays I/O-free
 - `log_setup.py` — the one place that attaches a logging handler: a DEBUG-level `FileHandler` on the `contrai_engine` / `contrai_core` package roots, and a no-op unless `--debug` is set
 - `debug_state.py` — Rich-free plain-text projections shared by the debug view and the log (`sort_cards_trump_first`, `cards_still_in_play`, `hand_snapshot`, `deal_lines`, `round_result_lines`)
 - `tests/` — pytest suite (`test_model/`, `test_view/`)
@@ -100,6 +101,21 @@ CONTRAI_AUTOPLAY_LANDING_PAUSE=0 CONTRAI_AUTOPLAY_ENDGAME_PAUSE=0 \
 CONTRAI_AI_CARD_DELAY=0 CONTRAI_AI_BID_DELAY=0 \
 uv run contrai --autoplay --seed 42
 ```
+
+**Rulesets.** Two mutually exclusive flags pick the table rules the game is built under:
+
+```bash
+uv run contrai --preset classic        # a named built-in ruleset (today: classic = the §9 defaults)
+uv run contrai --rules table.toml      # a TOML ruleset file laid out as contree-domain.md §9
+```
+
+A file is a *partial override* on the built-in defaults: it names only the knobs that differ, and every missing key keeps its §9 value. What it does name is checked strictly — an unknown section, an unknown key, a value of the wrong type or an unknown enum token is a usage error (exit code 2) rather than a warning, because a typo'd knob that silently kept its default would corrupt a logged experiment. A well-formed file that names an *impossible* table (neither marking convention on, or a target score off the 500–5000 ladder) is rejected by core's `InvalidRuleConfigError`, surfaced through the same usage error. `ruleset.py` also writes the format back (`dump_ruleset`), so the ruleset a simulation actually ran under can be archived next to its results:
+
+```bash
+uv run python -c "from contrai_core import RuleConfig; from contrai_engine.ruleset import dump_ruleset; print(dump_ruleset(RuleConfig()), end='')" > table.toml
+```
+
+**No knob changes behaviour yet.** The flags resolve, validate and reach `Game`, which threads the config down to `Round`, `PlayState` and `score_round` — and nothing consults a field of it. That is deliberate: this step is the backbone, and each knob is wired to behaviour on its own in a later step.
 
 **Play legality at the play boundary.** Card-play legality now lives entirely in `contrai_core.play.PlayState`: `Round.play_trick` reads the active player and their legal cards off `play_state.to_act` / `play_state.legal_actions(player)`, then advances the state with `play_state.apply(Play(player, card))`. `apply` is the single legality-enforcing transition — it checks turn order, then hand membership, then the follow/trump obligations — and raises `IllegalPlayError` (carrying the offending card, a `PlayRuleViolation` reason, and the legal alternatives) on an out-of-turn, not-held, or obligation-breaking play, instead of being **silently corrected** to a legal fallback. Both `AiPlayer.choose_card` (fed the `PlayObservation` projected from that same state) and `RichView.request_card_action` are contracted to only ever return a card from the legal set, so the raise is a safety net surfacing wiring bugs (cf. the `AiPlayer` cleanup in the open work) rather than a path hit in normal play — the headless 4-AI smoke run confirms it never fires.
 
