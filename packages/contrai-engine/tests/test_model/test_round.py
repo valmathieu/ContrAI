@@ -32,6 +32,7 @@ from contrai_core.card import Card
 from contrai_core.contract import Contract
 from contrai_core.deck import Deck
 from contrai_core.play import PlayState
+from contrai_core.rule_config import RuleConfig
 from contrai_core.team import Team
 from contrai_core.exceptions import IllegalPlayError, PlayRuleViolation
 from contrai_core.types import Rank, Suit, TrumpVariant
@@ -56,7 +57,7 @@ class _StubDeck:
         """Swallow the returned trick cards."""
 
 
-def _make_round(players_dict, hands, contract, deck=None):
+def _make_round(players_dict, hands, contract, deck=None, rules=None):
     """Build a ``Round`` wired to the supplied state.
 
     ``play_trick`` seeds the play state lazily from the hands, so the
@@ -71,6 +72,8 @@ def _make_round(players_dict, hands, contract, deck=None):
         deck: optional deck object; tests that run ``play_trick`` to
             completion pass a ``_StubDeck`` so the end-of-trick
             ``add_cards`` call has something to land on.
+        rules: optional table ruleset; ``None`` leaves the Round on its
+            own default (the §9 catalogue).
 
     Returns:
         A Round whose ``players_order`` is the four players in N/E/S/W
@@ -79,7 +82,9 @@ def _make_round(players_dict, hands, contract, deck=None):
     order = [players_dict[s] for s in ("N", "E", "S", "W")]
     for seat, cards in hands.items():
         players_dict[seat].hand = Hand(cards)
-    round_ = Round(order, dealer=players_dict["N"], deck=deck, round_number=1)
+    round_ = Round(
+        order, dealer=players_dict["N"], deck=deck, round_number=1, rules=rules
+    )
     round_.contract = contract
     return round_
 
@@ -376,6 +381,65 @@ class TestPlayThroughReachesTerminal:
         assert len(round_.play_state.completed_tricks) == 8
         for player in order:
             assert len(player.hand) == 0
+
+
+# ---------------------------------------------------------------------------
+# The table ruleset reaches the play state
+# ---------------------------------------------------------------------------
+
+
+class TestRulesThreading:
+    """The ``RuleConfig`` handed to a ``Round`` seeds every ``PlayState``
+    it creates — through the validated start and the lazy seed alike."""
+
+    def test_round_defaults_to_the_classic_ruleset(self, players):
+        order = [players[s] for s in ("N", "E", "S", "W")]
+        round_ = Round(order, dealer=players["N"], deck=None, round_number=1)
+        assert round_.rules == RuleConfig()
+
+    def test_play_all_tricks_seeds_play_state_with_the_rules(self, players):
+        rules = RuleConfig(target_score=1000)
+        order = [players[s] for s in ("N", "E", "S", "W")]
+        round_ = Round(
+            order, dealer=players["N"], deck=Deck(), round_number=1, rules=rules
+        )
+        round_.deal_cards()
+        round_.contract = _contract(players["N"], 100, Suit.SPADES)
+        for player in order:
+            player.choose_card = (
+                lambda observation: observation.legal_cards[0]
+            )
+
+        round_.play_all_tricks()
+
+        assert round_.play_state.rules is rules
+
+    def test_play_trick_lazy_seed_carries_the_rules(self, players):
+        rules = RuleConfig(target_score=1000)
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        # One card per seat — the invalid-start deal the lazy seed exists
+        # for, so this exercises the bare-constructor path, not start().
+        cards = {
+            "N": Card(Suit.HEARTS, Rank.KING),
+            "E": Card(Suit.HEARTS, Rank.SEVEN),
+            "S": Card(Suit.HEARTS, Rank.EIGHT),
+            "W": Card(Suit.HEARTS, Rank.NINE),
+        }
+        round_ = _make_round(
+            players,
+            {seat: [card] for seat, card in cards.items()},
+            contract,
+            deck=_StubDeck(),
+            rules=rules,
+        )
+        for seat, card in cards.items():
+            players[seat].choose_card = (
+                lambda observation, _card=card: _card
+            )
+
+        round_.play_trick()
+
+        assert round_.play_state.rules is rules
 
 
 # ---------------------------------------------------------------------------

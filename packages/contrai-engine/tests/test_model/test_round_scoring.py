@@ -24,6 +24,7 @@ from contrai_core.bid import ContractBid, SlamLevel
 from contrai_core.card import Card
 from contrai_core.contract import Contract
 from contrai_core.play import Play, PlayState
+from contrai_core.rule_config import RuleConfig
 from contrai_core.team_side import TeamSide
 from contrai_core.types import Rank, Suit
 
@@ -162,6 +163,41 @@ class TestScoreRoundResult:
         scores = round_.calculate_round_scores()
         assert scores is round_.round_scores
         assert round_.contract_made is True
+
+    def test_score_round_accepts_an_explicit_ruleset_and_ignores_it_for_now(
+        self, players
+    ):
+        """The ``rules`` seam is resolved but consulted by nothing yet, so
+        an unusual ruleset scores identically to the defaults."""
+        contract = _contract(players["N"], SlamLevel.SLAM, Suit.SPADES)
+        round_ = _slam_round(
+            players, contract=contract, trick_winners=["N"] * 8
+        )
+        assert score_round(
+            round_, rules=RuleConfig(target_score=1000)
+        ) == score_round(round_)
+
+    def test_wrapper_passes_the_round_rules(self, players, monkeypatch):
+        """``calculate_round_scores`` names the round's own ruleset rather
+        than letting the scorer fall back to it."""
+        seen = {}
+        real = score_round
+
+        def spy(r, *, rules=None):
+            seen["rules"] = rules
+            return real(r)
+
+        monkeypatch.setattr(
+            "contrai_engine.model.round.round.score_round", spy
+        )
+        contract = _contract(players["N"], SlamLevel.SLAM, Suit.SPADES)
+        round_ = _slam_round(
+            players, contract=contract, trick_winners=["N"] * 8
+        )
+
+        round_.calculate_round_scores()
+
+        assert seen["rules"] is round_.rules
 
 
 class TestSlamScoring:

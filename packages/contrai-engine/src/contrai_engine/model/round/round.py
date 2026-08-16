@@ -12,6 +12,7 @@ from contrai_core.auction import Auction
 from contrai_core.bid import Bid
 from contrai_core.contract import Contract
 from contrai_core.play import Play, PlayState
+from contrai_core.rule_config import RuleConfig
 from contrai_core.rules import rules_for
 from contrai_core.team_side import TeamSide
 from contrai_core.types import Rank
@@ -38,7 +39,14 @@ class Round:
     trick sequence management, and round score calculation.
     """
 
-    def __init__(self, players_order: List[Player], dealer: Player, deck: Deck, round_number: int):
+    def __init__(
+        self,
+        players_order: List[Player],
+        dealer: Player,
+        deck: Deck,
+        round_number: int,
+        rules: RuleConfig | None = None,
+    ):
         """
         Initialize a round with the given parameters.
 
@@ -47,11 +55,18 @@ class Round:
             dealer: The dealer for this round
             deck: The deck to use for dealing cards
             round_number: The current round number
+            rules: The table ruleset this round is played under. ``None``
+                (the default) means the §9 catalogue defaults.
         """
         self.players_order = players_order
         self.dealer = dealer
         self.deck = deck
         self.round_number = round_number
+        # The table ruleset, normally inherited from the Game. It is
+        # seeded into the core play state and named to the scorer, so
+        # both sides of the round read the same ruleset object — no knob
+        # of it changes a decision yet.
+        self.rules: RuleConfig = rules if rules is not None else RuleConfig()
 
         # Round state
         self.contract: Optional[Contract] = None
@@ -316,6 +331,7 @@ class Round:
                 self.contract,
                 tuple(self.players_order),
                 tuple(tuple(player.hand) for player in self.players_order),
+                rules=self.rules,
             )
 
         # Four plays make a trick. The active player and the legal cards
@@ -431,6 +447,7 @@ class Round:
             self.contract,
             tuple(self.players_order),
             tuple(tuple(player.hand) for player in self.players_order),
+            rules=self.rules,
         )
 
         # Play 8 tricks
@@ -453,7 +470,7 @@ class Round:
         Returns:
             Dict: Round scores, keyed by team side
         """
-        result = score_round(self)
+        result = score_round(self, rules=self.rules)
         self.round_scores = result.scores
         self.contract_made = result.contract_made
         self.unannounced_slam = result.unannounced_slam

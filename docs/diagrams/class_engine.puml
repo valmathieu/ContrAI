@@ -37,6 +37,7 @@ class Deck      <<from contrai-core>> #E1F0FF
 class Contract  <<from contrai-core>> #E1F0FF
 class Auction   <<from contrai-core>> #E1F0FF
 class PlayState <<from contrai-core>> #E1F0FF
+class RuleConfig <<from contrai-core>> #E1F0FF
 enum Suit       <<from contrai-core>> #E1F0FF
 class "ContractSuit" as p_contractsuit <<from contrai-core>> #E1F0FF
 
@@ -195,8 +196,9 @@ package "model/game.py" as p_game {
         + current_round : Round?
         + round_number : int
         + scores : dict<TeamSide, int>
+        + rules : RuleConfig
         --
-        + __init__(players: list<Player>)
+        + __init__(players: list<Player>, rules=None)
         + start_new_round() : None
         + manage_round(view=None) : None
         + check_game_over(target_score=1500) : GameOverStatus
@@ -259,8 +261,9 @@ package "model/round/ package" as p_round {
         + unannounced_slam : UnannouncedSlam?
         + belote_holder : Player?
         + belote_state : dict<Player, str>
+        + rules : RuleConfig
         --
-        + __init__(players_order, dealer, deck, round_number)
+        + __init__(players_order, dealer, deck, round_number, rules=None)
         + deal_cards() : None
         + manage_bidding(view=None) : Contract?
         + play_trick(view=None) : None
@@ -278,7 +281,7 @@ package "model/round/ package" as p_round {
 
     ' --- scoring.py: the pure scoring transformation ---
     class "scoring.py" as r_scoring <<module>> #FFEFD9 {
-        score_round(round) : RoundScore
+        score_round(round, *, rules=None) : RoundScore
         count_player_tricks(trick_winners, player) : int
         UnannouncedSlam <<enum>> : {SLAM, GRAND_SLAM}
         RoundScore <<dataclass>>
@@ -517,7 +520,9 @@ package "cli.py" as p_cli {
     class "main()" as Cli <<module>> #FFEFD9 {
         + main() : None
         --
-        - _build_game() : Game
+        - _build_parser() : ArgumentParser
+        - _parse_args(argv) : (DebugOptions, RuleConfig)
+        - _build_game(autoplay, rules) : Game
         --
         Drives landing → game loop →
         end-game; routes 'n' / 'r' / 'q'.
@@ -532,6 +537,52 @@ package "cli.py" as p_cli {
       the AiPlayer default).
       TODO marker for a future seat
       picker on the landing screen.
+      ""--rules FILE"" / ""--preset NAME"" are a
+      mutually exclusive pair; whichever is given
+      resolves to the ""RuleConfig"" the ""Game""
+      is built under. A bad ruleset leaves through
+      ""parser.error"" — usage + message, exit 2.
+    end note
+}
+
+' =========================================================
+' ruleset.py — TOML ⇄ RuleConfig, engine-side
+' =========================================================
+package "ruleset.py" as p_ruleset {
+    class "ruleset.py" as Ruleset <<module>> #FFEFD9 {
+        SECTIONS : dict<str, tuple<str>>
+        --
+        parse_ruleset(text) : RuleConfig
+        load_ruleset(path) : RuleConfig
+        dump_ruleset(config) : str
+        resolve_rules(*, preset, rules_path) : RuleConfig
+        --
+        - _coerce(section, key, value) : Any
+        - _format(value) : str
+    }
+
+    class RulesetError <<ValueError>>
+
+    Ruleset ..> RulesetError : <<raises>>
+
+    note bottom of Ruleset
+      **Loading lives in the engine** — core stays
+      I/O-free, so it defines what a ruleset //is//
+      and this module decides how one is //read//.
+      ""SECTIONS"" is the six-section §9 layout, one
+      entry per catalogue subsection; a test asserts
+      it covers every ""RuleConfig"" field exactly once.
+      **Unknown = error**, never a warning: an unknown
+      section or key, a wrong type or an unknown enum
+      token all raise ""RulesetError"", because a
+      typo'd knob that silently kept its default would
+      corrupt a logged experiment. A //missing// key is
+      fine — a file is a partial override on the
+      defaults. A well-formed but impossible table
+      propagates core's ""InvalidRuleConfigError"".
+      ""dump_ruleset"" is the exact inverse, so a
+      resolved ruleset can be archived beside a
+      simulation result or a scraped game.
     end note
 }
 
@@ -569,6 +620,11 @@ Game "1" o-- "0..1" Player : dealer
 Game "1" *-- "0..1" Round : current_round
 Game "1" o-- "0..1" Contract : current_contract
 
+' The table ruleset is fixed when the table sits down: Game holds it and
+' hands the same object to every Round, which seeds it into the play
+' state and names it to the scorer. No knob of it is consulted yet.
+Game "1" o-- "1" RuleConfig : rules
+
 ' Round references Contract / Auction / PlayState — the play phase
 ' itself lives entirely on play_state, so no Tricks are held here.
 Round "1" o-- "0..1" Contract : contract
@@ -576,11 +632,14 @@ Round "1" o-- "0..1" Auction : auction
 Round "1" o-- "0..1" PlayState : play_state
 Round "1" o-- "1" Deck : deck
 Round "1" o-- "4" Player : players_order
+Round "1" o-- "1" RuleConfig : rules
 
 ' View + CLI wiring (the controller role today = cli.py loop + view hooks)
 Round ..> RichView : <<human input + hooks>>
 Cli ..> Game : <<owns game loop>>
 Cli ..> RichView : <<owns view + screens>>
+Cli ..> Ruleset : <<--rules / --preset>>
+Ruleset ..> RuleConfig : <<builds / validates>>
 RichView "1" *-- "0..N" RoundSummary : history
 RichView ..> p_view_screens : <<composes + prints>>
 RichView ..> p_view_helpers : <<uses>>

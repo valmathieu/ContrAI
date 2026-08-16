@@ -8,6 +8,13 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 ## [Unreleased]
 
+### Added
+
+- (core) `RuleConfig` — frozen dataclass of the 22 table-rule knobs of §9 with its three enums, the `classic` preset and `InvalidRuleConfigError`. No knob changes behaviour yet. See [core docs](docs/core/index.md).
+- (core) `PlayState.rules` — the play state carries its `RuleConfig` (default `RuleConfig()`) through `start`, `apply` and `with_hands`; not consulted yet.
+- (engine) `Game`, `Round` and `score_round` accept a `RuleConfig` and thread it down to `PlayState`; the default reproduces today's behaviour exactly.
+- (engine) `contrai --rules FILE` / `--preset classic` — load the table ruleset from a TOML file or by name (mutually exclusive); unknown keys are rejected. See [engine docs](docs/engine/index.md).
+
 ## [0.3.0] - 2026-08-15
 
 Typed-and-sealed release: seats, sides and contract trumps become values rather than strings (`Position`, `TeamSide`, `Suit`/`TrumpVariant`), the trick rules sit behind a single `TrumpRules` seam, `PlayObservation` is fully sealed and the played-out round lives entirely on the core `PlayState`; the CLI gains `--debug`/`--seed`/`--autoplay`, and no-trump and Slam-family scoring are brought in line with the domain reference.

@@ -11,6 +11,7 @@ from contrai_core import (
     InvalidCardError,
     InvalidContractError,
     InvalidPlayerCountError,
+    InvalidRuleConfigError,
     PlayRuleViolation,
     Rank,
     Suit,
@@ -26,6 +27,7 @@ ALL_DOMAIN_ERRORS = [
     IllegalPlayError,
     TrickStateError,
     InvalidContractError,
+    InvalidRuleConfigError,
 ]
 
 
@@ -138,6 +140,22 @@ class TestInvalidContractError:
         err = InvalidContractError("Invalid trump suit: Spades", context="ContractBid")
         assert str(err) == "ContractBid: Invalid trump suit: Spades"
         assert err.context == "ContractBid"
+
+
+class TestInvalidRuleConfigError:
+    def test_is_contrai_and_value_error(self):
+        assert issubclass(InvalidRuleConfigError, ContraiError)
+        assert issubclass(InvalidRuleConfigError, ValueError)
+
+    def test_message_without_context(self):
+        err = InvalidRuleConfigError("target_score must be one of (500,)")
+        assert str(err) == "target_score must be one of (500,)"
+        assert err.context == ""
+
+    def test_message_with_context(self):
+        err = InvalidRuleConfigError("m", context="RuleConfig")
+        assert str(err) == "RuleConfig: m"
+        assert err.context == "RuleConfig"
 
 
 class TestInvalidPlayerCountError:

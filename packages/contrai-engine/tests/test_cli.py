@@ -23,6 +23,7 @@ import sys
 import pytest
 
 from contrai_core.position import Position
+from contrai_core.rule_config import PRESETS, RuleConfig
 from contrai_core.team_side import TeamSide
 from contrai_engine.cli import _apply_seed, _build_game, _parse_args, main
 from contrai_engine.model.game import GameOverStatus
@@ -46,36 +47,99 @@ def _restore_random_state():
 
 
 class TestParseArgs:
-    """``_parse_args`` — argparse wiring for the three debug-mode flags."""
+    """``_parse_args`` — argparse wiring for the debug-mode and ruleset flags.
+
+    It returns a ``(DebugOptions, RuleConfig)`` pair: the flags, and the
+    table ruleset ``--rules`` / ``--preset`` resolved to.
+    """
 
     def test_no_flags_returns_all_off_defaults(self):
-        """The back-compat anchor: an empty argv parses to ``DebugOptions()``."""
+        """The back-compat anchor: an empty argv parses to the defaults."""
 
-        assert _parse_args([]) == DebugOptions()
+        assert _parse_args([]) == (DebugOptions(), RuleConfig())
 
     def test_debug_flag_alone(self):
-        assert _parse_args(["--debug"]) == DebugOptions(debug=True)
+        assert _parse_args(["--debug"]) == (DebugOptions(debug=True), RuleConfig())
 
     def test_seed_flag_alone(self):
-        assert _parse_args(["--seed", "42"]) == DebugOptions(seed=42)
+        assert _parse_args(["--seed", "42"]) == (DebugOptions(seed=42), RuleConfig())
 
     def test_autoplay_flag_alone(self):
-        assert _parse_args(["--autoplay"]) == DebugOptions(autoplay=True)
+        assert _parse_args(["--autoplay"]) == (DebugOptions(autoplay=True), RuleConfig())
 
     def test_all_three_flags_combined(self):
         result = _parse_args(["--debug", "--seed", "7", "--autoplay"])
-        assert result == DebugOptions(debug=True, autoplay=True, seed=7)
+        assert result == (DebugOptions(debug=True, autoplay=True, seed=7), RuleConfig())
 
     def test_seed_value_is_coerced_to_int(self):
-        result = _parse_args(["--seed", "123"])
-        assert result.seed == 123
-        assert isinstance(result.seed, int)
+        options, _ = _parse_args(["--seed", "123"])
+        assert options.seed == 123
+        assert isinstance(options.seed, int)
 
     def test_non_integer_seed_exits(self):
         """``argparse``'s ``type=int`` rejects a non-numeric ``--seed``."""
 
         with pytest.raises(SystemExit):
             _parse_args(["--seed", "not-a-number"])
+
+    def test_preset_classic_resolves_to_the_defaults(self):
+        assert _parse_args(["--preset", "classic"]) == (DebugOptions(), RuleConfig())
+
+    def test_rules_file_is_loaded(self, tmp_path):
+        path = tmp_path / "table.toml"
+        path.write_text("[general]\ntarget_score = 1000\n", encoding="utf-8")
+
+        assert _parse_args(["--rules", str(path)])[1] == RuleConfig(target_score=1000)
+
+    def test_rules_and_preset_are_mutually_exclusive(self, tmp_path):
+        """``argparse``'s own group rejects the pair before ``resolve_rules``."""
+
+        path = tmp_path / "table.toml"
+        path.write_text("", encoding="utf-8")
+
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_args(["--rules", str(path), "--preset", "classic"])
+        assert excinfo.value.code == 2
+
+    def test_unknown_preset_exits(self):
+        """``choices`` rejects an unknown preset name."""
+
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_args(["--preset", "house"])
+        assert excinfo.value.code == 2
+
+    def test_missing_rules_file_exits_with_usage_error(self, tmp_path, capsys):
+        """An unreadable file is a usage error, not a traceback."""
+
+        missing = tmp_path / "nope.toml"
+
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_args(["--rules", str(missing)])
+        assert excinfo.value.code == 2
+        assert "nope.toml" in capsys.readouterr().err
+
+    def test_unknown_key_in_rules_file_exits_with_usage_error(self, tmp_path, capsys):
+        path = tmp_path / "typo.toml"
+        path.write_text("[general]\ntarget_scor = 2000\n", encoding="utf-8")
+
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_args(["--rules", str(path)])
+        assert excinfo.value.code == 2
+        assert "unknown key" in capsys.readouterr().err
+
+    def test_invalid_config_in_rules_file_exits_with_usage_error(self, tmp_path, capsys):
+        """A well-formed file naming an impossible table is still a usage error."""
+
+        path = tmp_path / "impossible.toml"
+        path.write_text(
+            "[scoring]\nmark_made_points = false\nmark_announced_points = false\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_args(["--rules", str(path)])
+        assert excinfo.value.code == 2
+        assert "mark_made_points" in capsys.readouterr().err
 
 
 class TestApplySeed:
@@ -139,6 +203,13 @@ class TestBuildGame:
             # gates actually read: a truthy value at any seat would put
             # a blocking prompt back into an unattended run.
             assert player.is_human is False
+
+    def test_rules_are_handed_to_the_game(self):
+        rules = RuleConfig(target_score=1000)
+        assert _build_game(rules=rules).rules is rules
+
+    def test_default_rules_are_classic(self):
+        assert _build_game().rules == RuleConfig()
 
 
 class TestSeedDeterminism:
@@ -338,6 +409,8 @@ class _Harness:
         self.view: _RecordingView | None = None
         self.build_calls: list[bool] = []
         """One entry per ``_build_game`` call: the ``autoplay`` it got."""
+        self.rules_seen: list[RuleConfig | None] = []
+        """One entry per ``_build_game`` call: the ``rules`` it got."""
 
 
 @pytest.fixture
@@ -367,8 +440,11 @@ def install_cli_doubles(monkeypatch):
             )
             return harness.view
 
-        def _make_game(autoplay: bool = False) -> _FakeGame:
+        def _make_game(
+            autoplay: bool = False, rules: RuleConfig | None = None
+        ) -> _FakeGame:
             harness.build_calls.append(autoplay)
+            harness.rules_seen.append(rules)
             return queue.pop(0)
 
         monkeypatch.setattr(sys, "argv", list(argv))
@@ -550,6 +626,33 @@ class TestMain:
 
         assert harness.build_calls == [True]
         assert harness.view.options == DebugOptions(autoplay=True)
+
+    def test_default_run_builds_the_game_under_the_classic_ruleset(
+        self, install_cli_doubles
+    ):
+        """No ruleset flag: the game is still built under an explicit config."""
+
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            end_game_choices=["q"],
+        )
+
+        main()
+
+        assert harness.rules_seen == [RuleConfig()]
+
+    def test_preset_flag_reaches_the_seating(self, install_cli_doubles):
+        """``--preset`` resolves once and reaches ``_build_game``."""
+
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            end_game_choices=["q"],
+            argv=("contrai", "--preset", "classic"),
+        )
+
+        main()
+
+        assert harness.rules_seen == [PRESETS["classic"]]
 
     @pytest.mark.parametrize(
         "error", [KeyboardInterrupt(), EOFError()], ids=["ctrl-c", "ctrl-d"]
