@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from contrai_core.deck import Deck
 from contrai_core.exceptions import InvalidPlayerCountError
 from contrai_core.position import Position
+from contrai_core.rule_config import RuleConfig
 from contrai_core.team import Team
 from contrai_core.team_side import TeamSide
 
@@ -70,8 +71,11 @@ class Game:
         current_round (Round): The current round object.
         round_number (int): The current round number.
         scores (dict[TeamSide, int]): The cumulative game score of each side.
+        rules (RuleConfig): The table ruleset every round of this game is
+            played under. Handed down to each :class:`Round`, and from
+            there to the core play state and the round scorer.
     """
-    def __init__(self, players):
+    def __init__(self, players, rules: RuleConfig | None = None):
         """
         Initialize a game with 4 players, one per seat.
         Teams are automatically created: North-South vs East-West.
@@ -99,6 +103,9 @@ class Game:
         Args:
             players (list[Player]): The 4 players, either all carrying a
                 distinct Position or none carrying one at all.
+            rules (RuleConfig | None): The table ruleset to play under.
+                ``None`` (the default) means the §9 catalogue defaults,
+                which reproduces today's behaviour exactly.
 
         Raises:
             InvalidPlayerCountError: If the number of players is not exactly 4.
@@ -166,6 +173,9 @@ class Game:
         self.current_round = None
         self.round_number = 0
         self.scores: dict[TeamSide, int] = {side: 0 for side in TeamSide}
+        # The table ruleset is game-level state: it is fixed when the
+        # table sits down and every round inherits it unchanged.
+        self.rules: RuleConfig = rules if rules is not None else RuleConfig()
 
     def start_new_round(self):
         """
@@ -188,7 +198,13 @@ class Game:
         self.round_number += 1
 
         # Create new Round object
-        self.current_round = Round(self.players_order, self.dealer, self.deck, self.round_number)
+        self.current_round = Round(
+            self.players_order,
+            self.dealer,
+            self.deck,
+            self.round_number,
+            rules=self.rules,
+        )
 
         # Deal cards
         self.current_round.deal_cards()

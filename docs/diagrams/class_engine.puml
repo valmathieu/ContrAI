@@ -37,6 +37,7 @@ class Deck      <<from contrai-core>> #E1F0FF
 class Contract  <<from contrai-core>> #E1F0FF
 class Auction   <<from contrai-core>> #E1F0FF
 class PlayState <<from contrai-core>> #E1F0FF
+class RuleConfig <<from contrai-core>> #E1F0FF
 enum Suit       <<from contrai-core>> #E1F0FF
 class "ContractSuit" as p_contractsuit <<from contrai-core>> #E1F0FF
 
@@ -195,8 +196,9 @@ package "model/game.py" as p_game {
         + current_round : Round?
         + round_number : int
         + scores : dict<TeamSide, int>
+        + rules : RuleConfig
         --
-        + __init__(players: list<Player>)
+        + __init__(players: list<Player>, rules=None)
         + start_new_round() : None
         + manage_round(view=None) : None
         + check_game_over(target_score=1500) : GameOverStatus
@@ -259,8 +261,9 @@ package "model/round/ package" as p_round {
         + unannounced_slam : UnannouncedSlam?
         + belote_holder : Player?
         + belote_state : dict<Player, str>
+        + rules : RuleConfig
         --
-        + __init__(players_order, dealer, deck, round_number)
+        + __init__(players_order, dealer, deck, round_number, rules=None)
         + deal_cards() : None
         + manage_bidding(view=None) : Contract?
         + play_trick(view=None) : None
@@ -278,7 +281,7 @@ package "model/round/ package" as p_round {
 
     ' --- scoring.py: the pure scoring transformation ---
     class "scoring.py" as r_scoring <<module>> #FFEFD9 {
-        score_round(round) : RoundScore
+        score_round(round, *, rules=None) : RoundScore
         count_player_tricks(trick_winners, player) : int
         UnannouncedSlam <<enum>> : {SLAM, GRAND_SLAM}
         RoundScore <<dataclass>>
@@ -569,6 +572,11 @@ Game "1" o-- "0..1" Player : dealer
 Game "1" *-- "0..1" Round : current_round
 Game "1" o-- "0..1" Contract : current_contract
 
+' The table ruleset is fixed when the table sits down: Game holds it and
+' hands the same object to every Round, which seeds it into the play
+' state and names it to the scorer. No knob of it is consulted yet.
+Game "1" o-- "1" RuleConfig : rules
+
 ' Round references Contract / Auction / PlayState — the play phase
 ' itself lives entirely on play_state, so no Tricks are held here.
 Round "1" o-- "0..1" Contract : contract
@@ -576,6 +584,7 @@ Round "1" o-- "0..1" Auction : auction
 Round "1" o-- "0..1" PlayState : play_state
 Round "1" o-- "1" Deck : deck
 Round "1" o-- "4" Player : players_order
+Round "1" o-- "1" RuleConfig : rules
 
 ' View + CLI wiring (the controller role today = cli.py loop + view hooks)
 Round ..> RichView : <<human input + hooks>>

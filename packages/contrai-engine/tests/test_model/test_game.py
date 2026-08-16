@@ -22,6 +22,7 @@ from contrai_core.card import Card
 from contrai_core.contract import Contract
 from contrai_core.hand import Hand
 from contrai_core.position import Position
+from contrai_core.rule_config import RuleConfig
 from contrai_core.types import Suit
 
 class DummyPlayer:
@@ -53,11 +54,14 @@ class FakeRound:
     failed_scores: dict[str, int] = {}
     contract_made = True
 
-    def __init__(self, players_order, dealer, deck, round_number):
+    def __init__(self, players_order, dealer, deck, round_number, rules=None):
         self.players_order = players_order
         self.dealer = dealer
         self.deck = deck
         self.round_number = round_number
+        # The real Round takes the game's RuleConfig; record it so the
+        # threading test can assert the Game handed its own down.
+        self.rules = rules
         self.calls: list[str] = []
         # Mirrors the attributes the real Round exposes once bidding/scoring
         # runs, so debug_state.round_result_lines (read by Game's debug
@@ -325,13 +329,38 @@ def test_start_new_round_deals_cards(game):
     Test that starting a new round deals cards to all players.
     """
     game.start_new_round()
-    
+
     # Each player should have 8 cards
     for player in game.players:
         assert len(player.hand) == 8
-    
+
     # Deck should be empty after dealing
     assert game.deck.is_empty()
+
+def test_game_defaults_to_the_classic_ruleset(game):
+    """
+    Test that a Game built without a ruleset plays the §9 defaults.
+    """
+    assert game.rules == RuleConfig()
+
+def test_game_records_an_explicit_ruleset(players):
+    """
+    Test that an explicit RuleConfig is kept as-is, not copied.
+    """
+    rules = RuleConfig(target_score=1000)
+    assert Game(players, rules=rules).rules is rules  # type: ignore
+
+def test_start_new_round_hands_the_ruleset_to_the_round(players, monkeypatch):
+    """
+    Test that the Game's ruleset reaches the Round it builds.
+    """
+    rules = RuleConfig(target_score=1000)
+    game = Game(players, rules=rules)  # type: ignore
+    monkeypatch.setattr(game_module, 'Round', FakeRound)
+
+    game.start_new_round()
+
+    assert game.current_round.rules is rules
 
 def test_check_game_over_not_finished(game):
     """
