@@ -9,7 +9,7 @@ rendering or game logic lives here.
 
 from __future__ import annotations
 
-from contrai_core import Position, Suit, TeamSide, TrumpVariant
+from contrai_core import ContractSuit, Position, Suit, TeamSide, TrumpVariant
 from contrai_core.bid import ContractBid
 
 # ---------------------------------------------------------------------------
@@ -74,6 +74,34 @@ SUIT_ALIASES = {
     "nt": TrumpVariant.NO_TRUMP,
     "notrump": TrumpVariant.NO_TRUMP,
     "no-trump": TrumpVariant.NO_TRUMP,
+    "at": TrumpVariant.ALL_TRUMP,
+    "alltrump": TrumpVariant.ALL_TRUMP,
+    "all-trump": TrumpVariant.ALL_TRUMP,
+}
+
+# Contract-trump glyphs. The four card suits get their Unicode pip; the
+# two variants get a two-letter tag rather than falling through to the
+# enum value ("NoTrump", 7 cells), which overflows the 11-cell bid column
+# of the bidding history.
+TRUMP_GLYPH: dict[ContractSuit, str] = {
+    Suit.SPADES: "♠",
+    Suit.HEARTS: "♥",
+    Suit.DIAMONDS: "♦",
+    Suit.CLUBS: "♣",
+    TrumpVariant.NO_TRUMP: "NT",
+    TrumpVariant.ALL_TRUMP: "AT",
+}
+
+# Spelled-out trump names for the contract panel. English-only, matching
+# contree-domain.md §10 (*sans atout* -> No Trump, *tout atout* -> All
+# Trump).
+TRUMP_LABEL: dict[ContractSuit, str] = {
+    Suit.SPADES: "Spades",
+    Suit.HEARTS: "Hearts",
+    Suit.DIAMONDS: "Diamonds",
+    Suit.CLUBS: "Clubs",
+    TrumpVariant.NO_TRUMP: "No Trump",
+    TrumpVariant.ALL_TRUMP: "All Trump",
 }
 # Derived from ``ContractBid.VALID_VALUES`` so the human-input parser
 # stays in lockstep with the auction's canonical value ladder. The

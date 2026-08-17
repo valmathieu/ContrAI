@@ -35,7 +35,7 @@ from contrai_core.play import PlayState
 from contrai_core.rule_config import RuleConfig
 from contrai_core.team import Team
 from contrai_core.exceptions import IllegalPlayError, PlayRuleViolation
-from contrai_core.types import Rank, Suit, TrumpVariant
+from contrai_core.types import CONTRACT_SUITS, Rank, Suit, TrumpVariant
 
 from contrai_engine.model.player import AiPlayer, HumanPlayer
 from contrai_engine.model.round import Round
@@ -670,10 +670,52 @@ class TestBeloteTransition:
 # UX promise the player sees as "I am not asked to confirm Pass".
 
 
-def _empty_round(players_dict):
-    """A Round with no contract / no trick — enough for bidding helpers."""
+def _empty_round(players_dict, rules=None):
+    """A Round with no contract / no trick — enough for bidding helpers.
+
+    Args:
+        players_dict: mapping of seat letter → Player.
+        rules: optional table ruleset; ``None`` leaves the Round on its
+            own default (the §9 catalogue).
+    """
     order = [players_dict[s] for s in ("N", "E", "S", "W")]
-    return Round(order, dealer=players_dict["N"], deck=None, round_number=1)
+    return Round(
+        order, dealer=players_dict["N"], deck=None, round_number=1, rules=rules
+    )
+
+
+class TestAuctionRuleset:
+    """The auction runs under the round's table ruleset (§9.2)."""
+
+    def test_the_auction_runs_under_the_round_ruleset(self, players):
+        rules = RuleConfig(extended_trump_choices=True)
+        round_ = _empty_round(players, rules=rules)
+        round_.manage_bidding()
+        assert round_.auction.rules is rules
+
+    def test_the_default_auction_offers_no_variants(self, players):
+        # Asked of the *finished* auction so the assertion holds whatever
+        # the AI seats bid — the offered trump set is a table rule, not an
+        # auction-state one.
+        round_ = _empty_round(players)
+        round_.manage_bidding()
+        offered = {
+            b.suit
+            for b in Auction.empty(rules=round_.rules).legal_actions(players["N"])
+            if isinstance(b, ContractBid)
+        }
+        assert offered == set(Suit)
+
+    def test_an_extended_auction_offers_both_variants(self, players):
+        rules = RuleConfig(extended_trump_choices=True)
+        round_ = _empty_round(players, rules=rules)
+        round_.manage_bidding()
+        offered = {
+            b.suit
+            for b in Auction.empty(rules=round_.rules).legal_actions(players["N"])
+            if isinstance(b, ContractBid)
+        }
+        assert offered == set(CONTRACT_SUITS)
 
 
 class TestManageBiddingAutoPasses:

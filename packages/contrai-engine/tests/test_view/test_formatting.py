@@ -171,10 +171,17 @@ class TestFormatTrumpLabel:
         assert "♥ Hearts" in text
         assert "★" not in text
 
-    def test_no_trump_label(self):
-        text = _format_trump_label(TrumpVariant.NO_TRUMP).plain
-        assert "No Trump" in text
-        assert "★" not in text
+    @pytest.mark.parametrize("variant, glyph, label", [
+        (TrumpVariant.NO_TRUMP, "NT", "No Trump"),
+        (TrumpVariant.ALL_TRUMP, "AT", "All Trump"),
+    ])
+    def test_variant_glyph_and_label(self, variant, glyph, label):
+        # A trump naming no suit has no pip to show, so the two-letter tag
+        # would only repeat the label ("NT No Trump"); the spelled-out name
+        # stands alone in the contract panel and the tag goes in the bid
+        # cell, where width is scarce.
+        assert _suit_glyph(variant) == glyph
+        assert _format_trump_label(variant).plain == label
 
     def test_none_suit_is_em_dash(self):
         assert _format_trump_label(None).plain == "—"
@@ -293,11 +300,28 @@ class TestBidLabel:
 
         assert _bid_label(bid).plain == f"{label} {_suit_glyph(Suit.SPADES)}"
 
-    def test_no_trump_contract_uses_the_no_trump_glyph(self, four_players):
+    @pytest.mark.parametrize("variant", list(TrumpVariant))
+    def test_a_variant_contract_uses_its_two_letter_tag(
+        self, four_players, variant
+    ):
         north, *_ = four_players
-        bid = ContractBid(north, 100, TrumpVariant.NO_TRUMP)
+        bid = ContractBid(north, 100, variant)
 
-        assert _bid_label(bid).plain.endswith(_suit_glyph(TrumpVariant.NO_TRUMP))
+        assert _bid_label(bid).plain.endswith(_suit_glyph(variant))
+
+    @pytest.mark.parametrize("variant", list(TrumpVariant))
+    def test_a_variant_bid_cell_fits_the_history_column(
+        self, four_players, variant
+    ):
+        # screens/bidding.py reserves cell_w = 11 for a whole cell — the
+        # seat letter, a space, then the bid label — and pads the rest to
+        # keep the seats in vertical lanes, so the cell must stay under 11
+        # for the lanes to hold. "S 240 NT" is 8. Falling back to the enum
+        # value ("NoTrump", 7 cells) makes it "S 240 NoTrump", 13, and the
+        # column overflows.
+        north, *_ = four_players
+        label = _bid_label(ContractBid(north, 240, variant)).plain
+        assert len(f"S {label}") < 11
 
     def test_an_unknown_bid_subclass_falls_back_to_str(self):
         """Defensive: a bid type the view has never heard of still renders."""

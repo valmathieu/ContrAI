@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Optional
 
-from contrai_core import Auction, BasePlayer, Position
+from contrai_core import Auction, BasePlayer, Position, TrumpVariant
 from contrai_core.bid import (
     Bid,
     ContractBid,
@@ -39,6 +39,7 @@ from contrai_engine.view.theme import (
     GOLD,
     RED,
     TITLE,
+    TRUMP_GLYPH,
     YELLOW,
 )
 
@@ -113,7 +114,7 @@ def _panel_bidding_history(bids: list) -> Panel:
         #2  S 100 ♥    E Pass     N 130 ♥    W ×2
     """
     # Fixed column widths so cells stack in vertical lanes. The bid
-    # cell holds at most "S 180 ♥" (7 cells); pad to leave a gap.
+    # cell holds at most "S 240 NT" (8 cells); pad to leave a gap.
     round_w = 4
     cell_w = 11
     body = Text()
@@ -190,6 +191,22 @@ def _bidding_prompt_text(
         min_value = _cheapest_legal_raise(legal)
         if min_value is not None:
             options.append(f"'{min_value} H'")
+            # An extended table offers no trump and all trump too, and
+            # their input tags are worth advertising. Derived from the
+            # legal set rather than from the ruleset, so a variant already
+            # past its own ladder top simply stops being suggested.
+            variants = sorted(
+                {
+                    b.suit for b in legal
+                    if isinstance(b, ContractBid)
+                    and isinstance(b.suit, TrumpVariant)
+                    and b.value == min_value
+                },
+                key=lambda v: v.value,
+            )
+            options.extend(
+                f"'{min_value} {TRUMP_GLYPH[v]}'" for v in variants
+            )
         options.append("'pass'")
         if any(isinstance(b, DoubleBid) for b in legal):
             options.append("'double'")

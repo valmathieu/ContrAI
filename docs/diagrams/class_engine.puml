@@ -35,7 +35,9 @@ enum TeamSide   <<from contrai-core>> #E1F0FF
 class Team      <<from contrai-core>> #E1F0FF
 class Deck      <<from contrai-core>> #E1F0FF
 class Contract  <<from contrai-core>> #E1F0FF
-class Auction   <<from contrai-core>> #E1F0FF
+class Auction   <<from contrai-core>> #E1F0FF {
+    + rules : RuleConfig
+}
 class PlayState <<from contrai-core>> #E1F0FF
 class RuleConfig <<from contrai-core>> #E1F0FF
 enum Suit       <<from contrai-core>> #E1F0FF
@@ -291,8 +293,11 @@ package "model/round/ package" as p_round {
 
     note right of Round
       ""manage_bidding"" drives a core
-      ""Auction"" through the cyclic
-      ""players_order"". Each turn: query
+      ""Auction.empty(rules=self.rules)"" through
+      the cyclic ""players_order"" — the table
+      ruleset is what decides the trump choices
+      on offer and each mode's ladder top.
+      Each turn: query
       ""legal_actions(player)""; if the only
       legal action is Pass (partner just
       doubled / redoubled), auto-apply it
@@ -465,14 +470,21 @@ package "view/ package" as p_view {
       its own module:
       * theme — colour tokens + lookup tables
         (""POSITION_SHORT"" and friends are
-        keyed by ""Position"")
+        keyed by ""Position""; ""TRUMP_GLYPH"" /
+        ""TRUMP_LABEL"" are keyed by
+        ""ContractSuit"", giving the two suitless
+        variants the tags ""NT"" / ""AT"" and the
+        names //No Trump// / //All Trump//)
       * formatting — seat / suit / contract /
         trump labels + the compact ""_bid_label""
       * parsing — ""_parse_bid_input"",
         ""_parse_card_input""
       * bidding_rules — ""_illegal_bid_reason""
         (the prompt hint reads
-        ""Auction.legal_actions"" directly)
+        ""Auction.legal_actions"" directly; the
+        table-limit branches read
+        ""bookable_suits"" / ""ladder_top"" rather
+        than restating the numbers)
       * state_helpers — ""_current_winner"",
         ""_trick_index"" (which of the eight
         tricks is on the table),

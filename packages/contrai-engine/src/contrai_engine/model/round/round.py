@@ -138,6 +138,11 @@ class Round:
            raises :class:`IllegalBidError` — there is no silent
            "force a Pass on illegal" fallback any more.
 
+        The auction runs under this round's :attr:`rules`, which is what
+        decides the trump choices on offer (the four suits, plus no trump
+        and all trump when ``extended_trump_choices`` is on) and where
+        each mode's numeric ladder stops.
+
         Args:
             view: Optional view that drives human input and pacing
                 hooks.
@@ -147,7 +152,7 @@ class Round:
             player passed.
         """
 
-        auction = Auction.empty()
+        auction = Auction.empty(rules=self.rules)
         player_iter = itertools.cycle(self.players_order)
 
         while not auction.is_terminal():

@@ -15,11 +15,11 @@ Source at `packages/contrai-engine/src/contrai_engine/`:
     - `levels.py` — the `AI_LEVELS` registry + `make_ai_player()` factory for difficulty selection
   - `game.py` — `Game` (fires `view.on_round_dealt(...)` after the deal and `view.on_all_pass_redeal(...)` when nobody contracts). Carries the `RuleConfig` handed in at construction (`Game(players, rules=…)` → `Round` → `PlayState` / `score_round`); defaults to `RuleConfig()`, and nothing reads a knob of it yet
   - `round/` — the round subpackage (the lifecycle orchestrator plus the pure scoring transformation it calls); `round/__init__.py` re-exports `Round` / `UnannouncedSlam` so external imports (`from contrai_engine.model.round import …`) are unchanged:
-    - `round.py` — `Round`, the lifecycle orchestrator: deal → `manage_bidding` → `play_trick` / `play_all_tricks` → the thin `calculate_round_scores` wrapper, plus the inline belote/rebelote helpers. The trick loop is driven by the immutable core `contrai_core.play.PlayState` — seeded at the start of play by `play_all_tricks` (or lazily by `play_trick` when driven directly) — which owns whose turn it is, the legal cards, each seat's remaining hand, the completed tricks and their winners, and what each side has captured. `Round` keeps exactly one mirror of it — `_sync_hands` re-extends every `player.hand` after each play — so the view keeps reading the classic engine objects; every other question about the play phase is asked of `play_state` directly. AI seats instead read the frozen `PlayObservation` projected from that same state. Publishes `view.on_bid_made(...)`, `view.on_contract_established(...)`, `view.on_card_played(...)`, `view.on_trick_complete(...)`, and `view.on_belote_announced(...)` so the view can pace and narrate AI turns. Takes the table `RuleConfig` from the `Game` (`rules=` on the constructor, defaulting to `RuleConfig()`), seeds it into both the validated and the lazy `PlayState`, and names it to the scorer
+    - `round.py` — `Round`, the lifecycle orchestrator: deal → `manage_bidding` → `play_trick` / `play_all_tricks` → the thin `calculate_round_scores` wrapper, plus the inline belote/rebelote helpers. The trick loop is driven by the immutable core `contrai_core.play.PlayState` — seeded at the start of play by `play_all_tricks` (or lazily by `play_trick` when driven directly) — which owns whose turn it is, the legal cards, each seat's remaining hand, the completed tricks and their winners, and what each side has captured. `Round` keeps exactly one mirror of it — `_sync_hands` re-extends every `player.hand` after each play — so the view keeps reading the classic engine objects; every other question about the play phase is asked of `play_state` directly. AI seats instead read the frozen `PlayObservation` projected from that same state. Publishes `view.on_bid_made(...)`, `view.on_contract_established(...)`, `view.on_card_played(...)`, `view.on_trick_complete(...)`, and `view.on_belote_announced(...)` so the view can pace and narrate AI turns. Takes the table `RuleConfig` from the `Game` (`rules=` on the constructor, defaulting to `RuleConfig()`), runs the auction under it (`Auction.empty(rules=self.rules)`, so the offered trump choices and each mode's ladder top are the table's call), seeds it into both the validated and the lazy `PlayState`, and names it to the scorer
     - `scoring.py` — the pure `score_round(round, *, rules=None) -> RoundScore` transformation (the numeric / unannounced-Slam / doubled / Slam-family scoring shapes, belote +20), plus `count_player_tricks` and the `UnannouncedSlam` outcome tag. `rules` defaults to `round_.rules`; the seam is resolved but consulted by nothing yet — the §9.6 rows land on the made/announced decomposition in a later step
 - `view/` — the terminal UI, split into focused modules (see [CLI](#cli) below):
   - `rich_view.py` — `RichView`, the stateful orchestrator: console + per-game state, the engine hooks (`request_*_action`, `on_*`, `show_*`), the input loops, and `_render_in_game` (the single seam that pulls state off `self` and feeds the pure builders). `RoundSummary` lives here too. Re-exported from `view/__init__.py`, so both `from contrai_engine.view.rich_view import RichView` (used by `cli.py` / `model/game.py`) and `from contrai_engine.view import RichView` work.
-  - `theme.py` — design tokens (colour palette) and lookup tables (target-score options, `POSITION_SHORT` seat labels, `TEAM_ABBR` side labels, bid aliases, valid contract values). The team labels here are *presentation only* — identity is `TeamSide`, so rewording one cannot break a score lookup
+  - `theme.py` — design tokens (colour palette) and lookup tables (target-score options, `POSITION_SHORT` seat labels, `TEAM_ABBR` side labels, `TRUMP_GLYPH` / `TRUMP_LABEL` contract-trump tags and names, bid aliases, valid contract values). The team labels here are *presentation only* — identity is `TeamSide`, so rewording one cannot break a score lookup. `TRUMP_GLYPH` gives the two suitless variants the two-letter tags `NT` / `AT` rather than falling through to the enum value (`"NoTrump"`, 7 cells), which overflowed the bidding history's 11-cell bid column
   - `formatting.py` — stateless text / glyph / label builders (seat & suit labels, the shared contract / trump labels, and the compact `Bid` label)
   - `parsing.py` — human-input parsers (`_parse_bid_input`, `_parse_card_input`)
   - `bidding_rules.py` — the messaging-only `_illegal_bid_reason` mirror of the auction rules (the specific nudge shown when a human types an illegal bid); the adaptive prompt hint is derived directly from `Auction.legal_actions`
@@ -114,6 +114,20 @@ A file is a *partial override* on the built-in defaults: it names only the knobs
 ```bash
 uv run python -c "from contrai_core import RuleConfig; from contrai_engine.ruleset import dump_ruleset; print(dump_ruleset(RuleConfig()), end='')" > table.toml
 ```
+
+**Trump choices.** No trump and all trump are off by default (`contree-domain.md` §9.2). Turn them on with a ruleset file:
+
+```toml
+[trump]
+extended_trump_choices = true
+all_trump_belote       = "single"   # none / single / four
+```
+
+```bash
+uv run contrai --rules table.toml
+```
+
+At the prompt they are `nt` and `at` — `"100 nt"`, `"240at"`, and the spelled-out `no-trump` / `all-trump` also parse. Each mode has its own ladder top: 180 at a suit, 160 at no trump, and 160 / 180 / 240 at all trump depending on the belote regime. The bid prompt advertises only what is actually legal, so a variant already past its ceiling stops being suggested, and a rejected bid says which limit it crossed rather than "not legal here".
 
 **No knob changes behaviour yet.** The flags resolve, validate and reach `Game`, which threads the config down to `Round`, `PlayState` and `score_round` — and nothing consults a field of it. That is deliberate: this step is the backbone, and each knob is wired to behaviour on its own in a later step.
 
