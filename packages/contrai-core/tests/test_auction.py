@@ -36,6 +36,8 @@ Redouble legality, ``partner_bid``).
 import pytest
 
 from contrai_core import (
+    CONTRACT_SUITS,
+    AllTrumpBelote,
     Auction,
     BasePlayer,
     ContractBid,
@@ -44,10 +46,13 @@ from contrai_core import (
     PassBid,
     Position,
     RedoubleBid,
+    RuleConfig,
     SlamLevel,
     Suit,
     Team,
     TrumpVariant,
+    bookable_suits,
+    ladder_top,
 )
 
 
@@ -342,33 +347,59 @@ class TestContractBidPrecedence:
 
 
 class TestContractLegalitySuitIndependence:
-    """Contract legality is a function of value only — never of suit.
+    """Auction *precedence* is a function of value only — never of suit.
 
-    The rule helper has been split into a suit-agnostic
+    The rule helper is split into a suit-agnostic
     :meth:`Auction._is_contract_value_legal` precisely so callers (most
     importantly :meth:`Auction.legal_actions`) don't probe the same
-    question six times per value. These tests pin that invariant: the
-    answer for any given ``value`` must be identical across every
-    :class:`Suit`.
+    question six times per value. These tests pin that invariant: for any
+    given ``value``, the precedence answer must be identical across every
+    trump the table offers.
+
+    The suit does matter to the two *table* limits — an unbookable trump
+    choice and the per-mode ladder top — which no auction state can lift.
+    Those are checked separately in ``TestTrumpChoiceGate``; the tests
+    below hold the value at or below every offered mode's ceiling so the
+    precedence question is the only one being asked.
     """
 
-    @pytest.mark.parametrize("value", ContractBid.VALID_VALUES)
-    def test_value_legal_iff_every_suit_legal_on_empty(self, north, value):
-        auction = Auction()
+    #: Bookable at an extended table and legal on every mode's ladder —
+    #: 160 is the lowest of the three ceilings, so nothing below it can be
+    #: capped away and any difference must come from precedence.
+    UNCAPPED_VALUES = [
+        v for v in ContractBid.VALID_VALUES
+        if not isinstance(v, int) or v <= 160
+    ]
+
+    @pytest.mark.parametrize("rules", [
+        RuleConfig(),
+        RuleConfig(extended_trump_choices=True),
+    ])
+    @pytest.mark.parametrize("value", UNCAPPED_VALUES)
+    def test_value_legal_iff_every_suit_legal_on_empty(
+        self, north, value, rules
+    ):
+        auction = Auction.empty(rules=rules)
         value_answer = auction._is_contract_value_legal(value)
-        for suit in ContractBid.VALID_SUITS:
+        for suit in bookable_suits(rules):
             assert (
                 auction._is_contract_legal(ContractBid(north, value, suit))
                 is value_answer
             )
 
-    @pytest.mark.parametrize("value", ContractBid.VALID_VALUES)
+    @pytest.mark.parametrize("rules", [
+        RuleConfig(),
+        RuleConfig(extended_trump_choices=True),
+    ])
+    @pytest.mark.parametrize("value", UNCAPPED_VALUES)
     def test_value_legal_iff_every_suit_legal_after_contract(
-        self, north, east, value
+        self, north, east, value, rules
     ):
-        auction = Auction((ContractBid(east, 100, Suit.HEARTS),))
+        auction = Auction(
+            (ContractBid(east, 100, Suit.HEARTS),), rules=rules
+        )
         value_answer = auction._is_contract_value_legal(value)
-        for suit in ContractBid.VALID_SUITS:
+        for suit in bookable_suits(rules):
             assert (
                 auction._is_contract_legal(ContractBid(north, value, suit))
                 is value_answer
@@ -482,13 +513,26 @@ class TestLegalActionsMonotonicity:
             from_full_probe = {
                 ContractBid(north, value, suit)
                 for value in ContractBid.VALID_VALUES
-                for suit in ContractBid.VALID_SUITS
+                for suit in bookable_suits(auction.rules)
                 if auction._is_contract_value_legal(value)
+                and not (
+                    isinstance(value, int)
+                    and value > ladder_top(suit, auction.rules)
+                )
             }
             assert from_short_circuit == from_full_probe, (
                 f"Short-circuit diverged from per-value probe for "
                 f"{auction.bids!r}"
             )
+
+    def test_no_bid_above_a_suits_ladder_top_is_ever_offered(self, north):
+        # Value legality stays monotonic; what narrows as the value climbs
+        # is the *suit* set, because each mode stops at its own ceiling.
+        rules = RuleConfig(extended_trump_choices=True,
+                           all_trump_belote=AllTrumpBelote.FOUR)
+        for bid in Auction.empty(rules=rules).legal_actions(north):
+            if isinstance(bid, ContractBid) and isinstance(bid.value, int):
+                assert bid.value <= ladder_top(bid.suit, rules)
 
 
 # ---------------------------------------------------------------------------
@@ -675,23 +719,58 @@ class TestRedoubleLegality:
 class TestLegalActions:
     """Shape of the enumerated legal-actions set."""
 
-    def test_empty_auction_includes_pass_and_all_contracts(self, north):
+    def test_empty_auction_offers_the_four_suits_by_default(self, north):
         actions = Auction().legal_actions(north)
         # Always starts with the Pass action.
         assert isinstance(actions[0], PassBid)
-        # 13 values × 5 bookable trumps = 65 ContractBids legal at start,
-        # plus the Pass. Five, not six: ALL_TRUMP is unimplemented and off
-        # ContractBid.VALID_SUITS, so it is out of the action space by
-        # construction rather than by a filter here.
+        # 11 numeric steps (80–180) + Slam + Solo Slam, over four suits.
+        # Extended trump choices are off in the §9 default set, so neither
+        # variant is in the action space a search agent samples.
         contracts = [a for a in actions if isinstance(a, ContractBid)]
-        assert len(contracts) == 13 * 5
-        assert len(ContractBid.VALID_SUITS) == 5
-        # A search-based agent samples this set directly, so an unplayable
-        # contract must not be reachable through it.
-        assert all(bid.suit is not TrumpVariant.ALL_TRUMP for bid in contracts)
+        assert len(contracts) == 13 * 4
+        assert {b.suit for b in contracts} == set(Suit)
+        assert not any(isinstance(b.suit, TrumpVariant) for b in contracts)
         # No Double / Redouble before there's a contract to challenge.
         assert not any(isinstance(a, DoubleBid) for a in actions)
         assert not any(isinstance(a, RedoubleBid) for a in actions)
+
+    @pytest.mark.parametrize("regime, expected", [
+        (AllTrumpBelote.NONE, 74),
+        (AllTrumpBelote.SINGLE, 76),
+        (AllTrumpBelote.FOUR, 82),
+    ])
+    def test_extended_table_offers_both_variants_on_their_ladders(
+        self, north, regime, expected
+    ):
+        # 44 suit bids (4 × 80–180) + 9 at no trump (80–160) + all trump's
+        # own ladder (9 / 11 / 17 steps by regime), plus Slam and Solo Slam
+        # under each of the six trumps.
+        rules = RuleConfig(extended_trump_choices=True, all_trump_belote=regime)
+        contracts = [
+            a for a in Auction.empty(rules=rules).legal_actions(north)
+            if isinstance(a, ContractBid)
+        ]
+        assert len(contracts) == expected
+        by_suit: dict = {}
+        for bid in contracts:
+            if isinstance(bid.value, int):
+                by_suit.setdefault(bid.suit, []).append(bid.value)
+        assert max(by_suit[Suit.SPADES]) == 180
+        assert max(by_suit[TrumpVariant.NO_TRUMP]) == 160
+        assert max(by_suit[TrumpVariant.ALL_TRUMP]) == ladder_top(
+            TrumpVariant.ALL_TRUMP, rules
+        )
+
+    def test_slam_family_is_available_under_every_trump_choice(self, north):
+        # §5.2: the Slam-family base values do not move with the ladder, so
+        # a mode capped at 160 still offers both all-tricks contracts.
+        rules = RuleConfig(extended_trump_choices=True,
+                           all_trump_belote=AllTrumpBelote.NONE)
+        contracts = [
+            a for a in Auction.empty(rules=rules).legal_actions(north)
+            if isinstance(a, ContractBid) and isinstance(a.value, SlamLevel)
+        ]
+        assert {b.suit for b in contracts} == set(CONTRACT_SUITS)
 
     def test_includes_double_after_opponent_contract(
         self, north, west, south, east, four_players
@@ -1212,3 +1291,82 @@ class TestStateProperties:
     ):
         auction = Auction((PassBid(north),))
         assert auction.partner_bid(south) is None
+
+
+# ---------------------------------------------------------------------------
+# The table ruleset: which trumps are bookable, and how high each goes
+# ---------------------------------------------------------------------------
+
+
+class TestTrumpChoiceGate:
+    """``extended_trump_choices`` and the per-mode ladder tops (§5.2, §9.2)."""
+
+    @pytest.mark.parametrize(
+        "suit", [TrumpVariant.NO_TRUMP, TrumpVariant.ALL_TRUMP]
+    )
+    def test_variants_are_illegal_by_default(self, north, suit):
+        assert Auction().is_legal(ContractBid(north, 80, suit)) is False
+
+    @pytest.mark.parametrize(
+        "suit", [TrumpVariant.NO_TRUMP, TrumpVariant.ALL_TRUMP]
+    )
+    def test_variants_are_legal_at_an_extended_table(self, north, suit):
+        rules = RuleConfig(extended_trump_choices=True)
+        auction = Auction.empty(rules=rules)
+        assert auction.is_legal(ContractBid(north, 80, suit)) is True
+
+    def test_a_value_above_the_mode_ladder_is_illegal(self, north):
+        rules = RuleConfig(extended_trump_choices=True)
+        auction = Auction.empty(rules=rules)
+        assert auction.is_legal(
+            ContractBid(north, 170, TrumpVariant.NO_TRUMP)
+        ) is False
+        assert auction.is_legal(
+            ContractBid(north, 190, TrumpVariant.ALL_TRUMP)
+        ) is False
+        assert auction.is_legal(ContractBid(north, 180, Suit.SPADES)) is True
+
+    def test_a_suit_bid_above_180_is_illegal_at_every_table(self, north):
+        # The 190–240 steps exist for the all-trump ``four`` regime only;
+        # a suit contract can never take them.
+        rules = RuleConfig(extended_trump_choices=True,
+                           all_trump_belote=AllTrumpBelote.FOUR)
+        auction = Auction.empty(rules=rules)
+        assert auction.is_legal(ContractBid(north, 190, Suit.SPADES)) is False
+        assert auction.is_legal(
+            ContractBid(north, 240, TrumpVariant.ALL_TRUMP)
+        ) is True
+
+    @pytest.mark.parametrize(
+        "suit", [Suit.SPADES, TrumpVariant.NO_TRUMP, TrumpVariant.ALL_TRUMP]
+    )
+    def test_the_slam_family_is_never_ladder_capped(self, north, suit):
+        # SlamLevel has no ordering against ints, so the cap must guard on
+        # ``isinstance(value, int)`` before ever comparing — and §5.2 puts
+        # the Slam family under every trump choice at its own base value.
+        rules = RuleConfig(extended_trump_choices=True,
+                           all_trump_belote=AllTrumpBelote.NONE)
+        auction = Auction.empty(rules=rules)
+        assert auction.is_legal(ContractBid(north, SlamLevel.SLAM, suit)) is True
+        assert auction.is_legal(
+            ContractBid(north, SlamLevel.SOLO_SLAM, suit)
+        ) is True
+
+    def test_the_ruleset_survives_apply(self, north):
+        rules = RuleConfig(extended_trump_choices=True)
+        auction = Auction.empty(rules=rules).apply(PassBid(north))
+        assert auction.rules is rules
+
+    def test_empty_defaults_to_the_classic_ruleset(self):
+        assert Auction.empty().rules == RuleConfig()
+        assert Auction() == Auction.empty()
+
+    def test_equality_accounts_for_the_ruleset(self):
+        # Two auctions with the same bids but different tables are not the
+        # same state — they offer different actions.
+        extended = RuleConfig(extended_trump_choices=True)
+        assert Auction.empty(rules=extended) != Auction.empty()
+
+    def test_an_ungated_bid_raises_through_apply(self, north):
+        with pytest.raises(IllegalBidError):
+            Auction().apply(ContractBid(north, 80, TrumpVariant.NO_TRUMP))

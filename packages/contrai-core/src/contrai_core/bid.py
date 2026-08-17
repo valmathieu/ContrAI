@@ -28,12 +28,15 @@ bid-to-wire bridge, future MCTS / RL agents) actually want.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from enum import Enum
+from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, Generic, TypeVar
 
 from .exceptions import InvalidContractError
-from .types import CONTRACT_SUITS, ContractSuit, TrumpVariant
+from .rule_config import AllTrumpBelote, RuleConfig
+from .types import CONTRACT_SUITS, ContractSuit, Suit, TrumpVariant
 
 if TYPE_CHECKING:
     from .player import BasePlayer
@@ -133,14 +136,20 @@ class PassBid(Bid[ActorT]):
 class ContractBid(Bid[ActorT]):
     """A numeric contract or *Slam* / *Solo Slam* bid.
 
-    Validated at construction via ``__post_init__``: the value must be
-    one of the table-defined steps and the suit must be a bookable trump
-    (see :attr:`VALID_SUITS`).
+    Validated at construction via ``__post_init__``, and only that far:
+    the value must be one of the table-defined steps and the suit one of
+    the six contract trumps. That is *well-formedness*, not legality —
+    whether this table offers that trump choice at all, and how high its
+    numeric ladder goes, are rules of the auction, answered by
+    :func:`bookable_suits` and :func:`ladder_top` from the round's
+    :class:`~contrai_core.RuleConfig`. Keeping the split here is what
+    lets a caller build a bid from user input and *then* ask whether it
+    is legal, with an explanation, instead of catching an exception.
 
     The two all-tricks contracts are the :class:`SlamLevel` enum members:
 
     - :attr:`SlamLevel.SLAM` — the contracting team must win all 8
-      tricks. Outranks every numeric bid (80–180).
+      tricks. Outranks every numeric bid (80–240).
     - :attr:`SlamLevel.SOLO_SLAM` — the contracting **player
       personally** must win all 8 tricks (their partner may not win
       any). Outranks Slam in raw numeric value, but is asymmetrically
@@ -148,47 +157,52 @@ class ContractBid(Bid[ActorT]):
       :class:`contrai_core.Auction`).
 
     Attributes:
-        value: A numeric step (80, 90, 100, …, 180), or a
-            :class:`SlamLevel` member for the all-tricks contracts.
+        value: A numeric step (80, 90, 100, …, 240), or a
+            :class:`SlamLevel` member for the all-tricks contracts. The
+            steps past 180 exist only for the all-trump ``four`` belote
+            regime; :func:`ladder_top` is what keeps them out of the
+            other modes.
         suit: The trump — one of the four :class:`Suit` members or
-            ``TrumpVariant.NO_TRUMP``. See :attr:`VALID_SUITS`.
+            either :class:`TrumpVariant`. See :attr:`VALID_SUITS`.
     """
 
+    #: Every numeric step a well-formed bid may name, plus the two
+    #: all-tricks contracts. The ladder runs to 240 because the all-trump
+    #: ``four`` regime can mark 162 on cards plus four Belotes; where a
+    #: given mode actually stops is :func:`ladder_top`'s answer.
     VALID_VALUES: ClassVar[list] = [
         80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180,
+        190, 200, 210, 220, 230, 240,
         SlamLevel.SLAM, SlamLevel.SOLO_SLAM,
     ]
-    #: The bookable trumps: every contract suit except ``ALL_TRUMP``, which
-    #: is unimplemented. Keeping the exclusion here rather than in the
-    #: auction is what keeps it out of the action space by construction —
-    #: :meth:`contrai_core.Auction.legal_actions` iterates this list.
-    VALID_SUITS: ClassVar[list] = [
-        suit for suit in CONTRACT_SUITS if suit is not TrumpVariant.ALL_TRUMP
-    ]
+    #: Every contract trump a well-formed bid may name. Which of the six a
+    #: *table* actually offers is a rule of the auction, not of the bid —
+    #: see :func:`bookable_suits`, which
+    #: :meth:`contrai_core.Auction.legal_actions` iterates instead.
+    VALID_SUITS: ClassVar[list] = list(CONTRACT_SUITS)
 
     value: int | SlamLevel
     suit: ContractSuit
 
     def __post_init__(self) -> None:
-        """Reject unknown values / suits at construction time.
+        """Reject malformed values / suits at construction time.
+
+        Well-formedness only: a step on the 80–240 ladder (or a
+        :class:`SlamLevel`) naming one of the six contract trumps. A bid
+        that passes here may still be illegal at the table it was made
+        at — :meth:`contrai_core.Auction.is_legal` is the authority on
+        that.
 
         Raises:
             InvalidContractError: If ``value`` is not on
-                :attr:`VALID_VALUES`, or ``suit`` is not a bookable trump.
-                ``TrumpVariant.ALL_TRUMP`` is rejected by its own branch so
-                the message can say why it is refused rather than merely
-                listing what is allowed.
+                :attr:`VALID_VALUES`, or ``suit`` is not on
+                :attr:`VALID_SUITS`.
         """
 
         if self.value not in self.VALID_VALUES:
             raise InvalidContractError(
                 f"Invalid contract value: {self.value}. "
                 f"Must be one of {self.VALID_VALUES}"
-            )
-        if self.suit is TrumpVariant.ALL_TRUMP:
-            raise InvalidContractError(
-                "All-trump contracts are not implemented and cannot be "
-                "bid. Bid a suit or no-trump instead."
             )
         if self.suit not in self.VALID_SUITS:
             raise InvalidContractError(
@@ -272,3 +286,60 @@ def seal_bid(bid: Bid[BasePlayer]) -> Bid[Position]:
     """
 
     return replace(bid, player=bid.player.position)
+
+
+#: The all-trump numeric ceiling per belote regime (contree-domain.md
+#: §5.2). Cards plus the last-trick bonus cap at 162, so a mode with no
+#: Belote stops at 160; each Belote the regime allows lifts the ceiling by
+#: 20 and the last 10-point step with it.
+_ALL_TRUMP_LADDER_TOP: Mapping[AllTrumpBelote, int] = MappingProxyType({
+    AllTrumpBelote.NONE: 160,
+    AllTrumpBelote.SINGLE: 180,
+    AllTrumpBelote.FOUR: 240,
+})
+
+
+def bookable_suits(rules: RuleConfig) -> tuple[ContractSuit, ...]:
+    """The trump choices a table under ``rules`` accepts (§5.2, §9.2).
+
+    Args:
+        rules: The table ruleset.
+
+    Returns:
+        The four card suits, plus ``NO_TRUMP`` and ``ALL_TRUMP`` when
+        ``rules.extended_trump_choices`` is on. Card suits first, so the
+        enumeration order of :meth:`contrai_core.Auction.legal_actions`
+        is stable across both settings.
+    """
+
+    return CONTRACT_SUITS if rules.extended_trump_choices else tuple(Suit)
+
+
+def ladder_top(contract_suit: ContractSuit, rules: RuleConfig) -> int:
+    """The highest numeric bid legal under ``contract_suit`` (§5.2).
+
+    The ladder top is the last 10-point step at or below what the mode can
+    actually take: 162 on cards and the last-trick bonus, plus 20 for each
+    Belote the mode admits. A suit contract admits one (180), no trump
+    admits none (160), and all trump follows the table's
+    ``all_trump_belote`` regime (160 / 180 / 240).
+
+    Bidding a step only a Belote can reach is legal without holding it —
+    the auction does not check hands — but commits the bidder to a
+    contract that will fail on cards alone.
+
+    Args:
+        contract_suit: The trump choice the bid names.
+        rules: The table ruleset.
+
+    Returns:
+        The highest legal numeric value. :class:`SlamLevel` bids are not
+        ladder-capped: the Slam family is available under every trump
+        choice at its own base value.
+    """
+
+    if contract_suit is TrumpVariant.NO_TRUMP:
+        return 160
+    if contract_suit is TrumpVariant.ALL_TRUMP:
+        return _ALL_TRUMP_LADDER_TOP[rules.all_trump_belote]
+    return 180

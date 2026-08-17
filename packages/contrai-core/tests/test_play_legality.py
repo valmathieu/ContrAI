@@ -29,11 +29,13 @@ from contrai_core import (
     BasePlayer,
     Card,
     Contract,
+    ContractSuit,
     IllegalPlayError,
     PlayRuleViolation,
     PlayState,
     Rank,
     Suit,
+    TrumpVariant,
 )
 from contrai_core.bid import ContractBid
 from contrai_core.play import Play
@@ -75,7 +77,7 @@ def _make_state(
     )
 
 
-def _contract(player: BasePlayer, value: int, suit: Suit) -> Contract:
+def _contract(player: BasePlayer, value: int, suit: ContractSuit) -> Contract:
     """Build a :class:`Contract` at ``value`` in ``suit`` for ``player``."""
     return Contract(ContractBid(player, value, suit))
 
@@ -160,6 +162,134 @@ class TestOverTrumpWhenTrumpIsLed:
         )
         legal = state.legal_actions(players["S"])
         assert set(legal) == set(hand)
+
+
+# ---------------------------------------------------------------------------
+# All trump — follow *and* raise in the led suit, free discard when void
+# ---------------------------------------------------------------------------
+
+
+class TestAllTrumpLegality:
+    """§6.4 — every suit is trump, so the led suit is always trump.
+
+    Holding the led suit therefore puts a seat on the over-trump branch
+    (follow *and* raise if able); being void puts it on the free-discard
+    branch, because there is no cross-suit cutting to oblige.
+    """
+
+    def test_must_follow_and_raise_when_able(self, players):
+        # N leads ♠10 (trump-scale rank 4). S holds ♠J (7, beats it), ♠7
+        # (0, does not) and ♥A. Only the ♠J is legal.
+        contract = _contract(players["N"], 100, TrumpVariant.ALL_TRUMP)
+        hand = [
+            Card(Suit.SPADES, Rank.JACK),
+            Card(Suit.SPADES, Rank.SEVEN),
+            Card(Suit.HEARTS, Rank.ACE),
+        ]
+        state = _make_state(
+            players, {"S": hand}, contract, [("N", Card(Suit.SPADES, Rank.TEN))]
+        )
+        assert set(state.legal_actions(players["S"])) == {
+            Card(Suit.SPADES, Rank.JACK)
+        }
+
+    def test_must_still_follow_when_it_cannot_raise(self, players):
+        # N leads the ♠J, the top of the scale. S holds ♠7 and ♠8 — neither
+        # beats it, and both stay legal because following is still owed.
+        contract = _contract(players["N"], 100, TrumpVariant.ALL_TRUMP)
+        hand = [
+            Card(Suit.SPADES, Rank.SEVEN),
+            Card(Suit.SPADES, Rank.EIGHT),
+            Card(Suit.HEARTS, Rank.ACE),
+        ]
+        state = _make_state(
+            players, {"S": hand}, contract, [("N", Card(Suit.SPADES, Rank.JACK))]
+        )
+        assert set(state.legal_actions(players["S"])) == {
+            Card(Suit.SPADES, Rank.SEVEN),
+            Card(Suit.SPADES, Rank.EIGHT),
+        }
+
+    def test_void_in_the_led_suit_discards_freely(self, players):
+        # No cross-suit cutting: every remaining card is legal, including
+        # the Jacks of the other suits, which cannot take the trick.
+        contract = _contract(players["N"], 100, TrumpVariant.ALL_TRUMP)
+        hand = [
+            Card(Suit.HEARTS, Rank.JACK),
+            Card(Suit.CLUBS, Rank.SEVEN),
+            Card(Suit.DIAMONDS, Rank.NINE),
+        ]
+        state = _make_state(
+            players, {"S": hand}, contract, [("N", Card(Suit.SPADES, Rank.TEN))]
+        )
+        assert set(state.legal_actions(players["S"])) == set(hand)
+
+    def test_an_off_suit_discard_does_not_raise_the_bar(self, players):
+        # THE REGRESSION. N leads ♠10 (rank 4); E is void and discards ♥J
+        # (trump-scale rank 7, but it never competed). S holds ♠A (rank 5,
+        # which does beat the ♠10) and ♠Q (rank 2, which does not), so the
+        # ♠A is the only legal card. Ranking the ♥J on the trump scale —
+        # what an ``is_trump`` + ``rank_in_suit`` comparison does once every
+        # suit is trump — puts the bar at 7, empties the raise set and
+        # collapses the answer back to "any spade", wrongly legalising the
+        # ♠Q. ``trick_rank`` skips the discard entirely.
+        contract = _contract(players["N"], 100, TrumpVariant.ALL_TRUMP)
+        hand = [
+            Card(Suit.SPADES, Rank.ACE),
+            Card(Suit.SPADES, Rank.QUEEN),
+            Card(Suit.CLUBS, Rank.ACE),
+        ]
+        state = _make_state(
+            players,
+            {"S": hand},
+            contract,
+            [
+                ("N", Card(Suit.SPADES, Rank.TEN)),
+                ("E", Card(Suit.HEARTS, Rank.JACK)),
+            ],
+        )
+        assert set(state.legal_actions(players["S"])) == {
+            Card(Suit.SPADES, Rank.ACE)
+        }
+
+    def test_the_bar_is_the_led_suit_even_when_the_discard_is_higher(
+        self, players
+    ):
+        # Same shape with a weaker lead: ♠8 led (rank 1), ♥J discarded
+        # (rank 7). S holds ♠7 (0) and ♠9 (6) — only the ♠9 beats the ♠8,
+        # and the discard has no say in it.
+        contract = _contract(players["N"], 100, TrumpVariant.ALL_TRUMP)
+        hand = [Card(Suit.SPADES, Rank.SEVEN), Card(Suit.SPADES, Rank.NINE)]
+        state = _make_state(
+            players,
+            {"S": hand},
+            contract,
+            [
+                ("N", Card(Suit.SPADES, Rank.EIGHT)),
+                ("E", Card(Suit.HEARTS, Rank.JACK)),
+            ],
+        )
+        assert set(state.legal_actions(players["S"])) == {
+            Card(Suit.SPADES, Rank.NINE)
+        }
+
+    def test_partner_master_exemption_is_moot(self, players):
+        # A seat void in the led suit discards freely whether or not its
+        # partner is master, so both branches agree. N leads ♠7; E plays
+        # ♠J and is master; S (N's partner, so *not* shielded) is void and
+        # still gets its whole hand.
+        contract = _contract(players["N"], 100, TrumpVariant.ALL_TRUMP)
+        hand = [Card(Suit.HEARTS, Rank.ACE), Card(Suit.CLUBS, Rank.JACK)]
+        state = _make_state(
+            players,
+            {"S": hand},
+            contract,
+            [
+                ("N", Card(Suit.SPADES, Rank.SEVEN)),
+                ("E", Card(Suit.SPADES, Rank.JACK)),
+            ],
+        )
+        assert set(state.legal_actions(players["S"])) == set(hand)
 
 
 # ---------------------------------------------------------------------------

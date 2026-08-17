@@ -15,6 +15,11 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) `Game`, `Round` and `score_round` accept a `RuleConfig` and thread it down to `PlayState`; the default reproduces today's behaviour exactly.
 - (engine) `contrai --rules FILE` / `--preset classic` — load the table ruleset from a TOML file or by name (mutually exclusive); unknown keys are rejected. See [engine docs](docs/engine/index.md).
 - (core) `AllTrumpRules` — all trump is a playable regime: every suit ranks as trump on the §3.3 scale, only the led suit competes. See [core docs](docs/core/index.md).
+- (core) `Auction` runs under a `RuleConfig`: `extended_trump_choices` gates no trump and all trump, and each mode caps at its §5.2 ladder top.
+
+### Changed
+
+- (core) **BREAKING:** `ContractBid` accepts all six contract trumps and values to 240; which are bookable is now `Auction`'s call. Use `bookable_suits(rules)`, not `ContractBid.VALID_SUITS`.
 
 ### Fixed
 
