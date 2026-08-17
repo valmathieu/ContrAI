@@ -337,6 +337,38 @@ class TestCurrentWinnerParity:
         assert current_winner(trick.plays, Suit.SPADES) is north
 
 
+class TestAllTrumpWinner:
+    """Every suit is trump, so only the led one competes (§6.4)."""
+
+    def test_highest_led_suit_card_wins(self, north, east, south, west):
+        plays = [
+            (north, Card(Suit.SPADES, Rank.ACE)),
+            (east, Card(Suit.SPADES, Rank.JACK)),
+            (south, Card(Suit.SPADES, Rank.NINE)),
+            (west, Card(Suit.SPADES, Rank.TEN)),
+        ]
+        assert current_winner(plays, TrumpVariant.ALL_TRUMP) is east
+
+    def test_an_off_suit_jack_cannot_take_the_trick(self, north, east, south, west):
+        # No cross-suit cutting at all trump (§6.4).
+        plays = [
+            (north, Card(Suit.SPADES, Rank.SEVEN)),
+            (east, Card(Suit.HEARTS, Rank.JACK)),
+            (south, Card(Suit.CLUBS, Rank.JACK)),
+            (west, Card(Suit.DIAMONDS, Rank.JACK)),
+        ]
+        assert current_winner(plays, TrumpVariant.ALL_TRUMP) is north
+
+    def test_trick_agrees_with_the_free_function(self, north, east, south, west):
+        trick = Trick()
+        trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
+        trick.add_play(east, Card(Suit.HEARTS, Rank.NINE))
+        trick.add_play(south, Card(Suit.SPADES, Rank.JACK))
+        trick.add_play(west, Card(Suit.HEARTS, Rank.TEN))
+        assert trick.get_current_winner(TrumpVariant.ALL_TRUMP) is east
+        assert current_winner(trick.plays, TrumpVariant.ALL_TRUMP) is east
+
+
 # ---------------------------------------------------------------------------
 # TrickRecord — the immutable completed-trick value
 # ---------------------------------------------------------------------------

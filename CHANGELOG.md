@@ -14,6 +14,11 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (core) `PlayState.rules` — the play state carries its `RuleConfig` (default `RuleConfig()`) through `start`, `apply` and `with_hands`; not consulted yet.
 - (engine) `Game`, `Round` and `score_round` accept a `RuleConfig` and thread it down to `PlayState`; the default reproduces today's behaviour exactly.
 - (engine) `contrai --rules FILE` / `--preset classic` — load the table ruleset from a TOML file or by name (mutually exclusive); unknown keys are rejected. See [engine docs](docs/engine/index.md).
+- (core) `AllTrumpRules` — all trump is a playable regime: every suit ranks as trump on the §3.3 scale, only the led suit competes. See [core docs](docs/core/index.md).
+
+### Fixed
+
+- (core) The over-trump obligation ranks candidates with `trick_rank`, so an off-suit discard can no longer raise the bar at all trump.
 
 ## [0.3.0] - 2026-08-15
 

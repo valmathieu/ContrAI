@@ -13,7 +13,13 @@ from .types import (
     is_trump,
     trump_suits,
 )
-from .rules import TrumpRules, SingleSuitRules, NoTrumpRules, rules_for
+from .rules import (
+    TrumpRules,
+    SingleSuitRules,
+    NoTrumpRules,
+    AllTrumpRules,
+    rules_for,
+)
 from .rule_config import (
     TurnDirection,
     AllTrumpBelote,
@@ -67,6 +73,7 @@ __all__ = [
     "TrumpRules",
     "SingleSuitRules",
     "NoTrumpRules",
+    "AllTrumpRules",
     "rules_for",
     "TurnDirection",
     "AllTrumpBelote",

@@ -1,14 +1,15 @@
 """Tests for the TrumpRules seam.
 
-Pins the five per-card tables against literals and locks the structural
+Pins the six per-card tables against literals and locks the structural
 guarantees the rest of the domain leans on: singleton identity, the
-sealed hierarchy, and the all-trump firewall living in
+sealed hierarchy, and the one-entry-point resolution in
 :func:`rules_for`.
 """
 
 import pytest
 
 from contrai_core import (
+    AllTrumpRules,
     Card,
     NoTrumpRules,
     Rank,
@@ -22,8 +23,8 @@ from contrai_core import (
 #: All 32 physical cards.
 ALL_CARDS = [Card(suit, rank) for suit in Suit for rank in Rank]
 
-#: The trump options the seam implements today (all-trump raises).
-IMPLEMENTED_TRUMPS = [*Suit, TrumpVariant.NO_TRUMP, None]
+#: Every trump option the seam resolves.
+IMPLEMENTED_TRUMPS = [*Suit, TrumpVariant.NO_TRUMP, TrumpVariant.ALL_TRUMP, None]
 
 # The expected tables, written out as literals so a slip in the source
 # tables cannot silently agree with itself.
@@ -50,10 +51,18 @@ NO_TRUMP_POINTS = {
     Rank.SEVEN: 0, Rank.EIGHT: 0, Rank.NINE: 0, Rank.JACK: 2,
     Rank.QUEEN: 3, Rank.KING: 4, Rank.TEN: 10, Rank.ACE: 19,
 }
+#: The all-trump scale (contree-domain.md §3.3) — every suit ranks like
+#: trump on its own scale, so the trump *ordering* is reused while the
+#: valuation is compressed to keep a suit at 38 and the deck at 152,
+#: exactly as at a suit contract.
+ALL_TRUMP_POINTS = {
+    Rank.SEVEN: 0, Rank.EIGHT: 0, Rank.NINE: 9, Rank.JACK: 14,
+    Rank.QUEEN: 1, Rank.KING: 3, Rank.TEN: 5, Rank.ACE: 6,
+}
 
 
 class TestRulesFor:
-    """Resolution: seven keys, five singletons, one raise."""
+    """Resolution: seven keys, six singletons, no raise."""
 
     @pytest.mark.parametrize("suit", Suit)
     def test_suit_contract_resolves_to_its_singleton(self, suit):
@@ -69,10 +78,11 @@ class TestRulesFor:
         assert isinstance(rules_for(None), NoTrumpRules)
         assert rules_for(None) is rules_for(TrumpVariant.NO_TRUMP)
 
-    def test_all_trump_raises(self):
-        # The firewall: all-trump must never quietly play as no-trump.
-        with pytest.raises(NotImplementedError, match="All-trump"):
-            rules_for(TrumpVariant.ALL_TRUMP)
+    def test_all_trump_resolves(self):
+        # All-trump is a regime of its own now, and must never share the
+        # no-trump singleton — the two are opposites.
+        assert isinstance(rules_for(TrumpVariant.ALL_TRUMP), AllTrumpRules)
+        assert rules_for(TrumpVariant.ALL_TRUMP) is not rules_for(None)
 
     def test_distinct_suits_get_distinct_rules(self):
         assert rules_for(Suit.SPADES) is not rules_for(Suit.HEARTS)
@@ -124,6 +134,60 @@ class TestTables:
         card = Card(Suit.CLUBS, rank)
         assert rules.points(card) == PLAIN_POINTS[rank]
         assert rules.rank_in_suit(card) == PLAIN_ORDER[rank]
+
+
+class TestAllTrumpRules:
+    """The regime where every suit is trump (contree-domain.md §3.3, §6.4)."""
+
+    def test_rules_for_returns_the_singleton(self):
+        rules = rules_for(TrumpVariant.ALL_TRUMP)
+        assert isinstance(rules, AllTrumpRules)
+        assert rules_for(TrumpVariant.ALL_TRUMP) is rules
+
+    def test_it_is_not_the_no_trump_singleton(self):
+        assert rules_for(TrumpVariant.ALL_TRUMP) is not rules_for(None)
+
+    @pytest.mark.parametrize("suit", list(Suit))
+    def test_every_suit_is_trump(self, suit):
+        assert rules_for(TrumpVariant.ALL_TRUMP).is_trump(suit) is True
+
+    @pytest.mark.parametrize("rank", Rank)
+    @pytest.mark.parametrize("suit", list(Suit))
+    def test_points_are_the_section_3_3_table(self, suit, rank):
+        rules = rules_for(TrumpVariant.ALL_TRUMP)
+        assert rules.points(Card(suit, rank)) == ALL_TRUMP_POINTS[rank]
+
+    @pytest.mark.parametrize("suit", list(Suit))
+    def test_every_suit_ranks_on_the_trump_ladder(self, suit):
+        rules = rules_for(TrumpVariant.ALL_TRUMP)
+        for rank, order in TRUMP_ORDER.items():
+            assert rules.rank_in_suit(Card(suit, rank)) == order
+
+    def test_a_suit_is_worth_38(self):
+        rules = rules_for(TrumpVariant.ALL_TRUMP)
+        assert sum(rules.points(Card(Suit.SPADES, r)) for r in Rank) == 38
+
+    def test_belote_lives_in_every_suit(self):
+        # Where a belote *can* live. Whether none / one / four of them
+        # actually score is the table's regime, decided in Round.
+        assert rules_for(TrumpVariant.ALL_TRUMP).belote_suits == tuple(Suit)
+
+    def test_higher_ranks_uses_the_trump_ladder_in_every_suit(self):
+        rules = rules_for(TrumpVariant.ALL_TRUMP)
+        assert rules.higher_ranks(Rank.ACE, Suit.CLUBS) == (Rank.NINE, Rank.JACK)
+        assert rules.higher_ranks(Rank.JACK, Suit.CLUBS) == ()
+
+    def test_only_the_led_suit_competes(self):
+        rules = rules_for(TrumpVariant.ALL_TRUMP)
+        # The led suit's weakest card still beats an off-suit Jack, because
+        # an off-suit card cannot take the trick at all (§6.4).
+        assert rules.trick_rank(Card(Suit.SPADES, Rank.SEVEN), Suit.SPADES) is not None
+        assert rules.trick_rank(Card(Suit.HEARTS, Rank.JACK), Suit.SPADES) is None
+
+    def test_led_suit_ranks_on_the_trump_scale(self):
+        rules = rules_for(TrumpVariant.ALL_TRUMP)
+        assert rules.trick_rank(Card(Suit.SPADES, Rank.JACK), Suit.SPADES) > \
+               rules.trick_rank(Card(Suit.SPADES, Rank.ACE), Suit.SPADES)
 
 
 class TestFullDeckCoverage:

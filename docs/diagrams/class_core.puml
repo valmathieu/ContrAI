@@ -112,6 +112,9 @@ package "rules.py" as p_rules {
     class NoTrumpRules <<frozen dataclass>> {
     }
 
+    class AllTrumpRules <<frozen dataclass>> {
+    }
+
     class "rules.py" as p_rules_fn <<module>> {
         rules_for(contract_suit: ContractSuit?) : TrumpRules
     }
@@ -135,9 +138,13 @@ package "rules.py" as p_rules {
       over the leaves stays exhaustive.
       **Singletons**: ""rules_for"" hands out one shared
       instance per regime (""None"" and ""NO_TRUMP""
-      resolve to the //same// no-trump object) and
-      raises ""NotImplementedError"" for ""ALL_TRUMP""
-      — the all-trump firewall lives here.
+      resolve to the //same// no-trump object).
+      **Four scoring scales, two orderings**: all trump
+      ranks every suit on the trump ladder but scores on
+      its own compressed table (§3.3), so every regime's
+      deck is 152. At all trump only the //led suit//
+      competes — ""trick_rank"" answers ""None"" elsewhere,
+      which is what forbids cross-suit cutting (§6.4).
       Follow/trump //obligations// stay in
       ""PlayState.legal_actions""; rules objects supply
       predicates and comparators only.
@@ -904,6 +911,7 @@ package "exceptions.py" as p_exc {
 ' Inheritance — TrumpRules sealed hierarchy
 TrumpRules <|-- SingleSuitRules
 TrumpRules <|-- NoTrumpRules
+TrumpRules <|-- AllTrumpRules
 SingleSuitRules --> Suit : suit
 p_rules_fn ..> TrumpRules : <<resolves singleton>>
 TrumpRules ..> Card : points / rank_in_suit / trick_rank
