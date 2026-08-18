@@ -80,6 +80,9 @@ class TestParseBidInput:
             ("150 clubs", 150, Suit.CLUBS),
             ("160 nt", 160, TrumpVariant.NO_TRUMP),
             ("160 notrump", 160, TrumpVariant.NO_TRUMP),
+            ("160 at", 160, TrumpVariant.ALL_TRUMP),
+            ("160 alltrump", 160, TrumpVariant.ALL_TRUMP),
+            ("240 all-trump", 240, TrumpVariant.ALL_TRUMP),
             ("80 ♥", 80, Suit.HEARTS),
             ("80 ♠", 80, Suit.SPADES),
         ],
@@ -93,11 +96,19 @@ class TestParseBidInput:
             ("100h", 100, Suit.HEARTS),
             ("80s", 80, Suit.SPADES),
             ("130c", 130, Suit.CLUBS),
+            ("240at", 240, TrumpVariant.ALL_TRUMP),
         ],
     )
     def test_contract_bid_glued(self, raw, value, suit, player):
         """Value and suit may be glued together with no separator."""
         assert _parse_bid_input(raw, player) == ContractBid(player, value, suit)
+
+    def test_parses_a_table_forbidden_bid_without_raising(self, player):
+        # Syntactic validation only — legality is Auction.is_legal's call,
+        # and the rejection message comes from _illegal_bid_reason. A 240
+        # bid is well-formed whatever the table offers.
+        bid = _parse_bid_input("240 s", player)
+        assert bid == ContractBid(player, 240, Suit.SPADES)
 
     @pytest.mark.parametrize(
         "raw,suit",
@@ -147,7 +158,7 @@ class TestParseBidInput:
             "80 q",      # invalid suit letter
             "70 h",      # value below the 80 floor
             "85 h",      # value not on the 10-step ladder
-            "190 h",     # value above the 180 ceiling
+            "250 h",     # value above the 240 ceiling
             "abc h",     # non-numeric value
             "80 h s",    # too many tokens
             "capot s",   # legacy name no longer accepted

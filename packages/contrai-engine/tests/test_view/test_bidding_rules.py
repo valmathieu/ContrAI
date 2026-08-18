@@ -11,7 +11,9 @@ derived directly from :meth:`Auction.legal_actions` (covered by
 
 from __future__ import annotations
 
-from contrai_core import Auction, Suit
+import pytest
+
+from contrai_core import AllTrumpBelote, Auction, RuleConfig, Suit, TrumpVariant
 from contrai_core.bid import ContractBid, DoubleBid, PassBid
 from contrai_engine.view.bidding_rules import _illegal_bid_reason
 
@@ -54,3 +56,55 @@ class TestIllegalBidReason:
             ContractBid(south, 80, Suit.HEARTS), auction
         )
         assert "outrank" in reason and "100" in reason
+
+    @pytest.mark.parametrize("variant, name", [
+        (TrumpVariant.NO_TRUMP, "no trump"),
+        (TrumpVariant.ALL_TRUMP, "all trump"),
+    ])
+    def test_explains_a_trump_choice_the_table_does_not_offer(
+        self, four_players, variant, name
+    ):
+        north, *_ = four_players
+        reason = _illegal_bid_reason(ContractBid(north, 80, variant), Auction())
+        assert name in reason.lower()
+
+    @pytest.mark.parametrize("variant, value, top", [
+        # No trump stops at 160 whatever the table; all trump follows the
+        # belote regime, which defaults to `single` and so stops at 180.
+        (TrumpVariant.NO_TRUMP, 170, "160"),
+        (TrumpVariant.ALL_TRUMP, 190, "180"),
+    ])
+    def test_explains_a_value_above_the_mode_ladder(
+        self, four_players, variant, value, top
+    ):
+        north, *_ = four_players
+        rules = RuleConfig(extended_trump_choices=True)
+        reason = _illegal_bid_reason(
+            ContractBid(north, value, variant), Auction.empty(rules=rules)
+        )
+        assert top in reason
+
+    def test_the_ladder_message_names_the_regime_ceiling(self, four_players):
+        # The same 190 all-trump bid is legal at a `four` table and over
+        # the ceiling at a `none` one — the message has to read the knob.
+        north, *_ = four_players
+        rules = RuleConfig(extended_trump_choices=True,
+                           all_trump_belote=AllTrumpBelote.NONE)
+        reason = _illegal_bid_reason(
+            ContractBid(north, 190, TrumpVariant.ALL_TRUMP),
+            Auction.empty(rules=rules),
+        )
+        assert "160" in reason
+
+    def test_the_ladder_message_beats_the_outrank_message(self, four_players):
+        # Both reasons apply to a 190 heart bid over a standing 100: the
+        # ladder cap is the more specific and more useful one.
+        _north, east, south, _west = four_players
+        rules = RuleConfig(extended_trump_choices=True)
+        auction = Auction.empty(rules=rules).apply(
+            ContractBid(east, 100, Suit.SPADES)
+        )
+        reason = _illegal_bid_reason(
+            ContractBid(south, 190, Suit.HEARTS), auction
+        )
+        assert "180" in reason

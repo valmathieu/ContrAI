@@ -65,10 +65,9 @@ class TrumpVariant(Enum):
     card", and the type is what keeps them out of ``Card.suit``, out of the
     deck, and out of the void/fallen maps that are keyed by card suit.
 
-    Only ``NO_TRUMP`` is bookable — see
-    :attr:`contrai_core.ContractBid.VALID_SUITS`. ``ALL_TRUMP`` is declared
-    because the contract vocabulary has it, but every path that would have
-    to interpret it raises rather than guess (:func:`is_trump`).
+    Both members name a fully playable card regime, resolved like any suit
+    through :func:`contrai_core.rules_for`. Whether a given table *offers*
+    them in the auction is a separate, ruleset-level question.
     """
 
     NO_TRUMP = "NoTrump"
@@ -106,8 +105,9 @@ def is_trump(card_suit: Suit, contract_suit: ContractSuit | None) -> bool:
     answers correctly for ``NO_TRUMP`` (no physical card carries that
     suit, so every trump branch collapses to plain follow-suit — which is
     what a no-trump contract wants) and it answers *the same way* for
-    ``ALL_TRUMP``, where every card should be trump instead. Routing
-    every caller through here makes that distinction one explicit
+    ``ALL_TRUMP``, where every card is trump instead. Routing every
+    caller through the :class:`~contrai_core.TrumpRules` seam is what
+    gives the two variants their opposite answers, from one explicit
     decision rather than a coincidence repeated at each site.
 
     Args:
@@ -117,14 +117,6 @@ def is_trump(card_suit: Suit, contract_suit: ContractSuit | None) -> bool:
 
     Returns:
         ``True`` if a card of ``card_suit`` plays as trump.
-
-    Raises:
-        NotImplementedError: If ``contract_suit`` is
-            ``TrumpVariant.ALL_TRUMP``, propagated from
-            :func:`contrai_core.rules_for` — the all-trump firewall lives
-            there. The auction does not offer all-trump
-            (:attr:`contrai_core.ContractBid.VALID_SUITS`), so reaching
-            the raise means a caller built the contract by hand.
     """
 
     # A thin delegate over the TrumpRules seam — the rules object is the
@@ -153,13 +145,9 @@ def trump_suits(contract_suit: ContractSuit | None) -> tuple[Suit, ...]:
 
     Returns:
         The trump card suits: empty for ``None``/``NO_TRUMP``, a single
-        suit for a suit contract. Always real card suits, which is what
-        makes it safe to key the void and fallen maps by the result.
-
-    Raises:
-        NotImplementedError: If ``contract_suit`` is
-            ``TrumpVariant.ALL_TRUMP``, propagated from
-            :func:`contrai_core.rules_for`.
+        suit for a suit contract, all four for ``ALL_TRUMP``. Always real
+        card suits, which is what makes it safe to key the void and
+        fallen maps by the result.
     """
 
     # Function-local for the same cycle reason as in :func:`is_trump`.

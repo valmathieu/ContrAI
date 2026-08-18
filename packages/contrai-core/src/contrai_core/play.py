@@ -372,6 +372,10 @@ class PlayState:
         4. Partner-master exemption: if your partner is currently winning,
            discard freely.
         5. Otherwise discard freely.
+        6. At all trump every suit is trump, so obligations 1–2 and 5 are
+           the whole rulebook: follow and raise in the led suit if able,
+           discard freely when void — there is nothing to cut with
+           (contree-domain.md §6.4).
 
         The returned cards are the very objects held in ``player``'s hand
         tuple — filtered, never reconstructed — so callers matching cards by
@@ -407,7 +411,7 @@ class PlayState:
         if lead_suit_cards:
             if rules.is_trump(lead_suit):
                 higher = _higher_trumps_than_played(
-                    lead_suit_cards, trick, rules
+                    lead_suit_cards, trick, rules, lead_suit
                 )
                 return higher if higher else lead_suit_cards
             return lead_suit_cards
@@ -419,11 +423,14 @@ class PlayState:
         if current_master is not None and current_master.team == player.team:
             return tuple(hand)
 
-        # No trump suit at all (or the led suit is trump and we are void in
-        # it): nothing to trump with, free discard. The regime test is an
-        # ``isinstance`` check against the sealed no-trump leaf — an enum
-        # member is always truthy, so no bare ``if not trump_suit`` can
-        # distinguish a NO_TRUMP contract from a suit one.
+        # No trump suit at all, or the led suit is itself trump and we are
+        # void in it (which is every all-trump trick where the seat cannot
+        # follow): nothing to cut with, free discard — §6.4 for both
+        # variants. The no-trump test is an ``isinstance`` check against
+        # the sealed leaf: an enum member is always truthy, so no bare
+        # ``if not trump_suit`` can distinguish a NO_TRUMP contract from a
+        # suit one. ``AllTrumpRules`` is not that leaf and reaches this
+        # line through ``rules.is_trump(lead_suit)`` instead.
         if isinstance(rules, NoTrumpRules) or rules.is_trump(lead_suit):
             return tuple(hand)
 
@@ -802,42 +809,46 @@ def _seal_plays(plays: tuple[Play, ...]) -> tuple[ObservedPlay, ...]:
 
 
 def _higher_trumps_than_played(
-    trumps_in_hand: tuple[Card, ...],
+    candidates: tuple[Card, ...],
     plays: tuple[Play, ...],
     rules: TrumpRules,
+    led_suit: Suit,
 ) -> tuple[Card, ...]:
-    """Return the held trumps that beat every trump already in ``plays``.
+    """Return the held cards that beat every card already competing.
 
-    Used by the over-trump rule when the led suit is itself trump. Returns
-    an empty tuple when no trump has been played yet (defensive; the rule
-    only calls this once trump is on the table) or when no held trump beats
-    the current best.
+    Used by the over-trump rule when the led suit is itself trump. Ranking
+    goes through :meth:`TrumpRules.trick_rank`, not ``rank_in_suit``,
+    because that is the only comparator that knows which cards *compete*:
+    at all trump every suit is trump, so a discard of another suit passes
+    an ``is_trump`` test yet can never take the trick, and ranking it on
+    the trump scale would raise the bar for no reason.
 
     Args:
-        trumps_in_hand: The candidate trumps from the player's hand.
+        candidates: The cards from the player's hand to filter — the held
+            cards of the led suit.
         plays: The plays of the current trick.
-        rules: The contract's trick rules, supplying trumpness and the
-            in-suit ranking. All cards compared here are trumps of the
-            same suit, which is exactly what ``rank_in_suit`` orders.
+        rules: The contract's trick rules.
+        led_suit: The suit of the trick's first card, which selects which
+            cards compete.
 
     Returns:
-        The subset of ``trumps_in_hand`` outranking the best trump played.
+        The subset of ``candidates`` outranking every competing card
+        played so far; empty when none does, or when nothing competes yet
+        (defensive — the rule only calls this with a card on the table).
     """
 
     best_so_far = None
     for _, card in plays:
-        if not rules.is_trump(card.suit):
-            continue
-        if best_so_far is None or rules.rank_in_suit(card) > rules.rank_in_suit(
-            best_so_far
-        ):
-            best_so_far = card
+        rank = rules.trick_rank(card, led_suit)
+        if rank is not None and (best_so_far is None or rank > best_so_far):
+            best_so_far = rank
     if best_so_far is None:
         return ()
     return tuple(
         card
-        for card in trumps_in_hand
-        if rules.rank_in_suit(card) > rules.rank_in_suit(best_so_far)
+        for card in candidates
+        if (rank := rules.trick_rank(card, led_suit)) is not None
+        and rank > best_so_far
     )
 
 

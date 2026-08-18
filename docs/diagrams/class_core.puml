@@ -112,6 +112,9 @@ package "rules.py" as p_rules {
     class NoTrumpRules <<frozen dataclass>> {
     }
 
+    class AllTrumpRules <<frozen dataclass>> {
+    }
+
     class "rules.py" as p_rules_fn <<module>> {
         rules_for(contract_suit: ContractSuit?) : TrumpRules
     }
@@ -135,9 +138,13 @@ package "rules.py" as p_rules {
       over the leaves stays exhaustive.
       **Singletons**: ""rules_for"" hands out one shared
       instance per regime (""None"" and ""NO_TRUMP""
-      resolve to the //same// no-trump object) and
-      raises ""NotImplementedError"" for ""ALL_TRUMP""
-      — the all-trump firewall lives here.
+      resolve to the //same// no-trump object).
+      **Four scoring scales, two orderings**: all trump
+      ranks every suit on the trump ladder but scores on
+      its own compressed table (§3.3), so every regime's
+      deck is 152. At all trump only the //led suit//
+      competes — ""trick_rank"" answers ""None"" elsewhere,
+      which is what forbids cross-suit cutting (§6.4).
       Follow/trump //obligations// stay in
       ""PlayState.legal_actions""; rules objects supply
       predicates and comparators only.
@@ -477,12 +484,12 @@ package "bid.py" as p_bid {
     }
 
     class ContractBid <<frozen dataclass>> {
-        + {static} VALID_VALUES = [80..180, SlamLevel.SLAM, SlamLevel.SOLO_SLAM]
-        + {static} VALID_SUITS = CONTRACT_SUITS - ALL_TRUMP
+        + {static} VALID_VALUES = [80..240, SlamLevel.SLAM, SlamLevel.SOLO_SLAM]
+        + {static} VALID_SUITS = CONTRACT_SUITS
         + value : int | SlamLevel
         + suit : ContractSuit
         --
-        + ~__post_init~__() : None <<rejects ALL_TRUMP by name>>
+        + ~__post_init~__() : None <<well-formedness only>>
         + get_numeric_value() : int <<SlamLevel → base_value>>
         + __gt__(other) : bool <<strict numeric ordering>>
         + __str__() : str
@@ -498,6 +505,8 @@ package "bid.py" as p_bid {
 
     class "bid.py" as p_bid_fn <<module>> {
         seal_bid(bid: Bid<BasePlayer>) : Bid<Position> <<reseats onto the bidder's seat>>
+        bookable_suits(rules: RuleConfig) : tuple<ContractSuit>
+        ladder_top(contract_suit: ContractSuit, rules: RuleConfig) : int
     }
 
     note bottom of Bid
@@ -526,8 +535,9 @@ package "bid.py" as p_bid {
 package "auction.py" as p_auction {
     class Auction <<frozen dataclass>> {
         + bids : tuple<Bid> = ()
+        + rules : RuleConfig = RuleConfig()
         --
-        + {static} empty() : Auction
+        + {static} empty(rules=None) : Auction
         + is_legal(bid: Bid) : bool
         + legal_actions(player: BasePlayer) : tuple<Bid>
         + apply(bid: Bid) : Auction <<raises IllegalBidError>>
@@ -562,6 +572,18 @@ package "auction.py" as p_auction {
       interfaces, so the auction phase is
       ready to drop into a future
       imperfect-information state object.
+    end note
+
+    note top of Auction
+      **Two layers of validity.** ""ContractBid"" answers
+      //is this a well-formed bid at all// — a step on the
+      80–240 ladder naming one of the six contract trumps.
+      ""Auction"" answers //is it legal at this table, now//:
+      ""bookable_suits"" drops both variants unless
+      ""extended_trump_choices"" is on, and ""ladder_top""
+      caps each mode (suit 180, no trump 160, all trump
+      160/180/240 by belote regime). Slam-family bids are
+      never ladder-capped.
     end note
 }
 
@@ -904,6 +926,7 @@ package "exceptions.py" as p_exc {
 ' Inheritance — TrumpRules sealed hierarchy
 TrumpRules <|-- SingleSuitRules
 TrumpRules <|-- NoTrumpRules
+TrumpRules <|-- AllTrumpRules
 SingleSuitRules --> Suit : suit
 p_rules_fn ..> TrumpRules : <<resolves singleton>>
 TrumpRules ..> Card : points / rank_in_suit / trick_rank
@@ -964,8 +987,11 @@ ContractBid ..> SlamLevel : value (all-tricks bids)
 
 ' Auction composes a tuple of Bids and materialises a Contract
 Auction "1" *-- "0..N" Bid       : bids
+Auction "1" o-- "1" RuleConfig   : rules
 Auction ..> Contract             : <<materialises>>
 Auction ..> IllegalBidError      : <<raises on apply>>
+Auction ..> p_bid_fn             : <<gate + ladder cap>>
+p_bid_fn ..> RuleConfig          : <<reads the §9.2 knobs>>
 
 ' Contract references ContractBid + BasePlayer + Team
 Contract "1" o-- "1" ContractBid : contract_bid

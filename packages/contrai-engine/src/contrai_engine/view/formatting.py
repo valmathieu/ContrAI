@@ -40,6 +40,8 @@ from contrai_engine.view.theme import (
     RED,
     RED_DIM,
     TEAM_ABBR,
+    TRUMP_GLYPH,
+    TRUMP_LABEL,
 )
 
 
@@ -64,8 +66,8 @@ def _team_abbr(side: TeamSide) -> str:
 
 
 def _suit_glyph(suit: ContractSuit) -> str:
-    """Unicode suit glyph (``♠``/``♥``/``♦``/``♣``), falling back to the enum value."""
-    return Card.SUIT_SYMBOLS.get(suit, suit.value)
+    """Contract-trump glyph: ``♠``/``♥``/``♦``/``♣``, or ``NT``/``AT``."""
+    return TRUMP_GLYPH[suit]
 
 
 # Short rank labels for the hand row and trick diamond. The engine's
@@ -182,18 +184,23 @@ def _format_contract_short(
 
 
 def _format_trump_label(suit: Optional[ContractSuit]) -> Text:
-    """``"♥ Hearts"`` with the glyph in suit color.
+    """``"♥ Hearts"`` with the glyph in suit color, ``"No Trump"`` alone.
+
+    A trump naming no suit has no pip to show, so its two-letter tag would
+    only repeat the label ("NT No Trump"); the spelled-out name stands on
+    its own instead.
 
     Args:
-        suit: The trump suit to render, or ``None`` for an em-dash.
+        suit: The trump to render, or ``None`` for an em-dash.
     """
     if suit is None:
         return Text("—", style=DIM)
+    if isinstance(suit, TrumpVariant):
+        return Text(TRUMP_LABEL[suit], style="bold")
     t = Text()
     t.append(_suit_glyph(suit), style=_suit_color(suit))
     t.append(" ", style=FG)
-    label = "No Trump" if suit is TrumpVariant.NO_TRUMP else suit.value
-    t.append(label, style="bold")
+    t.append(TRUMP_LABEL[suit], style="bold")
     return t
 
 

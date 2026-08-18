@@ -7,7 +7,7 @@ flowchart TD
     HasContract -- "no (all passed)" --> Zero["every team → 0<br/>contract_made = None"]
     Zero --> End(["RoundScore"])
 
-    HasContract -- "yes" --> Points["card points per team (trump-aware)<br/>+10 last-trick bonus → last-trick team<br/>belote_team = holder of K+Q of trump"]
+    HasContract -- "yes" --> Points["card points per team (trump-aware)<br/>+10 last-trick bonus → last-trick team<br/>belote counts per team (0-4, by all-trump regime)"]
     Points --> Family{"contract.is_slam_family()?"}
 
     %% ---------- Slam / Solo Slam path ----------
@@ -40,7 +40,7 @@ flowchart TD
     DblLose --> Belote
 
     %% ---------- Shared belote footer ----------
-    Belote["belote +20 preserved on every shape<br/>→ the K+Q holder's team (even the round's loser)"]
+    Belote["belote +20 per pair preserved on every shape<br/>→ each pair's holder team (even the round's loser)"]
     Belote --> End
 
     %% ---------- Engine-orange palette ----------

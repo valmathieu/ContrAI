@@ -165,12 +165,11 @@ class TestIsTrump:
         assert is_trump(card_suit, None) is False
 
     @pytest.mark.parametrize("card_suit", Suit)
-    def test_all_trump_raises(self, card_suit):
-        # Not implemented, and deliberately loud about it: the inline
-        # comparison this predicate replaced answered False here, which
-        # played an all-trump contract as if it were no-trump.
-        with pytest.raises(NotImplementedError, match="All-trump"):
-            is_trump(card_suit, TrumpVariant.ALL_TRUMP)
+    def test_every_suit_is_trump_at_all_trump(self, card_suit):
+        # The opposite answer to no-trump, and the reason this predicate
+        # exists: the inline ``card_suit == contract_suit`` it replaced
+        # answered False here, playing an all-trump round as a no-trump one.
+        assert is_trump(card_suit, TrumpVariant.ALL_TRUMP) is True
 
 
 class TestTrumpSuits:
@@ -184,9 +183,8 @@ class TestTrumpSuits:
     def test_none_yields_nothing(self):
         assert trump_suits(None) == ()
 
-    def test_all_trump_raises(self):
-        with pytest.raises(NotImplementedError, match="All-trump"):
-            trump_suits(TrumpVariant.ALL_TRUMP)
+    def test_all_trump_yields_every_suit(self):
+        assert trump_suits(TrumpVariant.ALL_TRUMP) == tuple(Suit)
 
     def test_always_returns_card_suits(self):
         # Callers key the fallen / void maps by the result, so it must never

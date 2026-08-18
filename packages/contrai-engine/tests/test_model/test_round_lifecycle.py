@@ -36,6 +36,7 @@ from contrai_core.bid import ContractBid
 from contrai_core.card import Card
 from contrai_core.contract import Contract
 from contrai_core.deck import Deck
+from contrai_core.rule_config import AllTrumpBelote, RuleConfig
 from contrai_core.team_side import TeamSide
 from contrai_core.types import Rank, Suit, TrumpVariant
 
@@ -195,7 +196,8 @@ class TestFullRoundLifecycleHappyPath:
         # No single seat holds both King and Queen of trump in this deal
         # (King -> E, Queen -> W) - the happy path is deliberately
         # belote-free so its score reduces to the plain numeric formula.
-        assert round_.belote_holder is None
+        assert round_.belote_pairs == {}
+        assert round_.belote_counts_by_side == {TeamSide.NS: 0, TeamSide.EW: 0}
 
         # --- Play -------------------------------------------------------
         round_.play_all_tricks(None)
@@ -308,7 +310,7 @@ class TestFullRoundLifecycleBelote:
         ],
     }
 
-    def test_full_lifecycle_tracks_belote_holder_and_bonus(self, players):
+    def test_full_lifecycle_tracks_the_belote_pair_and_bonus(self, players):
         order = [players[s] for s in ("N", "E", "S", "W")]
         round_ = Round(
             order, dealer=players["W"], deck=_stack_deck(self.HANDS), round_number=1
@@ -328,12 +330,15 @@ class TestFullRoundLifecycleBelote:
         assert contract.value == 110
         assert contract.double is False
 
-        # N holds both King and Queen of trump at deal time - the belote
-        # holder is snapshotted as soon as the contract is established.
-        assert round_.belote_holder is players["N"]
+        # N holds both King and Queen of trump at deal time - the pair
+        # is snapshotted as soon as the contract is established. A suit
+        # contract has one trump suit, so there is at most this one pair.
+        assert round_.belote_pairs == {players["N"]: (Suit.SPADES,)}
+        assert round_.belote_counts_by_side == {TeamSide.NS: 1, TeamSide.EW: 0}
         # Nothing has been played yet, so neither leg of the
         # belote/rebelote announcement has fired.
         assert round_.belote_state == {}
+        assert round_.belote_order == []
 
         # --- Play -------------------------------------------------------
         round_.play_all_tricks(None)
@@ -345,8 +350,11 @@ class TestFullRoundLifecycleBelote:
 
         # By the end of the round N has necessarily played every card,
         # King and Queen of trump included, so the belote state machine
-        # must have advanced all the way to "rebelote" for N.
-        assert round_.belote_state == {players["N"]: "rebelote"}
+        # must have advanced all the way to "rebelote" for N's spade pair.
+        assert round_.belote_state == {
+            (players["N"], Suit.SPADES): "rebelote"
+        }
+        assert round_.belote_order == [(players["N"], Suit.SPADES)]
 
         # --- Scoring ------------------------------------------------
         scores = round_.calculate_round_scores()
@@ -444,7 +452,7 @@ class TestFullRoundLifecycleAllPass:
 
         assert contract is None, "a weak stacked hand still opened the bidding"
         assert round_.contract is None
-        assert round_.belote_holder is None
+        assert round_.belote_pairs == {}
 
         # --- Redeal-ready state -----------------------------------------
         scores = round_.handle_failed_contract()
@@ -515,8 +523,8 @@ class TestFullRoundLifecycleNoTrump:
         # The one step ``manage_bidding`` would run after fixing the
         # contract. No suit is trump, so no suit can carry a belote and
         # the scoring below stays free of the +20 (contree-domain.md §3.5).
-        round_._detect_belote_holder()
-        assert round_.belote_holder is None
+        round_._detect_belote_pairs()
+        assert round_.belote_pairs == {}
 
         # --- Play -------------------------------------------------------
         round_.play_all_tricks(None)
@@ -551,3 +559,136 @@ class TestFullRoundLifecycleNoTrump:
         # stacked deal under the ``pinned_rng`` fixture's seed.
         assert round_.contract_made is True
         assert scores == {TeamSide.NS: 218, TeamSide.EW: 44}
+
+
+# ---------------------------------------------------------------------------
+# All trump: the other contract mode the auction cannot reach by itself.
+# ---------------------------------------------------------------------------
+
+
+class TestFullRoundLifecycleAllTrump:
+    """An all-trump round dealt, played out and scored on the §3.3 scale.
+
+    Same shape as the no-trump scenario above and injected the same way
+    — ``RuleBasedBiddingStrategy`` only ever names a real ``Suit``, so
+    the auction cannot produce an all-trump contract (that is step 6's
+    scope). Everything downstream is the real lifecycle: the four
+    ``AiPlayer`` seats pick their own cards through
+    ``RuleBasedCardPlayStrategy`` under §6.4's follow-and-raise
+    obligations, and ``calculate_round_scores`` runs the real rules.
+
+    Two things this proves that no unit test can. First, the §3.5
+    invariant end to end: all trump ranks every suit on the trump ladder
+    but scores on a compressed table, so its deck is 152 like every other
+    mode — applying the trump *table* to four suits would put 248 there.
+    Second, that the AI plays legally under a regime its bidding table
+    has never heard of: it picks from ``observation.legal_cards``, so an
+    all-trump round completes without an ``IllegalPlayError``.
+    """
+
+    # Reuses the belote deal. Under its ♠ contract exactly one pair
+    # exists (N's ♠K + ♠Q); at all trump the same 32 cards hold *three*,
+    # because W turns out to pair in both ♦ and ♣ — the one-seat-two-pairs
+    # case that a holder-keyed state could not represent at all.
+    HANDS = TestFullRoundLifecycleBelote.HANDS
+
+    def _all_trump_round(self, players, regime):
+        """Deal ``HANDS`` and inject a 100 all-trump contract for N."""
+        order = [players[s] for s in ("N", "E", "S", "W")]
+        round_ = Round(
+            order,
+            dealer=players["W"],
+            deck=_stack_deck(self.HANDS),
+            round_number=1,
+            rules=RuleConfig(
+                extended_trump_choices=True, all_trump_belote=regime
+            ),
+        )
+        round_.deal_cards()
+        round_.contract = Contract(
+            ContractBid(players["N"], 100, TrumpVariant.ALL_TRUMP)
+        )
+        # The one step ``manage_bidding`` would run after fixing the
+        # contract.
+        round_._detect_belote_pairs()
+        return round_
+
+    def test_all_trump_round_distributes_the_whole_162(self, players):
+        round_ = self._all_trump_round(players, AllTrumpBelote.NONE)
+
+        # --- Play -------------------------------------------------------
+        round_.play_all_tricks(None)
+
+        assert round_.play_state.is_terminal()
+        assert len(round_.play_state.completed_tricks) == 8
+        for seat in ("N", "E", "S", "W"):
+            assert len(players[seat].hand) == 0
+
+        # §3.3 / §3.5: 152 in the cards under all trump too — the whole
+        # point of the compressed scale.
+        assert sum(round_.play_state.card_points_by_side.values()) == 152
+
+        # --- Scoring ------------------------------------------------
+        scores = round_.calculate_round_scores()
+
+        assert round_.unannounced_slam is None
+        # The `none` regime awards no belote, so the total reduces to the
+        # plain numeric formula exactly as a belote-free suit round does.
+        assert round_.belote_counts_by_side == {TeamSide.NS: 0, TeamSide.EW: 0}
+        expected_total = (
+            round_.contract.value + 162
+            if round_.contract_made
+            else 160 + round_.contract.value
+        )
+        assert sum(scores.values()) == expected_total
+
+    def test_the_four_regime_marks_every_pair_it_finds(self, players):
+        # At all trump every suit can carry a belote, so this deal holds
+        # three pairs: N's ♠K + ♠Q, and W's ♦ and ♣ pairs both.
+        round_ = self._all_trump_round(players, AllTrumpBelote.FOUR)
+        assert round_.belote_pairs == {
+            players["N"]: (Suit.SPADES,),
+            players["W"]: (Suit.DIAMONDS, Suit.CLUBS),
+        }
+        assert round_.belote_counts_by_side == {TeamSide.NS: 1, TeamSide.EW: 2}
+
+        round_.play_all_tricks(None)
+        # Every holder played both cards of every pair, so all three
+        # reached "rebelote" — announcements are per pair, not per seat,
+        # which is what lets W be mid-announcement in two suits at once.
+        assert round_.belote_state == {
+            (players["N"], Suit.SPADES): "rebelote",
+            (players["W"], Suit.DIAMONDS): "rebelote",
+            (players["W"], Suit.CLUBS): "rebelote",
+        }
+
+        scores = round_.calculate_round_scores()
+        # Three belotes: +20 to N-S and +40 to E-W on top of the split.
+        expected_total = (
+            round_.contract.value + 162
+            if round_.contract_made
+            else 160 + round_.contract.value
+        )
+        assert sum(scores.values()) == expected_total + 60
+
+    def test_the_single_regime_marks_the_first_pair_announced(self, players):
+        round_ = self._all_trump_round(players, AllTrumpBelote.SINGLE)
+        # Both pairs are still detected and both still announce — only
+        # the marking is restricted.
+        assert set(round_.belote_pairs) == {players["N"], players["W"]}
+
+        round_.play_all_tricks(None)
+
+        assert len(round_.belote_order) == 3
+        first_holder = round_.belote_order[0][0]
+        counts = round_.belote_counts_by_side
+        assert counts[first_holder.position.team_side] == 1
+        assert sum(counts.values()) == 1
+
+        scores = round_.calculate_round_scores()
+        expected_total = (
+            round_.contract.value + 162
+            if round_.contract_made
+            else 160 + round_.contract.value
+        )
+        assert sum(scores.values()) == expected_total + 20

@@ -302,8 +302,11 @@ class TestBeloteByPosition:
     """`_belote_by_position` — projects belote state onto seat keys.
 
     The trick diamond renders its ★ badge per *seat*, but the round tracks
-    belote per *player*. This is the one place that re-keys, so its three
-    empty-result paths are what the badge relies on to stay silent.
+    belote per ``(player, suit)`` *pair* — a seat can hold two under the
+    all-trump ``four`` regime. This is the one place that collapses that
+    down, so its three empty-result paths are what the badge relies on to
+    stay silent, and its precedence rule is what keeps one seat to one
+    badge.
     """
 
     class _StubRound:
@@ -333,17 +336,48 @@ class TestBeloteByPosition:
 
     def test_a_populated_state_is_rekeyed_by_position(self, four_players):
         north, _east, south, _west = four_players
-        round_ = self._StubRound({north: "belote", south: "rebelote"})
+        round_ = self._StubRound({
+            (north, Suit.HEARTS): "belote",
+            (south, Suit.HEARTS): "rebelote",
+        })
 
         assert _belote_by_position(round_) == {
             Position.NORTH: "belote",
             Position.SOUTH: "rebelote",
         }
 
+    def test_two_pairs_in_one_seat_render_one_badge(self, four_players):
+        """All trump can put two pairs in a hand; the seat still gets one."""
+
+        north, *_ = four_players
+        round_ = self._StubRound({
+            (north, Suit.HEARTS): "belote",
+            (north, Suit.SPADES): "belote",
+        })
+
+        assert _belote_by_position(round_) == {Position.NORTH: "belote"}
+
+    @pytest.mark.parametrize("first, second", [
+        (Suit.HEARTS, Suit.SPADES),
+        (Suit.SPADES, Suit.HEARTS),
+    ])
+    def test_rebelote_outranks_belote_whichever_pair_reached_it(
+        self, four_players, first, second
+    ):
+        """The strongest kind wins, independent of dict order."""
+
+        north, *_ = four_players
+        round_ = self._StubRound({
+            (north, first): "rebelote",
+            (north, second): "belote",
+        })
+
+        assert _belote_by_position(round_) == {Position.NORTH: "rebelote"}
+
     def test_values_are_preserved_verbatim(self, four_players):
         """The helper re-keys; it must not reinterpret the kind string."""
 
         _north, east, *_ = four_players
-        round_ = self._StubRound({east: "★ Belote"})
+        round_ = self._StubRound({(east, Suit.CLUBS): "★ Belote"})
 
         assert _belote_by_position(round_)[Position.EAST] == "★ Belote"
