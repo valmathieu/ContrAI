@@ -103,7 +103,7 @@ class TestRoundRecapPanel:
 
     class _StubRound:
         def __init__(self, *, round_number, contract, round_scores,
-                     team_tricks=None, belote_holder=None,
+                     team_tricks=None, belote_pairs=None,
                      contract_made=None):
             self.round_number = round_number
             self.contract = contract
@@ -112,13 +112,21 @@ class TestRoundRecapPanel:
             self.play_state = TestRoundRecapPanel._StubPlayState(
                 self.team_tricks, contract.suit if contract else None
             )
-            # Belote holder (player object exposing ``.team.name``) and
-            # the engine's canonical made/failed flag. ``contract_made``
-            # left None lets ``RichView._contract_made`` fall back to the
-            # score heuristic, matching pre-flag behaviour for the simple
-            # cases these stubs cover.
-            self.belote_holder = belote_holder
+            # The K + Q pairs held, holder → suits, plus the engine's
+            # canonical made/failed flag. ``contract_made`` left None lets
+            # ``RichView._contract_made`` fall back to the score
+            # heuristic, matching pre-flag behaviour for the simple cases
+            # these stubs cover.
+            self.belote_pairs = belote_pairs or {}
             self.contract_made = contract_made
+
+        @property
+        def belote_counts_by_side(self):
+            """How many pairs each side holds — the real Round's shape."""
+            counts = {side: 0 for side in TeamSide}
+            for player, suits in self.belote_pairs.items():
+                counts[player.position.team_side] += len(suits)
+            return counts
 
     def test_recap_made_contract_shows_check(self):
         view = RichView()
@@ -189,7 +197,7 @@ class TestRoundRecapPanel:
             contract=contract,
             round_scores={TeamSide.NS: 141, TeamSide.EW: 0},
             team_tricks={TeamSide.NS: [ns_trick], TeamSide.EW: []},
-            belote_holder=north,
+            belote_pairs={north: (Suit.HEARTS,)},
         )
         round_.play_state.trick_winners = (north,)
         breakdown = _recap_breakdown(round_)
@@ -271,13 +279,13 @@ class TestRoundRecapPanel:
         north, *_ = four_players
         contract = self._StubContract(100, Suit.HEARTS, TeamSide.NS)
         # Belote follows the *holder* of K+Q of trump, not who captures
-        # them in a trick — so the recap reads ``belote_holder``.
+        # them in a trick — so the recap reads ``belote_counts_by_side``.
         round_ = self._StubRound(
             round_number=2,
             contract=contract,
             round_scores={TeamSide.NS: 200, TeamSide.EW: 0},
             team_tricks={TeamSide.NS: [], TeamSide.EW: []},
-            belote_holder=north,
+            belote_pairs={north: (Suit.HEARTS,)},
         )
         panel = _panel_round_recap(round_, {TeamSide.NS: 200, TeamSide.EW: 0})
         text = panel.renderable.plain
@@ -346,7 +354,7 @@ class TestRoundRecapPanel:
             contract=contract,
             round_scores={TeamSide.NS: 141, TeamSide.EW: 0},
             team_tricks={TeamSide.NS: [ns_trick], TeamSide.EW: []},
-            belote_holder=north,
+            belote_pairs={north: (Suit.HEARTS,)},
         )
         round_.play_state.trick_winners = (north,)
         breakdown = _recap_breakdown(round_)
@@ -396,7 +404,7 @@ class TestRoundRecapPanel:
             contract=contract,
             round_scores={TeamSide.NS: 141, TeamSide.EW: 0},
             team_tricks={TeamSide.NS: [ns_trick], TeamSide.EW: []},
-            belote_holder=north,
+            belote_pairs={north: (Suit.HEARTS,)},
         )
         round_.play_state.trick_winners = (north,)
         text = _panel_round_recap(
@@ -431,7 +439,7 @@ class TestRoundRecapPanel:
             contract=contract,
             round_scores={TeamSide.NS: 20, TeamSide.EW: 360},
             team_tricks={TeamSide.NS: [ns_trick], TeamSide.EW: []},
-            belote_holder=north,
+            belote_pairs={north: (Suit.HEARTS,)},
             contract_made=False,
         )
         # Last trick goes to E-W, not N-S.
@@ -494,7 +502,7 @@ class TestRoundRecapPanel:
             contract=contract,
             round_scores={TeamSide.NS: 141, TeamSide.EW: 0},
             team_tricks={TeamSide.NS: [ns_trick], TeamSide.EW: []},
-            belote_holder=north,
+            belote_pairs={north: (Suit.HEARTS,)},
         )
         round_.play_state.trick_winners = (north,)
         text = _panel_round_recap(
@@ -882,7 +890,7 @@ class TestRoundRecapPanel:
             contract=contract,
             round_scores={TeamSide.NS: 360, TeamSide.EW: 20},
             team_tricks={TeamSide.NS: [], TeamSide.EW: []},
-            belote_holder=east,  # losing defender holds the pair
+            belote_pairs={east: (Suit.HEARTS,)},  # losing defender holds it
         )
         breakdown = _recap_breakdown(round_)
         ew = breakdown[TeamSide.EW]

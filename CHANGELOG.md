@@ -17,10 +17,12 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (core) `AllTrumpRules` — all trump is a playable regime: every suit ranks as trump on the §3.3 scale, only the led suit competes. See [core docs](docs/core/index.md).
 - (core) `Auction` runs under a `RuleConfig`: `extended_trump_choices` gates no trump and all trump, and each mode caps at its §5.2 ladder top.
 - (engine) No trump and all trump are biddable at a table with `extended_trump_choices = true`; type `nt` / `at` at the prompt. See [engine docs](docs/engine/index.md).
+- (engine) All-trump rounds track every K + Q pair and mark 20 each, under the `none` / `single` / `four` regime. See [engine docs](docs/engine/index.md).
 
 ### Changed
 
 - (core) **BREAKING:** `ContractBid` accepts all six contract trumps and values to 240; which are bookable is now `Auction`'s call. Use `bookable_suits(rules)`, not `ContractBid.VALID_SUITS`.
+- (engine) **BREAKING:** `Round.belote_holder` is gone. Read `belote_pairs` (holder → suits) or `belote_counts_by_side`; `belote_state` is keyed by `(player, suit)`.
 
 ### Fixed
 

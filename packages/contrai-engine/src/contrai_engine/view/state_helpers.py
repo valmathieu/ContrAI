@@ -135,7 +135,12 @@ def _explain_constraint(
 
 
 def _belote_by_position(round_) -> dict[Position, str]:
-    """Project ``round_.belote_state`` (player → kind) onto positions.
+    """Project ``round_.belote_state`` ((player, suit) → kind) onto seats.
+
+    One seat gets one badge however many pairs it holds — under the
+    all-trump ``four`` regime a seat can be mid-announcement in two suits
+    at once — so the strongest kind reached in any of them wins:
+    ``"rebelote"`` (both cards of some pair played) outranks ``"belote"``.
 
     Returns an empty dict when no round is active, the round has no
     belote_state, or none has been triggered yet. Used to render the
@@ -144,7 +149,12 @@ def _belote_by_position(round_) -> dict[Position, str]:
     if round_ is None:
         return {}
     state = getattr(round_, "belote_state", None) or {}
-    return {player.position: kind for player, kind in state.items()}
+    badges: dict[Position, str] = {}
+    for (player, _suit), kind in state.items():
+        seat = player.position
+        if badges.get(seat) != "rebelote":
+            badges[seat] = kind
+    return badges
 
 
 def _resolve_delay(env_var: str, default: float) -> float:

@@ -177,7 +177,7 @@ alt no ContractBid (all-pass wipe)
     R -> R : self.contract = None
 else
     R -> R : self.contract = contract
-    R -> R : _detect_belote_holder()\n(narrow contract.suit with isinstance(.., Suit),\n then scan hands for K + Q of trump;\n a trump naming no suit → no holder)
+    R -> R : _detect_belote_pairs()\n(scan every seat for K + Q in each belote suit;\n empty at no trump and at the all-trump "none" regime,\n up to four pairs under "four")
     R -->> V : view.on_contract_established(self)
     note right of V
       RichView appends a

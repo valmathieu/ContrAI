@@ -32,8 +32,9 @@ from contrai_core.card import Card
 from contrai_core.contract import Contract
 from contrai_core.deck import Deck
 from contrai_core.play import PlayState
-from contrai_core.rule_config import RuleConfig
+from contrai_core.rule_config import AllTrumpBelote, RuleConfig
 from contrai_core.team import Team
+from contrai_core.team_side import TeamSide
 from contrai_core.exceptions import IllegalPlayError, PlayRuleViolation
 from contrai_core.types import CONTRACT_SUITS, Rank, Suit, TrumpVariant
 
@@ -543,10 +544,30 @@ class TestPlayTrickHandsObservation:
 # ---------------------------------------------------------------------------
 
 
-class TestBeloteHolderDetection:
-    """``_detect_belote_holder`` finds the player holding K+Q of trump."""
+#: N pairs in ♠ and ♥, E pairs in ♣. Under the all-trump ``four`` regime
+#: that is 2 belotes for N-S and 1 for E-W; under ``single`` only the
+#: first pair announced in play marks, whichever team holds it.
+_TWO_SIDED_BELOTE_HANDS = {
+    "N": [
+        Card(Suit.SPADES, Rank.KING),
+        Card(Suit.SPADES, Rank.QUEEN),
+        Card(Suit.HEARTS, Rank.KING),
+        Card(Suit.HEARTS, Rank.QUEEN),
+    ],
+    "E": [
+        Card(Suit.CLUBS, Rank.KING),
+        Card(Suit.CLUBS, Rank.QUEEN),
+        Card(Suit.DIAMONDS, Rank.KING),
+    ],
+    "S": [Card(Suit.DIAMONDS, Rank.QUEEN)],
+    "W": [Card(Suit.SPADES, Rank.SEVEN)],
+}
 
-    def test_sets_belote_holder_when_pair_present(self, players):
+
+class TestBelotePairDetection:
+    """``_detect_belote_pairs`` snapshots every K + Q pair at deal time."""
+
+    def test_records_the_pair_when_present(self, players):
         contract = _contract(players["N"], 100, Suit.HEARTS)
         round_ = _make_round(
             players,
@@ -561,10 +582,10 @@ class TestBeloteHolderDetection:
             },
             contract,
         )
-        round_._detect_belote_holder()
-        assert round_.belote_holder is players["S"]
+        round_._detect_belote_pairs()
+        assert round_.belote_pairs == {players["S"]: (Suit.HEARTS,)}
 
-    def test_no_holder_when_pair_split(self, players):
+    def test_no_pair_when_split(self, players):
         contract = _contract(players["N"], 100, Suit.HEARTS)
         round_ = _make_round(
             players,
@@ -576,10 +597,30 @@ class TestBeloteHolderDetection:
             },
             contract,
         )
-        round_._detect_belote_holder()
-        assert round_.belote_holder is None
+        round_._detect_belote_pairs()
+        assert round_.belote_pairs == {}
 
-    def test_no_holder_at_no_trump(self, players):
+    def test_a_pair_outside_the_trump_suit_is_not_one(self, players):
+        # Only the trump suit can carry a belote at a suit contract, so
+        # the ♠ pair below is just two cards.
+        contract = _contract(players["N"], 100, Suit.HEARTS)
+        round_ = _make_round(
+            players,
+            {
+                "N": [],
+                "E": [],
+                "S": [
+                    Card(Suit.SPADES, Rank.KING),
+                    Card(Suit.SPADES, Rank.QUEEN),
+                ],
+                "W": [],
+            },
+            contract,
+        )
+        round_._detect_belote_pairs()
+        assert round_.belote_pairs == {}
+
+    def test_no_pairs_at_no_trump(self, players):
         contract = _contract(players["N"], 100, TrumpVariant.NO_TRUMP)
         round_ = _make_round(
             players,
@@ -596,8 +637,9 @@ class TestBeloteHolderDetection:
             },
             contract,
         )
-        round_._detect_belote_holder()
-        assert round_.belote_holder is None
+        round_._detect_belote_pairs()
+        assert round_.belote_pairs == {}
+        assert round_.belote_counts_by_side == {TeamSide.NS: 0, TeamSide.EW: 0}
 
 
 class TestBeloteTransition:
@@ -620,23 +662,33 @@ class TestBeloteTransition:
             },
             contract,
         )
-        round_.belote_holder = players["S"]
+        round_._detect_belote_pairs()
         return round_
 
     def test_first_play_returns_belote(self, players):
         round_ = self._setup(players)
         card = Card(Suit.HEARTS, Rank.KING)
         assert round_._is_belote_event(players["S"], card) is True
-        kind = round_._transition_belote_state(players["S"])
+        kind = round_._transition_belote_state(players["S"], card.suit)
         assert kind == "belote"
-        assert round_.belote_state == {players["S"]: "belote"}
+        assert round_.belote_state == {(players["S"], Suit.HEARTS): "belote"}
+        assert round_.belote_order == [(players["S"], Suit.HEARTS)]
 
     def test_second_play_returns_rebelote(self, players):
         round_ = self._setup(players)
-        round_._transition_belote_state(players["S"])  # first → belote
-        kind = round_._transition_belote_state(players["S"])
+        round_._transition_belote_state(players["S"], Suit.HEARTS)
+        kind = round_._transition_belote_state(players["S"], Suit.HEARTS)
         assert kind == "rebelote"
-        assert round_.belote_state == {players["S"]: "rebelote"}
+        assert round_.belote_state == {(players["S"], Suit.HEARTS): "rebelote"}
+        # The pair is announced once, however many cards of it are played.
+        assert round_.belote_order == [(players["S"], Suit.HEARTS)]
+
+    def test_a_third_play_of_the_same_pair_is_inert(self, players):
+        # Defensive: each card is unique, so this cannot happen in play.
+        round_ = self._setup(players)
+        round_._transition_belote_state(players["S"], Suit.HEARTS)
+        round_._transition_belote_state(players["S"], Suit.HEARTS)
+        assert round_._transition_belote_state(players["S"], Suit.HEARTS) is None
 
     def test_non_kq_trump_not_an_event(self, players):
         round_ = self._setup(players)
@@ -650,11 +702,122 @@ class TestBeloteTransition:
 
     def test_non_holder_not_an_event(self, players):
         round_ = self._setup(players)
-        # N plays K♥ — but N is not the belote holder.
+        # N plays K♥ — but N holds no pair.
         assert (
             round_._is_belote_event(players["N"], Card(Suit.HEARTS, Rank.KING))
             is False
         )
+
+
+class TestAllTrumpBelote:
+    """§6.6 — the three all-trump belote regimes, applied by the Round."""
+
+    def _all_trump_round(self, players, regime):
+        round_ = _make_round(
+            players,
+            _TWO_SIDED_BELOTE_HANDS,
+            contract=_contract(players["N"], 100, TrumpVariant.ALL_TRUMP),
+            rules=RuleConfig(
+                extended_trump_choices=True, all_trump_belote=regime
+            ),
+        )
+        round_._detect_belote_pairs()
+        return round_
+
+    def test_four_regime_detects_every_pair(self, players):
+        # N holds K+Q of spades and of hearts; E holds K+Q of clubs.
+        round_ = self._all_trump_round(players, AllTrumpBelote.FOUR)
+        assert round_.belote_pairs == {
+            players["N"]: (Suit.SPADES, Suit.HEARTS),
+            players["E"]: (Suit.CLUBS,),
+        }
+        assert round_.belote_counts_by_side == {TeamSide.NS: 2, TeamSide.EW: 1}
+
+    def test_none_regime_detects_nothing(self, players):
+        # A table playing `none` has no belote to announce at all — not
+        # one that is announced and then fails to score.
+        round_ = self._all_trump_round(players, AllTrumpBelote.NONE)
+        assert round_.belote_pairs == {}
+        assert round_.belote_counts_by_side == {TeamSide.NS: 0, TeamSide.EW: 0}
+        assert round_._is_belote_event(
+            players["N"], Card(Suit.SPADES, Rank.KING)
+        ) is False
+
+    def test_single_regime_scores_only_the_first_announced(self, players):
+        # Both sides hold a pair and both announce; E announces first, so
+        # E-W marks the 20 and N-S marks nothing (§6.6).
+        round_ = self._all_trump_round(players, AllTrumpBelote.SINGLE)
+        assert set(round_.belote_pairs) == {players["N"], players["E"]}
+        round_._transition_belote_state(players["E"], Suit.CLUBS)
+        round_._transition_belote_state(players["N"], Suit.SPADES)
+        assert round_.belote_order[0] == (players["E"], Suit.CLUBS)
+        assert round_.belote_counts_by_side == {TeamSide.NS: 0, TeamSide.EW: 1}
+
+    def test_single_regime_follows_announcement_order_not_seat_order(
+        self, players
+    ):
+        # The mirror image of the previous case: N announces first and
+        # marks, even though the pairs held are identical. Nothing about
+        # the seating decides it.
+        round_ = self._all_trump_round(players, AllTrumpBelote.SINGLE)
+        round_._transition_belote_state(players["N"], Suit.HEARTS)
+        round_._transition_belote_state(players["E"], Suit.CLUBS)
+        assert round_.belote_counts_by_side == {TeamSide.NS: 1, TeamSide.EW: 0}
+
+    def test_single_regime_still_announces_for_every_holder(self, players):
+        # The second holder announces — it is a narrative event — and
+        # scores nothing. Both pairs reach "rebelote" in belote_state.
+        round_ = self._all_trump_round(players, AllTrumpBelote.SINGLE)
+        for holder, suit in ((players["E"], Suit.CLUBS),
+                             (players["N"], Suit.SPADES)):
+            round_._transition_belote_state(holder, suit)
+            round_._transition_belote_state(holder, suit)
+        assert set(round_.belote_state.values()) == {"rebelote"}
+        assert len(round_.belote_state) == 2
+
+    def test_nothing_announced_yet_scores_nothing_under_single(self, players):
+        # `single` marks the first pair *announced in play*; before any
+        # card is played there is no such pair.
+        round_ = self._all_trump_round(players, AllTrumpBelote.SINGLE)
+        assert round_.belote_counts_by_side == {TeamSide.NS: 0, TeamSide.EW: 0}
+
+    def test_four_regime_scores_without_waiting_for_announcements(
+        self, players
+    ):
+        # Unlike `single`, `four` reads the pairs held, not the order they
+        # were announced in — so it is already correct at deal time.
+        round_ = self._all_trump_round(players, AllTrumpBelote.FOUR)
+        assert round_.belote_counts_by_side == {TeamSide.NS: 2, TeamSide.EW: 1}
+
+    def test_a_holders_king_in_a_suit_they_do_not_pair_is_not_an_event(
+        self, players
+    ):
+        # At all trump every K/Q is a trump K/Q, so the event predicate
+        # must key on the *pair*, not on trumpness. E holds the ♦K but not
+        # the ♦Q, so playing it announces nothing.
+        round_ = self._all_trump_round(players, AllTrumpBelote.FOUR)
+        assert round_._is_belote_event(
+            players["E"], Card(Suit.DIAMONDS, Rank.KING)
+        ) is False
+        assert round_._is_belote_event(
+            players["E"], Card(Suit.CLUBS, Rank.KING)
+        ) is True
+
+    def test_a_suit_contract_is_unaffected_by_the_regime(self, players):
+        for regime in AllTrumpBelote:
+            round_ = _make_round(
+                players,
+                _TWO_SIDED_BELOTE_HANDS,
+                contract=_contract(players["N"], 100, Suit.HEARTS),
+                rules=RuleConfig(all_trump_belote=regime),
+            )
+            round_._detect_belote_pairs()
+            # Only ♥ can carry a belote here, so N's ♥K + ♥Q is the one
+            # pair that exists and the regime knob never gets a say.
+            assert round_.belote_pairs == {players["N"]: (Suit.HEARTS,)}
+            assert round_.belote_counts_by_side == {
+                TeamSide.NS: 1, TeamSide.EW: 0
+            }
 
 
 # ---------------------------------------------------------------------------

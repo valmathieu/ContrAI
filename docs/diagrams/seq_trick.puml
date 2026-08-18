@@ -153,7 +153,7 @@ loop **for _ in range(4)**
       already drove the frame.
     end note
 
-    alt player is belote_holder\nAND card is K-or-Q of trump
+    alt card is K-or-Q of a pair\nthe player holds (belote_pairs)
         R -> R : _transition_belote_state(player)\n→ "belote" (first) or "rebelote" (second)
         R -->> V : view.on_belote_announced(player, kind, self)
         note right of V

@@ -261,8 +261,10 @@ package "model/round/ package" as p_round {
         + round_scores : dict<TeamSide, int>
         + contract_made : bool?
         + unannounced_slam : UnannouncedSlam?
-        + belote_holder : Player?
-        + belote_state : dict<Player, str>
+        + belote_pairs : dict<Player, tuple<Suit>>
+        + belote_state : dict<(Player, Suit), str>
+        + belote_order : list<(Player, Suit)>
+        + belote_counts_by_side : dict<TeamSide, int> <<property>>
         + rules : RuleConfig
         --
         + __init__(players_order, dealer, deck, round_number, rules=None)
@@ -274,9 +276,11 @@ package "model/round/ package" as p_round {
         + handle_failed_contract() : dict<TeamSide, int>
         --
         - _gather_bid(player, auction, view) : Bid
-        - _detect_belote_holder() : None
+        - _belote_suits() : tuple<Suit>
+        - _detect_belote_pairs() : None
         - _is_belote_event(player, card) : bool
-        - _transition_belote_state(player) : str?
+        - _transition_belote_state(player, suit) : str?
+        - _scoring_belotes() : tuple<(Player, Suit)>
         - _sync_hands() : None
         - _trick_after_play() : Sequence<Play>
     }
@@ -290,6 +294,19 @@ package "model/round/ package" as p_round {
     }
 
     Round ..> r_scoring : <<delegates scoring>>
+
+    note bottom of r_scoring
+      **Belote is +20 //per pair//.** The scorer reads
+      ""round.belote_counts_by_side"" and multiplies;
+      how many pairs mark is the Round's call.
+      A suit contract has one belote suit and so at
+      most one pair, no trump has none, and all trump
+      has four — where the table's ""all_trump_belote""
+      regime picks //none// / //the first announced// /
+      //every pair//, so a side can mark up to +80
+      (contree-domain.md §6.6). The bonus survives
+      every scoring shape, including the losing side's.
+    end note
 
     note right of Round
       ""manage_bidding"" drives a core
@@ -516,7 +533,7 @@ package "view/ package" as p_view {
       the addition matches ""round_score"".
       Helpers ""_recap_breakdown"" /
       ""_format_recap_table"" /
-      ""_belote_side_in_round"" live in
+      ""_belote_counts_in_round"" live in
       ""screens/recap.py"".
       ----
       Tested per-module in

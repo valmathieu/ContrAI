@@ -169,14 +169,15 @@ def _recap_breakdown(round_) -> dict:
                       Drives the row label ("Tricks won (cards)" vs
                       "Tricks won (subst.)").
         round_points: honest play tally — the real trump-aware pile
-                      captured plus last-trick (10) and belote (20).
+                      captured plus last-trick (10) and belote
+                      (20 per pair held).
                       Always the true captured total, independent of
                       how the contract converts it into score; the
                       Outcome sub-table renders it verbatim.
         last_trick_bonus:
                       10 if the team took the last trick, else 0.
-        belote:       20 if the team *holds* both K and Q of trump
-                      (``belote_holder``), else 0.
+        belote:       20 per K + Q pair the team *holds*
+                      (``belote_counts_by_side``), else 0.
         trick_count:  number of tricks won.
         cards_count:  True when ``card_points`` contributes to the
                       team's round score (and should render as a
@@ -212,7 +213,7 @@ def _recap_breakdown(round_) -> dict:
         trick_winners[-1].position.team_side if trick_winners else None
     )
 
-    belote_side = _belote_side_in_round(round_)
+    belote_counts = _belote_counts_in_round(round_)
 
     attacking_side = (
         contract.player.position.team_side if contract is not None else None
@@ -238,7 +239,7 @@ def _recap_breakdown(round_) -> dict:
     for side in TeamSide:
         raw_card_pts = card_points.get(side, 0)
         raw_last_trick = 10 if side is last_trick_side else 0
-        raw_belote = 20 if side is belote_side else 0
+        raw_belote = 20 * belote_counts.get(side, 0)
 
         is_attacker = (side is attacking_side)
         is_winner = (is_attacker == contract_made)
@@ -253,10 +254,10 @@ def _recap_breakdown(round_) -> dict:
         # last-trick bonus in (shows 0).
         display_trick_points = raw_card_pts
         display_last_trick = raw_last_trick
-        # Belote (+20) is always preserved for the team holding the
-        # pair, win or lose — so it counts iff this team is the
-        # holder, in every scoring shape.
-        belote_count = (side is belote_side)
+        # Belote (+20 per pair) is always preserved for the team
+        # holding it, win or lose — so it counts iff this team holds at
+        # least one pair, in every scoring shape.
+        belote_count = bool(belote_counts.get(side, 0))
 
         if contract is None:
             # All passed — nothing scores.
@@ -595,18 +596,17 @@ def _format_recap_table(
     return out
 
 
-def _belote_side_in_round(round_) -> Optional[TeamSide]:
-    """Return the side *holding* both K and Q of trump this round.
+def _belote_counts_in_round(round_) -> dict[TeamSide, int]:
+    """How many K + Q pairs each side *holds* this round.
 
-    Belote belongs to whoever holds the pair (``belote_holder``),
-    not to whichever team captures those cards in a trick — see the
-    matching rule in
-    :meth:`contrai_engine.model.round.Round.calculate_round_scores`.
+    Belote belongs to whoever holds the pair, not to whichever team
+    captures those cards in a trick — see the matching rule in
+    :meth:`contrai_engine.model.round.Round.calculate_round_scores`. A
+    side marks at most one pair outside all trump and up to four under
+    the all-trump ``four`` regime, so the recap multiplies rather than
+    tests.
     """
-    holder = getattr(round_, "belote_holder", None)
-    if holder is None:
-        return None
-    return holder.position.team_side
+    return getattr(round_, "belote_counts_by_side", None) or {}
 
 
 def _contract_made(round_) -> bool:

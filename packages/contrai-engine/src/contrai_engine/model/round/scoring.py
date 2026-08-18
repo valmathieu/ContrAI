@@ -3,7 +3,7 @@ its team scores.
 
 ``score_round`` reads the authoritative :class:`contrai_core.PlayState`
 on the round (contract, the per-side captured piles and trick counts,
-and the per-trick winners) plus the round's belote holder, and returns
+and the per-trick winners) plus the round's belote counts, and returns
 a :class:`RoundScore` result; it mutates nothing. The thin
 ``Round.calculate_round_scores`` wrapper unpacks that result onto the
 round's public result attributes. Keeping the maths side-effect-free
@@ -160,15 +160,18 @@ def score_round(
       numeric grid. Solo Slam additionally requires the *contracting
       player personally* to win every trick.
 
-    Across every shape the **Belote bonus (+20)** is credited to the
-    team *holding* both K and Q of trump (``round_.belote_holder`` — not
-    whoever captures the cards in a trick) and is always preserved,
-    even for the side that loses the round.
+    Across every shape the **Belote bonus (+20 per pair)** is credited
+    to the team *holding* both K and Q (``round_.belote_counts_by_side``
+    — not whoever captures the cards in a trick) and is always preserved,
+    even for the side that loses the round. How many pairs mark is the
+    round's call: one at a suit contract, none at no trump, and none /
+    the first announced / every pair at all trump, where a side can mark
+    up to four (§6.6).
 
     Args:
         round_: The played-out round, read by reference (contract,
-            play_state, belote_holder, players_order). Nothing on it is
-            mutated.
+            play_state, belote_counts_by_side, players_order). Nothing on
+            it is mutated.
         rules: The table ruleset to score under; ``None`` means
             ``round_.rules``. Resolved here so the seam is exercised end
             to end — no scoring knob reads it yet; the §9.6 rows land on
@@ -216,17 +219,15 @@ def score_round(
     if trick_winners:
         team_card_points[trick_winners[-1].position.team_side] += 10
 
-    # Belote (+20) belongs to the side *holding* K + Q of trump, not
-    # to whoever wins the trick those cards land in. ``belote_holder``
-    # is the single player holding both at deal time (None when split,
-    # or at No-Trump).
-    belote_side: Optional[TeamSide] = None
-    if round_.belote_holder is not None:
-        belote_side = round_.belote_holder.position.team_side
+    # Belote (+20 per pair) belongs to the side *holding* K + Q, not to
+    # whoever wins the trick those cards land in. How many pairs mark is
+    # the round's call: one at a suit contract, none at no trump, and
+    # none / the first announced / every pair at all trump (§6.6).
+    belote_counts = round_.belote_counts_by_side
 
     def belote_bonus(side: TeamSide) -> int:
-        """Belote (+20) for ``side`` when it holds the pair."""
-        return 20 if side is belote_side else 0
+        """Belote (+20 each) for every pair ``side`` marks."""
+        return 20 * belote_counts[side]
 
     contract_side = round_.contract.player.position.team_side
 
@@ -265,9 +266,9 @@ def score_round(
                 if side is not contract_side:
                     team_scores[side] = at_risk
 
-        # Belote (+20) layered on top — independent of who won the contract.
-        if belote_side is not None:
-            team_scores[belote_side] += 20
+        # Belote layered on top — independent of who won the contract.
+        for side in team_scores:
+            team_scores[side] += belote_bonus(side)
 
         return RoundScore(
             scores=team_scores,

@@ -12,10 +12,10 @@ from contrai_core.auction import Auction
 from contrai_core.bid import Bid
 from contrai_core.contract import Contract
 from contrai_core.play import Play, PlayState
-from contrai_core.rule_config import RuleConfig
+from contrai_core.rule_config import AllTrumpBelote, RuleConfig
 from contrai_core.rules import rules_for
 from contrai_core.team_side import TeamSide
-from contrai_core.types import Rank
+from contrai_core.types import Rank, Suit, TrumpVariant
 
 from .scoring import UnannouncedSlam, score_round
 
@@ -104,14 +104,21 @@ class Round:
         # render the 250 and its explanatory tag.
         self.unannounced_slam: Optional[UnannouncedSlam] = None
 
-        # Belote / rebelote announcement state. ``belote_holder`` is the
-        # unique player holding both the K and the Q of trump at deal time
-        # (None when no one has both, or when the contract is NO_TRUMP /
-        # passed). ``belote_state`` tracks which of the two cards they
-        # have already played: missing → not yet announced; "belote" →
-        # one played; "rebelote" → both played.
-        self.belote_holder: Optional[Player] = None
-        self.belote_state: Dict[Player, str] = {}
+        #: Every K + Q pair held at deal time, holder -> the suits they
+        #: pair in. At most one entry with one suit outside all trump —
+        #: a suit contract has a single trump suit and no trump has none.
+        #: Under the all-trump ``four`` regime up to four pairs live in
+        #: one deal and a seat can pair in two suits.
+        self.belote_pairs: Dict[Player, tuple[Suit, ...]] = {}
+        #: Announcement progress per pair: (holder, suit) -> "belote" |
+        #: "rebelote". Keyed by the pair, not the holder, because a seat
+        #: can be mid-announcement in two suits at once. Missing → not
+        #: yet announced; "belote" → one of the two played; "rebelote"
+        #: → both played.
+        self.belote_state: Dict[tuple[Player, Suit], str] = {}
+        #: The pairs in the order they were first announced. Under the
+        #: ``single`` regime the head of this list is the one that marks.
+        self.belote_order: List[tuple[Player, Suit]] = []
 
     def deal_cards(self):
         """
@@ -177,7 +184,7 @@ class Round:
         self.contract = auction.contract()
         if self.contract is not None:
             logger.debug("contract fixed: %s", self.contract)
-            self._detect_belote_holder()
+            self._detect_belote_pairs()
             # Bookmark the contract in the event log so the start of
             # play is clearly delimited.
             if view is not None and hasattr(view, 'on_contract_established'):
@@ -225,56 +232,132 @@ class Round:
             )
         return bid
 
+    def _belote_suits(self) -> tuple[Suit, ...]:
+        """The suits a belote can live in at this table, this round.
+
+        The rules object answers where a belote is *possible* — the trump
+        suit at a suit contract, nothing at no trump, every suit at all
+        trump. The ``none`` regime then removes all trump's belotes
+        entirely: a table playing it has no belote to announce, not one
+        that fails to score (contree-domain.md §6.6, §9.2).
+
+        Returns:
+            The suits to scan hands for a K + Q pair in. Always real card
+            suits, so the ``has_card`` calls in
+            :meth:`_detect_belote_pairs` — which build a
+            :class:`~contrai_core.Card` from what they are handed — never
+            see a suitless trump.
+        """
+
+        trump = self.contract.suit if self.contract else None
+        if (trump is TrumpVariant.ALL_TRUMP
+                and self.rules.all_trump_belote is AllTrumpBelote.NONE):
+            return ()
+        return rules_for(trump).belote_suits
+
+    def _detect_belote_pairs(self) -> None:
+        """Snapshot every K + Q pair held at deal time.
+
+        Belote/rebelote is a per-pair narrative event: the holder
+        announces ``Belote`` on the first of the two cards they play and
+        ``Rebelote`` on the second. Scanning every seat rather than
+        stopping at the first is what the all-trump ``four`` regime needs
+        — up to four pairs live in one deal, and one seat may hold two.
+        """
+
+        suits = self._belote_suits()
+        self.belote_pairs = {}
+        for player in self.players_order:
+            paired = tuple(
+                suit for suit in suits
+                if player.hand.has_card(suit, Rank.KING)
+                and player.hand.has_card(suit, Rank.QUEEN)
+            )
+            if paired:
+                self.belote_pairs[player] = paired
+
     def _is_belote_event(self, player: Player, card) -> bool:
-        """True if *player* playing *card* counts toward a belote announcement."""
-        if self.belote_holder is None or self.contract is None:
+        """True if ``player`` playing ``card`` announces a belote.
+
+        The predicate keys on the *pair*, not on trumpness: at all trump
+        every King and Queen is a trump King and Queen, so a trumpness
+        test would fire on a holder's unpaired King in a fourth suit.
+        """
+
+        if self.contract is None:
             return False
-        if player is not self.belote_holder:
-            return False
-        rules = rules_for(self.contract.suit)
-        return rules.is_trump(card.suit) and card.rank in (
-            Rank.KING,
-            Rank.QUEEN,
+        return (
+            card.suit in self.belote_pairs.get(player, ())
+            and card.rank in (Rank.KING, Rank.QUEEN)
         )
 
-    def _transition_belote_state(self, player: Player) -> Optional[str]:
-        """Advance the belote_state machine and return the new state name.
+    def _transition_belote_state(
+        self, player: Player, suit: Suit
+    ) -> Optional[str]:
+        """Advance one pair's announcement state and return its new name.
 
-        Returns ``"belote"`` if this is the first of the K+Q pair played,
-        ``"rebelote"`` if it's the second, or ``None`` if the player has
-        already fired both (defensive — shouldn't happen, since each card
-        is unique).
+        Returns ``"belote"`` on the first card of the pair, ``"rebelote"``
+        on the second, or ``None`` if both have already fired (defensive
+        — each card is unique). First announcements are appended to
+        :attr:`belote_order`, which is what the ``single`` regime reads.
+
+        Args:
+            player: The pair's holder.
+            suit: The suit the pair lives in.
+
+        Returns:
+            The announcement name to narrate, or ``None``.
         """
-        current = self.belote_state.get(player)
+
+        key = (player, suit)
+        current = self.belote_state.get(key)
         if current is None:
-            self.belote_state[player] = "belote"
+            self.belote_state[key] = "belote"
+            self.belote_order.append(key)
             return "belote"
         if current == "belote":
-            self.belote_state[player] = "rebelote"
+            self.belote_state[key] = "rebelote"
             return "rebelote"
         return None
 
-    def _detect_belote_holder(self) -> None:
-        """Snapshot which player (if any) holds the K + Q of trump.
+    def _scoring_belotes(self) -> tuple[tuple[Player, Suit], ...]:
+        """The held pairs that actually mark, under this table's regime.
 
-        Belote/rebelote is a per-round, per-holder narrative event:
-        whoever holds both cards announces ``Belote`` on the first they
-        play and ``Rebelote`` on the second. No-trump contracts have no
-        belote.
+        Outside all trump at most one pair exists and it always marks —
+        the regime knob is an all-trump rule (§6.6). Under all trump:
+        ``none`` is already empty (no pair was ever detected), ``four``
+        marks every pair, and ``single`` marks only the first one
+        announced in play, whichever team announced it.
+
+        Returns:
+            The ``(holder, suit)`` pairs worth 20 points each.
         """
-        trump = self.contract.suit if self.contract else None
-        # The rules object knows which suits can carry a belote — always
-        # real card suits, so ``has_card`` below (which builds a Card from
-        # what it is handed) never sees a suitless trump. Empty under a
-        # no-trump contract: no belote to hold.
-        for suit in rules_for(trump).belote_suits:
-            for player in self.players_order:
-                has_king = player.hand.has_card(suit, Rank.KING)
-                has_queen = player.hand.has_card(suit, Rank.QUEEN)
-                if has_king and has_queen:
-                    self.belote_holder = player
-                    return
-        self.belote_holder = None
+
+        held = tuple(
+            (player, suit)
+            for player, suits in self.belote_pairs.items()
+            for suit in suits
+        )
+        if (self.contract is None
+                or self.contract.suit is not TrumpVariant.ALL_TRUMP
+                or self.rules.all_trump_belote is AllTrumpBelote.FOUR):
+            return held
+        return tuple(self.belote_order[:1])
+
+    @property
+    def belote_counts_by_side(self) -> Dict[TeamSide, int]:
+        """How many belotes each side marks this round.
+
+        Returns:
+            Every :class:`~contrai_core.TeamSide` member as a key, so
+            callers index directly; a side marking none maps to ``0``.
+            The scorer multiplies each by 20.
+        """
+
+        counts = {side: 0 for side in TeamSide}
+        for player, _suit in self._scoring_belotes():
+            counts[player.position.team_side] += 1
+        return counts
 
     def _sync_hands(self) -> None:
         """Re-mirror the players' hands from the authoritative play state.
@@ -393,10 +476,12 @@ class Round:
             if view is not None and hasattr(view, 'on_card_played'):
                 view.on_card_played(player, card, self._trick_after_play())
 
-            # Belote / rebelote announcement. Fires only when the holder
-            # plays one of the K/Q of trump. Each card fires at most once.
+            # Belote / rebelote announcement. Fires only when a seat
+            # plays a K or Q of a pair it holds — at all trump every K/Q
+            # is a trump K/Q, so trumpness alone is not the test. Each
+            # card fires at most once.
             if self._is_belote_event(player, card):
-                kind = self._transition_belote_state(player)
+                kind = self._transition_belote_state(player, card.suit)
                 if kind is not None and view is not None and hasattr(
                     view, 'on_belote_announced'
                 ):

@@ -4,13 +4,13 @@ underlying pure :func:`contrai_engine.model.round.scoring.score_round`.
 The scoring rules come from ``contree-domain.md`` §6.6, §7: the numeric
 (80-180) share-the-pile path, the unannounced-Slam 250 / 500 substitute,
 the doubled/redoubled winner-takes-all path, and the symmetric Slam /
-Solo Slam grid — with the Belote (+20) bonus layered onto every shape for
-the team *holding* K + Q of trump.
+Solo Slam grid — with the Belote (+20 per pair) bonus layered onto every
+shape for the team *holding* K + Q, up to four pairs under all trump.
 
 These build a ``Round`` directly and seed its authoritative
 ``play_state`` with synthesised four-play tricks via the bare
 (unvalidated) :class:`contrai_core.PlayState` constructor — the scoring
-path reads ``contract`` / ``play_state`` / ``belote_holder`` and nothing
+path reads ``contract`` / ``play_state`` / ``belote_pairs`` and nothing
 else — then assert on the published result attributes (``round_scores``
 / ``contract_made`` / ``unannounced_slam``). Each fixture self-asserts
 the play state's derived ``trick_winners`` before any scoring assertion,
@@ -19,6 +19,8 @@ a total. The shared ``players`` fixture lives in ``conftest.py``.
 """
 
 from __future__ import annotations
+
+import pytest
 
 from contrai_core.bid import ContractBid, SlamLevel
 from contrai_core.card import Card
@@ -371,7 +373,7 @@ class TestSlamFamilyBeloteLayering:
         round_ = _slam_round(
             players, contract=contract, trick_winners=["N"] * 8
         )
-        round_.belote_holder = players["N"]  # N-S holds K+Q of trump
+        round_.belote_pairs = {players["N"]: (Suit.HEARTS,)}  # N-S holds it
         scores = round_.calculate_round_scores()
         assert scores[TeamSide.NS] == 520  # 500 + 20
         assert scores[TeamSide.EW] == 0
@@ -381,7 +383,7 @@ class TestSlamFamilyBeloteLayering:
         contract = _contract(players["N"], SlamLevel.SLAM, Suit.SPADES)
         winners = ["N"] * 7 + ["W"]
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
-        round_.belote_holder = players["W"]  # E-W holds K+Q of trump
+        round_.belote_pairs = {players["W"]: (Suit.HEARTS,)}  # E-W holds it
         scores = round_.calculate_round_scores()
         assert scores[TeamSide.NS] == 0
         assert scores[TeamSide.EW] == 520  # 500 + 20
@@ -395,7 +397,7 @@ class TestSlamFamilyBeloteLayering:
         contract = _contract(players["N"], SlamLevel.SLAM, Suit.SPADES)
         winners = ["N"] * 7 + ["W"]
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
-        round_.belote_holder = players["N"]  # attacker holds belote
+        round_.belote_pairs = {players["N"]: (Suit.HEARTS,)}  # attacker
         scores = round_.calculate_round_scores()
         # Attacker still gets +20 from belote even though the contract failed.
         assert scores[TeamSide.NS] == 20
@@ -489,7 +491,7 @@ def _numeric_round(
     contract,
     team_cards,
     last_trick_winner=None,
-    belote_holder=None,
+    belote_pairs=None,
 ):
     """Build a numeric-contract Round with a synthesised play state.
 
@@ -504,10 +506,12 @@ def _numeric_round(
         last_trick_winner: seat letter credited with the last-trick
             bonus, or None. Realised as a final zero-point stacked trick
             won by that seat.
-        belote_holder: seat letter holding K + Q of trump, or None.
+        belote_pairs: mapping of seat letter → the suits that seat
+            holds a K + Q pair in, or None for a belote-free round. A
+            seat can pair in more than one suit under all trump.
 
     Returns:
-        Round with ``contract``, ``play_state`` and ``belote_holder``
+        Round with ``contract``, ``play_state`` and ``belote_pairs``
         populated.
     """
     order = [players_dict[s] for s in _ORDER]
@@ -550,8 +554,10 @@ def _numeric_round(
             is players_dict[last_trick_winner]
         )
 
-    if belote_holder is not None:
-        round_.belote_holder = players_dict[belote_holder]
+    if belote_pairs is not None:
+        round_.belote_pairs = {
+            players_dict[seat]: suits for seat, suits in belote_pairs.items()
+        }
     return round_
 
 
@@ -585,7 +591,7 @@ class TestNumericBeloteByHolder:
                 TeamSide.NS: [],
             },
             last_trick_winner="N",  # last-trick bonus to N-S, not the declarer
-            belote_holder=None,     # pair is split — nobody holds it
+            belote_pairs=None,      # pair is split — nobody holds it
         )
         scores = round_.calculate_round_scores()
         assert round_.contract_made is False
@@ -604,7 +610,7 @@ class TestNumericBeloteByHolder:
                 TeamSide.NS: [],
             },
             last_trick_winner="N",
-            belote_holder="S",  # N-S holds the pair
+            belote_pairs={"S": (Suit.HEARTS,)},  # N-S holds the pair
         )
         scores = round_.calculate_round_scores()
         # Declarer E-W realized 62 < 80 → failed → 0.
@@ -627,7 +633,7 @@ class TestNumericBeloteByHolder:
                 TeamSide.NS: [],
             },
             last_trick_winner="N",
-            belote_holder="E",  # declarer holds the pair
+            belote_pairs={"E": (Suit.HEARTS,)},  # declarer holds the pair
         )
         scores = round_.calculate_round_scores()
         # E-W realized = 7 cards + 20 belote = 27 < 80 → failed.
@@ -694,7 +700,7 @@ class TestNumericDoubledScoring:
                 TeamSide.EW: [("E", Card(Suit.CLUBS, Rank.KING))],
             },
             last_trick_winner="N",
-            belote_holder="E",  # E-W (defender) holds the pair
+            belote_pairs={"E": (Suit.SPADES,)},  # E-W defender holds it
         )
         scores = round_.calculate_round_scores()
         assert scores[TeamSide.NS] == 320  # 160 + 80*2
@@ -825,7 +831,7 @@ class TestUnannouncedSlamScoring:
         contract = _contract(players["N"], 100, Suit.SPADES)
         winners = ["N"] * 5 + ["S"] * 3
         round_ = _slam_round(players, contract=contract, trick_winners=winners)
-        round_.belote_holder = players["N"]  # N-S holds K+Q of trump
+        round_.belote_pairs = {players["N"]: (Suit.HEARTS,)}  # N-S holds it
         scores = round_.calculate_round_scores()
         assert scores[TeamSide.NS] == 370  # 100 + 250 + 20
         assert scores[TeamSide.EW] == 0
@@ -875,3 +881,101 @@ class TestUnannouncedSlamScoring:
         assert round_.contract_made is False
         assert scores[TeamSide.EW] == 0
         assert scores[TeamSide.NS] == 260  # 160 + 100 (normal failed)
+
+
+# ---------------------------------------------------------------------------
+# Belote per pair — the all-trump `four` regime can mark up to four
+# ---------------------------------------------------------------------------
+
+
+class TestBelotePerPair:
+    """§6.6 / §7.2 — 20 per pair, up to four of them at all trump.
+
+    The scorer reads ``round_.belote_counts_by_side`` and multiplies; the
+    regime that decides those counts is the Round's business and is
+    covered in ``test_round.py``. What is pinned here is that the
+    multiplication reaches every scoring shape, and that the standing
+    "the loser keeps its belote" exception holds per pair rather than
+    only for the first.
+    """
+
+    #: Two ♥ tens to E-W, everything else zero-point filler: the declarer
+    #: N-S takes almost nothing, so every round built from it fails.
+    _FAILING_CARDS = {
+        TeamSide.EW: [("E", Card(Suit.HEARTS, Rank.TEN)),
+                      ("W", Card(Suit.HEARTS, Rank.ACE))],
+    }
+
+    def _round(self, players, *, pairs, doubled=False):
+        """A failed 80 ♥ round for N-S holding ``pairs``."""
+        bid = ContractBid(players["N"], 80, Suit.HEARTS)
+        contract = Contract(
+            bid, double_player=players["E"] if doubled else None
+        )
+        return _numeric_round(
+            players,
+            contract=contract,
+            team_cards=self._FAILING_CARDS,
+            last_trick_winner="E",
+            belote_pairs=pairs,
+        )
+
+    @pytest.mark.parametrize("suits, bonus", [
+        ((), 0),
+        ((Suit.HEARTS,), 20),
+        ((Suit.HEARTS, Suit.SPADES), 40),
+        ((Suit.HEARTS, Suit.SPADES, Suit.CLUBS), 60),
+    ])
+    def test_a_failed_declarer_keeps_twenty_per_pair(
+        self, players, suits, bonus
+    ):
+        # Belote is the standing exception to "the loser marks 0" (§7.2),
+        # and that holds per pair, not only for the first. Capped at three
+        # pairs here because a fourth would take the declarer to 80 on
+        # belote alone and make the contract — see the test below.
+        pairs = {"N": suits} if suits else None
+        round_ = self._round(players, pairs=pairs)
+        score = score_round(round_)
+        assert score.contract_made is False
+        assert score.scores[TeamSide.NS] == bonus
+
+    def test_four_belotes_alone_can_make_an_eighty_contract(self, players):
+        # Belote counts toward *realized* points, not just toward the
+        # mark, so a declarer taking nothing in cards still makes 80 on
+        # four pairs — reachable only under the all-trump `four` regime.
+        round_ = self._round(
+            players,
+            pairs={
+                "N": (Suit.HEARTS, Suit.SPADES, Suit.CLUBS, Suit.DIAMONDS)
+            },
+        )
+        score = score_round(round_)
+        assert score.contract_made is True
+        # 80 announced + 0 in cards + 80 of belote.
+        assert score.scores[TeamSide.NS] == 160
+
+    def test_a_doubled_loser_keeps_every_pair_it_holds(self, players):
+        # Same rule on the winner-takes-all path.
+        round_ = self._round(
+            players, pairs={"N": (Suit.HEARTS, Suit.SPADES)}, doubled=True
+        )
+        assert score_round(round_).scores[TeamSide.NS] == 40
+
+    def test_both_sides_can_hold_belotes_at_all_trump(self, players):
+        # Three pairs split 2 / 1 across the two sides — unreachable under
+        # a suit contract, routine under the all-trump `four` regime.
+        base = self._round(players, pairs=None)
+        with_pairs = self._round(
+            players,
+            pairs={"N": (Suit.HEARTS, Suit.SPADES), "E": (Suit.CLUBS,)},
+        )
+        plain = score_round(base).scores
+        marked = score_round(with_pairs).scores
+        assert marked[TeamSide.NS] - plain[TeamSide.NS] == 40
+        assert marked[TeamSide.EW] - plain[TeamSide.EW] == 20
+
+    def test_two_pairs_in_one_seat_count_twice(self, players):
+        # Trap 8's shape: a holder-keyed state could only ever mark one.
+        round_ = self._round(players, pairs={"N": (Suit.HEARTS, Suit.SPADES)})
+        assert round_.belote_counts_by_side[TeamSide.NS] == 2
+        assert score_round(round_).scores[TeamSide.NS] == 40

@@ -88,7 +88,7 @@ end note
 G -> R : manage_bidding(view)
 ref over R, P : **seq_bidding** — bid loop, validation, termination
 R -> R : self.auction = auction\n(retained for the play phase — attached to\n each AI's PlayObservation via play_state.observe)
-R -> R : _detect_belote_holder()\n(if a contract was made)
+R -> R : _detect_belote_pairs()\n(if a contract was made)
 R --> G : Contract | None
 G -> G : current_contract = contract
 
