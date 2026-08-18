@@ -186,7 +186,10 @@ three passes land.
 
 - The team holding the final bid becomes the **declarer** / *attacker* .
 - The other team is the **defense**.
-- The suit of the final bid is the **trump** for this round.
+- The trump choice of the final bid — one of the four suits, no trump
+  or all trump — sets the **card regime** for this round: which cards
+  are trump, how every suit ranks and what each card scores (§3), and
+  which follow obligations apply (§6.2, §6.4).
 - If everyone passes without anyone bidding, the round is annulled: cards are
   collected and the **next dealer** (normal rotation, §2) redeals — unless the *same dealer redeals* option is on (§4, §9), or the *forced dealer bid* option makes an all-pass auction impossible in the first place (§5.1).
 
@@ -267,7 +270,11 @@ Notes:
 
 At the end of the 8 tricks:
 
-1. Each team sums the point values of the cards in the tricks it has won (using the *current* trump values, see §3).
+1. Each team sums the point values of the cards in the tricks it has
+   won, on the scale of the contract's trump mode: §3.1 for the trump
+   suit and §3.2 for the other three at a suit contract, §3.3 at all
+   trump, §3.4 at no trump. Every scale puts 152 points in the deck
+   (§3.5), so the totals below hold whichever mode was booked.
 2. The team that won the last trick adds the **last trick bonus** (10 points).
 3. Belote bonus (20) is added if applicable.
 
