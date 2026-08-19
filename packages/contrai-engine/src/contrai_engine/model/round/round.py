@@ -62,10 +62,11 @@ class Round:
         self.dealer = dealer
         self.deck = deck
         self.round_number = round_number
-        # The table ruleset, normally inherited from the Game. It is
-        # seeded into the core play state and named to the scorer, so
-        # both sides of the round read the same ruleset object — no knob
-        # of it changes a decision yet.
+        # The table ruleset, normally inherited from the Game. It is the
+        # round's single source for every table rule: the auction runs
+        # under it, it is seeded into the core play state, and the scorer
+        # reads it back off this attribute rather than being handed one —
+        # so no two phases of a round can run under different rulesets.
         self.rules: RuleConfig = rules if rules is not None else RuleConfig()
 
         # Round state
@@ -560,7 +561,7 @@ class Round:
         Returns:
             Dict: Round scores, keyed by team side
         """
-        result = score_round(self, rules=self.rules)
+        result = score_round(self)
         self.round_scores = result.scores
         self.contract_made = result.contract_made
         self.unannounced_slam = result.unannounced_slam

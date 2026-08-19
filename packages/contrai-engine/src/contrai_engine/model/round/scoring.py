@@ -16,7 +16,6 @@ from enum import Enum
 from typing import Dict, Optional, Sequence, TYPE_CHECKING
 
 from contrai_core.bid import SlamLevel
-from contrai_core.rule_config import RuleConfig
 from contrai_core.team_side import TeamSide
 
 if TYPE_CHECKING:
@@ -121,9 +120,7 @@ def count_player_tricks(
     return sum(1 for winner in trick_winners if winner is player)
 
 
-def score_round(
-    round_: 'Round', *, rules: RuleConfig | None = None
-) -> RoundScore:
+def score_round(round_: 'Round') -> RoundScore:
     """Score a played-out round into a :class:`RoundScore`.
 
     Three scoring shapes, all sharing the same Belote rule:
@@ -168,21 +165,23 @@ def score_round(
     the first announced / every pair at all trump, where a side can mark
     up to four (§6.6).
 
+    The table ruleset is read off ``round_.rules`` rather than taken as
+    an argument, so a round can only ever be scored under the ruleset it
+    was played under: the same object seeded ``round_.play_state`` and
+    decided which belote pairs mark, and letting a caller name a
+    different one would silently score the two phases against different
+    tables. No scoring knob reads it yet — the §9.6 rows land on the
+    made/announced decomposition in a later step.
+
     Args:
         round_: The played-out round, read by reference (contract,
-            play_state, belote_counts_by_side, players_order). Nothing on
-            it is mutated.
-        rules: The table ruleset to score under; ``None`` means
-            ``round_.rules``. Resolved here so the seam is exercised end
-            to end — no scoring knob reads it yet; the §9.6 rows land on
-            the made/announced decomposition in a later step.
+            play_state, belote_counts_by_side, players_order, rules).
+            Nothing on it is mutated.
 
     Returns:
         A :class:`RoundScore` carrying the per-team scores, the
         made/failed signal, and any unannounced-Slam tag.
     """
-    rules = rules if rules is not None else round_.rules
-
     if not round_.contract:
         # No contract established, return zero scores.
         sides = {player.position.team_side for player in round_.players_order}
