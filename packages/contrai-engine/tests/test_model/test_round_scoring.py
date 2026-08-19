@@ -79,6 +79,12 @@ def _seed_play_state(round_, players_dict, contract, plays):
     mid-round history (empty hands, stacked tricks, repeated filler
     cards) is injectable directly — exactly the seam the core provides
     for tests and search forks.
+
+    The state is seeded with ``round_.rules``, mirroring what the real
+    ``play_all_tricks`` / ``play_trick`` do: a play state carrying a
+    different ruleset from its own round is a state the engine cannot
+    produce, and letting the double build one would hide a §9.6
+    regression the moment the scoring knobs land.
     """
     order = tuple(players_dict[s] for s in _ORDER)
     round_.play_state = PlayState(
@@ -86,6 +92,7 @@ def _seed_play_state(round_, players_dict, contract, plays):
         players=order,
         hands=((), (), (), ()),
         plays=tuple(plays),
+        rules=round_.rules,
     )
 
 
@@ -109,6 +116,7 @@ def _slam_round(
     *,
     contract,
     trick_winners,
+    rules=None,
 ):
     """Build a Round whose play state yields the given trick winners.
 
@@ -118,12 +126,18 @@ def _slam_round(
         trick_winners: ordered list of seat letters — one per completed
             trick. Each entry is the player who wins that trick (each
             stacked trick is zero-point filler).
+        rules: optional table ruleset. Scoring reads it off the round, so
+            a case that varies a §9.6 knob varies it here rather than at
+            the ``score_round`` call — which keeps the play state and the
+            scorer on the same ruleset by construction.
 
     Returns:
         Round with ``contract`` and ``play_state`` populated.
     """
     order = [players_dict[s] for s in _ORDER]
-    round_ = Round(order, dealer=players_dict["N"], deck=None, round_number=1)
+    round_ = Round(
+        order, dealer=players_dict["N"], deck=None, round_number=1, rules=rules
+    )
     round_.contract = contract
 
     plays = []
@@ -166,40 +180,35 @@ class TestScoreRoundResult:
         assert scores is round_.round_scores
         assert round_.contract_made is True
 
-    def test_score_round_accepts_an_explicit_ruleset_and_ignores_it_for_now(
-        self, players
-    ):
-        """The ``rules`` seam is resolved but consulted by nothing yet, so
-        an unusual ruleset scores identically to the defaults."""
+    def test_scoring_reads_the_ruleset_off_the_round(self, players):
+        """The scorer takes no ``rules`` argument — a round is only ever
+        scored under the ruleset it was played under. No §9.6 knob is
+        consulted yet, so an unusual ruleset still scores the classic grid."""
+        contract = _contract(players["N"], SlamLevel.SLAM, Suit.SPADES)
+        configured = _slam_round(
+            players,
+            contract=contract,
+            trick_winners=["N"] * 8,
+            rules=RuleConfig(target_score=1000),
+        )
+        default = _slam_round(
+            players, contract=contract, trick_winners=["N"] * 8
+        )
+
+        assert configured.rules == RuleConfig(target_score=1000)
+        assert configured.play_state.rules is configured.rules
+        assert score_round(configured) == score_round(default)
+
+    def test_scorer_rejects_a_ruleset_argument(self, players):
+        """Pins the deletion: the ruleset is not a per-call choice, so a
+        caller cannot score a round against a table it never played at."""
         contract = _contract(players["N"], SlamLevel.SLAM, Suit.SPADES)
         round_ = _slam_round(
             players, contract=contract, trick_winners=["N"] * 8
         )
-        assert score_round(
-            round_, rules=RuleConfig(target_score=1000)
-        ) == score_round(round_)
 
-    def test_wrapper_passes_the_round_rules(self, players, monkeypatch):
-        """``calculate_round_scores`` names the round's own ruleset rather
-        than letting the scorer fall back to it."""
-        seen = {}
-        real = score_round
-
-        def spy(r, *, rules=None):
-            seen["rules"] = rules
-            return real(r)
-
-        monkeypatch.setattr(
-            "contrai_engine.model.round.round.score_round", spy
-        )
-        contract = _contract(players["N"], SlamLevel.SLAM, Suit.SPADES)
-        round_ = _slam_round(
-            players, contract=contract, trick_winners=["N"] * 8
-        )
-
-        round_.calculate_round_scores()
-
-        assert seen["rules"] is round_.rules
+        with pytest.raises(TypeError):
+            score_round(round_, rules=RuleConfig())  # type: ignore[call-arg]
 
 
 class TestSlamScoring:

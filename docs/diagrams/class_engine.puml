@@ -287,7 +287,7 @@ package "model/round/ package" as p_round {
 
     ' --- scoring.py: the pure scoring transformation ---
     class "scoring.py" as r_scoring <<module>> #FFEFD9 {
-        score_round(round, *, rules=None) : RoundScore
+        score_round(round) : RoundScore
         count_player_tricks(trick_winners, player) : int
         UnannouncedSlam <<enum>> : {SLAM, GRAND_SLAM}
         RoundScore <<dataclass>>
@@ -650,8 +650,10 @@ Game "1" *-- "0..1" Round : current_round
 Game "1" o-- "0..1" Contract : current_contract
 
 ' The table ruleset is fixed when the table sits down: Game holds it and
-' hands the same object to every Round, which seeds it into the play
-' state and names it to the scorer. No knob of it is consulted yet.
+' hands the same object to every Round, which runs its auction under it
+' and seeds it into the play state. The scorer reads it back off the
+' Round rather than being handed one, so no two phases of a round can
+' run under different rulesets.
 Game "1" o-- "1" RuleConfig : rules
 
 ' Round references Contract / Auction / PlayState — the play phase
