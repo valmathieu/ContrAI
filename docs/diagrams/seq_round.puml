@@ -131,14 +131,18 @@ note right of R
   ""calculate_round_scores"" is a thin
   wrapper: it calls ""scoring.score_round""
   and publishes the returned ""RoundScore""
-  onto ""round_scores"" / ""contract_made"" /
-  ""unannounced_slam"". The branch detail
-  (numeric share-pile vs. unannounced-Slam
-  vs. doubled winner-takes-all vs. Slam /
-  Solo Slam, belote +20 on every shape) lives
-  in **flow_scoring.mmd**.
+  onto ""round_score"" — ""round_scores"" /
+  ""contract_made"" / ""unannounced_slam"" are
+  read-only properties over it.
+  ""score_round"" reads the round and judges
+  made/failed, then hands the numbers to
+  ""components.py"", which splits each side's
+  mark into its //made// and //announced//
+  components (§7.2) and reduces them under
+  the table's marking conventions. The whole
+  pipeline is drawn in **flow_scoring.mmd**.
 end note
-R -> R : round_scores, contract_made,\nunannounced_slam = RoundScore
+R -> R : round_score = RoundScore\n(marks, belote, piles, multiplier)
 R --> G : round_scores: dict<TeamSide, int>
 ' No deactivate here: Round outlives manage_round — cli.py keeps
 ' handing ``game.current_round`` to the between-round view hooks

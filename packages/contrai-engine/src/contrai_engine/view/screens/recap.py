@@ -16,7 +16,7 @@ from rich.box import ROUNDED
 from rich.panel import Panel
 from rich.text import Text
 
-from contrai_engine.model.round.scoring import unannounced_slam_substitute
+from contrai_engine.model.round.scoring import sweep_substitute
 from contrai_engine.view.formatting import (
     _format_contract_short,
     _format_trump_label,
@@ -295,13 +295,11 @@ def _recap_breakdown(round_) -> dict:
                     # flat substitute the tag names — 250 for a team
                     # sweep, 500 for the declarer's own — mirroring
                     # the announced-Slam shape.
-                    sweep_substitute = unannounced_slam_substitute(
-                        unannounced_slam
-                    )
-                    card_points_value = sweep_substitute
+                    substitute = sweep_substitute(unannounced_slam)
+                    card_points_value = substitute
                     card_points_substituted = True
                     last_trick_counts = False
-                    display_trick_points = sweep_substitute
+                    display_trick_points = substitute
                     display_last_trick = 0
             else:
                 # Failed → defender takes the whole pile + contract;

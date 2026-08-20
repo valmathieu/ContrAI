@@ -17,7 +17,8 @@ from contrai_core.rules import rules_for
 from contrai_core.team_side import TeamSide
 from contrai_core.types import Rank, Suit, TrumpVariant
 
-from .scoring import UnannouncedSlam, score_round
+from .components import Mark
+from .scoring import RoundScore, UnannouncedSlam, score_round
 
 if TYPE_CHECKING:
     from ..player import Player
@@ -87,23 +88,12 @@ class Round:
         # about the play phase is read off it directly. AI seats instead
         # read the frozen ``PlayObservation`` projected from this state.
         self.play_state: PlayState | None = None
-        self.round_scores: Dict[TeamSide, int] = {}
-        # Single source of truth for the contract outcome, set by
-        # ``calculate_round_scores``. ``None`` until scored (or when the
-        # round was all-passed). The view reads this rather than
-        # re-deriving "made" from the scores — a failed declarer can
-        # still score a non-zero Belote bonus, so "round_score > 0" is
-        # not a reliable made/failed signal.
-        self.contract_made: Optional[bool] = None
-        # Unannounced-Slam marker, set by ``calculate_round_scores``.
-        # ``None`` when the round was not an unannounced Slam; otherwise
-        # the matching :class:`UnannouncedSlam` member — ``SLAM`` (the
-        # declaring *team* swept all 8 tricks) or ``GRAND_SLAM`` (the
-        # contracting *player personally* won them all). Only set for
-        # un-doubled numeric contracts — the path that swaps the
-        # 162-point pile for a flat 250 substitute. The view reads this to
-        # render the 250 and its explanatory tag.
-        self.unannounced_slam: Optional[UnannouncedSlam] = None
+        # The scored round, published atomically by
+        # ``calculate_round_scores`` (or by ``handle_failed_contract`` on
+        # an all-pass). ``None`` until the round is scored. The three
+        # attributes the view and the debug screen read are properties
+        # over it rather than copies, so they cannot drift from it.
+        self.round_score: Optional[RoundScore] = None
 
         #: Every K + Q pair held at deal time, holder -> the suits they
         #: pair in. At most one entry with one suit outside all trump —
@@ -120,6 +110,43 @@ class Round:
         #: The pairs in the order they were first announced. Under the
         #: ``single`` regime the head of this list is the one that marks.
         self.belote_order: List[tuple[Player, Suit]] = []
+
+    @property
+    def round_scores(self) -> Dict[TeamSide, int]:
+        """Per-side round scores; empty until the round is scored.
+
+        Returns:
+            The scored round's per-side totals, or ``{}`` while
+            :attr:`round_score` is ``None``.
+        """
+        return self.round_score.scores if self.round_score else {}
+
+    @property
+    def contract_made(self) -> Optional[bool]:
+        """Whether the contract was made.
+
+        The canonical made/failed signal — the view reads this rather
+        than re-deriving "made" from the scores, since a failed declarer
+        can still mark a non-zero Belote bonus.
+
+        Returns:
+            ``None`` until the round is scored, and on an all-passed
+            round; otherwise the scorer's verdict.
+        """
+        return self.round_score.contract_made if self.round_score else None
+
+    @property
+    def unannounced_slam(self) -> Optional[UnannouncedSlam]:
+        """The unannounced-sweep tag for this round.
+
+        Returns:
+            ``SLAM`` (the declaring *team* swept all 8 tricks) or
+            ``GRAND_SLAM`` (the contracting *player personally* won them
+            all) on an un-doubled numeric contract; ``None`` otherwise,
+            including before the round is scored. The view reads it to
+            render the flat substitute and its explanatory tag.
+        """
+        return self.round_score.unannounced_slam if self.round_score else None
 
     def deal_cards(self):
         """
@@ -551,20 +578,16 @@ class Round:
 
         Thin lifecycle wrapper around the pure :func:`scoring.score_round`
         transformation: it runs the scoring rules over the round's final
-        state and publishes the three result attributes the view reads —
-        :attr:`round_scores`, :attr:`contract_made` (the canonical
-        made/failed signal), and :attr:`unannounced_slam`. The scoring
-        shapes (numeric, unannounced Slam, doubled winner-takes-all,
-        Slam / Solo Slam) and the Belote rule all live in
-        :mod:`scoring`.
+        state and publishes the whole result atomically onto
+        :attr:`round_score`, which :attr:`round_scores`,
+        :attr:`contract_made` and :attr:`unannounced_slam` then read.
+        The §7.2 component model and the Belote rule live in
+        :mod:`scoring` and :mod:`components`.
 
         Returns:
             Dict: Round scores, keyed by team side
         """
-        result = score_round(self)
-        self.round_scores = result.scores
-        self.contract_made = result.contract_made
-        self.unannounced_slam = result.unannounced_slam
+        self.round_score = score_round(self)
         return self.round_scores
 
     def handle_failed_contract(self) -> Dict[TeamSide, int]:
@@ -579,7 +602,18 @@ class Round:
             self.deck.add_cards(player.hand)
             player.hand.clear()
 
-        # Return zero scores
+        # An all-pass publishes a *contractless* result: ``contract_made``
+        # stays ``None`` rather than becoming ``False``, or the recap and
+        # the debug screen would both read the redeal as a failed contract.
         sides = {player.position.team_side for player in self.players_order}
-        self.round_scores = {side: 0 for side in sides}
+        self.round_score = RoundScore(
+            scores={side: 0 for side in sides},
+            contract_made=None,
+            unannounced_slam=None,
+            marks={side: Mark(0, 0) for side in sides},
+            belote_points={side: 0 for side in sides},
+            card_points={side: 0 for side in sides},
+            last_trick_side=None,
+            multiplier=1,
+        )
         return self.round_scores
