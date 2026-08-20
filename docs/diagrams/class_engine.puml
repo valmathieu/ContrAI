@@ -505,6 +505,8 @@ package "view/ package" as p_view {
         screens/endgame.py
     }
 
+    p_view_screens ..> RoundScore : <<projects the components>>
+
     note right of RichView
       Stateful orchestrator (in ""rich_view.py"").
       Six-screen UI: landing, bidding, mid-trick,
@@ -571,16 +573,21 @@ package "view/ package" as p_view {
       diamonds, the landing roster) key off
       ""Position"" members rather than seat
       strings.
-      The round-recap breakdown credits each
-      team: contract bonus (attacker base on
-      normal made, 160+base×mult on doubled
-      made, (160+base)×mult on failed defender)
-      + card points + last-trick bonus + belote
-      → ""round_scores[side]"". The card /
-      last-trick / belote rows
-      em-dash when the engine ignores them so
-      the addition matches ""round_score"".
-      Helpers ""_recap_breakdown"" /
+      The round-recap breakdown **projects**
+      ""round.round_score"" rather than being a
+      second implementation of the rules: the
+      Scoring sub-table is §7.2's two components
+      as the table marked them — the //announced//
+      one in the Contract row, the //made// one
+      beside the belote in Round points — each
+      reduced by the same ""marked_total"" the
+      scorer used — so the two rows plus the
+      belote add back up to the round score.
+      The Outcome sub-table stays factual: the
+      pile, the last trick and the belote each
+      side really took. A §9.6 knob therefore
+      reaches the panel the moment the scorer
+      honours it. Helpers ""_recap_breakdown"" /
       ""_format_recap_table"" /
       ""_belote_counts_in_round"" live in
       ""screens/recap.py"".

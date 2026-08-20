@@ -25,6 +25,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) **BREAKING:** `Round.belote_holder` is gone. Read `belote_pairs` (holder → suits) or `belote_counts_by_side`; `belote_state` is keyed by `(player, suit)`.
 - (engine) Round scoring is built from §7.2's made-points and announced-points components; `RoundScore` carries both per side. See [engine docs](docs/engine/index.md).
 - (engine) **BREAKING:** `Round.round_scores` / `contract_made` / `unannounced_slam` are read-only properties over the new `Round.round_score`. `scoring.unannounced_slam_substitute` is now `sweep_substitute`.
+- (engine) The round recap reads its breakdown off the scored round, so its Scoring rows are the two components and track the table ruleset. See [engine docs](docs/engine/index.md).
 
 ### Fixed
 

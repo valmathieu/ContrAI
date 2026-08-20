@@ -13,7 +13,8 @@ import pytest
 
 from contrai_core import Card, Position, Rank, Suit, TeamSide, Trick, rules_for
 from contrai_core.bid import SlamLevel
-from contrai_engine.model.round import UnannouncedSlam
+from contrai_core.rule_config import RuleConfig
+from contrai_engine.model.round import Mark, RoundScore, UnannouncedSlam
 from contrai_engine.view.rich_view import RichView
 from contrai_engine.view.screens.recap import (
     _panel_round_recap,
@@ -104,7 +105,7 @@ class TestRoundRecapPanel:
     class _StubRound:
         def __init__(self, *, round_number, contract, round_scores,
                      team_tricks=None, belote_pairs=None,
-                     contract_made=None):
+                     contract_made=None, marks=None, rules=None):
             self.round_number = round_number
             self.contract = contract
             self.round_scores = round_scores
@@ -119,6 +120,9 @@ class TestRoundRecapPanel:
             # these stubs cover.
             self.belote_pairs = belote_pairs or {}
             self.contract_made = contract_made
+            self.unannounced_slam = None
+            self.rules = rules or RuleConfig()
+            self._marks = marks
 
         @property
         def belote_counts_by_side(self):
@@ -127,6 +131,114 @@ class TestRoundRecapPanel:
             for player, suits in self.belote_pairs.items():
                 counts[player.position.team_side] += len(suits)
             return counts
+
+        @property
+        def round_score(self):
+            """The ``RoundScore`` a real ``Round`` would publish here.
+
+            Assembled on access rather than in ``__init__`` so a test can
+            still set ``play_state.trick_winners`` or
+            ``unannounced_slam`` afterwards. Everything but ``marks`` is
+            derivable without knowing a single scoring rule; ``marks`` is
+            the §7.2 decomposition itself, so a test asserting on the
+            Scoring sub-table passes it explicitly. Left out, the whole
+            score is attributed to the made component — enough for the
+            tests that only care about the Outcome tally.
+            """
+            if self.contract is None:
+                return None
+            winners = self.play_state.trick_winners
+            last_trick_side = (
+                winners[-1].position.team_side if winners else None
+            )
+            card_points = dict(self.play_state.card_points_by_side)
+            if last_trick_side is not None:
+                card_points[last_trick_side] += 10
+            belote = {
+                side: 20 * count
+                for side, count in self.belote_counts_by_side.items()
+            }
+            marks = self._marks or {
+                side: Mark(
+                    self.round_scores.get(side, 0) - belote.get(side, 0), 0
+                )
+                for side in TeamSide
+            }
+            return RoundScore(
+                scores=dict(self.round_scores),
+                contract_made=self.contract_made,
+                unannounced_slam=self.unannounced_slam,
+                marks=marks,
+                belote_points=belote,
+                card_points=card_points,
+                last_trick_side=last_trick_side,
+                multiplier=self.contract.get_multiplier(),
+            )
+
+    def test_the_breakdown_does_not_recompute_the_score(self, four_players):
+        """A deliberately impossible ``RoundScore``: the components say
+        one thing, the play state another. The breakdown must follow the
+        ``RoundScore`` — if it re-derives from the piles, it disagrees."""
+        north, east, *_ = four_players
+        contract = self._StubContract(100, Suit.HEARTS, TeamSide.NS)
+        # N-S really captured A♥ (11) and took the last trick, so a
+        # breakdown that re-derives would report 21, not 899.
+        ns_trick = Trick()
+        ns_trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
+        ns_trick.add_play(east, Card(Suit.CLUBS, Rank.SEVEN))
+        round_ = self._StubRound(
+            round_number=1,
+            contract=contract,
+            round_scores={TeamSide.NS: 999, TeamSide.EW: 7},
+            team_tricks={TeamSide.NS: [ns_trick], TeamSide.EW: []},
+            contract_made=True,
+            marks={TeamSide.NS: Mark(899, 100), TeamSide.EW: Mark(7, 0)},
+        )
+        round_.play_state.trick_winners = (north,)
+        breakdown = _recap_breakdown(round_)
+        assert breakdown[TeamSide.NS]["card_points"] == 899
+        assert breakdown[TeamSide.NS]["contract"] == 100
+        assert breakdown[TeamSide.EW]["card_points"] == 7
+        assert breakdown[TeamSide.EW]["contract"] == 0
+        # ...while the Outcome rows stay factual: the pile really taken.
+        assert breakdown[TeamSide.NS]["trick_points"] == 11
+        assert breakdown[TeamSide.NS]["last_trick"] == 10
+
+    def test_the_breakdown_places_the_multiplier_where_the_table_does(
+        self, four_players
+    ):
+        """The Contract row is the announced component *as marked* — so
+        it carries the multiplier the table's §7.3 convention puts on
+        it, read back through ``marked_total`` rather than re-derived."""
+        contract = self._StubContract(
+            100, Suit.HEARTS, TeamSide.NS, double=True
+        )
+        round_ = self._StubRound(
+            round_number=1,
+            contract=contract,
+            round_scores={TeamSide.NS: 360, TeamSide.EW: 0},
+            contract_made=True,
+            marks={TeamSide.NS: Mark(160, 100), TeamSide.EW: Mark(0, 0)},
+        )
+        ns = _recap_breakdown(round_)[TeamSide.NS]
+        # Default table: only the announced component is multiplied.
+        assert ns["contract"] == 200
+        assert ns["card_points"] == 160
+        assert ns["contract"] + ns["card_points"] + ns["belote"] == 360
+
+        # A table that multiplies both components moves the same mark.
+        both = self._StubRound(
+            round_number=1,
+            contract=contract,
+            round_scores={TeamSide.NS: 520, TeamSide.EW: 0},
+            contract_made=True,
+            marks={TeamSide.NS: Mark(160, 100), TeamSide.EW: Mark(0, 0)},
+            rules=RuleConfig(only_announced_points_multiplied=False),
+        )
+        ns = _recap_breakdown(both)[TeamSide.NS]
+        assert ns["contract"] == 200
+        assert ns["card_points"] == 320
+        assert ns["contract"] + ns["card_points"] + ns["belote"] == 520
 
     def test_recap_made_contract_shows_check(self):
         view = RichView()
@@ -365,8 +477,9 @@ class TestRoundRecapPanel:
     def test_recap_round_points_survive_winner_takes_all_round(
         self, four_players
     ):
-        """In a doubled/failed round the Scoring card row is dashed, but
-        ``round_points`` still reports the real pile each side captured."""
+        """In a doubled/failed round the made component is a flat 160
+        rather than a share of the pile, but ``round_points`` still
+        reports the real pile each side captured."""
         view = RichView()
         north, east, *_ = four_players
         # Doubled contract by N-S that fails — E-W scores winner-takes-all.
@@ -384,10 +497,9 @@ class TestRoundRecapPanel:
         )
         breakdown = _recap_breakdown(round_)
         ew = breakdown[TeamSide.EW]
-        # Scoring zeroes the card row (winner-takes-all formula)...
-        assert ew["cards_count"] is False
-        # ...but the real captured pile still shows in round_points.
+        # The real captured pile still shows in round_points.
         assert ew["round_points"] == 20
+        assert ew["trick_points"] == 20
 
     def test_recap_outcome_total_sums_the_tally(self, four_players):
         """The Outcome table closes with a Total row equal to the per-side
@@ -534,6 +646,7 @@ class TestRoundRecapPanel:
             round_scores={TeamSide.NS: 350, TeamSide.EW: 0},
             team_tricks={TeamSide.NS: ns_tricks, TeamSide.EW: []},
             contract_made=True,
+            marks={TeamSide.NS: Mark(250, 100), TeamSide.EW: Mark(0, 0)},
         )
         round_.unannounced_slam = UnannouncedSlam.SLAM  # the team swept, not one seat
         # The bonus would be +10 — it must fold into the substitute.
@@ -543,18 +656,10 @@ class TestRoundRecapPanel:
         assert ns["trick_points"] == 250
         assert ns["last_trick"] == 0
         assert ns["card_points"] == 250
-        assert ns["card_points_substituted"] is True
         assert ns["contract"] == 100
         assert ns["round_points"] == 250
-        # Invariant preserved: contract + card_points + last-trick
-        # bonus + belote == score.
-        assert (
-            ns["contract"]
-            + ns["card_points"]
-            + ns["last_trick_bonus"]
-            + ns["belote"]
-            == 350
-        )
+        # Invariant preserved: the two components plus belote == score.
+        assert ns["contract"] + ns["card_points"] + ns["belote"] == 350
         text = _panel_round_recap(
             round_, {TeamSide.NS: 350, TeamSide.EW: 0}
         ).renderable.plain
@@ -584,22 +689,16 @@ class TestRoundRecapPanel:
             round_scores={TeamSide.NS: 600, TeamSide.EW: 0},
             team_tricks={TeamSide.NS: ns_tricks, TeamSide.EW: []},
             contract_made=True,
+            marks={TeamSide.NS: Mark(500, 100), TeamSide.EW: Mark(0, 0)},
         )
         round_.unannounced_slam = UnannouncedSlam.GRAND_SLAM
         round_.play_state.trick_winners = (north,)
         ns = _recap_breakdown(round_)[TeamSide.NS]
         assert ns["trick_points"] == 500
         assert ns["card_points"] == 500
-        assert ns["card_points_substituted"] is True
         assert ns["contract"] == 100
         # Same invariant as the team-sweep case: the rows sum to score.
-        assert (
-            ns["contract"]
-            + ns["card_points"]
-            + ns["last_trick_bonus"]
-            + ns["belote"]
-            == 600
-        )
+        assert ns["contract"] + ns["card_points"] + ns["belote"] == 600
 
     @pytest.mark.parametrize(
         "marker, expected_tag, substitute",
@@ -629,6 +728,7 @@ class TestRoundRecapPanel:
             round_scores={TeamSide.NS: score, TeamSide.EW: 0},
             team_tricks={TeamSide.NS: ns_tricks, TeamSide.EW: []},
             contract_made=True,
+            marks={TeamSide.NS: Mark(substitute, 90), TeamSide.EW: Mark(0, 0)},
         )
         round_.unannounced_slam = marker
         text = _panel_round_recap(
@@ -664,8 +764,9 @@ class TestRoundRecapPanel:
     def test_recap_contract_row_shows_contract_value_when_made_normal(
         self, four_players
     ):
-        """100 ♥ made by N-S → 'Contract' row shows +100 on N-S column,
-        em-dash on E-W."""
+        """100 ♥ made by N-S → 'Contract' row shows the announced
+        component (100) on N-S, em-dash on E-W; the pile the declarer
+        marked lands in the card-points row beside it."""
         view = RichView()
         north, *_ = four_players
         contract = self._StubContract(100, Suit.HEARTS, TeamSide.NS)
@@ -674,20 +775,18 @@ class TestRoundRecapPanel:
             contract=contract,
             round_scores={TeamSide.NS: 162, TeamSide.EW: 0},
             team_tricks={TeamSide.NS: [], TeamSide.EW: []},
+            marks={TeamSide.NS: Mark(62, 100), TeamSide.EW: Mark(0, 0)},
         )
         breakdown = _recap_breakdown(round_)
         assert breakdown[TeamSide.NS]["contract"] == 100
+        assert breakdown[TeamSide.NS]["card_points"] == 62
         assert breakdown[TeamSide.EW]["contract"] == 0
-        # Cards / last trick / belote DO contribute on a normal-made
-        # contract.
-        assert breakdown[TeamSide.NS]["cards_count"] is True
-        assert breakdown[TeamSide.EW]["cards_count"] is True
+        assert breakdown[TeamSide.EW]["card_points"] == 0
 
     def test_recap_contract_row_uses_slam_base_when_made(self, four_players):
-        """A made Slam normal: the contract row carries the base (250)
-        and the card-points row carries the flat substitute (250),
-        summing to the engine's 500. The last-trick bonus does not
-        contribute; the row label flips to "(subst.)"."""
+        """A made Slam normal: the announced component (250) sits in the
+        contract row and the flat substitute (250) in the card-points
+        row, summing to the engine's 500."""
         view = RichView()
         contract = self._StubContract(SlamLevel.SLAM, Suit.SPADES, TeamSide.EW)
         round_ = self._StubRound(
@@ -695,24 +794,21 @@ class TestRoundRecapPanel:
             contract=contract,
             round_scores={TeamSide.NS: 0, TeamSide.EW: 500},
             team_tricks={TeamSide.NS: [], TeamSide.EW: []},
+            marks={TeamSide.EW: Mark(250, 250), TeamSide.NS: Mark(0, 0)},
         )
         breakdown = _recap_breakdown(round_)
         # Slam normal: base = 250, substitute = 250, mult = 1.
         assert breakdown[TeamSide.EW]["contract"] == 250
         assert breakdown[TeamSide.EW]["card_points"] == 250
-        assert breakdown[TeamSide.EW]["card_points_substituted"] is True
-        assert breakdown[TeamSide.EW]["cards_count"] is True
-        # The last-trick bonus is no longer counted on Slam family rounds.
-        assert breakdown[TeamSide.EW]["last_trick_counts"] is False
-        assert breakdown[TeamSide.EW]["last_trick_bonus"] == 0
+        # The last-trick bonus is absorbed by the substitute.
+        assert breakdown[TeamSide.EW]["last_trick"] == 0
         # Losing side: zeros everywhere except belote (not tested here).
         assert breakdown[TeamSide.NS]["contract"] == 0
         assert breakdown[TeamSide.NS]["card_points"] == 0
-        assert breakdown[TeamSide.NS]["card_points_substituted"] is True
 
     def test_recap_contract_row_uses_slam_grid_when_failed(self, four_players):
-        """Failed Slam: defender wins the at-risk amount split into
-        contract (250) + substituted card points (250)."""
+        """Failed Slam: the defense marks the at-risk amount split into
+        its announced (250) and substituted made (250) components."""
         view = RichView()
         contract = self._StubContract(SlamLevel.SLAM, Suit.SPADES, TeamSide.EW)
         round_ = self._StubRound(
@@ -720,18 +816,16 @@ class TestRoundRecapPanel:
             contract=contract,
             round_scores={TeamSide.NS: 500, TeamSide.EW: 0},
             team_tricks={TeamSide.NS: [], TeamSide.EW: []},
+            marks={TeamSide.NS: Mark(250, 250), TeamSide.EW: Mark(0, 0)},
         )
         breakdown = _recap_breakdown(round_)
         assert breakdown[TeamSide.NS]["contract"] == 250
         assert breakdown[TeamSide.NS]["card_points"] == 250
-        assert breakdown[TeamSide.NS]["card_points_substituted"] is True
-        assert breakdown[TeamSide.NS]["cards_count"] is True
         assert breakdown[TeamSide.EW]["contract"] == 0
         assert breakdown[TeamSide.EW]["card_points"] == 0
-        assert breakdown[TeamSide.EW]["cards_count"] is False
 
     def test_recap_contract_row_uses_solo_slam_grid_when_made(self, four_players):
-        """Made Solo Slam normal: contract = 500, substitute = 500,
+        """Made Solo Slam normal: announced = 500, substitute = 500,
         sum = 1000."""
         view = RichView()
         contract = self._StubContract(SlamLevel.SOLO_SLAM, Suit.SPADES, TeamSide.EW)
@@ -740,18 +834,19 @@ class TestRoundRecapPanel:
             contract=contract,
             round_scores={TeamSide.NS: 0, TeamSide.EW: 1000},
             team_tricks={TeamSide.NS: [], TeamSide.EW: []},
+            marks={TeamSide.EW: Mark(500, 500), TeamSide.NS: Mark(0, 0)},
         )
         breakdown = _recap_breakdown(round_)
         assert breakdown[TeamSide.EW]["contract"] == 500
         assert breakdown[TeamSide.EW]["card_points"] == 500
-        assert breakdown[TeamSide.EW]["card_points_substituted"] is True
         assert breakdown[TeamSide.NS]["contract"] == 0
         assert breakdown[TeamSide.NS]["card_points"] == 0
 
     def test_recap_contract_row_uses_solo_slam_doubled_grid(self, four_players):
         """Doubled Solo Slam made: only the announced half scales.
-        Contract = 500 * 2 = 1000; substitute stays flat at 500;
-        sum = 1500."""
+        Contract = 500 × 2 = 1000; the substitute stays flat at 500;
+        sum = 1500 — the recap places the multiplier the same way the
+        scorer did, because it reduces the same components."""
         view = RichView()
         contract = self._StubContract(
             SlamLevel.SOLO_SLAM, Suit.SPADES, TeamSide.EW, double=True
@@ -761,19 +856,18 @@ class TestRoundRecapPanel:
             contract=contract,
             round_scores={TeamSide.NS: 0, TeamSide.EW: 1500},
             team_tricks={TeamSide.NS: [], TeamSide.EW: []},
+            marks={TeamSide.EW: Mark(500, 500), TeamSide.NS: Mark(0, 0)},
         )
         breakdown = _recap_breakdown(round_)
         assert breakdown[TeamSide.EW]["contract"] == 1000
         assert breakdown[TeamSide.EW]["card_points"] == 500
-        assert breakdown[TeamSide.EW]["card_points_substituted"] is True
 
-    def test_recap_contract_row_includes_full_bonus_when_doubled_made(
-        self, four_players
-    ):
-        """When the engine substitutes the flat 160+base*mult bonus
-        (doubled or redoubled made), the 'Contract' row carries the
-        full amount and the cards/last-trick/belote rows are zeroed for the
-        attacker so the breakdown sums to round_score."""
+    def test_recap_contract_row_splits_the_doubled_stake(self, four_players):
+        """A doubled made round is `160 + C × M` — and the recap shows it
+        as the two components it really is: the flat pile in the
+        card-points row, the multiplied contract in the contract row.
+        The old panel lumped all 360 under "Contract", hiding a pile
+        inside a row labelled for the contract."""
         view = RichView()
         contract = self._StubContract(
             100, Suit.HEARTS, TeamSide.NS, double=True
@@ -783,18 +877,16 @@ class TestRoundRecapPanel:
             contract=contract,
             round_scores={TeamSide.NS: 360, TeamSide.EW: 0},
             team_tricks={TeamSide.NS: [], TeamSide.EW: []},
+            marks={TeamSide.NS: Mark(160, 100), TeamSide.EW: Mark(0, 0)},
         )
         breakdown = _recap_breakdown(round_)
-        # 160 + 100*2 = 360
-        assert breakdown[TeamSide.NS]["contract"] == 360
-        # Attacker's cards/last-trick/belote are ignored by the engine
-        # — the recap reflects that so the addition matches round_score.
-        assert breakdown[TeamSide.NS]["cards_count"] is False
-        assert breakdown[TeamSide.NS]["card_points"] == 0
-        assert breakdown[TeamSide.NS]["last_trick_bonus"] == 0
-        assert breakdown[TeamSide.NS]["belote"] == 0
+        ns = breakdown[TeamSide.NS]
+        assert ns["contract"] == 200          # C × M
+        assert ns["card_points"] == 160       # the flat pile
+        assert ns["belote"] == 0
+        assert ns["contract"] + ns["card_points"] + ns["belote"] == 360
 
-    def test_recap_contract_row_includes_full_bonus_when_redoubled_made(
+    def test_recap_contract_row_splits_the_redoubled_stake(
         self, four_players
     ):
         view = RichView()
@@ -806,17 +898,18 @@ class TestRoundRecapPanel:
             contract=contract,
             round_scores={TeamSide.NS: 560, TeamSide.EW: 0},  # 160 + 100*4
             team_tricks={TeamSide.NS: [], TeamSide.EW: []},
+            marks={TeamSide.NS: Mark(160, 100), TeamSide.EW: Mark(0, 0)},
         )
-        breakdown = _recap_breakdown(round_)
-        # 160 + 100*4 = 560
-        assert breakdown[TeamSide.NS]["contract"] == 560
-        assert breakdown[TeamSide.NS]["cards_count"] is False
+        ns = _recap_breakdown(round_)[TeamSide.NS]
+        assert ns["contract"] == 400          # C × M
+        assert ns["card_points"] == 160
+        assert ns["contract"] + ns["card_points"] + ns["belote"] == 560
 
     def test_recap_contract_row_shows_defender_bonus_when_failed(
         self, four_players
     ):
-        """100 ♥ failed by N-S → E-W gets (160 + 100) * 1 = 260 in
-        their 'Contract' row; their cards/last-trick/belote are zeroed."""
+        """100 ♥ failed by N-S → E-W marks 160 + 100 = 260, split into
+        the flat failure pile and the contract it takes over."""
         view = RichView()
         contract = self._StubContract(100, Suit.HEARTS, TeamSide.NS)
         round_ = self._StubRound(
@@ -824,22 +917,20 @@ class TestRoundRecapPanel:
             contract=contract,
             round_scores={TeamSide.NS: 0, TeamSide.EW: 260},
             team_tricks={TeamSide.NS: [], TeamSide.EW: []},
+            marks={TeamSide.EW: Mark(160, 100), TeamSide.NS: Mark(0, 0)},
         )
         breakdown = _recap_breakdown(round_)
-        assert breakdown[TeamSide.EW]["contract"] == 260
+        assert breakdown[TeamSide.EW]["contract"] == 100
+        assert breakdown[TeamSide.EW]["card_points"] == 160
+        # The failed declarer marks neither component.
         assert breakdown[TeamSide.NS]["contract"] == 0
-        # Defender's cards/last-trick/belote don't contribute on a
-        # failed contract — the engine pays them a flat bonus instead.
-        assert breakdown[TeamSide.EW]["cards_count"] is False
-        # Attacker gets 0 on a failed contract; their
-        # cards/last-trick/belote also don't contribute (round_score is 0).
-        assert breakdown[TeamSide.NS]["cards_count"] is False
+        assert breakdown[TeamSide.NS]["card_points"] == 0
 
     def test_recap_contract_row_failed_doubled_winner_takes_160_plus_cm(
         self, four_players
     ):
-        """Failed 100 ♥ ×2 by N-S → E-W wins 160 + 100*2 = 360 (same
-        stake as a doubled made declarer — winner-takes-all)."""
+        """Failed 100 ♥ ×2 by N-S → E-W marks 160 + 100×2 = 360 (the same
+        stake a doubled made declarer takes — winner-takes-all)."""
         view = RichView()
         contract = self._StubContract(
             100, Suit.HEARTS, TeamSide.NS, double=True
@@ -849,12 +940,14 @@ class TestRoundRecapPanel:
             contract=contract,
             round_scores={TeamSide.NS: 0, TeamSide.EW: 360},
             team_tricks={TeamSide.NS: [], TeamSide.EW: []},
+            marks={TeamSide.EW: Mark(160, 100), TeamSide.NS: Mark(0, 0)},
         )
         breakdown = _recap_breakdown(round_)
-        assert breakdown[TeamSide.EW]["contract"] == 360
+        assert breakdown[TeamSide.EW]["contract"] == 200
+        assert breakdown[TeamSide.EW]["card_points"] == 160
         # Loser scores nothing (no belote here).
         assert breakdown[TeamSide.NS]["contract"] == 0
-        assert breakdown[TeamSide.NS]["cards_count"] is False
+        assert breakdown[TeamSide.NS]["card_points"] == 0
 
     def test_recap_doubled_made_defender_scores_zero(self, four_players):
         """Doubled contract made → the losing defender's breakdown is all
@@ -868,13 +961,12 @@ class TestRoundRecapPanel:
             contract=contract,
             round_scores={TeamSide.NS: 360, TeamSide.EW: 0},
             team_tricks={TeamSide.NS: [], TeamSide.EW: []},
+            marks={TeamSide.NS: Mark(160, 100), TeamSide.EW: Mark(0, 0)},
         )
         breakdown = _recap_breakdown(round_)
         ew = breakdown[TeamSide.EW]
         assert ew["contract"] == 0
-        assert ew["cards_count"] is False
         assert ew["card_points"] == 0
-        assert ew["last_trick_bonus"] == 0
         assert ew["belote"] == 0
 
     def test_recap_loser_keeps_belote_when_doubled(self, four_players):
@@ -894,18 +986,11 @@ class TestRoundRecapPanel:
         )
         breakdown = _recap_breakdown(round_)
         ew = breakdown[TeamSide.EW]
-        assert ew["belote_count"] is True
         assert ew["belote"] == 20
         assert ew["contract"] == 0
-        assert ew["cards_count"] is False
-        # The four components still sum to the engine's round score.
-        assert (
-            ew["contract"]
-            + ew["card_points"]
-            + ew["last_trick_bonus"]
-            + ew["belote"]
-            == 20
-        )
+        assert ew["card_points"] == 0
+        # The components still sum to the engine's round score.
+        assert ew["contract"] + ew["card_points"] + ew["belote"] == 20
 
     def test_recap_panel_renders_contract_row(self, four_players):
         """End-to-end: the rendered panel contains a 'Contract' row."""
@@ -928,9 +1013,9 @@ class TestRoundRecapPanel:
     def test_recap_breakdown_sums_to_round_score_normal_made(
         self, four_players
     ):
-        """Invariant: for any team, the four component rows must sum
-        to the engine's round_score. This is the test for the normal
-        (un-doubled) made case."""
+        """Invariant: for any team, the two §7.2 components plus the
+        belote must sum to the engine's round_score. This is the test
+        for the normal (un-doubled) made case."""
         view = RichView()
         north, east, south, west = four_players
         contract = self._StubContract(100, Suit.HEARTS, TeamSide.NS)
@@ -954,8 +1039,8 @@ class TestRoundRecapPanel:
             (west, Card(Suit.SPADES, Rank.EIGHT)),
         ]:
             ns_trick2.add_play(p, c)
-        # Engine score = 100 (contract) + 49 (cards) + 10 (last trick)
-        # = 159.
+        # Engine score = 100 (announced) + 59 (the pile, last-trick
+        # bonus included) = 159.
         round_ = self._StubRound(
             round_number=3,
             contract=contract,
@@ -964,17 +1049,16 @@ class TestRoundRecapPanel:
                 TeamSide.NS: [ns_trick1, ns_trick2],
                 TeamSide.EW: [],
             },
+            marks={TeamSide.NS: Mark(59, 100), TeamSide.EW: Mark(0, 0)},
         )
         round_.play_state.trick_winners = (north,)
         breakdown = _recap_breakdown(round_)
         ns = breakdown[TeamSide.NS]
-        sum_ns = (
-            ns["contract"]
-            + ns["card_points"]
-            + ns["last_trick_bonus"]
-            + ns["belote"]
-        )
-        assert sum_ns == 159
+        assert ns["contract"] + ns["card_points"] + ns["belote"] == 159
+        # The Outcome rows stay the factual split: 49 of cards, then the
+        # 10 the last trick is worth on top.
+        assert ns["trick_points"] == 49
+        assert ns["last_trick"] == 10
 
     def test_recap_table_uses_trump_glyph_in_belote_label(self, four_players):
         """The Belote row label reflects the actual trump suit."""
