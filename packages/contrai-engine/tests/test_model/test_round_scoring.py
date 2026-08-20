@@ -778,6 +778,46 @@ def _split_round(
     return round_
 
 
+def _sweep_round(players_dict, value, *, personal=False, rules=None):
+    """Build an un-doubled numeric round the declaring team sweeps.
+
+    All 32 cards land in eight tricks played entirely by the N-S seats,
+    so N-S wins every one and captures the whole 152-point pack — 162
+    with the last-trick bonus. Unlike the zero-point filler tricks the
+    Slam fixtures use, this is the pile a table that switches the
+    substitute *off* has to mark for real.
+
+    Args:
+        players_dict: the ``players`` fixture (seat → Player).
+        value: the numeric contract value, bid by N.
+        personal: whether N sweeps alone (``UnannouncedSlam.GRAND_SLAM``)
+            or the partner takes the last trick (``SLAM``).
+        rules: optional table ruleset.
+
+    Returns:
+        Round with ``contract`` and ``play_state`` populated.
+    """
+    cards = [card for card, _ in _PACK]
+    if personal:
+        seat_cards = [("N", card) for card in cards]
+    else:
+        # The first seven tricks are N's, the eighth entirely S's — so
+        # the partner wins one and the sweep is the team's, not N's.
+        seat_cards = [("N", card) for card in cards[:28]]
+        seat_cards += [("S", card) for card in cards[28:]]
+
+    round_ = _numeric_round(
+        players_dict,
+        contract=_contract(players_dict["N"], value, _SPLIT_TRUMP),
+        team_cards={TeamSide.NS: seat_cards, TeamSide.EW: []},
+        rules=rules,
+    )
+    # Self-check: a sweep is eight tricks and the whole pack.
+    assert round_.play_state.trick_counts_by_side[TeamSide.NS] == 8
+    assert round_.play_state.card_points_by_side[TeamSide.NS] == 152
+    return round_
+
+
 def _all_pass_round(players_dict, *, rules=None):
     """A contractless round — everybody passed, the deal is redealt."""
     order = [players_dict[s] for s in _ORDER]
@@ -788,6 +828,79 @@ def _all_pass_round(players_dict, *, rules=None):
         round_number=1,
         rules=rules,
     )
+
+
+class TestUnannouncedSlamSubstituteSwitch:
+    """§9.6 — whether a sweep marks its flat 250 / 500 or its real pile."""
+
+    def test_on_by_default_the_sweep_marks_the_substitute(self, players):
+        round_ = _sweep_round(players, 100)
+        score = score_round(round_)
+        assert score.scores[TeamSide.NS] == 350        # 100 + 250
+        assert score.unannounced_slam is UnannouncedSlam.SLAM
+
+    def test_off_marks_the_ordinary_pile(self, players):
+        # §7.2: "switched off, a sweep marks the ordinary pile like any
+        # other made contract" -> C + 162 instead of C + 250.
+        rules = RuleConfig(unannounced_slam_substitute=False)
+        round_ = _sweep_round(players, 100, rules=rules)
+        score = score_round(round_)
+        assert score.scores[TeamSide.NS] == 262        # 100 + 162
+        assert score.scores[TeamSide.EW] == 0
+        assert score.unannounced_slam is UnannouncedSlam.SLAM
+
+    def test_off_the_declarers_personal_sweep_marks_the_same_pile(
+        self, players
+    ):
+        # The 500 the tag is worth is what the switch turns off; the
+        # pile itself does not care who swept it.
+        rules = RuleConfig(unannounced_slam_substitute=False)
+        round_ = _sweep_round(players, 100, personal=True, rules=rules)
+        score = score_round(round_)
+        assert score.unannounced_slam is UnannouncedSlam.GRAND_SLAM
+        assert score.scores[TeamSide.NS] == 262        # not 100 + 500
+
+    def test_the_tag_survives_the_switch(self, players):
+        # The tag is a classification of what happened, not of what it
+        # marks — the recap still says "Slam".
+        rules = RuleConfig(unannounced_slam_substitute=False)
+        round_ = _sweep_round(players, 100, rules=rules)
+        assert score_round(round_).unannounced_slam is not None
+
+    def test_a_declared_slam_is_untouched_by_the_switch(self, players):
+        # The knob is named for the *unannounced* sweep — an announced
+        # Slam always marks its substitute (§7.2).
+        rules = RuleConfig(unannounced_slam_substitute=False)
+        contract = _contract(players["N"], SlamLevel.SLAM, Suit.SPADES)
+        round_ = _slam_round(
+            players, contract=contract, trick_winners=["N"] * 8, rules=rules
+        )
+        assert score_round(round_).scores[TeamSide.NS] == 500
+
+
+class TestFailureSwitchesEndToEnd:
+    """§7.2's failure options, reached through the scorer."""
+
+    def test_any_failure_marks_160_flattens_a_numeric_failure(self, players):
+        rules = RuleConfig(any_failure_marks_160=True)
+        round_ = _split_round(players, 120, attack=40, defense=122,
+                              rules=rules)
+        score = score_round(round_)
+        assert score.contract_made is False
+        assert score.scores[TeamSide.EW] == 320        # 160 + 160, not 280
+
+    def test_a_failed_slam_falls_back_to_the_flat_pile(self, players):
+        rules = RuleConfig(failed_slam_marks_made_points=False)
+        contract = _contract(players["N"], SlamLevel.SLAM, Suit.SPADES)
+        round_ = _slam_round(
+            players,
+            contract=contract,
+            trick_winners=["N"] * 7 + ["W"],
+            rules=rules,
+        )
+        score = score_round(round_)
+        assert score.contract_made is False
+        assert score.scores[TeamSide.EW] == 410        # 160 + 250, not 500
 
 
 class TestMarkingConventionsEndToEnd:

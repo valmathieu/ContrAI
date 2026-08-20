@@ -253,10 +253,14 @@ def score_round(round_: 'Round') -> RoundScore:
         )
 
     # The flat amount that stands in for the pile, or None to count it.
+    # An announced Slam always substitutes; a sweep the table does not
+    # substitute for marks its real 162 instead, so the round scores like
+    # any other made contract (§7.2). The tag survives either way — it
+    # classifies what happened, not what it is worth.
     substitute: Optional[int] = None
     if slam_family:
         substitute = contract.get_slam_card_substitute()
-    elif unannounced_slam is not None:
+    elif unannounced_slam is not None and rules.unannounced_slam_substitute:
         substitute = sweep_substitute(unannounced_slam)
 
     attack_mark, defense_mark = contract_components(

@@ -196,6 +196,73 @@ class TestMarkingConventions:
         assert marked_total(a_alone, 4, announced_alone) == 400
 
 
+class TestFailureSwitches:
+    """§7.2, "Failure marks — table options"."""
+
+    def test_any_failure_marks_160_flattens_the_announced_component(self):
+        # Every un-doubled failure marks 320 whatever the contract was.
+        rules = RuleConfig(any_failure_marks_160=True)
+        for value in (80, 110, 160):
+            _, d = _components(contract_value=value, made=False,
+                               attack_pile=48, defense_pile=114, rules=rules)
+            assert marked_total(d, 1, rules) == 320
+
+    def test_it_is_inert_on_a_made_contract(self):
+        rules = RuleConfig(any_failure_marks_160=True)
+        a, _ = _components(rules=rules)
+        assert marked_total(a, 1, rules) == 202
+
+    @pytest.mark.parametrize("base", [250, 500])
+    def test_a_failed_slam_keeps_its_substitute_by_default(self, base):
+        _, d = _components(contract_value=base, slam_family=True,
+                           substitute=base, made=False, attack_pile=0,
+                           defense_pile=162)
+        assert d == Mark(made=base, announced=base)
+
+    @pytest.mark.parametrize("base", [250, 500])
+    def test_failed_slam_made_points_off_falls_back_to_the_flat_pile(
+        self, base
+    ):
+        rules = RuleConfig(failed_slam_marks_made_points=False)
+        _, d = _components(contract_value=base, slam_family=True,
+                           substitute=base, made=False, attack_pile=0,
+                           defense_pile=162, rules=rules)
+        assert d == Mark(made=160, announced=base)
+
+    @pytest.mark.parametrize("announced_switch, expected", [(True, 250),
+                                                            (False, 160)])
+    def test_failed_slam_announced_points_only_bites_under_any_failure_160(
+        self, announced_switch, expected
+    ):
+        rules = RuleConfig(any_failure_marks_160=True,
+                           failed_slam_marks_announced_points=announced_switch)
+        _, d = _components(contract_value=250, slam_family=True,
+                           substitute=250, made=False, attack_pile=0,
+                           defense_pile=162, rules=rules)
+        assert d.announced == expected
+
+    @pytest.mark.parametrize("announced_switch", [True, False])
+    def test_it_is_inert_while_any_failure_marks_160_is_off(
+        self, announced_switch
+    ):
+        # §9.6's documented-inert combination, asserted rather than assumed.
+        rules = RuleConfig(failed_slam_marks_announced_points=announced_switch)
+        _, d = _components(contract_value=250, slam_family=True,
+                           substitute=250, made=False, attack_pile=0,
+                           defense_pile=162, rules=rules)
+        assert d.announced == 250
+
+    def test_a_numeric_failure_is_untouched_by_the_slam_switches(self):
+        # Both switches are named for the Slam family and must not reach
+        # a numeric contract, whose failure already marks the flat pile.
+        rules = RuleConfig(any_failure_marks_160=True,
+                           failed_slam_marks_made_points=False,
+                           failed_slam_marks_announced_points=False)
+        _, d = _components(made=False, attack_pile=48, defense_pile=114,
+                           rules=rules)
+        assert d == Mark(made=160, announced=160)
+
+
 class TestUnannouncedSweep:
     """§7.2 — the substitute absorbs the 152 cards and the 10-point bonus."""
 

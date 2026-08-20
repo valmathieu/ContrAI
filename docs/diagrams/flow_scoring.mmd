@@ -20,13 +20,13 @@ flowchart TD
     SlamMade --> Subst
     SweepTag --> Subst
     NumMade --> Subst
-    Subst["substitute = Slam base (250 / 500)<br/>| un-doubled sweep 250 / 500<br/>| None → count the pile for real"]
+    Subst["substitute = Slam base (250 / 500) — always<br/>| un-doubled sweep 250 / 500, iff <i>unannounced_slam_substitute</i><br/>| None → count the pile for real"]
 
     %% ---------- The two §7.2 components ----------
     Subst --> MadeComp
-    MadeComp["<b>made-points component</b><br/>made: substitute | 160 flat (M &gt; 1) | share the pile<br/>failed: 160 flat to the defense<br/>(Slam keeps its substitute)"]
+    MadeComp["<b>made-points component</b><br/>made: substitute | 160 flat (M &gt; 1) | share the pile<br/>failed: 160 flat to the defense<br/>— a failed Slam keeps its substitute<br/>unless <i>failed_slam_marks_made_points</i> is off"]
     MadeComp --> AnnComp
-    AnnComp["<b>announced-points component</b><br/>A = C, to the declarer when made<br/>and to the defense when failed"]
+    AnnComp["<b>announced-points component</b><br/>A = C, to the declarer when made<br/>and to the defense when failed<br/>— <i>any_failure_marks_160</i> flattens A to 160 on a failure,<br/>except where <i>failed_slam_marks_announced_points</i> keeps 250 / 500"]
 
     AnnComp --> Reduce["marked_total: apply §7.3 conventions<br/>and place the multiplier M<br/>default → made + announced × M"]
     Reduce --> Belote
