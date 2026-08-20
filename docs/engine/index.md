@@ -199,6 +199,18 @@ That decomposition is what the four scoring shapes the engine used to branch on 
 
 `RoundScore` carries the components (`marks`) alongside the totals, plus the belote credited (`belote_points`), the raw piles the contract was judged on (`card_points`, last-trick bonus included), `last_trick_side` and the `multiplier` — everything needed to reduce `marks` back to `scores`.
 
+#### Which components a table marks
+
+Two §9.6 switches decide which of the two components a table actually writes down — `mark_made_points` and `mark_announced_points`. At least one must be on; a `RuleConfig` with both off is rejected at construction, since such a table would keep no score at all. For an un-doubled round the three legal combinations mark (`contree-domain.md` §7.3):
+
+| Active conventions | Made contract | Failed contract |
+| --- | --- | --- |
+| Both (default) | declarer `C + P_attack`; defense its own points | defense `160 + C` |
+| *Made points* only | declarer `P_attack`; defense its own points | defense `160` (Slam-family: the 250 / 500 substitute) |
+| *Announced points* only | declarer `C`; defense `0` | defense `C` (Slam-family: 250 / 500) |
+
+The third switch, `only_announced_points_multiplied` (on by default), decides where a double or redouble bites when *both* components are marked: on the announced one alone (`made + announced × M`, so a doubled numeric contract marks `160 + C × M`) or on their sum (`(made + announced) × M`). When only one convention is active the multiplier falls on whichever component survives — otherwise a double would change nothing at all for a table that does not mark announced points. That override makes `only_announced_points_multiplied` inert on a single-convention table, which is why an announced-only table marks `A × M` either way.
+
 `view/screens/recap.py::_recap_breakdown` is exactly that reduction, and nothing more: it reads `round.round_score`, feeds each half of every `Mark` back through the same `marked_total` the scorer used, and emits the rows the panel prints. There is no second implementation of §7.2 in the view, so a §9.6 knob reaches the recap the moment the scorer honours it. The split is exact because both §7.3 marking conventions are linear in the components — `marked_total(Mark(a, 0)) + marked_total(Mark(0, b))` is always `marked_total(Mark(a, b))` — which is what makes `contract + card_points + belote == round_score` an identity rather than a coincidence to be re-checked per branch.
 
 **Every score is keyed by `TeamSide`.** `RoundScore.scores`, `Round.round_scores`, `PlayState.card_points_by_side` / `trick_counts_by_side`, `Game.scores` and `GameOverStatus.winner` / `tied_teams` / `final_scores` all use the core enum rather than the team's name string, so a winner looks straight up in the final scores and nothing depends on how the view spells a label. Which side won a trick, holds Belote, or declared the contract is read off the seat (`winner.position.team_side`, `contract.player.position.team_side`) rather than the mutable `Team` roster — which also retires the old "winner has no team" guards that silently dropped a trick from the tally. `"North-South"` / `"East-West"` survive only as `Team.name` and as `theme.TEAM_ABBR`, the view's `N-S` / `E-W` scoreboard mapping.

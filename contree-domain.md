@@ -406,7 +406,7 @@ For an un-doubled round, the three legal combinations mark:
 Doubled and redoubled rounds keep the winner-takes-all shape of §7.2 with the inactive component dropped, subject to one override:
 
 - **When *announced points* are not marked, the multiplier falls on the made-points component** — otherwise a double would change nothing at all. Such a round marks `160 × M` (Slam-family: `250 × M` / `500 × M`), whatever the *only announced points are multiplied* switch says.    
-- When *made points* are not marked, the announced component carries the round alone: `A × M` by default, or `160 × M` (Slam-family: `250 × M` / `500 × M`) with *only announced points are multiplied* switched off.
+- When *made points* are not marked, the announced component carries the round alone and takes the multiplier: `A × M`, whatever the *only announced points are multiplied* switch says — there is no other component for it to spread onto. For a Slam-family contract `A` is the 250 / 500 base, so such a round marks `250 × M` / `500 × M`.
 
 Belote follows its own rules (§6.6) on top of every convention.
 

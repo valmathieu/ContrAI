@@ -790,6 +790,44 @@ def _all_pass_round(players_dict, *, rules=None):
     )
 
 
+class TestMarkingConventionsEndToEnd:
+    """§7.3 through the scorer — the same 80 ♥ round at three tables.
+
+    The component grid itself is pinned in ``test_components.py``; what
+    these prove is that ``score_round`` reaches it with the round's own
+    ruleset, so a table marking only one component really does write a
+    different number down.
+    """
+
+    def test_a_table_marking_both_components(self, players):
+        round_ = _split_round(players, 80, attack=101, defense=61)
+        scores = score_round(round_).scores
+        assert scores == {TeamSide.NS: 181, TeamSide.EW: 61}  # 101 + 80 ; 61
+
+    def test_a_table_marking_made_points_only(self, players):
+        rules = RuleConfig(mark_announced_points=False)
+        round_ = _split_round(players, 80, attack=101, defense=61, rules=rules)
+        scores = score_round(round_).scores
+        assert scores == {TeamSide.NS: 101, TeamSide.EW: 61}  # the piles alone
+
+    def test_a_table_marking_announced_points_only(self, players):
+        rules = RuleConfig(mark_made_points=False)
+        round_ = _split_round(players, 80, attack=101, defense=61, rules=rules)
+        scores = score_round(round_).scores
+        assert scores == {TeamSide.NS: 80, TeamSide.EW: 0}    # the contract
+
+    def test_the_belote_is_marked_whatever_the_convention(self, players):
+        # §6.6: the bonus is a held-cards award, not a component of the
+        # mark — no marking convention can switch it off.
+        rules = RuleConfig(mark_made_points=False)
+        round_ = _split_round(
+            players, 80, attack=101, defense=61,
+            belote={TeamSide.EW: 1}, rules=rules,
+        )
+        score = score_round(round_)
+        assert score.scores == {TeamSide.NS: 80, TeamSide.EW: 20}
+
+
 class TestNumericBeloteByHolder:
     """Belote follows the *holder* of K + Q of trump, never the team that
     merely captures those cards in a trick. This is the Problem-1

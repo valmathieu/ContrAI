@@ -129,6 +129,73 @@ class TestSlamFamily:
         assert marked_total(att, multiplier, rules) == 0
 
 
+class TestMarkingConventions:
+    """§7.3 — which components are actually written down."""
+
+    BOTH = RuleConfig()
+    MADE_ONLY = RuleConfig(mark_announced_points=False)
+    ANNOUNCED_ONLY = RuleConfig(mark_made_points=False)
+
+    @pytest.mark.parametrize("rules, att, dfn", [
+        (BOTH, 202, 60),            # C + P_attack ; its own points
+        (MADE_ONLY, 102, 60),       # P_attack ; its own points
+        (ANNOUNCED_ONLY, 100, 0),   # C ; nothing
+    ])
+    def test_an_undoubled_made_contract(self, rules, att, dfn):
+        a, d = _components(rules=rules)
+        assert marked_total(a, 1, rules) == att
+        assert marked_total(d, 1, rules) == dfn
+
+    @pytest.mark.parametrize("rules, dfn", [
+        (BOTH, 260),                # 160 + C
+        (MADE_ONLY, 160),           # the flat pile
+        (ANNOUNCED_ONLY, 100),      # C
+    ])
+    def test_an_undoubled_failed_contract(self, rules, dfn):
+        a, d = _components(made=False, attack_pile=48, defense_pile=114,
+                           rules=rules)
+        assert marked_total(d, 1, rules) == dfn
+        assert marked_total(a, 1, rules) == 0
+
+    def test_the_multiplier_falls_on_made_points_when_announced_is_off(self):
+        # §7.3 override: otherwise a double would change nothing at all.
+        rules = self.MADE_ONLY
+        a, _ = _components(multiplier=2, rules=rules)
+        assert marked_total(a, 2, rules) == 320          # 160 × 2
+
+    @pytest.mark.parametrize("substitute, total", [(250, 500), (500, 1000)])
+    def test_made_points_only_marks_the_slam_substitute(
+        self, substitute, total
+    ):
+        # §7.3, "Slam-family: the 250 / 500 substitute" on a failure.
+        rules = self.MADE_ONLY
+        _, d = _components(contract_value=substitute, slam_family=True,
+                           substitute=substitute, made=False, multiplier=2,
+                           attack_pile=0, defense_pile=162, rules=rules)
+        assert marked_total(d, 2, rules) == total        # substitute × 2
+
+    def test_announced_only_marks_the_contract_times_the_multiplier(self):
+        # The announced component is A = C, and A × M is what a table
+        # marking only announced points writes — whatever the *only
+        # announced points are multiplied* switch says, since there is
+        # no other component for the multiplier to spread onto.
+        rules = RuleConfig(mark_made_points=False,
+                           only_announced_points_multiplied=False)
+        a, _ = _components(multiplier=2, rules=rules)
+        assert marked_total(a, 2, rules) == 200          # C × M, not 320
+
+    def test_announced_only_is_unaffected_by_the_multiplied_switch(self):
+        # Both spellings of the announced-only table agree, which is the
+        # point: the switch has nothing to choose between.
+        spread = RuleConfig(mark_made_points=False,
+                            only_announced_points_multiplied=False)
+        announced_alone = RuleConfig(mark_made_points=False)
+        a_spread, _ = _components(multiplier=4, rules=spread)
+        a_alone, _ = _components(multiplier=4, rules=announced_alone)
+        assert marked_total(a_spread, 4, spread) == 400
+        assert marked_total(a_alone, 4, announced_alone) == 400
+
+
 class TestUnannouncedSweep:
     """§7.2 — the substitute absorbs the 152 cards and the 10-point bonus."""
 

@@ -18,6 +18,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (core) `Auction` runs under a `RuleConfig`: `extended_trump_choices` gates no trump and all trump, and each mode caps at its §5.2 ladder top.
 - (engine) No trump and all trump are biddable at a table with `extended_trump_choices = true`; type `nt` / `at` at the prompt. See [engine docs](docs/engine/index.md).
 - (engine) All-trump rounds track every K + Q pair and mark 20 each, under the `none` / `single` / `four` regime. See [engine docs](docs/engine/index.md).
+- (engine) `mark_made_points`, `mark_announced_points` and `only_announced_points_multiplied` decide what a round marks. See [engine docs](docs/engine/index.md).
 
 ### Changed
 
