@@ -15,7 +15,7 @@ tested exactly as the domain reference prints them.
 
 from dataclasses import dataclass
 
-from contrai_core.rule_config import RuleConfig
+from contrai_core.rule_config import Rounding, RuleConfig
 
 #: What a failed contract's pile is worth to the defense (§7.2). The real
 #: pile is 162, but on a failure the defense takes it whole and it is
@@ -150,3 +150,34 @@ def marked_total(mark: Mark, multiplier: int, rules: RuleConfig) -> int:
     if rules.mark_announced_points:
         return mark.announced * multiplier
     return mark.made * multiplier
+
+
+def round_mark(value: int, rounding: Rounding) -> int:
+    """Round one side's mark to the table's step (§7.4).
+
+    Halves round **up**, so a raw 85 marks 90 at
+    :attr:`~contrai_core.Rounding.NEAREST_10` and an 85-77 split marks
+    90-80 — 170 in total, which §7.4 calls out as the expected
+    consequence rather than an error.
+
+    Only the *marks* move: whether the contract was made is judged on
+    exact points, upstream of this call. The flat components (160, the
+    250 / 500 substitutes, the contract value) and the belote bonus are
+    already multiples of ten, so in practice only a shared pile ever
+    moves — which is why rounding is applied last, to the finished mark,
+    rather than to each component.
+
+    Args:
+        value: The side's marked total, belote included.
+        rounding: The table's rounding rule.
+
+    Returns:
+        The rounded mark. ``NEAREST_5`` can never see an exact half:
+        piles are integers, so ``value`` is never a multiple of 5 plus 2.5.
+    """
+
+    if rounding is Rounding.NEAREST_10:
+        return ((value + 5) // 10) * 10
+    if rounding is Rounding.NEAREST_5:
+        return ((value + 2) // 5) * 5
+    return value

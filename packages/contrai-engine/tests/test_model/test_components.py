@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import pytest
 
-from contrai_core.rule_config import RuleConfig
+from contrai_core.rule_config import Rounding, RuleConfig
 
 from contrai_engine.model.round.components import (
     FLAT_FAILURE_PILE,
     Mark,
     contract_components,
     marked_total,
+    round_mark,
 )
 
 CLASSIC = RuleConfig()
@@ -278,3 +279,31 @@ class TestUnannouncedSweep:
         assert att == Mark(made=substitute, announced=100)
         assert marked_total(att, 1, CLASSIC) == total
         assert dfn == Mark(made=0, announced=0)
+
+
+class TestRounding:
+    """§7.4 — half rounds up, and only the marks move."""
+
+    @pytest.mark.parametrize("value, expected", [
+        (85, 90), (84, 80), (80, 80), (77, 80), (0, 0), (162, 160),
+    ])
+    def test_nearest_10_rounds_half_up(self, value, expected):
+        assert round_mark(value, Rounding.NEAREST_10) == expected
+
+    @pytest.mark.parametrize("value, expected", [
+        (87, 85), (88, 90), (83, 85), (82, 80), (85, 85),
+    ])
+    def test_nearest_5(self, value, expected):
+        assert round_mark(value, Rounding.NEAREST_5) == expected
+
+    @pytest.mark.parametrize("value", [0, 77, 85, 162, 1250])
+    def test_exact_is_the_identity(self, value):
+        assert round_mark(value, Rounding.EXACT) == value
+
+    @pytest.mark.parametrize("value", [0, 20, 160, 250, 500, 1250])
+    def test_the_flat_amounts_are_already_round(self, value):
+        # 160, the 250 / 500 substitutes and the belote's 20 are all
+        # multiples of ten, so only a shared pile ever actually moves —
+        # which is why rounding is applied last, to the finished mark.
+        for rounding in Rounding:
+            assert round_mark(value, rounding) == value

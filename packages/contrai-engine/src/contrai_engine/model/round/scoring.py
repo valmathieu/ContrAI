@@ -18,7 +18,7 @@ from typing import Dict, Optional, Sequence, TYPE_CHECKING
 from contrai_core.bid import SlamLevel
 from contrai_core.team_side import TeamSide
 
-from .components import Mark, contract_components, marked_total
+from .components import Mark, contract_components, marked_total, round_mark
 
 if TYPE_CHECKING:
     from contrai_core.player import BasePlayer
@@ -304,8 +304,14 @@ def score_round(round_: 'Round') -> RoundScore:
     for side in defender_sides:
         marks[side] = defense_mark
 
+    # §7.4 last, on the finished mark: the flat components and the belote
+    # are already multiples of ten, so only a shared pile ever moves, and
+    # rounding before or after adding belote is the same number.
     scores = {
-        side: marked_total(marks[side], multiplier, rules) + belote_points[side]
+        side: round_mark(
+            marked_total(marks[side], multiplier, rules) + belote_points[side],
+            rules.rounding,
+        )
         for side in sides
     }
 

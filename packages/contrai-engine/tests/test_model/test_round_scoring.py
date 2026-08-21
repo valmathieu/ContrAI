@@ -27,7 +27,7 @@ from contrai_core.card import Card
 from contrai_core.contract import Contract
 from contrai_core.deck import Deck
 from contrai_core.play import Play, PlayState
-from contrai_core.rule_config import RuleConfig
+from contrai_core.rule_config import Rounding, RuleConfig
 from contrai_core.rules import rules_for
 from contrai_core.team_side import TeamSide
 from contrai_core.types import Rank, Suit
@@ -972,6 +972,57 @@ class TestBeloteLostOnFailure:
         score = score_round(round_)
         assert score.contract_made is True
         assert score.belote_points[TeamSide.NS] == 20
+
+
+class TestRoundingAcrossASharedPile:
+    """§7.4 through the scorer — only a shared pile ever moves."""
+
+    def test_an_85_77_split_marks_90_and_80(self, players):
+        # §7.4: "A raw 85-77 split therefore marks 90-80 — exceptionally
+        # 170 in total." The attack is out-scoring, so the contract is
+        # made and both sides keep their share of the pile.
+        rules = RuleConfig(rounding=Rounding.NEAREST_10)
+        round_ = _split_round(players, 80, attack=85, defense=77, rules=rules)
+        score = score_round(round_)
+        assert score.scores == {TeamSide.NS: 170, TeamSide.EW: 80}
+        # 80 + 85 = 165 -> 170 ; 77 -> 80.
+
+    def test_nearest_5_moves_the_same_split_less(self, players):
+        rules = RuleConfig(rounding=Rounding.NEAREST_5)
+        round_ = _split_round(players, 80, attack=85, defense=77, rules=rules)
+        score = score_round(round_)
+        assert score.scores == {TeamSide.NS: 165, TeamSide.EW: 75}
+
+    def test_exact_is_the_default_and_moves_nothing(self, players):
+        round_ = _split_round(players, 80, attack=85, defense=77)
+        score = score_round(round_)
+        assert score.scores == {TeamSide.NS: 165, TeamSide.EW: 77}
+
+    def test_the_contract_is_still_judged_on_exact_points(self, players):
+        # §7.4: "whether the contract is made is always judged on exact
+        # points" — an 84 that rounds up to 90 still fails a 90 contract.
+        rules = RuleConfig(rounding=Rounding.NEAREST_10)
+        round_ = _split_round(players, 90, attack=84, defense=78, rules=rules)
+        assert score_round(round_).contract_made is False
+
+    def test_the_components_are_left_unrounded(self, players):
+        # Rounding is a presentation step on the finished mark, so the
+        # recap can still show what was really captured.
+        rules = RuleConfig(rounding=Rounding.NEAREST_10)
+        round_ = _split_round(players, 80, attack=85, defense=77, rules=rules)
+        score = score_round(round_)
+        assert score.marks[TeamSide.NS] == Mark(made=85, announced=80)
+        assert score.card_points == {TeamSide.NS: 85, TeamSide.EW: 77}
+
+    def test_a_flat_shape_is_already_round(self, players):
+        # A failure marks 160 + C + belote, every term a multiple of ten,
+        # so no rounding rule can move it.
+        rules = RuleConfig(rounding=Rounding.NEAREST_10)
+        round_ = _split_round(players, 120, attack=60, defense=102,
+                              belote={TeamSide.NS: 1}, rules=rules)
+        assert score_round(round_).scores == {
+            TeamSide.NS: 20, TeamSide.EW: 280
+        }
 
 
 class TestUnannouncedSlamSubstituteSwitch:

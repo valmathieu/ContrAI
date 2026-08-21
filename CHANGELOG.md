@@ -21,6 +21,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) `mark_made_points`, `mark_announced_points` and `only_announced_points_multiplied` decide what a round marks. See [engine docs](docs/engine/index.md).
 - (engine) `any_failure_marks_160`, the two `failed_slam_marks_*` switches and `unannounced_slam_substitute` reshape what a failed or swept round marks.
 - (engine) `belote_counts_toward_contract` and `belote_lost_when_contract_fails` decide whether a belote makes the contract and who keeps it.
+- (engine) `rounding` — marks are written exact, to the nearest 10, or to the nearest 5; halves round up. Contract success stays exact.
 
 ### Changed
 
