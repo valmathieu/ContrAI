@@ -199,6 +199,26 @@ That decomposition is what the four scoring shapes the engine used to branch on 
 
 `RoundScore` carries the components (`marks`) alongside the totals, plus the belote credited (`belote_points`), the raw piles the contract was judged on (`card_points`, last-trick bonus included), `last_trick_side` and the `multiplier` — everything needed to reduce `marks` back to `scores`.
 
+#### Judging the contract
+
+Made-ness is decided before any component is computed, and the two are kept apart deliberately: §7.4's rounding moves the *marks*, never the verdict.
+
+A Slam-family contract is judged on **tricks alone** — the declaring team took all 8 (and, for a Solo Slam, the bidder personally did). Points are never consulted, so none of the switches below reach it. An unannounced sweep is likewise made outright: taking every trick cannot fail.
+
+Every other numeric contract is judged on points, and by default on **two** tests (`contree-domain.md` §7.5):
+
+```text
+P_att = attack pile + attack belote      (belote iff belote_counts_toward_contract)
+P_def = defense pile + defense belote
+made  = P_att >= C  and  P_att > P_def   (the second iff attack_must_outscore_defense)
+```
+
+`attack_must_outscore_defense` is **on** by default, which is a deliberate change from `v0.3.0`: reaching `C` used to be sufficient. The second test is what settles the *dispute* §7.5 names — an exact tie fails the contract, so no separate knob is needed. The three splits that produce one are 81/81 on cards alone, 91/91 with a single belote (out of 182), and 101/101 with a belote on each side under the all-trump *four* regime (out of 202). Set `attack_must_outscore_defense = false` for the older behaviour.
+
+`belote_counts_toward_contract` (on by default) decides whether the +20 counts toward *both* tests. Switched off it is dropped from each side symmetrically, which can cut either way: a declarer that needed its belote to reach `C` now fails, while a declarer that was being out-scored only because the *defense* held a belote now makes it.
+
+`belote_lost_when_contract_fails` (off by default) is applied after the verdict and before the components: a failing declarer's belote moves to the defense. The transfer is one-directional — §6.6 is explicit that a defending team's belote is never taken — and every pair the declarer holds moves together, up to the four an all-trump round can award. Because it runs after the judging, a belote that carried the contract home is never the one that moves.
+
 #### Which components a table marks
 
 Two §9.6 switches decide which of the two components a table actually writes down — `mark_made_points` and `mark_announced_points`. At least one must be on; a `RuleConfig` with both off is rejected at construction, since such a table would keep no score at all. For an un-doubled round the three legal combinations mark (`contree-domain.md` §7.3):

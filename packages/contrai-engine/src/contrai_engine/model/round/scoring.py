@@ -243,14 +243,38 @@ def score_round(round_: 'Round') -> RoundScore:
                 if count_player_tricks(trick_winners, contract.player) == 8
                 else UnannouncedSlam.SLAM
             )
-        attack_realized = (
-            card_points[contract_side] + belote_points[contract_side]
+        # Belote is a *held-cards* bonus, credited below whatever
+        # happens. Whether it also counts toward the contract — both for
+        # reaching C and for out-scoring the defense — is the table's
+        # call (§6.6, §9.5).
+        counted = rules.belote_counts_toward_contract
+        attack_realized = card_points[contract_side] + (
+            belote_points[contract_side] if counted else 0
         )
-        # A sweep can never fail — every trick is already taken.
-        contract_made = (
-            unannounced_slam is not None
-            or attack_realized >= contract_value
+        defense_realized = sum(
+            card_points[side] + (belote_points[side] if counted else 0)
+            for side in defender_sides
         )
+        contract_made = attack_realized >= contract_value
+        if rules.attack_must_outscore_defense:
+            # §7.5: reaching C is not enough, and a dispute (an exact
+            # tie) therefore fails the contract — no separate knob
+            # needed, the strict comparison is the whole rule.
+            contract_made = contract_made and attack_realized > defense_realized
+        # A sweep can never fail — every trick is already taken, so it
+        # out-scores by construction and short-circuits both tests.
+        contract_made = unannounced_slam is not None or contract_made
+
+    # §6.6: a table may take the failing attackers' Belote and give it to
+    # the defense. A defending team's Belote is never taken, so the
+    # transfer is one-directional and only on a failure — and it happens
+    # *after* the contract is judged, so a belote that carried the
+    # contract home is never the one that moves.
+    if not contract_made and rules.belote_lost_when_contract_fails:
+        forfeited = belote_points[contract_side]
+        belote_points[contract_side] = 0
+        for side in defender_sides:
+            belote_points[side] += forfeited
 
     # The flat amount that stands in for the pile, or None to count it.
     # An announced Slam always substitutes; a sweep the table does not

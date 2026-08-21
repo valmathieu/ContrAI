@@ -14,12 +14,16 @@ flowchart TD
     Judge -- "Slam / Solo Slam" --> SlamMade["made = contract team won all 8<br/>(Solo Slam: bidder personally all 8)<br/>— a trick predicate, points never consulted"]
     Judge -- "numeric" --> Sweep{"M == 1 AND<br/>contract team won all 8?<br/>(unannounced sweep)"}
     Sweep -- "yes" --> SweepTag["tag GRAND_SLAM (bidder all 8), else SLAM<br/>made = true — a sweep cannot fail"]
-    Sweep -- "no" --> NumMade["made = attack_pile + own belote ≥ C"]
+    Sweep -- "no" --> NumMade["P_att ≥ C <b>AND</b> P_att &gt; P_def<br/>(the out-score test, iff <i>attack_must_outscore_defense</i>;<br/>a tie is the §7.5 dispute and fails)<br/>P = pile + own belote, the belote counted<br/>iff <i>belote_counts_toward_contract</i>"]
+
+    %% ---------- Belote transfer on a failure ----------
+    SlamMade --> Transfer
+    SweepTag --> Transfer
+    NumMade --> Transfer
+    Transfer["failed <b>and</b> <i>belote_lost_when_contract_fails</i><br/>→ the declarer's belote moves to the defense<br/>(one-directional: a defender's is never taken)"]
 
     %% ---------- The substitute ----------
-    SlamMade --> Subst
-    SweepTag --> Subst
-    NumMade --> Subst
+    Transfer --> Subst
     Subst["substitute = Slam base (250 / 500) — always<br/>| un-doubled sweep 250 / 500, iff <i>unannounced_slam_substitute</i><br/>| None → count the pile for real"]
 
     %% ---------- The two §7.2 components ----------
@@ -44,6 +48,6 @@ flowchart TD
 
     class Start,End entry;
     class HasContract,Judge,Sweep decision;
-    class Zero,Points,SlamMade,SweepTag,NumMade,Subst,Reduce step;
+    class Zero,Points,SlamMade,SweepTag,NumMade,Transfer,Subst,Reduce step;
     class MadeComp,AnnComp component;
     class Belote belote;

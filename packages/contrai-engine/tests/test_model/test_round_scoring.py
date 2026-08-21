@@ -830,6 +830,150 @@ def _all_pass_round(players_dict, *, rules=None):
     )
 
 
+class TestOutScoringTheDefense:
+    """§7.5 — the attack must out-score the defense, and the dispute."""
+
+    def test_reaching_the_contract_is_not_enough_by_default(self, players):
+        # 80 ♥ with an 80/82 split: C is reached, the defense is not
+        # out-scored, so the contract fails.
+        round_ = _split_round(players, 80, attack=80, defense=82)
+        score = score_round(round_)
+        assert score.contract_made is False
+        assert score.scores[TeamSide.EW] == 240        # 160 + 80
+
+    def test_a_dispute_on_cards_alone_fails_the_contract(self, players):
+        # 81 / 81 out of 162 (§7.5). The attack has not out-scored.
+        round_ = _split_round(players, 80, attack=81, defense=81)
+        assert score_round(round_).contract_made is False
+
+    def test_a_dispute_with_one_belote_is_91_against_91(self, players):
+        # 71 + 20 against 91, out of 182 (§7.5).
+        round_ = _split_round(players, 80, attack=71, defense=91,
+                              belote={TeamSide.NS: 1})
+        assert score_round(round_).contract_made is False
+
+    def test_a_dispute_with_a_belote_each_is_101_against_101(self, players):
+        # The all-trump four-belote regime puts one on each side: 81 + 20
+        # each, out of 202 (§7.5).
+        round_ = _split_round(players, 80, attack=81, defense=81,
+                              belote={TeamSide.NS: 1, TeamSide.EW: 1})
+        assert score_round(round_).contract_made is False
+
+    def test_out_scoring_by_one_point_makes_it(self, players):
+        round_ = _split_round(players, 80, attack=82, defense=80)
+        assert score_round(round_).contract_made is True
+
+    def test_off_a_tie_leaves_the_contract_made(self, players):
+        rules = RuleConfig(attack_must_outscore_defense=False)
+        round_ = _split_round(players, 80, attack=81, defense=81, rules=rules)
+        score = score_round(round_)
+        assert score.contract_made is True
+        assert score.scores[TeamSide.NS] == 161        # 80 + 81
+        assert score.scores[TeamSide.EW] == 81
+
+    def test_it_never_applies_to_a_slam_family_contract(self, players):
+        # Slam made-ness is a trick predicate; sweeping every trick
+        # out-scores by construction anyway.
+        contract = _contract(players["N"], SlamLevel.SLAM, Suit.SPADES)
+        round_ = _slam_round(
+            players, contract=contract, trick_winners=["N"] * 8
+        )
+        assert score_round(round_).contract_made is True
+
+    def test_a_sweep_can_never_fail_it(self, players):
+        # A sweep takes all 162 — it out-scores by construction, and the
+        # scorer short-circuits on the tag rather than on the points.
+        round_ = _sweep_round(players, 180)
+        assert score_round(round_).contract_made is True
+
+
+class TestBeloteTowardTheContract:
+    """§9.5 — whether the +20 helps reach C and out-score the defense."""
+
+    def test_belote_makes_the_contract_by_default(self, players):
+        # 75 on cards is short of an 80 contract; the +20 carries it to
+        # 95, which also out-scores the defense's 87.
+        round_ = _split_round(players, 80, attack=75, defense=87,
+                              belote={TeamSide.NS: 1})
+        assert score_round(round_).contract_made is True
+
+    def test_off_the_same_hand_fails(self, players):
+        rules = RuleConfig(belote_counts_toward_contract=False)
+        round_ = _split_round(players, 80, attack=75, defense=87,
+                              belote={TeamSide.NS: 1}, rules=rules)
+        score = score_round(round_)
+        assert score.contract_made is False
+        # The 20 is still marked — it just did not count toward the test.
+        assert score.belote_points[TeamSide.NS] == 20
+        assert score.scores[TeamSide.NS] == 20
+
+    def test_off_it_is_dropped_from_the_out_score_test_on_both_sides(
+        self, players
+    ):
+        rules = RuleConfig(belote_counts_toward_contract=False)
+        round_ = _split_round(players, 80, attack=85, defense=77,
+                              belote={TeamSide.EW: 1}, rules=rules)
+        # 85 > 77 on cards; with the belote counted it would be 85 < 97.
+        assert score_round(round_).contract_made is True
+
+    def test_on_a_defending_belote_can_break_the_out_score(self, players):
+        # The mirror of the case above at the default table: the
+        # defense's own +20 is what denies the attack its out-score.
+        round_ = _split_round(players, 80, attack=85, defense=77,
+                              belote={TeamSide.EW: 1})
+        assert score_round(round_).contract_made is False
+
+
+class TestBeloteLostOnFailure:
+    """§6.6 — a table may take the failing declarer's belote."""
+
+    def test_a_failed_declarer_keeps_its_belote_by_default(self, players):
+        round_ = _split_round(players, 120, attack=60, defense=102,
+                              belote={TeamSide.NS: 1})
+        score = score_round(round_)
+        assert score.belote_points == {TeamSide.NS: 20, TeamSide.EW: 0}
+        assert score.scores[TeamSide.NS] == 20
+
+    def test_the_switch_transfers_it_to_the_defense(self, players):
+        rules = RuleConfig(belote_lost_when_contract_fails=True)
+        round_ = _split_round(players, 120, attack=60, defense=102,
+                              belote={TeamSide.NS: 1}, rules=rules)
+        score = score_round(round_)
+        assert score.belote_points == {TeamSide.NS: 0, TeamSide.EW: 20}
+        assert score.scores[TeamSide.NS] == 0
+        assert score.scores[TeamSide.EW] == 300        # 160 + 120 + 20
+
+    def test_a_defending_belote_is_never_taken(self, players):
+        # §6.6: "a defending team's Belote is never taken" — the made
+        # contract leaves the defense's 20 alone.
+        rules = RuleConfig(belote_lost_when_contract_fails=True)
+        round_ = _split_round(players, 80, attack=120, defense=42,
+                              belote={TeamSide.EW: 1}, rules=rules)
+        assert score_round(round_).belote_points[TeamSide.EW] == 20
+
+    def test_every_pair_the_declarer_holds_transfers_together(self, players):
+        # The all-trump ``four`` regime can put several pairs on one
+        # side; the transfer moves the lot, not just the first.
+        rules = RuleConfig(belote_lost_when_contract_fails=True)
+        round_ = _split_round(players, 200, attack=100, defense=62,
+                              belote={TeamSide.NS: 3}, rules=rules)
+        score = score_round(round_)
+        assert score.belote_points == {TeamSide.NS: 0, TeamSide.EW: 60}
+
+    def test_a_belote_that_made_the_contract_is_never_transferred(
+        self, players
+    ):
+        # The transfer is decided *after* made/failed, so a belote that
+        # carried the contract home stays put even at a table that would
+        # otherwise take it — 75 + 20 = 95 against 87.
+        rules = RuleConfig(belote_lost_when_contract_fails=True)
+        round_ = _split_round(players, 80, attack=75, defense=87,
+                              belote={TeamSide.NS: 1}, rules=rules)
+        score = score_round(round_)
+        assert score.contract_made is True
+        assert score.belote_points[TeamSide.NS] == 20
+
+
 class TestUnannouncedSlamSubstituteSwitch:
     """§9.6 — whether a sweep marks its flat 250 / 500 or its real pile."""
 
