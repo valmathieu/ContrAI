@@ -12,11 +12,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 
 from contrai_core import Suit, TeamSide
+from contrai_core.rule_config import RuleConfig
 from rich.box import ROUNDED
 from rich.panel import Panel
 from rich.text import Text
 
-from contrai_engine.model.round.scoring import unannounced_slam_substitute
+from contrai_engine.model.round.components import Mark, marked_total
 from contrai_engine.view.formatting import (
     _format_contract_short,
     _format_trump_label,
@@ -149,203 +150,119 @@ def _panel_round_recap(
 def _recap_breakdown(round_) -> dict:
     """Per-team point components used by the recap panel.
 
-    Returns a dict keyed by team name with:
-        contract:     contract-related bonus credited to this team
-                      (attacker base on numeric un-doubled made,
-                      160+C*mult to the winning side on numeric
-                      failed *and* on numeric doubled/redoubled made
-                      — winner-takes-all; base*mult on Slam family
-                      for the side winning the contract; 0 otherwise).
-        card_points:  trump-aware per-card points summed across the
-                      team's tricks for numeric
-                      contracts, *or* the flat, unmultiplied
-                      ``slam_card_substitute`` credited
-                      to the side winning a Slam-family contract.
-                      The ``card_points_substituted`` flag tells the
-                      renderer which kind it is.
-        card_points_substituted:
-                      True iff this round uses a Slam-family flat
-                      substitute instead of the actual trick pile.
-                      Drives the row label ("Tricks won (cards)" vs
-                      "Tricks won (subst.)").
-        round_points: honest play tally — the real trump-aware pile
-                      captured plus last-trick (10) and belote
-                      (20 per pair held).
-                      Always the true captured total, independent of
-                      how the contract converts it into score; the
-                      Outcome sub-table renders it verbatim.
-        last_trick_bonus:
-                      10 if the team took the last trick, else 0.
-        belote:       20 per K + Q pair the team *holds*
-                      (``belote_counts_by_side``), else 0.
-        trick_count:  number of tricks won.
-        cards_count:  True when ``card_points`` contributes to the
-                      team's round score (and should render as a
-                      number). False → em-dash.
-        last_trick_counts:
-                      True when ``last_trick_bonus`` contributes;
-                      False → em-dash. (Always False for Slam family
-                      and for any doubled/failed numeric round — the
-                      flat winner-takes-all bonus already covers the
-                      pile.)
-        belote_count: True when ``belote`` contributes — i.e. iff
-                      this team holds the pair. Belote is always
-                      preserved, win or lose, in every scoring shape.
+    A **projection of the round's** :class:`RoundScore` — the view knows
+    no scoring rule of its own. The two Scoring rows are §7.2's two
+    components as the table marked them, and the Outcome rows are the
+    factual play tally the scorer worked from. One implementation of the
+    scoring model therefore serves both the model and the panel, and a
+    §9.6 knob reaches the recap the moment the scorer honours it.
 
-    Each component is the *contribution to round_score* — so
-    contract + card_points + last_trick_bonus + belote always equals
-    the engine's round_score for that team.
+    Returns a dict keyed by :class:`TeamSide` with:
+        contract:     the **announced-points** component as marked —
+                      what the contract itself is worth to this side,
+                      carrying the double/redouble multiplier wherever
+                      the table's §7.3 convention puts it.
+        card_points:  the **made-points** component as marked — what
+                      the trick pile is worth to this side: its share
+                      of the pile (last-trick bonus included), the flat
+                      160 of a failed or doubled round, or a
+                      Slam-family / unannounced-sweep substitute.
+        belote:       20 per K + Q pair the team actually **marks**,
+                      from the scorer's own tally — so at a table with
+                      ``belote_lost_when_contract_fails`` on, a failed
+                      declarer's belote appears here under the defense.
+        belote_held:  20 per pair the team **holds**, before any such
+                      transfer. A play fact, which is why the Outcome
+                      sub-table reads this one and the Scoring
+                      sub-table reads ``belote``.
+        round_points: honest play tally — the real trump-aware pile
+                      captured plus last-trick (10) and the belote held.
+                      Always the true captured total, independent of how
+                      the contract converts it into score; the Outcome
+                      sub-table renders it verbatim.
+        trick_points: the real pile this side captured, last-trick
+                      bonus excluded — except for the declarer of an
+                      un-doubled sweep, whose pile the scorer replaced
+                      with a flat 250 / 500 that absorbs the bonus too.
+        last_trick:   10 if the team took the last trick, else 0 (and 0
+                      when the substitute above already covers it).
+        trick_count:  number of tricks won.
+
+    The three scoring rows reconcile exactly: ``contract +
+    card_points + belote`` is this side's round score.
     """
+    score = getattr(round_, "round_score", None)
     contract = getattr(round_, "contract", None)
-    # The captured piles, the trick tallies and who took the last trick
-    # are all derived by the core play state — the recap reads them
-    # rather than re-summing a pile of its own, so the numbers under
-    # "Outcome" are the same ones the scorer worked from.
+    # The trick tallies come from the core play state — the recap reads
+    # them rather than counting tricks of its own.
     play_state = getattr(round_, "play_state", None)
-    card_points = (
-        play_state.card_points_by_side if play_state is not None else {}
-    )
     trick_counts = (
         play_state.trick_counts_by_side if play_state is not None else {}
     )
-    trick_winners = play_state.trick_winners if play_state is not None else ()
-    last_trick_side = (
-        trick_winners[-1].position.team_side if trick_winners else None
-    )
 
-    belote_counts = _belote_counts_in_round(round_)
+    if score is None or contract is None:
+        # All passed, or the round is not scored yet: nothing to project.
+        return {
+            side: {
+                "contract": 0,
+                "card_points": 0,
+                "belote": 0,
+                "belote_held": 0,
+                "round_points": 0,
+                "trick_points": 0,
+                "last_trick": 0,
+                "trick_count": trick_counts.get(side, 0),
+            }
+            for side in TeamSide
+        }
 
-    attacking_side = (
-        contract.player.position.team_side if contract is not None else None
-    )
-    contract_made = contract is not None and _contract_made(round_)
-    # Unannounced-Slam marker set by the engine (None or an
-    # UnannouncedSlam member). When present, the declaring team's 162
-    # pile is shown as the flat 250 substitute with the last-trick
-    # bonus folded in.
-    unannounced_slam = getattr(round_, "unannounced_slam", None)
-    if contract is not None:
-        base = contract.get_base_points()
-        mult = contract.get_multiplier()
-        is_slam_family = contract.is_slam_family()
-        slam_substitute = contract.get_slam_card_substitute()
-    else:
-        base = 0
-        mult = 1
-        is_slam_family = False
-        slam_substitute = 0
+    rules = getattr(round_, "rules", None) or RuleConfig()
+    multiplier = score.multiplier
+    attacking_side = contract.player.position.team_side
+    # Who *held* each pair, before any failure-transfer moved what it is
+    # worth to the other side — the Outcome sub-table's question.
+    held_counts = _belote_counts_in_round(round_)
 
     out = {}
     for side in TeamSide:
-        raw_card_pts = card_points.get(side, 0)
-        raw_last_trick = 10 if side is last_trick_side else 0
-        raw_belote = 20 * belote_counts.get(side, 0)
+        mark = score.marks.get(side, Mark(0, 0))
+        belote = score.belote_points.get(side, 0)
+        belote_held = 20 * held_counts.get(side, 0)
+        pile = score.card_points.get(side, 0)
+        last_trick = 10 if side is score.last_trick_side else 0
 
-        is_attacker = (side is attacking_side)
-        is_winner = (is_attacker == contract_made)
-        contract_row = 0
-        card_points_value = raw_card_pts
-        card_points_substituted = False
-        cards_count = True
-        last_trick_counts = True
-        # Outcome-row display values. Default to the real captured
-        # pile / last-trick bonus; the unannounced-Slam branch swaps
-        # the pile for the flat 250 substitute and folds the
-        # last-trick bonus in (shows 0).
-        display_trick_points = raw_card_pts
-        display_last_trick = raw_last_trick
-        # Belote (+20 per pair) is always preserved for the team
-        # holding it, win or lose — so it counts iff this team holds at
-        # least one pair, in every scoring shape.
-        belote_count = bool(belote_counts.get(side, 0))
+        # Each component reduced by the very function the scorer used.
+        # Splitting the mark in two before reducing is exact: both §7.3
+        # conventions are linear in the components, so the two halves
+        # always add back up to the mark the side actually wrote down.
+        announced = marked_total(Mark(0, mark.announced), multiplier, rules)
+        made = marked_total(Mark(mark.made, 0), multiplier, rules)
 
-        if contract is None:
-            # All passed — nothing scores.
-            cards_count = False
-            last_trick_counts = False
-        elif is_slam_family:
-            # Slam family: the 162 of trick-card points is replaced
-            # by a flat substitute equal to the contract base. Only
-            # the announced half (contract) scales with the
-            # multiplier — the substitute stays flat, just as the
-            # numeric 160 does — and the whole amount goes to the
-            # side that wins the contract. Belote (+20) still applies
-            # on top for whichever team holds it. The last-trick bonus
-            # does NOT — the substitute already covers the 162.
-            card_points_substituted = True
-            last_trick_counts = False
-            if is_winner:
-                contract_row = base * mult
-                card_points_value = slam_substitute
-                cards_count = True
-            else:
-                card_points_value = 0
-                cards_count = False
-        elif mult == 1:
-            # Numeric, un-doubled: the two sides share the pile.
-            if contract_made:
-                # Made → declarer adds the contract value on top of
-                # its card pile; both sides keep cards, the last-trick
-                # bonus, and belote.
-                if is_attacker:
-                    contract_row = base
-                if is_attacker and unannounced_slam is not None:
-                    # Unannounced Slam: the declarer's 162 pile
-                    # (last-trick bonus included) is replaced by the
-                    # flat substitute the tag names — 250 for a team
-                    # sweep, 500 for the declarer's own — mirroring
-                    # the announced-Slam shape.
-                    sweep_substitute = unannounced_slam_substitute(
-                        unannounced_slam
-                    )
-                    card_points_value = sweep_substitute
-                    card_points_substituted = True
-                    last_trick_counts = False
-                    display_trick_points = sweep_substitute
-                    display_last_trick = 0
-            else:
-                # Failed → defender takes the whole pile + contract;
-                # the declarer keeps only its belote.
-                cards_count = False
-                last_trick_counts = False
-                if not is_attacker:
-                    contract_row = 160 + base
+        # Outcome rows stay factual — what this side really captured —
+        # with one exception: the declarer of an un-doubled sweep, whose
+        # 162 pile the scorer replaced with the flat substitute its tag
+        # names, and that substitute absorbs the last-trick bonus too.
+        # A table with the substitute switched off marks the real pile,
+        # and then ``mark.made`` *is* the pile, so the test below
+        # correctly declines to substitute.
+        if (
+            score.unannounced_slam is not None
+            and side is attacking_side
+            and mark.made != pile
+        ):
+            trick_points, shown_last_trick = mark.made, 0
         else:
-            # Numeric, doubled / redoubled: winner-takes-all. The
-            # flat 160 + C×M replaces the cards/last-trick pile for
-            # both sides; the loser scores only its belote.
-            cards_count = False
-            last_trick_counts = False
-            if is_winner:
-                contract_row = 160 + base * mult
+            trick_points, shown_last_trick = pile - last_trick, last_trick
 
         out[side] = {
-            "contract": contract_row,
-            "card_points": card_points_value if cards_count else 0,
-            "card_points_substituted": card_points_substituted,
-            # Honest play tally for the Outcome sub-table: the real
-            # trump-aware pile this team captured plus the last-trick
-            # (10) and belote (20) it earned in play. Independent of
-            # how the contract converts these into score — so it still
-            # reflects real captured points in a winner-takes-all round
-            # where the Scoring rows are dashed out. The display values
-            # equal the raw ones except on an unannounced Slam, where
-            # the pile reads 250 and the last-trick bonus is folded
-            # in (0).
-            "round_points": display_trick_points + display_last_trick + raw_belote,
-            # Factual components the Outcome sub-table renders one per
-            # row. ``trick_points`` is the real pile and ``last_trick``
-            # the real last-trick bonus (10/0), both independent of the
-            # scoring formula; ``belote`` below is already factual (the
-            # holder keeps it in every shape).
-            "trick_points": display_trick_points,
-            "last_trick": display_last_trick,
-            "last_trick_bonus": raw_last_trick if last_trick_counts else 0,
-            "belote": raw_belote if belote_count else 0,
+            "contract": announced,
+            "card_points": made,
+            "belote": belote,
+            "belote_held": belote_held,
+            "round_points": trick_points + shown_last_trick + belote_held,
+            "trick_points": trick_points,
+            "last_trick": shown_last_trick,
             "trick_count": trick_counts.get(side, 0),
-            "cards_count": cards_count,
-            "last_trick_counts": last_trick_counts,
-            "belote_count": belote_count,
         }
     return out
 
@@ -395,13 +312,14 @@ def _format_outcome_table(
     """Render the per-team play tally — the factual results of play.
 
     Rows: Tricks won (count), Tricks points (trump-aware pile), Last
-    trick (10 to whoever won trick 8), Belote (20 to the side holding
-    K+Q of trump) and a closing Total. Every value is the *real*
+    trick (10 to whoever won trick 8), Belote (20 to the side *holding*
+    K+Q of trump, even at a table that hands a failed declarer's belote
+    to the defense) and a closing Total. Every value is the *real*
     amount each side captured in play, independent of how the contract
     converts it into score — so a winner-takes-all round still surfaces
     the points each side genuinely took. The Total is their per-side
-    sum (trick points + last trick + belote), the honest play tally;
-    the Scoring sub-table then reports how much of it actually scored.
+    sum (trick points + last trick + belote held), the honest play
+    tally; the Scoring sub-table then reports what actually scored.
 
     When ``all_passed`` is set (no contract was struck, so no cards
     were played) every cell renders as an em-dash, so the whole panel
@@ -472,9 +390,13 @@ def _format_outcome_table(
     else:
         row_bel.append("—", style=DIM)
     row_bel.append(")      ", style=FG)
-    row_bel.append_text(_bonus_cell(ns.get("belote", 0)))
+    # The pair each side *held* — a play fact, so a table that moves a
+    # failed declarer's belote to the defense still shows it here under
+    # the seat that announced it. Where it ends up is the Scoring table's
+    # business.
+    row_bel.append_text(_bonus_cell(ns.get("belote_held", 0)))
     row_bel.append("  ")
-    row_bel.append_text(_bonus_cell(ew.get("belote", 0)))
+    row_bel.append_text(_bonus_cell(ew.get("belote_held", 0)))
     row_bel.append("\n")
 
     # Total — the honest play tally per side (trick points + last
@@ -511,19 +433,16 @@ def _format_recap_table(
 ) -> Text:
     """Render the Scoring sub-table inside the recap panel.
 
-    Rows: Contract (the bonus a team earns from the contract being
-    made or failed), Round points (the part of the play tally that
-    actually scored), then a divider and the engine-computed Round
-    score.
+    Rows: Contract (the announced-points component the table marked),
+    Round points (the made-points component plus the belote), then a
+    divider and the engine-computed Round score.
 
-    Round points is the score-contributing roll-up, not the raw tally:
-    ``card_points + last_trick_bonus + belote`` — i.e. ``Round score −
-    Contract`` by the :meth:`_recap_breakdown` invariant. On a
-    winner-takes-all round (failed or doubled) the captured pile and
-    last trick stop counting, so the row collapses to just the belote
-    the holder keeps, or an em-dash when no belote is held. For engine
-    data the columns therefore reconcile: Contract + Round points =
-    Round score, which the divider anchors.
+    The two rows are §7.2's two halves of the mark, so the columns
+    reconcile by construction: Contract + Round points = Round score,
+    which the divider anchors. On a winner-takes-all round the made
+    component is the flat 160 rather than a share of the pile; on a
+    failed contract the declarer's is 0, so its row collapses to the
+    belote it keeps — or an em-dash when it holds none.
     """
     ns = breakdown.get(TeamSide.NS, {})
     ew = breakdown.get(TeamSide.EW, {})
@@ -537,17 +456,11 @@ def _format_recap_table(
         return t
 
     def _round_points_cell(side: dict) -> Text:
-        # The score-contributing part only: cards + last-trick bonus +
-        # belote, each already zeroed by the breakdown when it doesn't
-        # count. A failed/doubled round leaves belote alone, so this
-        # is belote (or an em-dash when the side holds none).
+        # The made-points component plus the belote — everything this
+        # side marked that is not the contract itself.
         if all_passed:
             return Text(f"{'—':>6}", style=DIM)
-        scored = (
-            side.get("card_points", 0)
-            + side.get("last_trick_bonus", 0)
-            + side.get("belote", 0)
-        )
+        scored = side.get("card_points", 0) + side.get("belote", 0)
         return _num_cell(scored, show_zero=False)
 
     # Header row: "                          N-S     E-W"

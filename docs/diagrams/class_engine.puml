@@ -198,6 +198,7 @@ package "model/game.py" as p_game {
         + current_round : Round?
         + round_number : int
         + scores : dict<TeamSide, int>
+        + last_round_belote : dict<TeamSide, int>
         + rules : RuleConfig
         --
         + __init__(players: list<Player>, rules=None)
@@ -206,6 +207,9 @@ package "model/game.py" as p_game {
         + check_game_over(target_score=1500) : GameOverStatus
         + next_dealer() : None
         + set_players_order() : None
+        --
+        - _has_crossed(side, target_score) : bool
+        - _record_round_belote() : None
     }
 
     class GameOverStatus <<frozen dataclass>> {
@@ -226,6 +230,18 @@ package "model/game.py" as p_game {
       once into ""players_by_position"" so team
       formation and any later seat lookup never
       re-scan the player list.
+      ----
+      ""last_round_belote"" is the belote the
+      round most recently scored credited each
+      side, refreshed on **both** exits of
+      ""manage_round"" — a redeal awards none, so
+      a stale credit would deny a later win.
+      ""_has_crossed"" reads it: with the table's
+      ""win_on_belote_points_alone"" off, a side
+      carried past the target by //that round's//
+      belote has not won yet (§8). Belote banked
+      in earlier rounds is ordinary score and is
+      never discounted.
     end note
 
     note bottom of GameOverStatus
@@ -258,9 +274,10 @@ package "model/round/ package" as p_round {
         + contract : Contract?
         + auction : Auction?
         + play_state : PlayState?
-        + round_scores : dict<TeamSide, int>
-        + contract_made : bool?
-        + unannounced_slam : UnannouncedSlam?
+        + round_score : RoundScore?
+        + round_scores : dict<TeamSide, int> <<property>>
+        + contract_made : bool? <<property>>
+        + unannounced_slam : UnannouncedSlam? <<property>>
         + belote_pairs : dict<Player, tuple<Suit>>
         + belote_state : dict<(Player, Suit), str>
         + belote_order : list<(Player, Suit)>
@@ -288,12 +305,41 @@ package "model/round/ package" as p_round {
     ' --- scoring.py: the pure scoring transformation ---
     class "scoring.py" as r_scoring <<module>> #FFEFD9 {
         score_round(round) : RoundScore
+        sweep_substitute(tag) : int
         count_player_tricks(trick_winners, player) : int
         UnannouncedSlam <<enum>> : {SLAM, GRAND_SLAM}
-        RoundScore <<dataclass>>
+    }
+
+    class RoundScore <<dataclass>> #FFEFD9 {
+        + scores : dict<TeamSide, int>
+        + contract_made : bool?
+        + unannounced_slam : UnannouncedSlam?
+        + marks : dict<TeamSide, Mark>
+        + belote_points : dict<TeamSide, int>
+        + card_points : dict<TeamSide, int>
+        + last_trick_side : TeamSide?
+        + multiplier : int
+    }
+
+    ' --- components.py: the §7.2 arithmetic, over plain ints ---
+    class "components.py" as p_components <<module>> #FFF8E1 {
+        contract_components(...) : tuple<Mark, Mark>
+        marked_total(mark, multiplier, rules) : int
+        FLAT_FAILURE_PILE : int
+    }
+
+    class Mark <<frozen dataclass>> #FFF8E1 {
+        + made : int
+        + announced : int
     }
 
     Round ..> r_scoring : <<delegates scoring>>
+    Round *-- "0..1" RoundScore : round_score
+    r_scoring ..> p_components : <<delegates §7.2>>
+    r_scoring ..> RoundScore : <<builds>>
+    RoundScore "1" o-- "2" Mark : marks
+    p_components ..> Mark : <<builds>>
+    p_components ..> RuleConfig : <<reads §9.6>>
 
     note bottom of r_scoring
       **Belote is +20 //per pair//.** The scorer reads
@@ -348,11 +394,12 @@ package "model/round/ package" as p_round {
       while AI seats read the frozen
       ""PlayObservation"" projected by
       ""play_state.observe(player, bids=...)"".
-      ""calculate_round_scores"" is
-      a thin wrapper that publishes
-      ""score_round""'s ""RoundScore"" onto
+      ""calculate_round_scores"" is a thin
+      wrapper that publishes ""score_round""'s
+      ""RoundScore"" onto ""round_score"";
       ""round_scores"" / ""contract_made"" /
-      ""unannounced_slam"".
+      ""unannounced_slam"" are read-only
+      properties over it, so they cannot drift.
       ----
       During play Round fires (each hasattr-guarded):
       * ""view.on_bid_made(player, bid, history)""
@@ -379,13 +426,31 @@ package "model/round/ package" as p_round {
       trick counts and the +10 last-trick bonus
       from ""trick_winners"" — never the
       view-facing mirrors.
-      Four scoring shapes (numeric share-pile,
-      unannounced-Slam 250 / 500 substitute, doubled
-      winner-takes-all, Slam / Solo Slam grid),
-      belote +20 to the K+Q holder layered on
-      every shape. ""UnannouncedSlam"" tags an
+      Its own job is only **reading the round**
+      and **judging made/failed** — the arithmetic
+      is ""components.py""'s. ""UnannouncedSlam"" tags an
       undeclared all-trick sweep on a numeric
-      contract.
+      contract, and picks the flat substitute that
+      stands in for its pile.
+    end note
+
+    note bottom of p_components
+      **A mark is two components** (§7.2): the
+      //made points// the trick pile is worth and
+      the //announced points// the contract is
+      worth. ""contract_components"" splits the
+      round into one ""Mark"" per side;
+      ""marked_total"" reduces a ""Mark"" to the
+      number written down, applying the §7.3
+      marking conventions and placing the
+      double/redouble multiplier.
+      ----
+      Pure arithmetic over ints and a
+      ""RuleConfig"" — no ""Round"", no ""Contract"",
+      no ""PlayState"" — so the §7.2 grids are
+      testable exactly as the domain reference
+      prints them, and each §9.6 scoring row is
+      one expression rather than a new branch.
     end note
 }
 
@@ -456,6 +521,8 @@ package "view/ package" as p_view {
         screens/endgame.py
     }
 
+    p_view_screens ..> RoundScore : <<projects the components>>
+
     note right of RichView
       Stateful orchestrator (in ""rich_view.py"").
       Six-screen UI: landing, bidding, mid-trick,
@@ -522,16 +589,21 @@ package "view/ package" as p_view {
       diamonds, the landing roster) key off
       ""Position"" members rather than seat
       strings.
-      The round-recap breakdown credits each
-      team: contract bonus (attacker base on
-      normal made, 160+base×mult on doubled
-      made, (160+base)×mult on failed defender)
-      + card points + last-trick bonus + belote
-      → ""round_scores[side]"". The card /
-      last-trick / belote rows
-      em-dash when the engine ignores them so
-      the addition matches ""round_score"".
-      Helpers ""_recap_breakdown"" /
+      The round-recap breakdown **projects**
+      ""round.round_score"" rather than being a
+      second implementation of the rules: the
+      Scoring sub-table is §7.2's two components
+      as the table marked them — the //announced//
+      one in the Contract row, the //made// one
+      beside the belote in Round points — each
+      reduced by the same ""marked_total"" the
+      scorer used — so the two rows plus the
+      belote add back up to the round score.
+      The Outcome sub-table stays factual: the
+      pile, the last trick and the belote each
+      side really took. A §9.6 knob therefore
+      reaches the panel the moment the scorer
+      honours it. Helpers ""_recap_breakdown"" /
       ""_format_recap_table"" /
       ""_belote_counts_in_round"" live in
       ""screens/recap.py"".

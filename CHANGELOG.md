@@ -18,14 +18,24 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (core) `Auction` runs under a `RuleConfig`: `extended_trump_choices` gates no trump and all trump, and each mode caps at its §5.2 ladder top.
 - (engine) No trump and all trump are biddable at a table with `extended_trump_choices = true`; type `nt` / `at` at the prompt. See [engine docs](docs/engine/index.md).
 - (engine) All-trump rounds track every K + Q pair and mark 20 each, under the `none` / `single` / `four` regime. See [engine docs](docs/engine/index.md).
+- (engine) `mark_made_points`, `mark_announced_points` and `only_announced_points_multiplied` decide what a round marks. See [engine docs](docs/engine/index.md).
+- (engine) `any_failure_marks_160`, the two `failed_slam_marks_*` switches and `unannounced_slam_substitute` reshape what a failed or swept round marks.
+- (engine) `belote_counts_toward_contract` and `belote_lost_when_contract_fails` decide whether a belote makes the contract and who keeps it.
+- (engine) `rounding` — marks are written exact, to the nearest 10, or to the nearest 5; halves round up. Contract success stays exact.
+- (engine) `win_on_belote_points_alone` — switched off, the Belote of the crossing round does not carry a team past the target.
 
 ### Changed
 
 - (core) **BREAKING:** `ContractBid` accepts all six contract trumps and values to 240; which are bookable is now `Auction`'s call. Use `bookable_suits(rules)`, not `ContractBid.VALID_SUITS`.
 - (engine) **BREAKING:** `Round.belote_holder` is gone. Read `belote_pairs` (holder → suits) or `belote_counts_by_side`; `belote_state` is keyed by `(player, suit)`.
+- (engine) Round scoring is built from §7.2's made-points and announced-points components; `RoundScore` carries both per side. See [engine docs](docs/engine/index.md).
+- (engine) **BREAKING:** `Round.round_scores` / `contract_made` / `unannounced_slam` are read-only properties over the new `Round.round_score`. `scoring.unannounced_slam_substitute` is now `sweep_substitute`.
+- (engine) The round recap reads its breakdown off the scored round, so its Scoring rows are the two components and track the table ruleset. See [engine docs](docs/engine/index.md).
+- (engine) **BREAKING:** The attack must now out-score the defense to make its contract (§7.5 default); an exact tie fails it. Set `attack_must_outscore_defense = false` for the old behaviour.
 
 ### Fixed
 
+- (engine) The recap's Outcome table credits a belote to the side that *held* it, so a transfer to the defense no longer rewrites the play tally.
 - (core) The over-trump obligation ranks candidates with `trick_rank`, so an off-suit discard can no longer raise the bar at all trump.
 - (engine) A no-trump contract renders as `NT` / `No Trump` instead of `NoTrump No Trump`, and its bid cell no longer overflows the history column.
 
