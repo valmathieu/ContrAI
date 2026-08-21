@@ -14,6 +14,7 @@ from contrai_engine.debug_state import round_result_lines
 from contrai_engine.model import game as game_module
 from contrai_engine.model.game import Game
 from contrai_engine.model.player import AiPlayer
+from contrai_engine.model.round import Mark, RoundScore
 from contrai_core.deck import Deck
 from contrai_core.team_side import TeamSide
 from contrai_core.exceptions import InvalidPlayerCountError
@@ -53,6 +54,9 @@ class FakeRound:
     play_scores: dict[str, int] = {}
     failed_scores: dict[str, int] = {}
     contract_made = True
+    #: The belote the scripted round credits each side, which ``Game``
+    #: lifts off ``round_score`` to feed its win gate.
+    play_belote: dict[TeamSide, int] = {}
 
     def __init__(self, players_order, dealer, deck, round_number, rules=None):
         self.players_order = players_order
@@ -68,6 +72,7 @@ class FakeRound:
         # logging) has something valid to read off this double too.
         self.contract = None
         self.round_scores: dict[str, int] = {}
+        self.round_score: RoundScore | None = None
 
     def deal_cards(self):
         """Record the call; no cards actually move."""
@@ -87,15 +92,41 @@ class FakeRound:
 
     def calculate_round_scores(self):
         """Record the call and report the scripted completed-round scores,
-        mirroring them onto ``self.round_scores`` the way the real ``Round``
-        does."""
+        publishing a ``RoundScore`` and mirroring its totals onto
+        ``self.round_scores`` the way the real ``Round`` does."""
         self.calls.append("calculate_round_scores")
+        self.round_score = RoundScore(
+            scores=dict(self.play_scores),
+            contract_made=self.contract_made,
+            unannounced_slam=None,
+            marks={side: Mark(0, 0) for side in TeamSide},
+            belote_points={
+                side: self.play_belote.get(side, 0) for side in TeamSide
+            },
+            card_points={side: 0 for side in TeamSide},
+            last_trick_side=None,
+            multiplier=1,
+        )
         self.round_scores = dict(self.play_scores)
         return dict(self.play_scores)
 
     def handle_failed_contract(self):
-        """Record the call and report the scripted all-pass scores."""
+        """Record the call and report the scripted all-pass scores.
+
+        Publishes the contractless ``RoundScore`` the real ``Round``
+        publishes — zero belote, ``contract_made`` left ``None``.
+        """
         self.calls.append("handle_failed_contract")
+        self.round_score = RoundScore(
+            scores=dict(self.failed_scores),
+            contract_made=None,
+            unannounced_slam=None,
+            marks={side: Mark(0, 0) for side in TeamSide},
+            belote_points={side: 0 for side in TeamSide},
+            card_points={side: 0 for side in TeamSide},
+            last_trick_side=None,
+            multiplier=1,
+        )
         return dict(self.failed_scores)
 
 
@@ -448,6 +479,133 @@ def test_check_game_over_default_target_score(game):
 
     assert result.game_over is True
     assert result.winner == TeamSide.NS
+
+
+class TestWinOnBelotePointsAlone:
+    """§8 — whether a Belote can carry a side past the target.
+
+    Switched off, only the *crossing round's* Belote is discounted:
+    Belote banked in earlier rounds is ordinary score by then. The gate
+    is therefore a question about one round, which is why ``Game`` keeps
+    ``last_round_belote`` rather than a running Belote total.
+    """
+
+    @staticmethod
+    def _game(players, *, scores, last_round_belote=None, rules=None):
+        """A game sitting on the given scores and last-round belote."""
+        game = Game(players, rules=rules)  # type: ignore[arg-type]
+        game.scores = dict(scores)
+        if last_round_belote is not None:
+            game.last_round_belote = {
+                side: last_round_belote.get(side, 0) for side in TeamSide
+            }
+        return game
+
+    def test_belote_can_cross_the_target_by_default(self, players):
+        game = self._game(players,
+                          scores={TeamSide.NS: 2010, TeamSide.EW: 1200},
+                          last_round_belote={TeamSide.NS: 20})
+        status = game.check_game_over(2000)
+        assert status.game_over is True
+        assert status.winner is TeamSide.NS
+
+    def test_off_a_belote_only_crossing_does_not_win(self, players):
+        game = self._game(players,
+                          rules=RuleConfig(win_on_belote_points_alone=False),
+                          scores={TeamSide.NS: 2010, TeamSide.EW: 1200},
+                          last_round_belote={TeamSide.NS: 20})
+        status = game.check_game_over(2000)
+        assert status.game_over is False
+        assert status.winner is None
+        assert status.tied_teams is None
+
+    def test_off_points_from_play_confirm_the_win(self, players):
+        # The same lead, but this round's belote was not what carried it.
+        game = self._game(players,
+                          rules=RuleConfig(win_on_belote_points_alone=False),
+                          scores={TeamSide.NS: 2010, TeamSide.EW: 1200},
+                          last_round_belote={TeamSide.NS: 0})
+        assert game.check_game_over(2000).game_over is True
+
+    def test_off_earlier_rounds_belote_still_counts(self, players):
+        # Only the crossing round's credit is discounted: a side 5 points
+        # over the target with no belote this round has won, however much
+        # belote it banked earlier.
+        game = self._game(players,
+                          rules=RuleConfig(win_on_belote_points_alone=False),
+                          scores={TeamSide.NS: 2005, TeamSide.EW: 1200},
+                          last_round_belote={TeamSide.NS: 0})
+        assert game.check_game_over(2000).game_over is True
+
+    def test_off_four_all_trump_belotes_are_discounted_together(self, players):
+        game = self._game(players,
+                          rules=RuleConfig(win_on_belote_points_alone=False),
+                          scores={TeamSide.NS: 2050, TeamSide.EW: 1200},
+                          last_round_belote={TeamSide.NS: 80})
+        assert game.check_game_over(2000).game_over is False
+
+    def test_off_the_gate_only_looks_at_the_leader(self, players):
+        # The trailing side's belote is irrelevant — it is not crossing.
+        game = self._game(players,
+                          rules=RuleConfig(win_on_belote_points_alone=False),
+                          scores={TeamSide.NS: 2010, TeamSide.EW: 1200},
+                          last_round_belote={TeamSide.NS: 0,
+                                             TeamSide.EW: 80})
+        assert game.check_game_over(2000).game_over is True
+
+    def test_a_tie_at_the_target_is_still_sudden_death(self, players):
+        game = self._game(players,
+                          rules=RuleConfig(win_on_belote_points_alone=False),
+                          scores={TeamSide.NS: 2010, TeamSide.EW: 2010},
+                          last_round_belote={TeamSide.NS: 20,
+                                             TeamSide.EW: 20})
+        status = game.check_game_over(2000)
+        assert status.game_over is False
+        assert status.tied_teams == [TeamSide.NS, TeamSide.EW]
+
+    def test_the_gate_tolerates_an_unscored_game(self, players):
+        # cli.py checks before the first round is ever dealt.
+        game = self._game(players,
+                          rules=RuleConfig(win_on_belote_points_alone=False),
+                          scores={TeamSide.NS: 0, TeamSide.EW: 0})
+        assert game.check_game_over(2000).game_over is False
+
+    def test_a_fresh_game_starts_with_no_belote_credit(self, players):
+        game = Game(players)  # type: ignore[arg-type]
+        assert game.last_round_belote == {TeamSide.NS: 0, TeamSide.EW: 0}
+
+    def test_manage_round_records_the_rounds_belote(self, game, monkeypatch):
+        # The credit the gate reads is lifted off the scored round, so
+        # each round replaces it rather than adding to it.
+        FakeRound.bidding_contract = object()
+        FakeRound.play_scores = {TeamSide.NS: 180, TeamSide.EW: 0}
+        FakeRound.play_belote = {TeamSide.NS: 20}
+        monkeypatch.setattr(game_module, 'Round', FakeRound)
+
+        game.manage_round()
+        assert game.last_round_belote == {TeamSide.NS: 20, TeamSide.EW: 0}
+
+        FakeRound.play_belote = {}
+        game.manage_round()
+        assert game.last_round_belote == {TeamSide.NS: 0, TeamSide.EW: 0}
+        assert game.scores[TeamSide.NS] == 360
+
+    def test_an_all_pass_round_leaves_no_belote_credit(
+        self, game, monkeypatch
+    ):
+        # A redeal never reaches ``calculate_round_scores``; the credit
+        # from the previous round must not linger and gate a later win.
+        FakeRound.bidding_contract = object()
+        FakeRound.play_scores = {TeamSide.NS: 180, TeamSide.EW: 0}
+        FakeRound.play_belote = {TeamSide.NS: 20}
+        monkeypatch.setattr(game_module, 'Round', FakeRound)
+        game.manage_round()
+        assert game.last_round_belote[TeamSide.NS] == 20
+
+        FakeRound.bidding_contract = None
+        FakeRound.failed_scores = {TeamSide.NS: 0, TeamSide.EW: 0}
+        game.manage_round()
+        assert game.last_round_belote == {TeamSide.NS: 0, TeamSide.EW: 0}
 
 
 def test_next_dealer_picks_random_when_none(game, monkeypatch):

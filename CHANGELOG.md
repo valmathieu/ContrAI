@@ -22,6 +22,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) `any_failure_marks_160`, the two `failed_slam_marks_*` switches and `unannounced_slam_substitute` reshape what a failed or swept round marks.
 - (engine) `belote_counts_toward_contract` and `belote_lost_when_contract_fails` decide whether a belote makes the contract and who keeps it.
 - (engine) `rounding` — marks are written exact, to the nearest 10, or to the nearest 5; halves round up. Contract success stays exact.
+- (engine) `win_on_belote_points_alone` — switched off, the Belote of the crossing round does not carry a team past the target.
 
 ### Changed
 
@@ -34,6 +35,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 ### Fixed
 
+- (engine) The recap's Outcome table credits a belote to the side that *held* it, so a transfer to the defense no longer rewrites the play tally.
 - (core) The over-trump obligation ranks candidates with `trick_rank`, so an off-suit discard can no longer raise the bar at all trump.
 - (engine) A no-trump contract renders as `NT` / `No Trump` instead of `NoTrump No Trump`, and its bid cell no longer overflows the history column.
 

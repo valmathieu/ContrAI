@@ -105,7 +105,8 @@ class TestRoundRecapPanel:
     class _StubRound:
         def __init__(self, *, round_number, contract, round_scores,
                      team_tricks=None, belote_pairs=None,
-                     contract_made=None, marks=None, rules=None):
+                     contract_made=None, marks=None, rules=None,
+                     belote_marked=None):
             self.round_number = round_number
             self.contract = contract
             self.round_scores = round_scores
@@ -123,6 +124,9 @@ class TestRoundRecapPanel:
             self.unannounced_slam = None
             self.rules = rules or RuleConfig()
             self._marks = marks
+            # What the scorer *marked* per side, when that differs from
+            # what each side holds — i.e. after a failure-transfer.
+            self._belote_marked = belote_marked
 
         @property
         def belote_counts_by_side(self):
@@ -154,7 +158,7 @@ class TestRoundRecapPanel:
             card_points = dict(self.play_state.card_points_by_side)
             if last_trick_side is not None:
                 card_points[last_trick_side] += 10
-            belote = {
+            belote = self._belote_marked or {
                 side: 20 * count
                 for side, count in self.belote_counts_by_side.items()
             }
@@ -239,6 +243,42 @@ class TestRoundRecapPanel:
         assert ns["contract"] == 200
         assert ns["card_points"] == 320
         assert ns["contract"] + ns["card_points"] + ns["belote"] == 520
+
+    def test_a_transferred_belote_shows_under_its_holder_in_outcome(
+        self, four_players
+    ):
+        """At a table with ``belote_lost_when_contract_fails`` on, a
+        failed declarer's 20 is *marked* by the defense but was *held*
+        by the declarer. The Outcome table reports the play fact, the
+        Scoring table the marked amount — the two rows disagree, and
+        that disagreement is the transfer being visible."""
+        north, east, *_ = four_players
+        contract = self._StubContract(100, Suit.HEARTS, TeamSide.NS)
+        ns_trick = Trick()
+        ns_trick.add_play(north, Card(Suit.HEARTS, Rank.ACE))
+        ns_trick.add_play(east, Card(Suit.CLUBS, Rank.SEVEN))
+        round_ = self._StubRound(
+            round_number=5,
+            contract=contract,
+            round_scores={TeamSide.NS: 0, TeamSide.EW: 280},
+            team_tricks={TeamSide.NS: [ns_trick], TeamSide.EW: []},
+            belote_pairs={north: (Suit.HEARTS,)},   # N-S holds the pair
+            contract_made=False,
+            marks={TeamSide.EW: Mark(160, 100), TeamSide.NS: Mark(0, 0)},
+            # ...and the scorer moved what it is worth to E-W.
+            belote_marked={TeamSide.NS: 0, TeamSide.EW: 20},
+        )
+        breakdown = _recap_breakdown(round_)
+        # Outcome: the holder.
+        assert breakdown[TeamSide.NS]["belote_held"] == 20
+        assert breakdown[TeamSide.EW]["belote_held"] == 0
+        # Scoring: the side that marks it.
+        assert breakdown[TeamSide.NS]["belote"] == 0
+        assert breakdown[TeamSide.EW]["belote"] == 20
+        # Each table still adds up on its own terms.
+        assert breakdown[TeamSide.NS]["round_points"] == 31   # 11 + 0 + 20
+        ew = breakdown[TeamSide.EW]
+        assert ew["contract"] + ew["card_points"] + ew["belote"] == 280
 
     def test_recap_made_contract_shows_check(self):
         view = RichView()

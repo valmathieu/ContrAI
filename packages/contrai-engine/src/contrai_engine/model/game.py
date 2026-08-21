@@ -173,6 +173,14 @@ class Game:
         self.current_round = None
         self.round_number = 0
         self.scores: dict[TeamSide, int] = {side: 0 for side in TeamSide}
+        # The belote credited by the round most recently scored, per side.
+        # Only used by ``check_game_over``: a table that does not let a
+        # side win on Belote points alone discounts the credit of the
+        # round that crossed the target, not the game's whole belote
+        # history (contree-domain.md §8).
+        self.last_round_belote: dict[TeamSide, int] = {
+            side: 0 for side in TeamSide
+        }
         # The table ruleset is game-level state: it is fixed when the
         # table sits down and every round inherits it unchanged.
         self.rules: RuleConfig = rules if rules is not None else RuleConfig()
@@ -241,6 +249,7 @@ class Game:
         # If no contract (all passed), handle failed contract (redistributes cards).
         if not contract:
             self.current_round.handle_failed_contract()
+            self._record_round_belote()
             self._log_round_result()
             # Notify the view that the round will be redealt. The hook is a
             # pure announcement — it carries no round payload.
@@ -254,11 +263,29 @@ class Game:
         # Calculate scores for the round - delegate to Round
         round_scores = self.current_round.calculate_round_scores()
 
+        self._record_round_belote()
+
         # Update total scores
         for side, points in round_scores.items():
             self.scores[side] += points
 
         self._log_round_result()
+
+    def _record_round_belote(self) -> None:
+        """Snapshot the just-scored round's belote onto ``last_round_belote``.
+
+        Called on **both** exits of :meth:`manage_round` — the scored
+        round and the all-pass redeal. A redeal awards no belote, so
+        leaving the previous round's credit in place would let
+        :meth:`check_game_over` discount points the crossing round never
+        paid, and deny a legitimate win.
+        """
+
+        score = self.current_round.round_score
+        self.last_round_belote = (
+            dict(score.belote_points) if score
+            else {side: 0 for side in TeamSide}
+        )
 
     def _log_round_result(self) -> None:
         """Log the just-finished round's outcome at DEBUG.
@@ -301,21 +328,25 @@ class Game:
             leading_teams = [side for side, score in self.scores.items()
                              if score == max_score]
 
-            if len(leading_teams) == 1:
+            if len(leading_teams) > 1:
+                # Sudden death: level at/above the target — play another
+                # round. The belote gate cannot break a tie, so it is
+                # not consulted here.
                 return GameOverStatus(
-                    game_over=True,
-                    winner=leading_teams[0],
-                    tied_teams=None,
+                    game_over=False,
+                    winner=None,
+                    tied_teams=leading_teams,
                     final_scores=self.scores.copy(),
                 )
 
-            # Sudden death: level at/above the target — play another round.
-            return GameOverStatus(
-                game_over=False,
-                winner=None,
-                tied_teams=leading_teams,
-                final_scores=self.scores.copy(),
-            )
+            winner = leading_teams[0]
+            if self._has_crossed(winner, target_score):
+                return GameOverStatus(
+                    game_over=True,
+                    winner=winner,
+                    tied_teams=None,
+                    final_scores=self.scores.copy(),
+                )
 
         return GameOverStatus(
             game_over=False,
@@ -323,6 +354,30 @@ class Game:
             tied_teams=None,
             final_scores=self.scores.copy(),
         )
+
+    def _has_crossed(self, side: TeamSide, target_score: int) -> bool:
+        """Whether ``side`` has legitimately reached the target (§8).
+
+        A table that allows :attr:`~contrai_core.RuleConfig.win_on_belote_points_alone`
+        — the default — asks nothing more than the score. Switched off,
+        a side carried past the target by the belote of the very round
+        that crossed it has not won yet: the win waits until points from
+        play confirm it. Belote banked in earlier rounds is ordinary
+        score and is not discounted, which is why only
+        :attr:`last_round_belote` is subtracted.
+
+        Args:
+            side: The leading side.
+            target_score: The game target.
+
+        Returns:
+            Whether the side's win stands.
+        """
+
+        if self.rules.win_on_belote_points_alone:
+            return self.scores[side] >= target_score
+        credit = self.last_round_belote.get(side, 0)
+        return self.scores[side] - credit >= target_score
 
     def next_dealer(self):
         """

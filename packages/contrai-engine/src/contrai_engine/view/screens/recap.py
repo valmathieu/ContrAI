@@ -167,12 +167,18 @@ def _recap_breakdown(round_) -> dict:
                       of the pile (last-trick bonus included), the flat
                       160 of a failed or doubled round, or a
                       Slam-family / unannounced-sweep substitute.
-        belote:       20 per K + Q pair the team marks, from the
-                      scorer's own tally.
+        belote:       20 per K + Q pair the team actually **marks**,
+                      from the scorer's own tally — so at a table with
+                      ``belote_lost_when_contract_fails`` on, a failed
+                      declarer's belote appears here under the defense.
+        belote_held:  20 per pair the team **holds**, before any such
+                      transfer. A play fact, which is why the Outcome
+                      sub-table reads this one and the Scoring
+                      sub-table reads ``belote``.
         round_points: honest play tally — the real trump-aware pile
-                      captured plus last-trick (10) and belote. Always
-                      the true captured total, independent of how the
-                      contract converts it into score; the Outcome
+                      captured plus last-trick (10) and the belote held.
+                      Always the true captured total, independent of how
+                      the contract converts it into score; the Outcome
                       sub-table renders it verbatim.
         trick_points: the real pile this side captured, last-trick
                       bonus excluded — except for the declarer of an
@@ -201,6 +207,7 @@ def _recap_breakdown(round_) -> dict:
                 "contract": 0,
                 "card_points": 0,
                 "belote": 0,
+                "belote_held": 0,
                 "round_points": 0,
                 "trick_points": 0,
                 "last_trick": 0,
@@ -212,11 +219,15 @@ def _recap_breakdown(round_) -> dict:
     rules = getattr(round_, "rules", None) or RuleConfig()
     multiplier = score.multiplier
     attacking_side = contract.player.position.team_side
+    # Who *held* each pair, before any failure-transfer moved what it is
+    # worth to the other side — the Outcome sub-table's question.
+    held_counts = _belote_counts_in_round(round_)
 
     out = {}
     for side in TeamSide:
         mark = score.marks.get(side, Mark(0, 0))
         belote = score.belote_points.get(side, 0)
+        belote_held = 20 * held_counts.get(side, 0)
         pile = score.card_points.get(side, 0)
         last_trick = 10 if side is score.last_trick_side else 0
 
@@ -247,7 +258,8 @@ def _recap_breakdown(round_) -> dict:
             "contract": announced,
             "card_points": made,
             "belote": belote,
-            "round_points": trick_points + shown_last_trick + belote,
+            "belote_held": belote_held,
+            "round_points": trick_points + shown_last_trick + belote_held,
             "trick_points": trick_points,
             "last_trick": shown_last_trick,
             "trick_count": trick_counts.get(side, 0),
@@ -300,13 +312,14 @@ def _format_outcome_table(
     """Render the per-team play tally — the factual results of play.
 
     Rows: Tricks won (count), Tricks points (trump-aware pile), Last
-    trick (10 to whoever won trick 8), Belote (20 to the side holding
-    K+Q of trump) and a closing Total. Every value is the *real*
+    trick (10 to whoever won trick 8), Belote (20 to the side *holding*
+    K+Q of trump, even at a table that hands a failed declarer's belote
+    to the defense) and a closing Total. Every value is the *real*
     amount each side captured in play, independent of how the contract
     converts it into score — so a winner-takes-all round still surfaces
     the points each side genuinely took. The Total is their per-side
-    sum (trick points + last trick + belote), the honest play tally;
-    the Scoring sub-table then reports how much of it actually scored.
+    sum (trick points + last trick + belote held), the honest play
+    tally; the Scoring sub-table then reports what actually scored.
 
     When ``all_passed`` is set (no contract was struck, so no cards
     were played) every cell renders as an em-dash, so the whole panel
@@ -377,9 +390,13 @@ def _format_outcome_table(
     else:
         row_bel.append("—", style=DIM)
     row_bel.append(")      ", style=FG)
-    row_bel.append_text(_bonus_cell(ns.get("belote", 0)))
+    # The pair each side *held* — a play fact, so a table that moves a
+    # failed declarer's belote to the defense still shows it here under
+    # the seat that announced it. Where it ends up is the Scoring table's
+    # business.
+    row_bel.append_text(_bonus_cell(ns.get("belote_held", 0)))
     row_bel.append("  ")
-    row_bel.append_text(_bonus_cell(ew.get("belote", 0)))
+    row_bel.append_text(_bonus_cell(ew.get("belote_held", 0)))
     row_bel.append("\n")
 
     # Total — the honest play tally per side (trick points + last
