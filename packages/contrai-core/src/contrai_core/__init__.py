@@ -45,6 +45,7 @@ from .bid import (
     SlamLevel,
     seal_bid,
     bookable_suits,
+    bookable_values,
     ladder_top,
 )
 from .auction import Auction
@@ -78,6 +79,7 @@ __all__ = [
     "AllTrumpRules",
     "rules_for",
     "bookable_suits",
+    "bookable_values",
     "ladder_top",
     "TurnDirection",
     "AllTrumpBelote",

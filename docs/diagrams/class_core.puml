@@ -513,6 +513,7 @@ package "bid.py" as p_bid {
     class "bid.py" as p_bid_fn <<module>> {
         seal_bid(bid: Bid<BasePlayer>) : Bid<Position> <<reseats onto the bidder's seat>>
         bookable_suits(rules: RuleConfig) : tuple<ContractSuit>
+        bookable_values(rules: RuleConfig) : tuple<int|SlamLevel>
         ladder_top(contract_suit: ContractSuit, rules: RuleConfig) : int
     }
 
@@ -591,6 +592,10 @@ package "auction.py" as p_auction {
       caps each mode (suit 180, no trump 160, all trump
       160/180/240 by belote regime). Slam-family bids are
       never ladder-capped.
+      ""bookable~_values"" drops the Solo Slam when the
+      table withdraws it, and the two
+      ""slam~_can~_be~_doubled"" switches gate
+      ""Auction.~_is~_double~_legal"" per contract.
     end note
 }
 

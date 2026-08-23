@@ -19,7 +19,7 @@ Source lives at `packages/contrai-core/src/contrai_core/`:
 | `rule_config.py` | `RuleConfig` (frozen catalogue of the 22 configurable §9 table rules), `TurnDirection` / `AllTrumpBelote` / `Rounding`, `TARGET_SCORES`, the `classic()` preset and `PRESETS` |
 | `team.py`       | `Team` (the two-player roster and its display name)                                     |
 | `player.py`     | `BasePlayer` (engine `Player` extends it)                                               |
-| `bid.py`        | `Bid`, `PassBid`, `ContractBid`, `DoubleBid`, `RedoubleBid` (frozen-dataclass sum type, generic over the actor), `seal_bid`, and the two table-rule functions `bookable_suits(rules)` / `ladder_top(contract_suit, rules)` |
+| `bid.py`        | `Bid`, `PassBid`, `ContractBid`, `DoubleBid`, `RedoubleBid` (frozen-dataclass sum type, generic over the actor), `seal_bid`, and the three table-rule functions `bookable_suits(rules)` / `bookable_values(rules)` / `ladder_top(contract_suit, rules)` |
 | `auction.py`    | `Auction` (bidding-state rule oracle, carrying the table `RuleConfig` — see §below)     |
 | `contract.py`   | `Contract`, `ObservedContract` (its seat-keyed projection)                              |
 | `trick.py`      | `Trick`, `TrickRecord` (the completed-trick value), `current_winner` (module-level trick-winner rule, shared with `PlayState`) |
@@ -72,6 +72,10 @@ Frozen plus `slots=True` makes a ruleset hashable, which is the point: a simulat
 | all trump, `four` | 240 | up to four pairs, +80 |
 
 The split is what keeps the view's "build the bid, then ask whether it is legal" flow intact: the CLI's `_parse_bid_input` never raises on a bid the table forbids, it returns the bid and lets `Auction.is_legal` reject it with an explanation. The two functions live in `bid.py` rather than on `Auction` so the view can mirror the rules for its messages without reimplementing them. `SlamLevel` bids are deliberately **not** ladder-capped — §5.2 puts the Slam family under every trump choice at its own base value — which is why every cap comparison guards on `isinstance(value, int)` first: a `SlamLevel` has no ordering against an int at all.
+
+**The three §9.4 switches are auction rules, not bid well-formedness.** `bookable_values(rules)` is the value-side sibling of `bookable_suits`: it returns `ContractBid.VALID_VALUES` in order, minus `SlamLevel.SOLO_SLAM` when the table has `solo_slam_available` off. Only the Solo Slam is a table's to withdraw — the numeric steps are *capped* per mode by `ladder_top`, never removed, and the plain Slam is available everywhere. Preserving the order matters: `legal_actions` probes precedence monotonically up `VALID_VALUES` and would break on a resorted list. A `ContractBid` for a withdrawn Solo Slam still **constructs** — it is a well-formed bid — and `Auction.is_legal` is the authority that refuses it, which is why the check sits in `_is_contract_legal` beside the trump-choice limit rather than in `__post_init__`: both are table rules no auction state can lift, and both must stay reversible by handing the auction a different `RuleConfig`.
+
+Doubling is gated the same way, per contract, by `_slam_double_allowed`: `slam_can_be_doubled` and `solo_slam_can_be_doubled` are two independent switches, both on by default, and turning one off forbids the double against that contract alone. A numeric contract is never gated. The redouble needs no switch of its own — it only ever stands on a live double, so removing the double removes the redouble by construction.
 
 One thing the auction deliberately does *not* check: that a bidder past 160 actually holds the Belote the step depends on. The auction never looks at hands. Bidding 240 at all trump without four pairs is legal and simply commits the bidder to a contract the cards alone cannot make.
 

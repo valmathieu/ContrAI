@@ -34,6 +34,7 @@ from contrai_core import (
     Team,
     TrumpVariant,
     bookable_suits,
+    bookable_values,
     ladder_top,
     seal_bid,
 )
@@ -458,3 +459,25 @@ class TestSealBid:
 
     def test_sealed_pass_is_still_a_bid(self, north):
         assert isinstance(seal_bid(PassBid(north)), Bid)
+
+
+# ---------------------------------------------------------------------------
+# bookable_values — the value-side table rule
+# ---------------------------------------------------------------------------
+
+
+class TestBookableValues:
+    """``bookable_values`` is the value-side sibling of ``bookable_suits``."""
+
+    def test_every_step_and_both_slams_by_default(self):
+        assert bookable_values(RuleConfig()) == tuple(ContractBid.VALID_VALUES)
+
+    def test_solo_slam_is_withdrawn_when_the_table_forbids_it(self):
+        values = bookable_values(RuleConfig(solo_slam_available=False))
+        assert SlamLevel.SOLO_SLAM not in values
+        assert SlamLevel.SLAM in values
+        # Nothing else is touched — the numeric ladder is untouched by
+        # a bidding switch; ``ladder_top`` is what caps that.
+        assert [v for v in values if isinstance(v, int)] == [
+            v for v in ContractBid.VALID_VALUES if isinstance(v, int)
+        ]

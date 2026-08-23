@@ -315,6 +315,33 @@ def bookable_suits(rules: RuleConfig) -> tuple[ContractSuit, ...]:
     return CONTRACT_SUITS if rules.extended_trump_choices else tuple(Suit)
 
 
+def bookable_values(rules: RuleConfig) -> tuple[int | SlamLevel, ...]:
+    """The contract values a table under ``rules`` accepts (§5.2, §9.4).
+
+    The value-side sibling of :func:`bookable_suits`. Only the Solo Slam
+    is a table's to withdraw: the numeric steps are capped per mode by
+    :func:`ladder_top`, not removed, and the plain Slam is available
+    everywhere.
+
+    Args:
+        rules: The table ruleset.
+
+    Returns:
+        :attr:`ContractBid.VALID_VALUES` in order, minus
+        :attr:`SlamLevel.SOLO_SLAM` when ``rules.solo_slam_available``
+        is off. Order is preserved so
+        :meth:`contrai_core.Auction.legal_actions` keeps its monotonic
+        probe over the numeric ladder.
+    """
+
+    if rules.solo_slam_available:
+        return tuple(ContractBid.VALID_VALUES)
+    return tuple(
+        value for value in ContractBid.VALID_VALUES
+        if value is not SlamLevel.SOLO_SLAM
+    )
+
+
 def ladder_top(contract_suit: ContractSuit, rules: RuleConfig) -> int:
     """The highest numeric bid legal under ``contract_suit`` (§5.2).
 

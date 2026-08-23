@@ -24,6 +24,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) `rounding` — marks are written exact, to the nearest 10, or to the nearest 5; halves round up. Contract success stays exact.
 - (engine) `win_on_belote_points_alone` — switched off, the Belote of the crossing round does not carry a team past the target.
 - (core) `Position.next_in(direction)` — the seat's successor either way round the table; `next` stays the anticlockwise shorthand.
+- (core) `bookable_values(rules)` and `Auction` gate the Slam family on `solo_slam_available`, `slam_can_be_doubled` and `solo_slam_can_be_doubled`. See [core docs](docs/core/index.md).
 
 ### Changed
 

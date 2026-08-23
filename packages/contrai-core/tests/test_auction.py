@@ -1370,3 +1370,98 @@ class TestTrumpChoiceGate:
     def test_an_ungated_bid_raises_through_apply(self, north):
         with pytest.raises(IllegalBidError):
             Auction().apply(ContractBid(north, 80, TrumpVariant.NO_TRUMP))
+
+
+# ---------------------------------------------------------------------------
+# §9.4 — the table's bidding switches
+# ---------------------------------------------------------------------------
+
+
+class TestSoloSlamAvailability:
+    """§9.4 — a table may take the Solo Slam off the ladder entirely."""
+
+    def test_solo_slam_is_enumerated_by_default(self, four_players, north):
+        auction = Auction.empty()
+        actions = auction.legal_actions(north)
+        assert any(
+            isinstance(b, ContractBid) and b.value is SlamLevel.SOLO_SLAM
+            for b in actions
+        )
+
+    def test_solo_slam_is_absent_when_unavailable(self, four_players, north):
+        auction = Auction.empty(rules=RuleConfig(solo_slam_available=False))
+        actions = auction.legal_actions(north)
+        assert not any(
+            isinstance(b, ContractBid) and b.value is SlamLevel.SOLO_SLAM
+            for b in actions
+        )
+        # The plain Slam is unaffected: the two are independent rows.
+        assert any(
+            isinstance(b, ContractBid) and b.value is SlamLevel.SLAM
+            for b in actions
+        )
+
+    def test_an_unavailable_solo_slam_is_rejected_by_is_legal(
+        self, four_players, north
+    ):
+        auction = Auction.empty(rules=RuleConfig(solo_slam_available=False))
+        bid = ContractBid(north, SlamLevel.SOLO_SLAM, Suit.SPADES)
+        assert auction.is_legal(bid) is False
+        with pytest.raises(IllegalBidError):
+            auction.apply(bid)
+
+
+class TestSlamDoublingSwitches:
+    """§9.4 / §5.3 — two independent switches, both on by default."""
+
+    def _slam_auction(self, bidder, level, rules):
+        """``bidder`` bids ``level``; the auction is handed to an opponent."""
+        return Auction.empty(rules=rules).apply(
+            ContractBid(bidder, level, Suit.SPADES)
+        )
+
+    def test_a_slam_can_be_doubled_by_default(self, four_players, north, east):
+        auction = self._slam_auction(north, SlamLevel.SLAM, RuleConfig())
+        assert auction.is_legal(DoubleBid(east)) is True
+
+    def test_a_slam_cannot_be_doubled_when_the_switch_is_off(
+        self, four_players, north, east
+    ):
+        rules = RuleConfig(slam_can_be_doubled=False)
+        auction = self._slam_auction(north, SlamLevel.SLAM, rules)
+        assert auction.is_legal(DoubleBid(east)) is False
+        assert not any(
+            isinstance(b, DoubleBid) for b in auction.legal_actions(east)
+        )
+
+    def test_the_solo_slam_switch_does_not_touch_the_slam(
+        self, four_players, north, east
+    ):
+        rules = RuleConfig(solo_slam_can_be_doubled=False)
+        auction = self._slam_auction(north, SlamLevel.SLAM, rules)
+        assert auction.is_legal(DoubleBid(east)) is True
+
+    def test_a_solo_slam_cannot_be_doubled_when_the_switch_is_off(
+        self, four_players, north, east
+    ):
+        rules = RuleConfig(solo_slam_can_be_doubled=False)
+        auction = self._slam_auction(north, SlamLevel.SOLO_SLAM, rules)
+        assert auction.is_legal(DoubleBid(east)) is False
+
+    def test_a_numeric_contract_is_never_gated_by_the_slam_switches(
+        self, four_players, north, east
+    ):
+        rules = RuleConfig(slam_can_be_doubled=False, solo_slam_can_be_doubled=False)
+        auction = Auction.empty(rules=rules).apply(
+            ContractBid(north, 100, Suit.SPADES)
+        )
+        assert auction.is_legal(DoubleBid(east)) is True
+
+    def test_forbidding_the_double_forbids_the_redouble_with_it(
+        self, four_players, north, east
+    ):
+        # A redouble stands only on a live double, so removing the double
+        # removes the redouble by construction — no second switch needed.
+        rules = RuleConfig(slam_can_be_doubled=False)
+        auction = self._slam_auction(north, SlamLevel.SLAM, rules)
+        assert auction.is_legal(RedoubleBid(north)) is False
