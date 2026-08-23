@@ -23,6 +23,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) `belote_counts_toward_contract` and `belote_lost_when_contract_fails` decide whether a belote makes the contract and who keeps it.
 - (engine) `rounding` — marks are written exact, to the nearest 10, or to the nearest 5; halves round up. Contract success stays exact.
 - (engine) `win_on_belote_points_alone` — switched off, the Belote of the crossing round does not carry a team past the target.
+- (core) `Position.next_in(direction)` — the seat's successor either way round the table; `next` stays the anticlockwise shorthand.
 
 ### Changed
 

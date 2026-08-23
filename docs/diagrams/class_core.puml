@@ -273,6 +273,7 @@ package "position.py / team_side.py" as p_position {
         + team_side : TeamSide              <<property>>
         + french_name : str                 <<property>>
         --
+        + next_in(direction: TurnDirection) : Position
         + is_teammate(other: Position) : bool
         + {static} from_french(name: str) : Position
         + __str__() : str
@@ -287,6 +288,12 @@ package "position.py / team_side.py" as p_position {
       ""opponents"" / ""team~_side"" all derive from
       that one ordering instead of each
       re-encoding seat arithmetic.
+      Turn direction is //threaded//, not baked in:
+      ""next~_in(direction)"" walks the same ordering
+      backwards for a clockwise table, and ""next"" is
+      its anticlockwise shorthand. ""partner"" /
+      ""opponents"" / ""team~_side"" need no direction —
+      the partner is across the table either way.
       ""is~_teammate"" is the //same side?//
       boolean, expressed on top of ""team~_side"";
       ""team~_side"" is the //which side?// value.
