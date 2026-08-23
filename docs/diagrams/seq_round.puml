@@ -48,13 +48,13 @@ activate G
 == Setup — start_new_round() ==
 
 G -> G : current_contract = None
-G -> G : next_dealer()\n(random first time, else rotate +1)
+G -> G : next_dealer()\n(random first time, else the next seat\nin the table's turn direction)
 alt round_number == 0
     G -> D : shuffle()
 else subsequent rounds
     G -> D : cut()
 end
-G -> G : set_players_order()\n(starts after dealer, anticlockwise)
+G -> G : set_players_order()\n(starts after dealer, in the\ntable's turn direction)
 G -> G : round_number += 1
 G -> R : new Round(players_order, dealer,\n            deck, round_number)
 activate R

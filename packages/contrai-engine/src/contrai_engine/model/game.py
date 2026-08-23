@@ -379,23 +379,34 @@ class Game:
         credit = self.last_round_belote.get(side, 0)
         return self.scores[side] - credit >= target_score
 
-    def next_dealer(self):
+    def next_dealer(self) -> None:
+        """Pass the deal to the next seat along, in the table's direction.
+
+        The first round's dealer is drawn at random; every later round
+        hands the deal to the dealer's successor under
+        ``rules.turn_direction`` — to the dealer's right when play runs
+        anticlockwise (contree-domain.md §2, §4).
         """
-        Sets the next dealer for the next round (player to the left of current dealer, anticlockwise).
-        """
+
         if self.dealer is None:
             self.dealer = random.choice(self.players)
         else:
-            idx = self.players.index(self.dealer)
-            self.dealer = self.players[(idx + 1) % 4]
+            successor = self.dealer.position.next_in(self.rules.turn_direction)
+            self.dealer = self.players_by_position[successor]
 
-    def set_players_order(self):
+    def set_players_order(self) -> None:
+        """Order the seats for this round, starting after the dealer.
+
+        The player after the dealer in the table's direction speaks first
+        and leads trick 1 (§5.1, §6); the dealer therefore acts last and
+        is dealt to last. Walking :meth:`~contrai_core.Position.next_in`
+        rather than indexing the canonical seating is what keeps the one
+        direction setting governing the deal, the auction and the lead
+        together.
         """
-        Sets the players order starting with the player after the dealer (anticlockwise order).
-        """
-        # Reset players order and start with next player after dealer (anticlockwise order)
-        dealer_idx = self.players.index(self.dealer)
+
         self.players_order = []
-        for i in range(4):
-            player_idx = (dealer_idx + 1 + i) % 4
-            self.players_order.append(self.players[player_idx])
+        seat = self.dealer.position
+        for _ in range(4):
+            seat = seat.next_in(self.rules.turn_direction)
+            self.players_order.append(self.players_by_position[seat])

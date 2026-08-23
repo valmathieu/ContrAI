@@ -26,6 +26,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (core) `Position.next_in(direction)` — the seat's successor either way round the table; `next` stays the anticlockwise shorthand.
 - (core) `bookable_values(rules)` and `Auction` gate the Slam family on `solo_slam_available`, `slam_can_be_doubled` and `solo_slam_can_be_doubled`. See [core docs](docs/core/index.md).
 - (core) `under_trump_exemption` — a void seat facing an unbeatable opponent cut may discard instead of under-trumping. See [core docs](docs/core/index.md).
+- (engine) `turn_direction` — dealer rotation, bidding order and the opening lead all run clockwise when the table asks. See [engine docs](docs/engine/index.md).
 
 ### Changed
 

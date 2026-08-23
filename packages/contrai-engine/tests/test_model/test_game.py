@@ -8,6 +8,7 @@ and the ``manage_round`` lifecycle driven through a ``Round`` double
 """
 
 import logging
+import random
 
 import pytest
 from contrai_engine.debug_state import round_result_lines
@@ -23,7 +24,7 @@ from contrai_core.card import Card
 from contrai_core.contract import Contract
 from contrai_core.hand import Hand
 from contrai_core.position import Position
-from contrai_core.rule_config import RuleConfig
+from contrai_core.rule_config import RuleConfig, TurnDirection
 from contrai_core.types import Suit
 
 class DummyPlayer:
@@ -902,3 +903,99 @@ def test_manage_round_completed_logs_round_result_against_a_genuine_round(
     assert result_messages[0] == "\n".join(
         round_result_lines(game.current_round, game.scores)
     )
+
+
+# ---------------------------------------------------------------------------
+# §9.1 — turn direction
+# ---------------------------------------------------------------------------
+
+
+class TestTurnDirection:
+    """§9.1 — one setting governs dealer rotation and the playing order."""
+
+    def _game(self, players, direction):
+        return Game(
+            players,  # type: ignore[arg-type]
+            rules=RuleConfig(turn_direction=direction),
+        )
+
+    def test_dealer_rotates_anticlockwise_by_default(self, players):
+        game = self._game(players, TurnDirection.ANTICLOCKWISE)
+        game.dealer = game.players_by_position[Position.NORTH]
+        game.next_dealer()
+        assert game.dealer.position is Position.WEST
+
+    def test_dealer_rotates_clockwise_when_the_table_asks(self, players):
+        game = self._game(players, TurnDirection.CLOCKWISE)
+        game.dealer = game.players_by_position[Position.NORTH]
+        game.next_dealer()
+        assert game.dealer.position is Position.EAST
+
+    def test_dealer_rotation_visits_every_seat_once_per_lap(self, players):
+        for direction in TurnDirection:
+            game = self._game(players, direction)
+            game.dealer = game.players_by_position[Position.NORTH]
+            seen = []
+            for _ in range(4):
+                game.next_dealer()
+                seen.append(game.dealer.position)
+            assert len(set(seen)) == 4
+            assert seen[-1] is Position.NORTH
+
+    def test_playing_order_starts_after_the_dealer_anticlockwise(self, players):
+        game = self._game(players, TurnDirection.ANTICLOCKWISE)
+        game.dealer = game.players_by_position[Position.NORTH]
+        game.set_players_order()
+        assert [p.position for p in game.players_order] == [
+            Position.WEST, Position.SOUTH, Position.EAST, Position.NORTH
+        ]
+
+    def test_playing_order_starts_after_the_dealer_clockwise(self, players):
+        game = self._game(players, TurnDirection.CLOCKWISE)
+        game.dealer = game.players_by_position[Position.NORTH]
+        game.set_players_order()
+        assert [p.position for p in game.players_order] == [
+            Position.EAST, Position.SOUTH, Position.WEST, Position.NORTH
+        ]
+
+    def test_the_dealer_speaks_last_either_way(self, players):
+        for direction in TurnDirection:
+            game = self._game(players, direction)
+            game.dealer = game.players_by_position[Position.SOUTH]
+            game.set_players_order()
+            assert game.players_order[-1] is game.dealer
+            assert len({p.position for p in game.players_order}) == 4
+
+    def test_partners_still_alternate_in_a_clockwise_order(self, players):
+        # Seats alternate sides around the table whichever way play runs,
+        # so index 0 and index 2 of the playing order are always partners —
+        # which is what ``PlayState``'s +1 stepping relies on.
+        game = self._game(players, TurnDirection.CLOCKWISE)
+        game.dealer = game.players_by_position[Position.NORTH]
+        game.set_players_order()
+        order = [p.position for p in game.players_order]
+        assert order[0].is_teammate(order[2])
+        assert not order[0].is_teammate(order[1])
+
+
+class TestClockwiseRoundPlaysOut:
+    """A clockwise table runs a full round with no rule broken."""
+
+    def test_a_clockwise_game_plays_a_round_end_to_end(self):
+        random.seed(4242)
+        game = Game(
+            [AiPlayer(seat.value, position=seat) for seat in Position],
+            rules=RuleConfig(turn_direction=TurnDirection.CLOCKWISE),
+        )
+        game.manage_round()
+        if game.current_contract is not None:
+            state = game.current_round.play_state
+            assert state.is_terminal()
+            assert sum(state.card_points_by_side.values()) == 152
+            # Every trick was played in the table's own direction: each
+            # seat's successor within a trick is its clockwise neighbour.
+            seats = [p.position for p in state.players]
+            for index, seat in enumerate(seats):
+                assert seats[(index + 1) % 4] is seat.next_in(
+                    TurnDirection.CLOCKWISE
+                )
