@@ -10,7 +10,8 @@ contrée follow / trump obligations:
        highest already played; otherwise any trump.
     3. When you cannot follow suit and your partner is *not* currently
        master of the trick, you must trump (and over-trump opponents if
-       able).
+       able) — unless the table's under-trump exemption (on by default)
+       lets you discard because nothing in hand beats the opponent's cut.
     4. Partner-master exemption: if your partner is currently winning the
        trick, you may discard freely.
     5. Otherwise discard.
@@ -34,6 +35,7 @@ from contrai_core import (
     PlayRuleViolation,
     PlayState,
     Rank,
+    RuleConfig,
     Suit,
     TrumpVariant,
 )
@@ -47,6 +49,7 @@ def _make_state(
     contract: Contract | None,
     plays: list[tuple[str, Card]],
     order: tuple[str, ...] = ("N", "E", "S", "W"),
+    rules: RuleConfig | None = None,
 ) -> PlayState:
     """Build a :class:`PlayState` wired to the supplied trick state.
 
@@ -60,6 +63,8 @@ def _make_state(
             current trick.
         order: the seating rotation as seat letters; ``order[0]`` leads
             trick 0. Defaults to N/E/S/W.
+        rules: the table ruleset; ``None`` means the §9 defaults, i.e.
+            the under-trump exemption on.
 
     Returns:
         A :class:`PlayState` whose ``plays`` and per-seat ``hands`` reflect
@@ -74,6 +79,7 @@ def _make_state(
         players=seating,
         hands=hand_tuples,
         plays=play_tuples,
+        rules=rules if rules is not None else RuleConfig(),
     )
 
 
@@ -162,6 +168,19 @@ class TestOverTrumpWhenTrumpIsLed:
         )
         legal = state.legal_actions(players["S"])
         assert set(legal) == set(hand)
+
+    def test_the_under_trump_exemption_is_inert_at_no_trump(self, players):
+        """At no trump nothing is trump, so nobody can cut and the switch
+        changes nothing either way (§6.4)."""
+        contract = _contract(players["N"], 100, TrumpVariant.NO_TRUMP)
+        hand = [Card(Suit.DIAMONDS, Rank.ACE), Card(Suit.CLUBS, Rank.SEVEN)]
+        plays = [("N", Card(Suit.HEARTS, Rank.SEVEN)),
+                 ("E", Card(Suit.HEARTS, Rank.ACE))]
+        on = _make_state(players, {"S": hand}, contract, plays)
+        off = _make_state(players, {"S": hand}, contract, plays,
+                          rules=RuleConfig(under_trump_exemption=False))
+        assert set(on.legal_actions(players["S"])) == set(hand)
+        assert on.legal_actions(players["S"]) == off.legal_actions(players["S"])
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +310,19 @@ class TestAllTrumpLegality:
         )
         assert set(state.legal_actions(players["S"])) == set(hand)
 
+    def test_the_under_trump_exemption_is_inert_at_all_trump(self, players):
+        """At all trump a void seat already discards freely, so the switch
+        changes nothing either way (§6.4)."""
+        contract = _contract(players["N"], 100, TrumpVariant.ALL_TRUMP)
+        hand = [Card(Suit.DIAMONDS, Rank.ACE), Card(Suit.CLUBS, Rank.SEVEN)]
+        plays = [("N", Card(Suit.HEARTS, Rank.SEVEN)),
+                 ("E", Card(Suit.HEARTS, Rank.ACE))]
+        on = _make_state(players, {"S": hand}, contract, plays)
+        off = _make_state(players, {"S": hand}, contract, plays,
+                          rules=RuleConfig(under_trump_exemption=False))
+        assert set(on.legal_actions(players["S"])) == set(hand)
+        assert on.legal_actions(players["S"]) == off.legal_actions(players["S"])
+
 
 # ---------------------------------------------------------------------------
 # Sanity scenarios for non-trump-led tricks
@@ -356,13 +388,13 @@ class TestFollowSuitWhenNonTrumpLed:
         legal = state.legal_actions(players["S"])
         assert set(legal) == {Card(Suit.SPADES, Rank.JACK)}
 
-    def test_partner_led_then_partner_overtaken_must_trump(self, players):
-        """S has no hearts AND no trump higher than the opponent's
-        overtrump — must still play a trump (even a lower one). The
-        non-trump cards are now off-limits."""
+    def test_under_trump_exemption_lets_a_void_seat_discard(self, players):
+        """N (partner) led ♥A; E (opponent) cut with ♠J. S is void in hearts
+        and holds no trump above ♠J. With the exemption on — the §9 default
+        — S may discard instead of throwing a losing trump away."""
         contract = _contract(players["N"], 100, Suit.SPADES)
         hand = [
-            Card(Suit.SPADES, Rank.SEVEN),  # below opponent's ♠ J
+            Card(Suit.SPADES, Rank.SEVEN),  # below the opponent's ♠J
             Card(Suit.DIAMONDS, Rank.ACE),
         ]
         state = _make_state(
@@ -373,8 +405,65 @@ class TestFollowSuitWhenNonTrumpLed:
              ("E", Card(Suit.SPADES, Rank.JACK))],
         )
         legal = state.legal_actions(players["S"])
-        # Must trump even though we can't over-trump.
+        # "Discard freely" means the whole hand, the losing trump included.
+        assert set(legal) == set(hand)
+
+    def test_under_trump_is_compulsory_when_the_exemption_is_off(self, players):
+        """The same trick at a table that switched the exemption off: S must
+        still play a trump even though it cannot beat the ♠J."""
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        hand = [
+            Card(Suit.SPADES, Rank.SEVEN),
+            Card(Suit.DIAMONDS, Rank.ACE),
+        ]
+        state = _make_state(
+            players,
+            {"S": hand},
+            contract,
+            [("N", Card(Suit.HEARTS, Rank.ACE)),
+             ("E", Card(Suit.SPADES, Rank.JACK))],
+            rules=RuleConfig(under_trump_exemption=False),
+        )
+        legal = state.legal_actions(players["S"])
         assert set(legal) == {Card(Suit.SPADES, Rank.SEVEN)}
+
+    def test_the_exemption_does_not_lift_the_over_trump_obligation(self, players):
+        """Holding a trump that *beats* the cut, the seat must still play it —
+        the exemption covers only the losing under-trump (§6.2)."""
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        hand = [
+            Card(Suit.SPADES, Rank.JACK),   # beats the opponent's ♠7
+            Card(Suit.DIAMONDS, Rank.ACE),
+        ]
+        state = _make_state(
+            players,
+            {"S": hand},
+            contract,
+            [("N", Card(Suit.HEARTS, Rank.ACE)),
+             ("E", Card(Suit.SPADES, Rank.SEVEN))],
+        )
+        assert set(state.legal_actions(players["S"])) == {
+            Card(Suit.SPADES, Rank.JACK)
+        }
+
+    def test_the_exemption_is_inert_before_anyone_has_cut(self, players):
+        """No opponent trump on the table yet: the plain trump obligation
+        stands, exemption or not (§6.2, bullet 2)."""
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        hand = [
+            Card(Suit.SPADES, Rank.SEVEN),
+            Card(Suit.DIAMONDS, Rank.ACE),
+        ]
+        state = _make_state(
+            players,
+            {"S": hand},
+            contract,
+            [("E", Card(Suit.HEARTS, Rank.ACE))],
+            order=("E", "S", "W", "N"),
+        )
+        assert set(state.legal_actions(players["S"])) == {
+            Card(Suit.SPADES, Rank.SEVEN)
+        }
 
     def test_three_card_partial_opponent_master_forces_overtrump(self, players):
         """Three-card partial trick: N♥A, E♠7, S♠A. S is now master

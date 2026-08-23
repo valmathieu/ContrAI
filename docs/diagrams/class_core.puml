@@ -827,7 +827,12 @@ package "play.py" as p_play {
       primitive a future search-based AI would
       sample from; no search runs on it yet.
       Carries the table ""RuleConfig"" through
-      ""apply"" / ""with_hands""; nothing reads it yet.
+      ""apply"" / ""with~_hands"". ""legal~_actions"" reads
+      one knob off it: the //under-trump exemption//,
+      on by default — void in the led suit facing an
+      opponent's unbeatable cut, the seat may discard
+      instead of under-trumping. Inert at no trump and
+      at all trump, neither of which reaches that branch.
     end note
 
     note bottom of PlayObservation
