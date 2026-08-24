@@ -14,6 +14,7 @@ plain seat names.
 import pytest
 
 from contrai_core import Position, TeamSide
+from contrai_core.rule_config import TurnDirection
 
 
 # ---------------------------------------------------------------------------
@@ -270,3 +271,43 @@ class TestStringRendering:
         # f"{player.position} card play" in play.py — must render as the
         # plain seat name, e.g. "East card play".
         assert f"{Position.EAST} card play" == "East card play"
+
+
+# ---------------------------------------------------------------------------
+# Direction-aware successor
+# ---------------------------------------------------------------------------
+
+
+class TestDirectionAwareSuccessor:
+    """``next_in`` walks the table either way; ``next`` is the anticlockwise shorthand."""
+
+    def test_anticlockwise_is_the_definition_order(self):
+        assert Position.NORTH.next_in(TurnDirection.ANTICLOCKWISE) is Position.WEST
+        assert Position.WEST.next_in(TurnDirection.ANTICLOCKWISE) is Position.SOUTH
+        assert Position.SOUTH.next_in(TurnDirection.ANTICLOCKWISE) is Position.EAST
+        assert Position.EAST.next_in(TurnDirection.ANTICLOCKWISE) is Position.NORTH
+
+    def test_clockwise_walks_the_other_way(self):
+        assert Position.NORTH.next_in(TurnDirection.CLOCKWISE) is Position.EAST
+        assert Position.EAST.next_in(TurnDirection.CLOCKWISE) is Position.SOUTH
+        assert Position.SOUTH.next_in(TurnDirection.CLOCKWISE) is Position.WEST
+        assert Position.WEST.next_in(TurnDirection.CLOCKWISE) is Position.NORTH
+
+    def test_next_is_the_anticlockwise_shorthand(self):
+        for seat in Position:
+            assert seat.next is seat.next_in(TurnDirection.ANTICLOCKWISE)
+
+    def test_four_steps_return_to_the_start_either_way(self):
+        for direction in TurnDirection:
+            for seat in Position:
+                walked = seat
+                for _ in range(4):
+                    walked = walked.next_in(direction)
+                assert walked is seat
+
+    def test_two_steps_reach_the_partner_either_way(self):
+        # The partner is across the table, so it is direction-invariant:
+        # the same seat is two steps away whichever way you walk.
+        for direction in TurnDirection:
+            for seat in Position:
+                assert seat.next_in(direction).next_in(direction) is seat.partner

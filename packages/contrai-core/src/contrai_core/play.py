@@ -132,10 +132,12 @@ class PlayState:
         hands: Per-seat remaining cards, parallel to ``players``.
         plays: The flat chronological play history. Every four plays form
             one trick. Defaults to empty — a fresh play phase.
-        rules: The table ruleset this play phase runs under. Carried, not
-            yet consulted — no legality or scoring decision reads a knob
-            of it today. Part of value equality, so two states played
-            under different rulesets never compare equal.
+        rules: The table ruleset this play phase runs under.
+            :meth:`legal_actions` reads ``under_trump_exemption`` off it
+            to decide the under-trump obligation; the remaining knobs are
+            carried for the round scorer and the engine. Part of value
+            equality, so two states played under different rulesets never
+            compare equal.
     """
 
     contract: Contract
@@ -368,14 +370,22 @@ class PlayState:
         2. When trump is led, over-trump the best trump on the table if you
            hold a higher one; otherwise any card of the led (trump) suit.
         3. Void in the led suit with your partner not currently master: you
-           must trump, over-trumping an opponent's ruff if able.
+           must trump, over-trumping an opponent's ruff if able. The
+           table's *under-trump exemption* (``rules.under_trump_exemption``,
+           on by default per §9.5) lifts the obligation in exactly one
+           sub-case — an opponent has cut and nothing in hand beats it —
+           where the seat may discard freely instead of throwing a losing
+           trump away. Switched off, the under-trump is compulsory. The
+           over-trump obligation is never lifted (§6.2).
         4. Partner-master exemption: if your partner is currently winning,
            discard freely.
         5. Otherwise discard freely.
         6. At all trump every suit is trump, so obligations 1–2 and 5 are
            the whole rulebook: follow and raise in the led suit if able,
            discard freely when void — there is nothing to cut with
-           (contree-domain.md §6.4).
+           (contree-domain.md §6.4). The under-trump exemption is
+           therefore inert at all trump *and* at no trump: neither regime
+           can reach the branch it guards.
 
         The returned cards are the very objects held in ``player``'s hand
         tuple — filtered, never reconstructed — so callers matching cards by
@@ -447,6 +457,17 @@ class PlayState:
             )
             if higher_trumps:
                 return higher_trumps
+            # Table option — under-trump exemption (§6.2, §9.5), on by
+            # default. Void in the led suit, an opponent has cut, and
+            # nothing in hand beats it: the seat may discard freely
+            # rather than throw a losing trump away. "Freely" is the
+            # whole hand — playing the under-trump anyway stays legal.
+            # Switched off, the under-trump is compulsory. This branch is
+            # unreachable at no trump (nothing is trump, so nobody cut)
+            # and at all trump (a void seat already returned above), which
+            # is exactly the §6.4 inertness.
+            if self.rules.under_trump_exemption:
+                return tuple(hand)
             if trump_cards:
                 return trump_cards
             return tuple(hand)

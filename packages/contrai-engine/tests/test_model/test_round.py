@@ -27,7 +27,7 @@ import pytest
 
 from contrai_core import Hand, Position
 from contrai_core.auction import Auction
-from contrai_core.bid import ContractBid, DoubleBid, PassBid
+from contrai_core.bid import ContractBid, DoubleBid, PassBid, SlamLevel
 from contrai_core.card import Card
 from contrai_core.contract import Contract
 from contrai_core.deck import Deck
@@ -1065,3 +1065,58 @@ class TestTrickCompletedLogging:
             for record in caplog.records
         )
 
+
+
+class TestSoloSlamGivesTheLead:
+    """§6 / §9.5 — off by default; on, the declarer opens trick 1."""
+
+    def _round(self, players, contract_value, rules):
+        """A round dealt in N/E/S/W order whose contract belongs to E."""
+        order = [players[s] for s in ("N", "E", "S", "W")]
+        round_ = Round(
+            order, dealer=players["N"], deck=Deck(), round_number=1, rules=rules
+        )
+        round_.deal_cards()
+        round_.contract = _contract(players["E"], contract_value, Suit.SPADES)
+        return round_
+
+    def test_the_seat_after_the_dealer_leads_by_default(self, players):
+        round_ = self._round(players, SlamLevel.SOLO_SLAM, RuleConfig())
+        seating, _hands = round_._play_seating()
+        assert seating[0] is round_.players_order[0]
+
+    def test_the_declarer_leads_when_the_option_is_on(self, players):
+        rules = RuleConfig(solo_slam_gives_the_lead=True)
+        round_ = self._round(players, SlamLevel.SOLO_SLAM, rules)
+        seating, hands = round_._play_seating()
+        assert seating[0] is players["E"]
+        # A rotation, not a rebuild: the cyclic order is preserved, so
+        # play still runs in the table's direction.
+        assert list(seating) == [
+            players["E"], players["S"], players["W"], players["N"]
+        ]
+        # Hands stay parallel to seats.
+        assert hands[0] == tuple(players["E"].hand)
+
+    def test_a_plain_slam_does_not_take_the_lead(self, players):
+        rules = RuleConfig(solo_slam_gives_the_lead=True)
+        round_ = self._round(players, SlamLevel.SLAM, rules)
+        seating, _hands = round_._play_seating()
+        assert seating[0] is round_.players_order[0]
+
+    def test_a_numeric_contract_does_not_take_the_lead(self, players):
+        rules = RuleConfig(solo_slam_gives_the_lead=True)
+        round_ = self._round(players, 100, rules)
+        seating, _hands = round_._play_seating()
+        assert seating[0] is round_.players_order[0]
+
+    def test_play_all_tricks_seeds_the_state_on_the_declarer(self, players):
+        rules = RuleConfig(solo_slam_gives_the_lead=True)
+        round_ = self._round(players, SlamLevel.SOLO_SLAM, rules)
+        for player in round_.players_order:
+            player.choose_card = (
+                lambda observation: observation.legal_cards[0]
+            )
+        round_.play_all_tricks()
+        assert round_.play_state.is_terminal()
+        assert round_.play_state.plays[0].player is players["E"]

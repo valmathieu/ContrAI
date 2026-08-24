@@ -23,6 +23,13 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) `belote_counts_toward_contract` and `belote_lost_when_contract_fails` decide whether a belote makes the contract and who keeps it.
 - (engine) `rounding` — marks are written exact, to the nearest 10, or to the nearest 5; halves round up. Contract success stays exact.
 - (engine) `win_on_belote_points_alone` — switched off, the Belote of the crossing round does not carry a team past the target.
+- (core) `Position.next_in(direction)` — the seat's successor either way round the table; `next` stays the anticlockwise shorthand.
+- (core) `bookable_values(rules)` and `Auction` gate the Slam family on `solo_slam_available`, `slam_can_be_doubled` and `solo_slam_can_be_doubled`. See [core docs](docs/core/index.md).
+- (core) `under_trump_exemption` — a void seat facing an unbeatable opponent cut may discard instead of under-trumping. See [core docs](docs/core/index.md).
+- (engine) `turn_direction` — dealer rotation, bidding order and the opening lead all run clockwise when the table asks. See [engine docs](docs/engine/index.md).
+- (engine) `reshuffle_every_round` — the deck is shuffled before every deal instead of merely cut.
+- (engine) The landing picker offers all seven §9.1 targets and the chosen value lands on the ruleset the game is built under.
+- (engine) `solo_slam_gives_the_lead` — the Solo Slam declarer opens trick 1; play then continues in the normal order.
 
 ### Changed
 
@@ -32,6 +39,8 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) **BREAKING:** `Round.round_scores` / `contract_made` / `unannounced_slam` are read-only properties over the new `Round.round_score`. `scoring.unannounced_slam_substitute` is now `sweep_substitute`.
 - (engine) The round recap reads its breakdown off the scored round, so its Scoring rows are the two components and track the table ruleset. See [engine docs](docs/engine/index.md).
 - (engine) **BREAKING:** The attack must now out-score the defense to make its contract (§7.5 default); an exact tie fails it. Set `attack_must_outscore_defense = false` for the old behaviour.
+- (core) **BREAKING:** Under-trumping is no longer compulsory — §6.2's exemption is the §9 default. Set `under_trump_exemption = false` to restore it.
+- (engine) **BREAKING:** `Game.check_game_over()` takes no argument — it reads `rules.target_score`, whose default is now 2000, not 1500.
 
 ### Fixed
 

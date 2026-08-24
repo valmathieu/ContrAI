@@ -194,3 +194,14 @@ class TestLandingPromptText:
         plain = _landing_prompt_text(DEFAULT_TARGET).plain
         for value, _, _ in TARGET_OPTIONS:
             assert str(value) in plain
+
+
+def test_target_options_cover_the_catalogue():
+    """The radio offers core's own §9.1 ladder, and its default is the
+    ruleset's — not a view opinion."""
+    from contrai_core import TARGET_SCORES
+    from contrai_core.rule_config import RuleConfig
+    from contrai_engine.view.theme import DEFAULT_TARGET, TARGET_OPTIONS
+
+    assert tuple(value for value, _, _ in TARGET_OPTIONS) == TARGET_SCORES
+    assert DEFAULT_TARGET == RuleConfig().target_score == 2000

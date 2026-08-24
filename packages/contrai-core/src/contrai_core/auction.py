@@ -33,6 +33,7 @@ from .bid import (
     RedoubleBid,
     SlamLevel,
     bookable_suits,
+    bookable_values,
     ladder_top,
 )
 from .contract import Contract
@@ -140,8 +141,9 @@ class Auction:
         # that mode's ladder top, which is why the suit set narrows as the
         # value climbs. See ``TestLegalActionsMonotonicity``.
         suits = bookable_suits(self.rules)
+        values = bookable_values(self.rules)
         found_legal = False
-        for value in ContractBid.VALID_VALUES:
+        for value in values:
             if not found_legal:
                 if not self._is_contract_value_legal(value):
                     continue
@@ -364,6 +366,11 @@ class Auction:
         # SlamLevel out of an int comparison it has no ordering for.
         if bid.suit not in bookable_suits(self.rules):
             return False
+        # A table may withdraw the Solo Slam altogether (§9.4). Checked
+        # here, beside the trump-choice limit, because both are table
+        # rules no auction state can lift.
+        if bid.value not in bookable_values(self.rules):
+            return False
         if isinstance(bid.value, int) and bid.value > ladder_top(
             bid.suit, self.rules
         ):
@@ -414,6 +421,29 @@ class Auction:
             return True
         return value > last_contract_bid.value
 
+    def _slam_double_allowed(self, contract_bid: ContractBid) -> bool:
+        """Whether this table lets ``contract_bid`` be doubled (§5.3, §9.4).
+
+        *Slam can be doubled* and *Solo Slam can be doubled* are two
+        independent switches, both on by default; turning one off
+        forbids the double — and with it the redouble, which only ever
+        stands on a live double — against that contract alone. A numeric
+        contract is never gated.
+
+        Args:
+            contract_bid: The contract bid a double would stand against.
+
+        Returns:
+            ``True`` unless the contract is a Slam-family bid whose
+            switch is off.
+        """
+
+        if contract_bid.value is SlamLevel.SLAM:
+            return self.rules.slam_can_be_doubled
+        if contract_bid.value is SlamLevel.SOLO_SLAM:
+            return self.rules.solo_slam_can_be_doubled
+        return True
+
     def _is_double_legal(self, bid: DoubleBid) -> bool:
         """A :class:`DoubleBid` requires a live :class:`ContractBid`
         by the opposing team and no prior :class:`DoubleBid` /
@@ -436,6 +466,8 @@ class Auction:
             elif isinstance(prev, (DoubleBid, RedoubleBid)):
                 return False
         if last_contract_bid is None:
+            return False
+        if not self._slam_double_allowed(last_contract_bid):
             return False
         if last_contract_bid.player.team is bid.player.team:
             return False

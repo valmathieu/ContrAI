@@ -595,11 +595,12 @@ class TestRulesField:
         assert after.rules is rules
         assert after.with_hands(after.hands).rules is rules
 
-    def test_rules_do_not_change_legality_yet(self, players):
-        # Step-1 contract: carried, not consulted.
+    def test_the_ruleset_now_reaches_legality(self, players):
+        # Step 4 wired ``under_trump_exemption``: two states differing only
+        # in the ruleset are no longer interchangeable oracles. The legal
+        # sets on a fresh deal still match (nobody is void yet); the shaped
+        # trick states in ``test_play_legality.py`` are where they diverge.
         contract, seating, hands, _ = _deal(players)
-        plain = PlayState.start(contract, seating, hands)
-        other = PlayState.start(contract, seating, hands,
-                                rules=RuleConfig(under_trump_exemption=False))
-        for p in seating:
-            assert plain.legal_actions(p) == other.legal_actions(p)
+        strict = RuleConfig(under_trump_exemption=False)
+        state = PlayState.start(contract, seating, hands, rules=strict)
+        assert state.rules.under_trump_exemption is False

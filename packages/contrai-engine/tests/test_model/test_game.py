@@ -8,6 +8,7 @@ and the ``manage_round`` lifecycle driven through a ``Round`` double
 """
 
 import logging
+import random
 
 import pytest
 from contrai_engine.debug_state import round_result_lines
@@ -23,7 +24,7 @@ from contrai_core.card import Card
 from contrai_core.contract import Contract
 from contrai_core.hand import Hand
 from contrai_core.position import Position
-from contrai_core.rule_config import RuleConfig
+from contrai_core.rule_config import RuleConfig, TurnDirection
 from contrai_core.types import Suit
 
 class DummyPlayer:
@@ -163,6 +164,13 @@ def game(players):
     Fixture that returns a Game instance with 4 players.
     """
     return Game(players) # type: ignore
+
+@pytest.fixture
+def game_to_1500(players):
+    """A game played to 1500 — the target the score tests below are written
+    against, now that the ruleset's own default is §9.1's 2000.
+    """
+    return Game(players, rules=RuleConfig(target_score=1500))  # type: ignore
 
 def test_game_initialization(game, players):
     """
@@ -393,33 +401,33 @@ def test_start_new_round_hands_the_ruleset_to_the_round(players, monkeypatch):
 
     assert game.current_round.rules is rules
 
-def test_check_game_over_not_finished(game):
+def test_check_game_over_not_finished(game_to_1500):
     """
     Test check_game_over when no team has reached target score.
     """
-    game.scores = {TeamSide.NS: 1200, TeamSide.EW: 800}
+    game_to_1500.scores = {TeamSide.NS: 1200, TeamSide.EW: 800}
 
-    result = game.check_game_over(target_score=1500)
+    result = game_to_1500.check_game_over()
 
     assert result.game_over is False
     assert result.winner is None
     assert result.tied_teams is None
     assert result.final_scores == {TeamSide.NS: 1200, TeamSide.EW: 800}
 
-def test_check_game_over_winner(game):
+def test_check_game_over_winner(game_to_1500):
     """
     Test check_game_over when a team has won.
     """
-    game.scores = {TeamSide.NS: 1600, TeamSide.EW: 1200}
+    game_to_1500.scores = {TeamSide.NS: 1600, TeamSide.EW: 1200}
 
-    result = game.check_game_over(target_score=1500)
+    result = game_to_1500.check_game_over()
 
     assert result.game_over is True
     assert result.winner == TeamSide.NS
     assert result.tied_teams is None
     assert result.final_scores == {TeamSide.NS: 1600, TeamSide.EW: 1200}
 
-def test_check_game_over_tie_continues_game(game):
+def test_check_game_over_tie_continues_game(game_to_1500):
     """
     Test that a tie at/above the target does not end the game.
 
@@ -427,9 +435,9 @@ def test_check_game_over_tie_continues_game(game):
     game continues with tiebreaker rounds until one team leads, so
     ``game_over`` stays False while ``tied_teams`` flags the state.
     """
-    game.scores = {TeamSide.NS: 1600, TeamSide.EW: 1600}
+    game_to_1500.scores = {TeamSide.NS: 1600, TeamSide.EW: 1600}
 
-    result = game.check_game_over(target_score=1500)
+    result = game_to_1500.check_game_over()
 
     assert result.game_over is False
     assert result.winner is None
@@ -437,48 +445,51 @@ def test_check_game_over_tie_continues_game(game):
     assert result.final_scores == {TeamSide.NS: 1600, TeamSide.EW: 1600}
 
 
-def test_check_game_over_tie_below_target_not_flagged(game):
+def test_check_game_over_tie_below_target_not_flagged(game_to_1500):
     """
     Test that a tie below the target is not reported as a tiebreaker.
 
     ``tied_teams`` only signals the sudden-death state — equal scores
     short of the target are just an unfinished game.
     """
-    game.scores = {TeamSide.NS: 1200, TeamSide.EW: 1200}
+    game_to_1500.scores = {TeamSide.NS: 1200, TeamSide.EW: 1200}
 
-    result = game.check_game_over(target_score=1500)
+    result = game_to_1500.check_game_over()
 
     assert result.game_over is False
     assert result.winner is None
     assert result.tied_teams is None
 
 
-def test_check_game_over_tie_resolved_by_next_round(game):
+def test_check_game_over_tie_resolved_by_next_round(game_to_1500):
     """
     Test that the game ends once a tiebreaker round breaks the tie.
 
     After sudden death, both teams sit above the target but one now
     leads — that team wins.
     """
-    game.scores = {TeamSide.NS: 1760, TeamSide.EW: 1600}
+    game_to_1500.scores = {TeamSide.NS: 1760, TeamSide.EW: 1600}
 
-    result = game.check_game_over(target_score=1500)
+    result = game_to_1500.check_game_over()
 
     assert result.game_over is True
     assert result.winner == TeamSide.NS
     assert result.tied_teams is None
 
 
-def test_check_game_over_default_target_score(game):
-    """
-    Test that check_game_over uses 1500 as the default target score.
-    """
-    game.scores = {TeamSide.NS: 1500, TeamSide.EW: 900}
+def test_check_game_over_reads_the_rulesets_target(players):
+    game = Game(players, rules=RuleConfig(target_score=1000))  # type: ignore
+    game.scores[TeamSide.NS] = 1000
+    assert game.check_game_over().game_over is True
 
-    result = game.check_game_over()
 
-    assert result.game_over is True
-    assert result.winner == TeamSide.NS
+def test_check_game_over_defaults_to_two_thousand(game):
+    # §9.1's default target, and no longer the view's 1500.
+    assert game.rules.target_score == 2000
+    game.scores[TeamSide.NS] = 1999
+    assert game.check_game_over().game_over is False
+    game.scores[TeamSide.NS] = 2000
+    assert game.check_game_over().game_over is True
 
 
 class TestWinOnBelotePointsAlone:
@@ -505,7 +516,7 @@ class TestWinOnBelotePointsAlone:
         game = self._game(players,
                           scores={TeamSide.NS: 2010, TeamSide.EW: 1200},
                           last_round_belote={TeamSide.NS: 20})
-        status = game.check_game_over(2000)
+        status = game.check_game_over()
         assert status.game_over is True
         assert status.winner is TeamSide.NS
 
@@ -514,7 +525,7 @@ class TestWinOnBelotePointsAlone:
                           rules=RuleConfig(win_on_belote_points_alone=False),
                           scores={TeamSide.NS: 2010, TeamSide.EW: 1200},
                           last_round_belote={TeamSide.NS: 20})
-        status = game.check_game_over(2000)
+        status = game.check_game_over()
         assert status.game_over is False
         assert status.winner is None
         assert status.tied_teams is None
@@ -525,7 +536,7 @@ class TestWinOnBelotePointsAlone:
                           rules=RuleConfig(win_on_belote_points_alone=False),
                           scores={TeamSide.NS: 2010, TeamSide.EW: 1200},
                           last_round_belote={TeamSide.NS: 0})
-        assert game.check_game_over(2000).game_over is True
+        assert game.check_game_over().game_over is True
 
     def test_off_earlier_rounds_belote_still_counts(self, players):
         # Only the crossing round's credit is discounted: a side 5 points
@@ -535,14 +546,14 @@ class TestWinOnBelotePointsAlone:
                           rules=RuleConfig(win_on_belote_points_alone=False),
                           scores={TeamSide.NS: 2005, TeamSide.EW: 1200},
                           last_round_belote={TeamSide.NS: 0})
-        assert game.check_game_over(2000).game_over is True
+        assert game.check_game_over().game_over is True
 
     def test_off_four_all_trump_belotes_are_discounted_together(self, players):
         game = self._game(players,
                           rules=RuleConfig(win_on_belote_points_alone=False),
                           scores={TeamSide.NS: 2050, TeamSide.EW: 1200},
                           last_round_belote={TeamSide.NS: 80})
-        assert game.check_game_over(2000).game_over is False
+        assert game.check_game_over().game_over is False
 
     def test_off_the_gate_only_looks_at_the_leader(self, players):
         # The trailing side's belote is irrelevant — it is not crossing.
@@ -551,7 +562,7 @@ class TestWinOnBelotePointsAlone:
                           scores={TeamSide.NS: 2010, TeamSide.EW: 1200},
                           last_round_belote={TeamSide.NS: 0,
                                              TeamSide.EW: 80})
-        assert game.check_game_over(2000).game_over is True
+        assert game.check_game_over().game_over is True
 
     def test_a_tie_at_the_target_is_still_sudden_death(self, players):
         game = self._game(players,
@@ -559,7 +570,7 @@ class TestWinOnBelotePointsAlone:
                           scores={TeamSide.NS: 2010, TeamSide.EW: 2010},
                           last_round_belote={TeamSide.NS: 20,
                                              TeamSide.EW: 20})
-        status = game.check_game_over(2000)
+        status = game.check_game_over()
         assert status.game_over is False
         assert status.tied_teams == [TeamSide.NS, TeamSide.EW]
 
@@ -568,7 +579,7 @@ class TestWinOnBelotePointsAlone:
         game = self._game(players,
                           rules=RuleConfig(win_on_belote_points_alone=False),
                           scores={TeamSide.NS: 0, TeamSide.EW: 0})
-        assert game.check_game_over(2000).game_over is False
+        assert game.check_game_over().game_over is False
 
     def test_a_fresh_game_starts_with_no_belote_credit(self, players):
         game = Game(players)  # type: ignore[arg-type]
@@ -665,6 +676,23 @@ def test_start_new_round_shuffles_first_round_then_cuts(game, monkeypatch):
 
     game.start_new_round()
     assert calls == ['shuffle', 'cut']
+
+
+def test_start_new_round_reshuffles_every_round_when_asked(players, monkeypatch):
+    """§9.3 — the table may shuffle before every deal instead of cutting."""
+    game = Game(
+        players,  # type: ignore[arg-type]
+        rules=RuleConfig(reshuffle_every_round=True),
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(game.deck, "shuffle", lambda: calls.append("shuffle"))
+    monkeypatch.setattr(game.deck, "cut", lambda: calls.append("cut"))
+    monkeypatch.setattr(game.deck, "deal", lambda players_order: None)
+
+    game.start_new_round()
+    game.start_new_round()
+
+    assert calls == ["shuffle", "shuffle"]
 
 
 def test_manage_round_completed(game, monkeypatch):
@@ -902,3 +930,99 @@ def test_manage_round_completed_logs_round_result_against_a_genuine_round(
     assert result_messages[0] == "\n".join(
         round_result_lines(game.current_round, game.scores)
     )
+
+
+# ---------------------------------------------------------------------------
+# §9.1 — turn direction
+# ---------------------------------------------------------------------------
+
+
+class TestTurnDirection:
+    """§9.1 — one setting governs dealer rotation and the playing order."""
+
+    def _game(self, players, direction):
+        return Game(
+            players,  # type: ignore[arg-type]
+            rules=RuleConfig(turn_direction=direction),
+        )
+
+    def test_dealer_rotates_anticlockwise_by_default(self, players):
+        game = self._game(players, TurnDirection.ANTICLOCKWISE)
+        game.dealer = game.players_by_position[Position.NORTH]
+        game.next_dealer()
+        assert game.dealer.position is Position.WEST
+
+    def test_dealer_rotates_clockwise_when_the_table_asks(self, players):
+        game = self._game(players, TurnDirection.CLOCKWISE)
+        game.dealer = game.players_by_position[Position.NORTH]
+        game.next_dealer()
+        assert game.dealer.position is Position.EAST
+
+    def test_dealer_rotation_visits_every_seat_once_per_lap(self, players):
+        for direction in TurnDirection:
+            game = self._game(players, direction)
+            game.dealer = game.players_by_position[Position.NORTH]
+            seen = []
+            for _ in range(4):
+                game.next_dealer()
+                seen.append(game.dealer.position)
+            assert len(set(seen)) == 4
+            assert seen[-1] is Position.NORTH
+
+    def test_playing_order_starts_after_the_dealer_anticlockwise(self, players):
+        game = self._game(players, TurnDirection.ANTICLOCKWISE)
+        game.dealer = game.players_by_position[Position.NORTH]
+        game.set_players_order()
+        assert [p.position for p in game.players_order] == [
+            Position.WEST, Position.SOUTH, Position.EAST, Position.NORTH
+        ]
+
+    def test_playing_order_starts_after_the_dealer_clockwise(self, players):
+        game = self._game(players, TurnDirection.CLOCKWISE)
+        game.dealer = game.players_by_position[Position.NORTH]
+        game.set_players_order()
+        assert [p.position for p in game.players_order] == [
+            Position.EAST, Position.SOUTH, Position.WEST, Position.NORTH
+        ]
+
+    def test_the_dealer_speaks_last_either_way(self, players):
+        for direction in TurnDirection:
+            game = self._game(players, direction)
+            game.dealer = game.players_by_position[Position.SOUTH]
+            game.set_players_order()
+            assert game.players_order[-1] is game.dealer
+            assert len({p.position for p in game.players_order}) == 4
+
+    def test_partners_still_alternate_in_a_clockwise_order(self, players):
+        # Seats alternate sides around the table whichever way play runs,
+        # so index 0 and index 2 of the playing order are always partners —
+        # which is what ``PlayState``'s +1 stepping relies on.
+        game = self._game(players, TurnDirection.CLOCKWISE)
+        game.dealer = game.players_by_position[Position.NORTH]
+        game.set_players_order()
+        order = [p.position for p in game.players_order]
+        assert order[0].is_teammate(order[2])
+        assert not order[0].is_teammate(order[1])
+
+
+class TestClockwiseRoundPlaysOut:
+    """A clockwise table runs a full round with no rule broken."""
+
+    def test_a_clockwise_game_plays_a_round_end_to_end(self):
+        random.seed(4242)
+        game = Game(
+            [AiPlayer(seat.value, position=seat) for seat in Position],
+            rules=RuleConfig(turn_direction=TurnDirection.CLOCKWISE),
+        )
+        game.manage_round()
+        if game.current_contract is not None:
+            state = game.current_round.play_state
+            assert state.is_terminal()
+            assert sum(state.card_points_by_side.values()) == 152
+            # Every trick was played in the table's own direction: each
+            # seat's successor within a trick is its clockwise neighbour.
+            seats = [p.position for p in state.players]
+            for index, seat in enumerate(seats):
+                assert seats[(index + 1) % 4] is seat.next_in(
+                    TurnDirection.CLOCKWISE
+                )

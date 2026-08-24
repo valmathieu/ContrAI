@@ -1,7 +1,7 @@
 """Design tokens and shared constants for the Rich terminal UI.
 
 Holds the color palette mapped from the handoff README's color table,
-plus the small lookup tables (target-score options, position/team
+plus the small lookup tables (the §9.1 target-score radio, position/team
 labels, bid keyword aliases, the valid contract-value set) that the
 formatting, parsing, and screen modules all consume. Pure data — no
 rendering or game logic lives here.
@@ -9,7 +9,15 @@ rendering or game logic lives here.
 
 from __future__ import annotations
 
-from contrai_core import ContractSuit, Position, Suit, TeamSide, TrumpVariant
+from contrai_core import (
+    TARGET_SCORES,
+    ContractSuit,
+    Position,
+    RuleConfig,
+    Suit,
+    TeamSide,
+    TrumpVariant,
+)
 from contrai_core.bid import ContractBid
 
 # ---------------------------------------------------------------------------
@@ -36,15 +44,22 @@ HINT = "rgb(61,61,64)"
 RULE = "rgb(42,42,42)"
 DOT = "rgb(58,58,58)"
 
-# Valid target scores shown on the landing radio.
+# Target-score radio rows. The values are core's own §9.1 ladder, so the
+# picker and ``RuleConfig``'s validation can never disagree about what is
+# selectable; the label and the estimate are presentation.
 TARGET_OPTIONS = [
     (500, "Quick game", "~10 min"),
     (1000, "Short game", "~20 min"),
     (1500, "Standard", "~30 min"),
     (2000, "Long game", "~45 min"),
     (3000, "Marathon", "~60 min"),
+    (4000, "Endurance", "~80 min"),
+    (5000, "Ultra", "~100 min"),
 ]
-DEFAULT_TARGET = 1500
+assert tuple(v for v, _, _ in TARGET_OPTIONS) == TARGET_SCORES
+
+# The §9 catalogue default, not a view opinion.
+DEFAULT_TARGET = RuleConfig().target_score
 
 # Position label mapping: seat -> single-letter UI label.
 POSITION_SHORT: dict[Position, str] = {

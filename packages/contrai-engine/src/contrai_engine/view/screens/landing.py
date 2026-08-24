@@ -83,7 +83,7 @@ def _landing_suit_ribbon() -> Text:
 
 
 def _panel_game_setup(selected: int) -> Panel:
-    """Five radio rows for target score, highlight the selected one."""
+    """One radio row per §9.1 target score, highlighting the selected one."""
     rows = Text()
     rows.append("Target score", style=f"bold {FG}")
     rows.append(" ", style=FG)
@@ -181,10 +181,16 @@ def _panel_players(autoplay: bool = False) -> Panel:
 
 
 def _landing_prompt_text(selected: int) -> Text:
-    """Prompt line asking for the target score, naming the default."""
+    """Prompt line asking for the target score, naming the default.
+
+    The offered values are read off :data:`TARGET_OPTIONS` rather than
+    spelled out, so the prompt and the radio above it can never disagree
+    about what the table accepts.
+    """
     t = Text()
+    offered = " / ".join(str(value) for value, _, _ in TARGET_OPTIONS)
     t.append(
-        "Target score? [500 / 1000 / 1500 / 2000 / 3000] (default ",
+        f"Target score? [{offered}] (default ",
         style=FG,
     )
     t.append(str(selected), style=f"bold {GOLD}")
