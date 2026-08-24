@@ -107,7 +107,15 @@ end
 == Trick-taking — 8 tricks ==
 
 G -> R : play_all_tricks(view)
-R -> R : play_state = PlayState.start(\n  contract, players_order,\n  tuple(tuple(player.hand) for player in players_order))
+R -> R : seating, hands = ~_play~_seating()
+note right of R
+  Normally players~_order as dealt. Under
+  solo~_slam~_gives~_the~_lead a Solo Slam
+  declarer is **rotated** to the front, which
+  moves only the first lead: direction, later
+  leads and dealer rotation are untouched.
+end note
+R -> R : play_state = PlayState.start(\n  contract, seating, hands)
 note right of R
   Validated seeding (contrai-core): exactly
   4 seats, 8 distinct cards each — the very

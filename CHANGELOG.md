@@ -29,6 +29,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) `turn_direction` — dealer rotation, bidding order and the opening lead all run clockwise when the table asks. See [engine docs](docs/engine/index.md).
 - (engine) `reshuffle_every_round` — the deck is shuffled before every deal instead of merely cut.
 - (engine) The landing picker offers all seven §9.1 targets and the chosen value lands on the ruleset the game is built under.
+- (engine) `solo_slam_gives_the_lead` — the Solo Slam declarer opens trick 1; play then continues in the normal order.
 
 ### Changed
 

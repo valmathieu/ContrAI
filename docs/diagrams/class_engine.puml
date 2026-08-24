@@ -300,6 +300,7 @@ package "model/round/ package" as p_round {
         - _is_belote_event(player, card) : bool
         - _transition_belote_state(player, suit) : str?
         - _scoring_belotes() : tuple<(Player, Suit)>
+        - _play_seating() : tuple<tuple<Player>, tuple<tuple<Card>>>
         - _sync_hands() : None
         - _trick_after_play() : Sequence<Play>
     }

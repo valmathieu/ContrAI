@@ -22,6 +22,7 @@ from .scoring import RoundScore, UnannouncedSlam, score_round
 
 if TYPE_CHECKING:
     from ..player import Player
+    from contrai_core.card import Card
     from contrai_core.team import Team
     from contrai_core.deck import Deck
 
@@ -401,6 +402,42 @@ class Round:
             player.hand.clear()
             player.hand.extend(self.play_state.hand_of(player))
 
+    def _play_seating(
+        self,
+    ) -> tuple[tuple[Player, ...], tuple[tuple[Card, ...], ...]]:
+        """The seating and hands to seed this round's play state with.
+
+        Normally the round's own :attr:`players_order` — the seat after
+        the dealer leads trick 1 whichever team took the contract (§6).
+        Under the table option *the Solo Slam gives the lead* the
+        declarer of a Solo Slam opens instead, which is applied by
+        **rotating** the order onto them rather than rebuilding it: the
+        play state steps forward through the tuple it is handed, so a
+        rotation moves the lead and leaves everything else alone —
+        play still runs in the table's direction, later tricks are still
+        led by their winners, and the next dealer is still the seat after
+        this one.
+
+        Returns:
+            The seats in play order and their hands, parallel tuples
+            ready for :meth:`~contrai_core.PlayState.start`.
+        """
+
+        seating = list(self.players_order)
+        if (
+            self.rules.solo_slam_gives_the_lead
+            and self.contract is not None
+            and self.contract.is_solo_slam()
+        ):
+            declarer = self.contract.player
+            if declarer in seating:
+                pivot = seating.index(declarer)
+                seating = seating[pivot:] + seating[:pivot]
+        return (
+            tuple(seating),
+            tuple(tuple(player.hand) for player in seating),
+        )
+
     def _trick_after_play(self) -> Sequence[Play]:
         """The trick on the table, read **after** a card has been applied.
 
@@ -443,10 +480,11 @@ class Round:
         # mirroring the Auction idiom — since a directly injected mid-round
         # hand need not hold the full 8 cards.
         if self.play_state is None:
+            seating, hands = self._play_seating()
             self.play_state = PlayState(
                 self.contract,
-                tuple(self.players_order),
-                tuple(tuple(player.hand) for player in self.players_order),
+                seating,
+                hands,
                 rules=self.rules,
             )
 
@@ -561,10 +599,11 @@ class Round:
         # validated start (4 seats, 8 distinct cards each). The very Card
         # objects held in the players' hands flow into it, so the view can
         # keep matching playable cards by identity.
+        seating, hands = self._play_seating()
         self.play_state = PlayState.start(
             self.contract,
-            tuple(self.players_order),
-            tuple(tuple(player.hand) for player in self.players_order),
+            seating,
+            hands,
             rules=self.rules,
         )
 
