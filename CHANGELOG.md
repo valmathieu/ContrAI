@@ -28,6 +28,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (core) `under_trump_exemption` — a void seat facing an unbeatable opponent cut may discard instead of under-trumping. See [core docs](docs/core/index.md).
 - (engine) `turn_direction` — dealer rotation, bidding order and the opening lead all run clockwise when the table asks. See [engine docs](docs/engine/index.md).
 - (engine) `reshuffle_every_round` — the deck is shuffled before every deal instead of merely cut.
+- (engine) The landing picker offers all seven §9.1 targets and the chosen value lands on the ruleset the game is built under.
 
 ### Changed
 
@@ -38,6 +39,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) The round recap reads its breakdown off the scored round, so its Scoring rows are the two components and track the table ruleset. See [engine docs](docs/engine/index.md).
 - (engine) **BREAKING:** The attack must now out-score the defense to make its contract (§7.5 default); an exact tie fails it. Set `attack_must_outscore_defense = false` for the old behaviour.
 - (core) **BREAKING:** Under-trumping is no longer compulsory — §6.2's exemption is the §9 default. Set `under_trump_exemption = false` to restore it.
+- (engine) **BREAKING:** `Game.check_game_over()` takes no argument — it reads `rules.target_score`, whose default is now 2000, not 1500.
 
 ### Fixed
 

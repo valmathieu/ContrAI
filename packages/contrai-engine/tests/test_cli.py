@@ -17,6 +17,7 @@ Rich rendering or blocking input. The real wiring — that a genuine
 
 from __future__ import annotations
 
+import dataclasses
 import random
 import sys
 
@@ -355,8 +356,13 @@ class _FakeGame:
         self._tied_after = set(tied_after)
         self._raises = raises
 
-    def check_game_over(self, target_score: int) -> GameOverStatus:
-        self.targets_checked.append(target_score)
+    rules: RuleConfig = RuleConfig()
+    """The ruleset ``cli`` folds the landing pick onto; ``_make_game``
+    replaces it with whatever the real call was handed, mirroring the real
+    ``Game``, which owns its target from construction on."""
+
+    def check_game_over(self) -> GameOverStatus:
+        self.targets_checked.append(self.rules.target_score)
         over = self.rounds_played >= self.rounds_to_play
         # A tie at/above the target *is* sudden death, so the real
         # ``Game`` never reports it alongside ``game_over``. Mirror that
@@ -445,7 +451,10 @@ def install_cli_doubles(monkeypatch):
         ) -> _FakeGame:
             harness.build_calls.append(autoplay)
             harness.rules_seen.append(rules)
-            return queue.pop(0)
+            game = queue.pop(0)
+            if rules is not None:
+                game.rules = rules
+            return game
 
         monkeypatch.setattr(sys, "argv", list(argv))
         monkeypatch.setattr("contrai_engine.cli.RichView", _make_view)
@@ -510,9 +519,9 @@ class TestMain:
 
         main()
 
-        # First call passes nothing (the screen's own default stands);
-        # the second pre-selects whatever the first call returned.
-        assert harness.view.landing_received == [_UNSET, 1000]
+        # First call seeds from the resolved ruleset's target; the second
+        # pre-selects whatever the first call returned.
+        assert harness.view.landing_received == [RuleConfig().target_score, 1000]
         assert [target for _, target in harness.view.attached] == [1000, 2000]
 
     def test_attach_receives_the_target_show_landing_returned(
@@ -530,8 +539,30 @@ class TestMain:
         main()
 
         assert harness.view.attached == [(game, 3000)]
-        # ...and the same target reaches every ``check_game_over`` call.
+        # ...and it is the model's own number, not a value the loop carries
+        # alongside the game: every ``check_game_over`` reads it off
+        # ``game.rules``.
+        assert game.rules.target_score == 3000
         assert set(game.targets_checked) == {3000}
+
+    def test_the_landing_pick_lands_on_the_ruleset(self, install_cli_doubles):
+        """The target chosen on the landing screen replaces the ruleset's,
+        so the model — not the view — owns the number from then on."""
+
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            landing_targets=[3000],
+            end_game_choices=["q"],
+        )
+
+        main()
+
+        # Every other knob survives the replace untouched.
+        assert harness.rules_seen[0] == dataclasses.replace(
+            RuleConfig(), target_score=3000
+        )
+        # ...and the view was attached against the model's own number.
+        assert harness.view.attached[0][1] == 3000
 
     def test_recap_flags_are_derived_from_check_game_over(
         self, install_cli_doubles

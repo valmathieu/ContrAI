@@ -165,6 +165,13 @@ def game(players):
     """
     return Game(players) # type: ignore
 
+@pytest.fixture
+def game_to_1500(players):
+    """A game played to 1500 — the target the score tests below are written
+    against, now that the ruleset's own default is §9.1's 2000.
+    """
+    return Game(players, rules=RuleConfig(target_score=1500))  # type: ignore
+
 def test_game_initialization(game, players):
     """
     Test that a game is correctly initialized with players, teams, and initial state.
@@ -394,33 +401,33 @@ def test_start_new_round_hands_the_ruleset_to_the_round(players, monkeypatch):
 
     assert game.current_round.rules is rules
 
-def test_check_game_over_not_finished(game):
+def test_check_game_over_not_finished(game_to_1500):
     """
     Test check_game_over when no team has reached target score.
     """
-    game.scores = {TeamSide.NS: 1200, TeamSide.EW: 800}
+    game_to_1500.scores = {TeamSide.NS: 1200, TeamSide.EW: 800}
 
-    result = game.check_game_over(target_score=1500)
+    result = game_to_1500.check_game_over()
 
     assert result.game_over is False
     assert result.winner is None
     assert result.tied_teams is None
     assert result.final_scores == {TeamSide.NS: 1200, TeamSide.EW: 800}
 
-def test_check_game_over_winner(game):
+def test_check_game_over_winner(game_to_1500):
     """
     Test check_game_over when a team has won.
     """
-    game.scores = {TeamSide.NS: 1600, TeamSide.EW: 1200}
+    game_to_1500.scores = {TeamSide.NS: 1600, TeamSide.EW: 1200}
 
-    result = game.check_game_over(target_score=1500)
+    result = game_to_1500.check_game_over()
 
     assert result.game_over is True
     assert result.winner == TeamSide.NS
     assert result.tied_teams is None
     assert result.final_scores == {TeamSide.NS: 1600, TeamSide.EW: 1200}
 
-def test_check_game_over_tie_continues_game(game):
+def test_check_game_over_tie_continues_game(game_to_1500):
     """
     Test that a tie at/above the target does not end the game.
 
@@ -428,9 +435,9 @@ def test_check_game_over_tie_continues_game(game):
     game continues with tiebreaker rounds until one team leads, so
     ``game_over`` stays False while ``tied_teams`` flags the state.
     """
-    game.scores = {TeamSide.NS: 1600, TeamSide.EW: 1600}
+    game_to_1500.scores = {TeamSide.NS: 1600, TeamSide.EW: 1600}
 
-    result = game.check_game_over(target_score=1500)
+    result = game_to_1500.check_game_over()
 
     assert result.game_over is False
     assert result.winner is None
@@ -438,48 +445,51 @@ def test_check_game_over_tie_continues_game(game):
     assert result.final_scores == {TeamSide.NS: 1600, TeamSide.EW: 1600}
 
 
-def test_check_game_over_tie_below_target_not_flagged(game):
+def test_check_game_over_tie_below_target_not_flagged(game_to_1500):
     """
     Test that a tie below the target is not reported as a tiebreaker.
 
     ``tied_teams`` only signals the sudden-death state — equal scores
     short of the target are just an unfinished game.
     """
-    game.scores = {TeamSide.NS: 1200, TeamSide.EW: 1200}
+    game_to_1500.scores = {TeamSide.NS: 1200, TeamSide.EW: 1200}
 
-    result = game.check_game_over(target_score=1500)
+    result = game_to_1500.check_game_over()
 
     assert result.game_over is False
     assert result.winner is None
     assert result.tied_teams is None
 
 
-def test_check_game_over_tie_resolved_by_next_round(game):
+def test_check_game_over_tie_resolved_by_next_round(game_to_1500):
     """
     Test that the game ends once a tiebreaker round breaks the tie.
 
     After sudden death, both teams sit above the target but one now
     leads — that team wins.
     """
-    game.scores = {TeamSide.NS: 1760, TeamSide.EW: 1600}
+    game_to_1500.scores = {TeamSide.NS: 1760, TeamSide.EW: 1600}
 
-    result = game.check_game_over(target_score=1500)
+    result = game_to_1500.check_game_over()
 
     assert result.game_over is True
     assert result.winner == TeamSide.NS
     assert result.tied_teams is None
 
 
-def test_check_game_over_default_target_score(game):
-    """
-    Test that check_game_over uses 1500 as the default target score.
-    """
-    game.scores = {TeamSide.NS: 1500, TeamSide.EW: 900}
+def test_check_game_over_reads_the_rulesets_target(players):
+    game = Game(players, rules=RuleConfig(target_score=1000))  # type: ignore
+    game.scores[TeamSide.NS] = 1000
+    assert game.check_game_over().game_over is True
 
-    result = game.check_game_over()
 
-    assert result.game_over is True
-    assert result.winner == TeamSide.NS
+def test_check_game_over_defaults_to_two_thousand(game):
+    # §9.1's default target, and no longer the view's 1500.
+    assert game.rules.target_score == 2000
+    game.scores[TeamSide.NS] = 1999
+    assert game.check_game_over().game_over is False
+    game.scores[TeamSide.NS] = 2000
+    assert game.check_game_over().game_over is True
 
 
 class TestWinOnBelotePointsAlone:
@@ -506,7 +516,7 @@ class TestWinOnBelotePointsAlone:
         game = self._game(players,
                           scores={TeamSide.NS: 2010, TeamSide.EW: 1200},
                           last_round_belote={TeamSide.NS: 20})
-        status = game.check_game_over(2000)
+        status = game.check_game_over()
         assert status.game_over is True
         assert status.winner is TeamSide.NS
 
@@ -515,7 +525,7 @@ class TestWinOnBelotePointsAlone:
                           rules=RuleConfig(win_on_belote_points_alone=False),
                           scores={TeamSide.NS: 2010, TeamSide.EW: 1200},
                           last_round_belote={TeamSide.NS: 20})
-        status = game.check_game_over(2000)
+        status = game.check_game_over()
         assert status.game_over is False
         assert status.winner is None
         assert status.tied_teams is None
@@ -526,7 +536,7 @@ class TestWinOnBelotePointsAlone:
                           rules=RuleConfig(win_on_belote_points_alone=False),
                           scores={TeamSide.NS: 2010, TeamSide.EW: 1200},
                           last_round_belote={TeamSide.NS: 0})
-        assert game.check_game_over(2000).game_over is True
+        assert game.check_game_over().game_over is True
 
     def test_off_earlier_rounds_belote_still_counts(self, players):
         # Only the crossing round's credit is discounted: a side 5 points
@@ -536,14 +546,14 @@ class TestWinOnBelotePointsAlone:
                           rules=RuleConfig(win_on_belote_points_alone=False),
                           scores={TeamSide.NS: 2005, TeamSide.EW: 1200},
                           last_round_belote={TeamSide.NS: 0})
-        assert game.check_game_over(2000).game_over is True
+        assert game.check_game_over().game_over is True
 
     def test_off_four_all_trump_belotes_are_discounted_together(self, players):
         game = self._game(players,
                           rules=RuleConfig(win_on_belote_points_alone=False),
                           scores={TeamSide.NS: 2050, TeamSide.EW: 1200},
                           last_round_belote={TeamSide.NS: 80})
-        assert game.check_game_over(2000).game_over is False
+        assert game.check_game_over().game_over is False
 
     def test_off_the_gate_only_looks_at_the_leader(self, players):
         # The trailing side's belote is irrelevant — it is not crossing.
@@ -552,7 +562,7 @@ class TestWinOnBelotePointsAlone:
                           scores={TeamSide.NS: 2010, TeamSide.EW: 1200},
                           last_round_belote={TeamSide.NS: 0,
                                              TeamSide.EW: 80})
-        assert game.check_game_over(2000).game_over is True
+        assert game.check_game_over().game_over is True
 
     def test_a_tie_at_the_target_is_still_sudden_death(self, players):
         game = self._game(players,
@@ -560,7 +570,7 @@ class TestWinOnBelotePointsAlone:
                           scores={TeamSide.NS: 2010, TeamSide.EW: 2010},
                           last_round_belote={TeamSide.NS: 20,
                                              TeamSide.EW: 20})
-        status = game.check_game_over(2000)
+        status = game.check_game_over()
         assert status.game_over is False
         assert status.tied_teams == [TeamSide.NS, TeamSide.EW]
 
@@ -569,7 +579,7 @@ class TestWinOnBelotePointsAlone:
         game = self._game(players,
                           rules=RuleConfig(win_on_belote_points_alone=False),
                           scores={TeamSide.NS: 0, TeamSide.EW: 0})
-        assert game.check_game_over(2000).game_over is False
+        assert game.check_game_over().game_over is False
 
     def test_a_fresh_game_starts_with_no_belote_credit(self, players):
         game = Game(players)  # type: ignore[arg-type]

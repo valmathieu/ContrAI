@@ -16,6 +16,13 @@ The two mutually exclusive ruleset flags (``--rules FILE`` /
 :class:`~contrai_core.RuleConfig` the :class:`Game` is built under. A
 malformed, unreadable or impossible ruleset is reported as an
 ``argparse`` usage error rather than a traceback.
+
+The landing screen's target-score pick is folded onto that resolved
+ruleset with :func:`dataclasses.replace` before each :class:`Game` is
+built, so a run started under ``--rules`` opens on that file's target and
+the player can still change it. From then on the model owns the number —
+``Game.check_game_over()`` reads it off ``game.rules`` and the loop
+carries nothing alongside the game.
 """
 
 from __future__ import annotations
@@ -202,12 +209,16 @@ def main() -> None:
                 pass
 
     view = RichView(options=options)
-    target = view.show_landing()
+    target = view.show_landing(selected_target=rules.target_score)
     try:
         while True:
+            # The landing pick overrides whatever ``--rules`` / ``--preset``
+            # named: from here the model owns the target, so nothing else
+            # has to carry it alongside the game.
+            rules = dataclasses.replace(rules, target_score=target)
             game = _build_game(autoplay=options.autoplay, rules=rules)
-            view.attach(game, target_score=target)
-            while not game.check_game_over(target).game_over:
+            view.attach(game, target_score=game.rules.target_score)
+            while not game.check_game_over().game_over:
                 game.manage_round(view=view)
                 view.on_round_complete(game.current_round, game.scores)
                 # Show a between-round recap (contract, made/failed,
@@ -216,14 +227,14 @@ def main() -> None:
                 # final round's breakdown before the scoreboard takes
                 # over — the prompt adapts to the final-round and
                 # sudden-death (tie at/above target) cases.
-                status = game.check_game_over(target)
+                status = game.check_game_over()
                 view.show_round_recap(
                     game.current_round,
                     game.scores,
                     is_final=status.game_over,
                     is_tiebreaker=status.tied_teams is not None,
                 )
-            choice = view.show_end_game(game.check_game_over(target))
+            choice = view.show_end_game(game.check_game_over())
             if choice == "q":
                 break
             if choice == "n":

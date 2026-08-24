@@ -307,23 +307,25 @@ class Game:
                 ),
             )
 
-    def check_game_over(self, target_score: int = 1500) -> GameOverStatus:
-        """
-        Checks if a team strictly leads at the target score, ending the game.
+    def check_game_over(self) -> GameOverStatus:
+        """Check whether a team strictly leads at the table's target score.
+
+        The target is a table rule (§9.1), read off :attr:`rules` — there
+        is no way to ask this question against a different number, which
+        is what keeps the score panel, the recap and the game loop from
+        drifting apart.
 
         A tie at or above the target does not end the game: the teams are in
         sudden death and keep playing tiebreaker rounds until one of them
         leads. The tie is surfaced through ``tied_teams`` so callers (e.g.
         the view) can announce the tiebreaker.
 
-        Args:
-            target_score: Score required to win the game.
-
         Returns:
             GameOverStatus: Whether the game is over, the winner (always set
                 when over), any teams tied at/above the target, and a
                 snapshot of the final scores.
         """
+        target_score = self.rules.target_score
         max_score = max(self.scores.values())
 
         if max_score >= target_score:

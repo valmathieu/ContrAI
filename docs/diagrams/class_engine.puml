@@ -204,7 +204,7 @@ package "model/game.py" as p_game {
         + __init__(players: list<Player>, rules=None)
         + start_new_round() : None
         + manage_round(view=None) : None
-        + check_game_over(target_score=1500) : GameOverStatus
+        + check_game_over() : GameOverStatus
         + next_dealer() : None
         + set_players_order() : None
         --
@@ -246,7 +246,9 @@ package "model/game.py" as p_game {
 
     note bottom of GameOverStatus
       Frozen verdict returned by
-      ""Game.check_game_over(target)"".
+      ""Game.check_game_over()"", whose
+      target is read off ""Game.rules""
+      (§9.1) rather than passed in.
       Over only when one team strictly
       leads at/above the target —
       ""winner"" is then always set.
