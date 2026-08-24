@@ -193,8 +193,11 @@ class Game:
         self.current_contract = None
         self.next_dealer()
 
-        # Shuffle if it's the first round and cut deck otherwise
-        if self.round_number == 0:
+        # The collected pile is cut, not reshuffled, between rounds — the
+        # canonical rule (§4). The very first deal of a game has no pile
+        # to cut, so it always shuffles; a table running
+        # ``reshuffle_every_round`` shuffles before every deal instead.
+        if self.round_number == 0 or self.rules.reshuffle_every_round:
             self.deck.shuffle()
         else:
             self.deck.cut()

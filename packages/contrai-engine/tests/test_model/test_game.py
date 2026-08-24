@@ -668,6 +668,23 @@ def test_start_new_round_shuffles_first_round_then_cuts(game, monkeypatch):
     assert calls == ['shuffle', 'cut']
 
 
+def test_start_new_round_reshuffles_every_round_when_asked(players, monkeypatch):
+    """§9.3 — the table may shuffle before every deal instead of cutting."""
+    game = Game(
+        players,  # type: ignore[arg-type]
+        rules=RuleConfig(reshuffle_every_round=True),
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(game.deck, "shuffle", lambda: calls.append("shuffle"))
+    monkeypatch.setattr(game.deck, "cut", lambda: calls.append("cut"))
+    monkeypatch.setattr(game.deck, "deal", lambda players_order: None)
+
+    game.start_new_round()
+    game.start_new_round()
+
+    assert calls == ["shuffle", "shuffle"]
+
+
 def test_manage_round_completed(game, monkeypatch):
     """
     Test the happy path of manage_round: a contract is won, per-round scores are

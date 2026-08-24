@@ -49,7 +49,7 @@ activate G
 
 G -> G : current_contract = None
 G -> G : next_dealer()\n(random first time, else the next seat\nin the table's turn direction)
-alt round_number == 0
+alt first round or reshuffle~_every~_round
     G -> D : shuffle()
 else subsequent rounds
     G -> D : cut()
