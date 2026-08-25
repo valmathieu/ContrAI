@@ -62,18 +62,34 @@ if TYPE_CHECKING:
 
 
 def _panel_round(
-    round_: Optional[Round], phase: str, trick_index: int = 1
+    round_: Optional[Round],
+    phase: str,
+    trick_index: int = 1,
+    live_score: bool = True,
 ) -> Panel:
     """Top-right Round info panel: contract, trump, and phase status.
 
-    During bidding the third line names the dealer; during play it
-    shows the current trick index and both teams' running card points.
-    The border and title turn gold once a contract (trump) is active.
+    During bidding the third line names the dealer; during play it shows
+    the current trick index and, when ``live_score`` is on, both teams'
+    running card points. The border and title turn gold once a contract
+    (trump) is active.
 
     ``trick_index`` is the 1-based index of the trick on the table,
     resolved once per frame by
     :func:`~contrai_engine.view.state_helpers._trick_index` — the panel
     does not see the trick itself, so it cannot derive it.
+
+    Args:
+        round_: The round being played, or ``None`` before one exists.
+        phase: ``"bidding"``, or a play phase.
+        trick_index: The 1-based index of the trick on the table.
+        live_score: The §9.7 interface aid. When ``False`` the running
+            card points are withheld, so the table counts its own pile
+            the way it would away from a screen. Inert during bidding,
+            which has no pile to report yet.
+
+    Returns:
+        The Round info ``Panel``.
     """
     body = Text()
     contract = round_.contract if round_ else None
@@ -101,20 +117,24 @@ def _panel_round(
     else:
         body.append("Trick:    ", style=DIM)
         body.append(f"{trick_index} of 8\n", style=FG)
-        # Round running points (cards collected by each team so far).
-        ns_pts, ew_pts = _round_running_points(round_)
-        body.append("Round pts: ", style=DIM)
-        body.append(
-            f"{_team_abbr(TeamSide.NS)} ",
-            style=f"bold {_team_color(TeamSide.NS)}",
-        )
-        body.append(str(ns_pts), style="bold")
-        body.append("  ·  ", style=DIM)
-        body.append(
-            f"{_team_abbr(TeamSide.EW)} ",
-            style=f"bold {_team_color(TeamSide.EW)}",
-        )
-        body.append(str(ew_pts), style="bold")
+        if live_score:
+            # Round running points (cards collected by each team so far).
+            # §9.7 lists this as a table option: some tables would rather
+            # count the pile themselves, so this row is switchable while
+            # the trick counter above it is not.
+            ns_pts, ew_pts = _round_running_points(round_)
+            body.append("Round pts: ", style=DIM)
+            body.append(
+                f"{_team_abbr(TeamSide.NS)} ",
+                style=f"bold {_team_color(TeamSide.NS)}",
+            )
+            body.append(str(ns_pts), style="bold")
+            body.append("  ·  ", style=DIM)
+            body.append(
+                f"{_team_abbr(TeamSide.EW)} ",
+                style=f"bold {_team_color(TeamSide.EW)}",
+            )
+            body.append(str(ew_pts), style="bold")
 
     border_color = YELLOW if trump_active else BORDER
     title_color = YELLOW if trump_active else TITLE

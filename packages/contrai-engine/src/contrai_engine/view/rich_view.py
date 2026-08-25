@@ -37,7 +37,7 @@ from contrai_core import (
     TeamSide,
     rules_for,
 )
-from contrai_engine.options import DebugOptions
+from contrai_engine.options import DebugOptions, TableAids
 from contrai_engine.view.bidding_rules import _illegal_bid_reason
 from contrai_engine.view.formatting import (
     _format_card_compact,
@@ -155,7 +155,11 @@ class RichView:
 
     LOG_MAX = 5
 
-    def __init__(self, options: DebugOptions | None = None) -> None:
+    def __init__(
+        self,
+        options: DebugOptions | None = None,
+        aids: TableAids | None = None,
+    ) -> None:
         """Create an unattached view: fresh console, empty per-game state.
 
         Args:
@@ -165,8 +169,13 @@ class RichView:
                 runtime behavior exactly. No file/logging setup happens
                 here; that is the CLI's job, once, before the view is
                 constructed.
+            aids: The table's §9.7 interface aids, or ``None`` for the
+                catalogue's all-on defaults. Rebindable after
+                construction — the setup screen edits them and the CLI
+                re-points this attribute before the next deal.
         """
         self.options: DebugOptions = options or DebugOptions()
+        self.aids: TableAids = aids or TableAids()
         self.console: Console = Console()
         self.target_score: int = DEFAULT_TARGET
         self.history: list[RoundSummary] = []
@@ -662,7 +671,9 @@ class RichView:
             else {side: 0 for side in TeamSide}
         )
         top_left = _panel_game_score(scores, self.target_score)
-        top_right = _panel_round(round_, phase, trick_index)
+        top_right = _panel_round(
+            round_, phase, trick_index, live_score=self.aids.live_round_score
+        )
         self.console.print(_two_column(top_left, top_right, left_width=24))
         # Middle row: last trick + current trick
         mid_left = _panel_last_trick(

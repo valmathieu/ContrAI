@@ -135,6 +135,38 @@ class TestPanelRound:
         ).renderable.plain
         assert "3 of 8" in text
 
+    def test_playing_phase_shows_the_running_round_points(self, four_players):
+        """The live score is on by default — the §9.7 aid's default state."""
+        north, *_ = four_players
+        contract = _StubContract(100, Suit.HEARTS, player=north)
+        text = _panel_round(
+            _StubRound(contract=contract), phase="playing", trick_index=3
+        ).renderable.plain
+        assert "Round pts:" in text
+
+    def test_live_score_off_omits_the_round_points_row(self, four_players):
+        """Switched off, the aid hides the running pile — and nothing else."""
+        north, *_ = four_players
+        contract = _StubContract(100, Suit.HEARTS, player=north)
+        text = _panel_round(
+            _StubRound(contract=contract),
+            phase="playing",
+            trick_index=3,
+            live_score=False,
+        ).renderable.plain
+        assert "Round pts:" not in text
+        # The trick counter is not part of the aid: it stays either way.
+        assert "3 of 8" in text
+
+    def test_live_score_is_inert_during_bidding(self, four_players):
+        """Bidding has no running pile to hide, so the flag changes nothing."""
+        *_, west = four_players
+        on = _panel_round(_StubRound(dealer=west), phase="bidding").renderable.plain
+        off = _panel_round(
+            _StubRound(dealer=west), phase="bidding", live_score=False
+        ).renderable.plain
+        assert on == off
+
 
 class TestRenderDiamond:
     """Winner star, pending ?, led marker, dots, belote badge."""

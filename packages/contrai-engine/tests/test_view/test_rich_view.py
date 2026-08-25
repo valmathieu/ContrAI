@@ -29,7 +29,7 @@ from contrai_core import (
 )
 from contrai_core.bid import ContractBid, DoubleBid, PassBid
 from contrai_engine.model.game import GameOverStatus
-from contrai_engine.options import DebugOptions
+from contrai_engine.options import DebugOptions, TableAids
 from contrai_engine.view.rich_view import RichView
 from contrai_engine.view.screens.bidding import (
     _bidding_prompt_text,
@@ -1653,3 +1653,72 @@ class TestDebugStrip:
         combined = "\n".join(self._render_bidding_frame(view))
 
         assert "Debug — all hands" not in combined
+
+
+class TestLiveRoundScoreAid:
+    """``RichView`` carries the §9.7 interface aid and hands it to the frame.
+
+    The Round panel is printed inside a ``Table.grid``, which has no
+    ``.plain`` to read back, so the aid's journey is asserted by spying on
+    ``_panel_round`` itself — the seam the frame actually crosses.
+    """
+
+    class _StubRound:
+        round_number = 1
+        contract = None
+        dealer = None
+
+    class _StubGame:
+        def __init__(self):
+            self.players = []
+            self.current_round = TestLiveRoundScoreAid._StubRound()
+            self.scores = {TeamSide.NS: 0, TeamSide.EW: 0}
+
+    def _spy_on_panel_round(self, monkeypatch) -> dict:
+        from contrai_engine.view import rich_view
+
+        seen: dict = {}
+
+        def _spy(round_, phase, trick_index=1, live_score=True):
+            seen["live_score"] = live_score
+            return Text("")
+
+        monkeypatch.setattr(rich_view, "_panel_round", _spy)
+        return seen
+
+    def _render(self, view) -> None:
+        view.console.clear = lambda *a, **k: None
+        view.console.print = lambda *a, **k: None
+        view._render_in_game(
+            phase="playing", prompt_question=Text(""), mandatory=False
+        )
+
+    def test_default_view_leaves_the_aid_on(self, monkeypatch):
+        seen = self._spy_on_panel_round(monkeypatch)
+        view = RichView()
+        view.attach(self._StubGame(), target_score=1500)
+
+        self._render(view)
+
+        assert view.aids == TableAids()
+        assert seen["live_score"] is True
+
+    def test_aid_off_reaches_the_round_panel(self, monkeypatch):
+        seen = self._spy_on_panel_round(monkeypatch)
+        view = RichView(aids=TableAids(live_round_score=False))
+        view.attach(self._StubGame(), target_score=1500)
+
+        self._render(view)
+
+        assert seen["live_score"] is False
+
+    def test_aids_can_be_swapped_after_construction(self, monkeypatch):
+        """The CLI re-points ``view.aids`` when the setup screen edits it."""
+        seen = self._spy_on_panel_round(monkeypatch)
+        view = RichView()
+        view.attach(self._StubGame(), target_score=1500)
+        view.aids = TableAids(live_round_score=False)
+
+        self._render(view)
+
+        assert seen["live_score"] is False

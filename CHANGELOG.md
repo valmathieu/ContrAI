@@ -30,6 +30,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) `reshuffle_every_round` — the deck is shuffled before every deal instead of merely cut.
 - (engine) The landing picker offers all seven §9.1 targets and the chosen value lands on the ruleset the game is built under.
 - (engine) `solo_slam_gives_the_lead` — the Solo Slam declarer opens trick 1; play then continues in the normal order.
+- (engine) `contrai --no-live-score` hides the in-game `Round pts:` row — the running score is now a switchable table aid.
 
 ### Changed
 

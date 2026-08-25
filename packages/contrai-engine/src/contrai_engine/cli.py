@@ -38,7 +38,7 @@ from contrai_core.rule_config import PRESETS, RuleConfig
 from contrai_engine.log_setup import configure_logging
 from contrai_engine.model.game import Game
 from contrai_engine.model.player import AiPlayer, HumanPlayer
-from contrai_engine.options import DebugOptions
+from contrai_engine.options import DebugOptions, TableAids
 from contrai_engine.ruleset import resolve_rules
 from contrai_engine.view.rich_view import RichView
 
@@ -81,6 +81,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="run one full unattended game with an AI at every seat",
     )
+    parser.add_argument(
+        "--no-live-score",
+        action="store_true",
+        help="hide the running round points from the in-game Round panel",
+    )
     # A file and a named preset are two ways of saying the same thing, so
     # argparse refuses the pair itself — ``resolve_rules`` guards the same
     # case for non-CLI callers.
@@ -101,8 +106,11 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _parse_args(argv: list[str] | None = None) -> tuple[DebugOptions, RuleConfig]:
-    """Parse the CLI's flags into a :class:`DebugOptions` and a ``RuleConfig``.
+def _parse_args(
+    argv: list[str] | None = None,
+) -> tuple[DebugOptions, RuleConfig, TableAids]:
+    """Parse the CLI's flags into a :class:`DebugOptions`, a ``RuleConfig``
+    and a :class:`TableAids`.
 
     Args:
         argv: Argument strings to parse, excluding the program name.
@@ -110,10 +118,12 @@ def _parse_args(argv: list[str] | None = None) -> tuple[DebugOptions, RuleConfig
             ``argparse``'s own default.
 
     Returns:
-        The parsed flags and the resolved table ruleset. No seed
-        generation happens here — that is :func:`_apply_seed`'s job — so
-        ``seed`` is ``None`` unless ``--seed`` was passed explicitly, and
-        the ruleset is ``RuleConfig()`` unless a flag named another.
+        The parsed flags, the resolved table ruleset, and the table's
+        interface aids. No seed generation happens here — that is
+        :func:`_apply_seed`'s job — so ``seed`` is ``None`` unless
+        ``--seed`` was passed explicitly, the ruleset is ``RuleConfig()``
+        unless a flag named another, and the aids are ``TableAids()``
+        unless ``--no-live-score`` switched one off.
 
     Raises:
         SystemExit: If ``argv`` fails to parse (e.g. a non-integer
@@ -126,6 +136,7 @@ def _parse_args(argv: list[str] | None = None) -> tuple[DebugOptions, RuleConfig
     parser = _build_parser()
     args = parser.parse_args(argv)
     options = DebugOptions(debug=args.debug, autoplay=args.autoplay, seed=args.seed)
+    aids = TableAids(live_round_score=not args.no_live_score)
     try:
         rules = resolve_rules(preset=args.preset, rules_path=args.rules)
     except (ValueError, OSError) as exc:
@@ -133,7 +144,7 @@ def _parse_args(argv: list[str] | None = None) -> tuple[DebugOptions, RuleConfig
         # file. ``parser.error`` prints usage + the message to stderr and
         # exits 2 — the same shape as any other bad flag.
         parser.error(str(exc))
-    return options, rules
+    return options, rules, aids
 
 
 def _apply_seed(options: DebugOptions) -> DebugOptions:
@@ -192,7 +203,7 @@ def _build_game(autoplay: bool = False, rules: RuleConfig | None = None) -> Game
 
 def main() -> None:
     """Entry point registered as the ``contrai`` console script."""
-    options, rules = _parse_args()
+    options, rules, aids = _parse_args()
     options = _apply_seed(options)
     configure_logging(options)
 
@@ -208,7 +219,7 @@ def main() -> None:
             except Exception:
                 pass
 
-    view = RichView(options=options)
+    view = RichView(options=options, aids=aids)
     target = view.show_landing(selected_target=rules.target_score)
     try:
         while True:

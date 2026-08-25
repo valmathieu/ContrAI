@@ -29,7 +29,7 @@ from contrai_core.team_side import TeamSide
 from contrai_engine.cli import _apply_seed, _build_game, _parse_args, main
 from contrai_engine.model.game import GameOverStatus
 from contrai_engine.model.player import AiPlayer, HumanPlayer
-from contrai_engine.options import DebugOptions
+from contrai_engine.options import DebugOptions, TableAids
 from contrai_engine.view.theme import DEFAULT_TARGET
 
 @pytest.fixture(autouse=True)
@@ -57,23 +57,33 @@ class TestParseArgs:
     def test_no_flags_returns_all_off_defaults(self):
         """The back-compat anchor: an empty argv parses to the defaults."""
 
-        assert _parse_args([]) == (DebugOptions(), RuleConfig())
+        assert _parse_args([]) == (DebugOptions(), RuleConfig(), TableAids())
 
     def test_debug_flag_alone(self):
-        assert _parse_args(["--debug"]) == (DebugOptions(debug=True), RuleConfig())
+        assert _parse_args(["--debug"]) == (
+            DebugOptions(debug=True), RuleConfig(), TableAids(),
+        )
 
     def test_seed_flag_alone(self):
-        assert _parse_args(["--seed", "42"]) == (DebugOptions(seed=42), RuleConfig())
+        assert _parse_args(["--seed", "42"]) == (
+            DebugOptions(seed=42), RuleConfig(), TableAids(),
+        )
 
     def test_autoplay_flag_alone(self):
-        assert _parse_args(["--autoplay"]) == (DebugOptions(autoplay=True), RuleConfig())
+        assert _parse_args(["--autoplay"]) == (
+            DebugOptions(autoplay=True), RuleConfig(), TableAids(),
+        )
 
     def test_all_three_flags_combined(self):
         result = _parse_args(["--debug", "--seed", "7", "--autoplay"])
-        assert result == (DebugOptions(debug=True, autoplay=True, seed=7), RuleConfig())
+        assert result == (
+            DebugOptions(debug=True, autoplay=True, seed=7),
+            RuleConfig(),
+            TableAids(),
+        )
 
     def test_seed_value_is_coerced_to_int(self):
-        options, _ = _parse_args(["--seed", "123"])
+        options, _, _ = _parse_args(["--seed", "123"])
         assert options.seed == 123
         assert isinstance(options.seed, int)
 
@@ -84,7 +94,28 @@ class TestParseArgs:
             _parse_args(["--seed", "not-a-number"])
 
     def test_preset_classic_resolves_to_the_defaults(self):
-        assert _parse_args(["--preset", "classic"]) == (DebugOptions(), RuleConfig())
+        assert _parse_args(["--preset", "classic"]) == (
+            DebugOptions(), RuleConfig(), TableAids(),
+        )
+
+    def test_no_live_score_switches_the_aid_off(self):
+        """``--no-live-score`` is the §9.7 aid's only CLI surface."""
+
+        assert _parse_args(["--no-live-score"])[2] == TableAids(
+            live_round_score=False
+        )
+
+    def test_live_score_is_on_without_the_flag(self):
+        assert _parse_args([])[2].live_round_score is True
+
+    def test_no_live_score_is_independent_of_the_ruleset_flags(self):
+        """The aid is a view setting, so it composes with any ruleset."""
+
+        options, rules, aids = _parse_args(
+            ["--preset", "classic", "--no-live-score"]
+        )
+        assert (options, rules) == (DebugOptions(), RuleConfig())
+        assert aids == TableAids(live_round_score=False)
 
     def test_rules_file_is_loaded(self, tmp_path):
         path = tmp_path / "table.toml"
@@ -276,10 +307,12 @@ class _RecordingView:
         self,
         options: DebugOptions | None = None,
         *,
+        aids: TableAids | None = None,
         landing_targets: list[int] | None = None,
         end_game_choices: list[str] | None = None,
     ) -> None:
         self.options = options
+        self.aids = aids
         self.console = _RecordingConsole()
         # One ordered log covering view *and* game calls alike (the fake
         # game appends through the view it is handed), so the per-round
@@ -438,9 +471,13 @@ def install_cli_doubles(monkeypatch):
         harness = _Harness()
         queue = list(games)
 
-        def _make_view(options: DebugOptions | None = None) -> _RecordingView:
+        def _make_view(
+            options: DebugOptions | None = None,
+            aids: TableAids | None = None,
+        ) -> _RecordingView:
             harness.view = _RecordingView(
                 options,
+                aids=aids,
                 landing_targets=landing_targets,
                 end_game_choices=end_game_choices,
             )
@@ -684,6 +721,29 @@ class TestMain:
         main()
 
         assert harness.rules_seen == [PRESETS["classic"]]
+
+    def test_no_live_score_reaches_the_view(self, install_cli_doubles):
+        """The aid is constructed into the view, not carried by the model."""
+
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            end_game_choices=["q"],
+            argv=("contrai", "--no-live-score"),
+        )
+
+        main()
+
+        assert harness.view.aids == TableAids(live_round_score=False)
+
+    def test_default_run_leaves_the_aid_on(self, install_cli_doubles):
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            end_game_choices=["q"],
+        )
+
+        main()
+
+        assert harness.view.aids == TableAids()
 
     @pytest.mark.parametrize(
         "error", [KeyboardInterrupt(), EOFError()], ids=["ctrl-c", "ctrl-d"]
