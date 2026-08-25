@@ -17,7 +17,6 @@ Rich rendering or blocking input. The real wiring — that a genuine
 
 from __future__ import annotations
 
-import dataclasses
 import random
 import sys
 
@@ -31,7 +30,6 @@ from contrai_engine.model.game import GameOverStatus
 from contrai_engine.model.player import AiPlayer, HumanPlayer
 from contrai_engine.options import DebugOptions, TableAids
 from contrai_engine.ruleset import TableSetup
-from contrai_engine.view.theme import DEFAULT_TARGET
 
 @pytest.fixture(autouse=True)
 def _restore_random_state():
@@ -305,7 +303,7 @@ class _RecordingView:
         options: DebugOptions | None = None,
         *,
         aids: TableAids | None = None,
-        landing_targets: list[int] | None = None,
+        landing_setups: list[TableSetup] | None = None,
         end_game_choices: list[str] | None = None,
     ) -> None:
         self.options = options
@@ -320,13 +318,18 @@ class _RecordingView:
         self.round_completions: list[tuple[object, dict]] = []
         self.recaps: list[dict] = []
         self.end_game_statuses: list[GameOverStatus] = []
-        self._landing_targets = list(landing_targets or [DEFAULT_TARGET])
+        # ``None`` means "echo whatever you were handed" — the real
+        # screen's ``[Enter]``, i.e. deal the setup on display. A list
+        # scripts a player who edited something instead.
+        self._landing_setups = list(landing_setups) if landing_setups else None
         self._end_game_choices = list(end_game_choices or ["q"])
 
-    def show_landing(self, selected_target: object = _UNSET) -> int:
+    def show_landing(self, selected: object = _UNSET) -> TableSetup:
         self.events.append("show_landing")
-        self.landing_received.append(selected_target)
-        return self._landing_targets.pop(0)
+        self.landing_received.append(selected)
+        if self._landing_setups is None:
+            return selected if isinstance(selected, TableSetup) else TableSetup()
+        return self._landing_setups.pop(0)
 
     def attach(self, game: object, target_score: int) -> None:
         self.events.append("attach")
@@ -461,7 +464,7 @@ def install_cli_doubles(monkeypatch):
     def _install(
         *,
         games: list[_FakeGame],
-        landing_targets: list[int] | None = None,
+        landing_setups: list[TableSetup] | None = None,
         end_game_choices: list[str] | None = None,
         argv: tuple[str, ...] = ("contrai",),
     ) -> _Harness:
@@ -475,7 +478,7 @@ def install_cli_doubles(monkeypatch):
             harness.view = _RecordingView(
                 options,
                 aids=aids,
-                landing_targets=landing_targets,
+                landing_setups=landing_setups,
                 end_game_choices=end_game_choices,
             )
             return harness.view
@@ -524,11 +527,11 @@ class TestMain:
     def test_rematch_builds_a_second_game_without_a_new_landing(
         self, install_cli_doubles
     ):
-        """``"r"`` reuses the chosen target: fresh game, no second landing."""
+        """``"r"`` reuses the chosen setup: fresh game, no second landing."""
 
         harness = install_cli_doubles(
             games=[_FakeGame(rounds_to_play=1), _FakeGame(rounds_to_play=1)],
-            landing_targets=[1000],
+            landing_setups=[TableSetup(rules=RuleConfig(target_score=1000))],
             end_game_choices=["r", "q"],
         )
 
@@ -537,66 +540,69 @@ class TestMain:
         assert harness.build_calls == [False, False]
         assert harness.view.events.count("show_landing") == 1
         assert harness.view.events.count("attach") == 2
-        # Both games run to the same target — that is what "rematch" means.
+        # Both games run under the same setup — that is what "rematch" means.
         assert [target for _, target in harness.view.attached] == [1000, 1000]
 
-    def test_new_game_reruns_the_landing_with_the_current_target(
+    def test_new_game_reruns_the_landing_with_the_current_setup(
         self, install_cli_doubles
     ):
-        """``"n"`` re-shows the landing, pre-selecting the target in play."""
+        """``"n"`` re-shows the landing, opening on the setup in play."""
 
+        first = TableSetup(rules=RuleConfig(target_score=1000))
+        second = TableSetup(rules=RuleConfig(target_score=2000))
         harness = install_cli_doubles(
             games=[_FakeGame(rounds_to_play=1), _FakeGame(rounds_to_play=1)],
-            landing_targets=[1000, 2000],
+            landing_setups=[first, second],
             end_game_choices=["n", "q"],
         )
 
         main()
 
-        # First call seeds from the resolved ruleset's target; the second
-        # pre-selects whatever the first call returned.
-        assert harness.view.landing_received == [RuleConfig().target_score, 1000]
+        # First call opens on what the flags resolved to; the second opens
+        # on whatever the first call returned.
+        assert harness.view.landing_received == [TableSetup(), first]
         assert [target for _, target in harness.view.attached] == [1000, 2000]
 
-    def test_attach_receives_the_target_show_landing_returned(
+    def test_the_game_is_built_under_the_setup_the_landing_returned(
         self, install_cli_doubles
     ):
-        """The landing's return value is the target threaded into the view."""
+        """The screen's edit is what reaches the model — the whole point of
+        the setup screen, and the one thing no unit test above proves."""
 
         game = _FakeGame(rounds_to_play=1)
+        rules = RuleConfig(target_score=3000, extended_trump_choices=True)
         harness = install_cli_doubles(
             games=[game],
-            landing_targets=[3000],
+            landing_setups=[TableSetup(rules=rules, origin="custom")],
             end_game_choices=["q"],
         )
 
         main()
 
+        assert harness.rules_seen == [rules]
+        # ...and the target is the model's own number, not one the loop
+        # carries alongside the game: every ``check_game_over`` reads it
+        # off ``game.rules``.
         assert harness.view.attached == [(game, 3000)]
-        # ...and it is the model's own number, not a value the loop carries
-        # alongside the game: every ``check_game_over`` reads it off
-        # ``game.rules``.
-        assert game.rules.target_score == 3000
         assert set(game.targets_checked) == {3000}
 
-    def test_the_landing_pick_lands_on_the_ruleset(self, install_cli_doubles):
-        """The target chosen on the landing screen replaces the ruleset's,
-        so the model — not the view — owns the number from then on."""
+    def test_the_aid_the_landing_returned_is_repointed_on_the_view(
+        self, install_cli_doubles
+    ):
+        """The aids never reach the model, so the CLI hands them to the
+        view directly once the screen is done with them."""
 
         harness = install_cli_doubles(
             games=[_FakeGame(rounds_to_play=1)],
-            landing_targets=[3000],
+            landing_setups=[
+                TableSetup(aids=TableAids(live_round_score=False))
+            ],
             end_game_choices=["q"],
         )
 
         main()
 
-        # Every other knob survives the replace untouched.
-        assert harness.rules_seen[0] == dataclasses.replace(
-            RuleConfig(), target_score=3000
-        )
-        # ...and the view was attached against the model's own number.
-        assert harness.view.attached[0][1] == 3000
+        assert harness.view.aids == TableAids(live_round_score=False)
 
     def test_recap_flags_are_derived_from_check_game_over(
         self, install_cli_doubles

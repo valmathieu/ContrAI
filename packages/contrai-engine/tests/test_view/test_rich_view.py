@@ -21,15 +21,18 @@ from rich.text import Text
 from contrai_core import (
     Auction,
     Card,
+    PRESETS,
     Play,
     Position,
     Rank,
+    RuleConfig,
     Suit,
     TeamSide,
 )
 from contrai_core.bid import ContractBid, DoubleBid, PassBid
 from contrai_engine.model.game import GameOverStatus
 from contrai_engine.options import DebugOptions, TableAids
+from contrai_engine.ruleset import TableSetup
 from contrai_engine.view.rich_view import RichView
 from contrai_engine.view.screens.bidding import (
     _bidding_prompt_text,
@@ -1198,7 +1201,7 @@ class TestAutoplayCtrlCPropagation:
         view = RichView(options=DebugOptions(autoplay=True))
 
         with pytest.raises(KeyboardInterrupt):
-            view.show_landing(1500)
+            view.show_landing(TableSetup())
 
 
 class TestAiDelayDebugZeroing:
@@ -1387,9 +1390,21 @@ class TestShowRoundRecapAutoplay:
 
 class TestShowLandingAutoplay:
     """``show_landing`` under autoplay: renders once, pauses, returns the
-    default/passed target -- there is no human to type a choice."""
+    setup it was handed -- there is no human to type a choice."""
 
-    def test_autoplay_returns_passed_target_without_input(
+    def test_autoplay_returns_the_passed_setup_without_input(
+        self, monkeypatch, _forbid_console_input
+    ):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(autoplay=True))
+        view.console.input = _forbid_console_input
+        setup = TableSetup(rules=RuleConfig(target_score=3000), origin="house")
+
+        assert view.show_landing(setup) is setup
+
+    def test_autoplay_returns_the_defaults_when_not_passed(
         self, monkeypatch, _forbid_console_input
     ):
         from contrai_engine.view import rich_view
@@ -1398,19 +1413,7 @@ class TestShowLandingAutoplay:
         view = RichView(options=DebugOptions(autoplay=True))
         view.console.input = _forbid_console_input
 
-        assert view.show_landing(2000) == 2000
-
-    def test_autoplay_returns_default_target_when_not_passed(
-        self, monkeypatch, _forbid_console_input
-    ):
-        from contrai_engine.view import rich_view
-        from contrai_engine.view.theme import DEFAULT_TARGET
-
-        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
-        view = RichView(options=DebugOptions(autoplay=True))
-        view.console.input = _forbid_console_input
-
-        assert view.show_landing() == DEFAULT_TARGET
+        assert view.show_landing() == TableSetup()
 
     def test_autoplay_pauses_using_landing_env_delay(
         self, monkeypatch, _forbid_console_input
@@ -1424,7 +1427,7 @@ class TestShowLandingAutoplay:
         view = RichView(options=DebugOptions(autoplay=True))
         view.console.input = _forbid_console_input
 
-        view.show_landing(1500)
+        view.show_landing(TableSetup())
 
         assert sleep_calls == [0.04]
 
@@ -1438,37 +1441,189 @@ class TestShowLandingAutoplay:
         view.console.input = _forbid_console_input
         captured = _capture_prints(view)
 
-        view.show_landing(1500)
+        view.show_landing(TableSetup())
 
         assert any("(autoplay)" in t for t in captured)
 
 
-class TestShowLandingInteractive:
-    """Non-autoplay path — a regression net on the splash-print refactor.
+def _drive_landing(view, raws):
+    """Feed ``raws`` to ``view.console.input`` and silence the printing."""
+    inputs = iter(raws)
+    view.console.clear = lambda *a, **k: None
+    view.console.print = lambda *a, **k: None
+    view.console.input = lambda *a, **k: next(inputs)
+    return view
 
-    ``show_landing`` had no dedicated coverage before this change; these
-    tests lock its pre-existing (untouched) behavior now that the splash
-    print is shared with the new autoplay branch.
-    """
 
-    def test_blank_input_returns_selected_target(self):
-        view = RichView()
-        view.console.input = lambda *a, **k: ""
+class TestShowLandingDispatcher:
+    """The landing screen is the setup dispatcher: it routes keys to the
+    sub-screens and returns whichever setup the player leaves it with."""
 
-        assert view.show_landing(2000) == 2000
+    def test_blank_input_deals_the_setup_unchanged(self):
+        setup = TableSetup(rules=RuleConfig(target_score=1000), origin="house")
+        view = _drive_landing(RichView(), [""])
 
-    def test_valid_numeric_input_returns_that_target(self):
-        view = RichView()
-        view.console.input = lambda *a, **k: "1000"
+        assert view.show_landing(setup) is setup
 
-        assert view.show_landing(2000) == 1000
+    def test_no_argument_opens_on_the_catalogue_defaults(self):
+        view = _drive_landing(RichView(), [""])
 
-    def test_invalid_then_valid_input_reprompts(self):
-        view = RichView()
-        inputs = iter(["notanumber", "", "1500"])
-        view.console.input = lambda *a, **k: next(inputs)
+        assert view.show_landing() == TableSetup()
 
-        assert view.show_landing(2000) == 1500
+    def test_l_toggles_the_live_round_score(self):
+        view = _drive_landing(RichView(), ["l", ""])
+
+        result = view.show_landing(TableSetup())
+
+        assert result.aids == TableAids(live_round_score=False)
+        # The aid is not a rule: switching it must not touch the ruleset.
+        assert result.rules == RuleConfig()
+
+    def test_l_twice_returns_to_where_it_started(self):
+        view = _drive_landing(RichView(), ["l", "l", ""])
+
+        assert view.show_landing(TableSetup()).aids == TableAids()
+
+    def test_p_routes_to_the_preset_picker(self, monkeypatch):
+        picked = TableSetup(rules=RuleConfig(target_score=500), origin="picked")
+        view = _drive_landing(RichView(), ["p", ""])
+        monkeypatch.setattr(
+            RichView, "_show_preset_picker", lambda self, current: picked
+        )
+
+        assert view.show_landing(TableSetup()) is picked
+
+    def test_f_routes_to_the_file_loader(self, monkeypatch):
+        loaded = TableSetup(origin="house.toml")
+        view = _drive_landing(RichView(), ["f", ""])
+        monkeypatch.setattr(
+            RichView, "_show_file_loader", lambda self, current: loaded
+        )
+
+        assert view.show_landing(TableSetup()) is loaded
+
+    def test_a_sub_screen_is_handed_the_setup_in_play(self, monkeypatch):
+        """Each sub-screen edits the live setup, not a fresh one."""
+        seen = []
+        setup = TableSetup(rules=RuleConfig(target_score=1000))
+        view = _drive_landing(RichView(), ["p", ""])
+
+        def _record(self, current):
+            seen.append(current)
+            return current
+
+        monkeypatch.setattr(RichView, "_show_preset_picker", _record)
+        view.show_landing(setup)
+
+        assert seen == [setup]
+
+    def test_an_unknown_key_reprompts_without_changing_anything(self):
+        setup = TableSetup()
+        view = _drive_landing(RichView(), ["z", ""])
+
+        assert view.show_landing(setup) is setup
+
+    def test_keys_are_case_insensitive_and_have_long_forms(self):
+        view = _drive_landing(RichView(), ["LIVE", ""])
+
+        assert view.show_landing(TableSetup()).aids == TableAids(
+            live_round_score=False
+        )
+
+
+class TestShowPresetPicker:
+    """The preset picker: a numbered radio over ``PRESETS``."""
+
+    def test_blank_input_keeps_the_current_setup(self):
+        setup = TableSetup(origin="house.toml")
+        view = _drive_landing(RichView(), [""])
+
+        assert view._show_preset_picker(setup) is setup
+
+    def test_a_number_selects_that_row(self):
+        view = _drive_landing(RichView(), ["1"])
+
+        result = view._show_preset_picker(TableSetup(origin="house.toml"))
+
+        assert result.rules == PRESETS["classic"]
+        assert result.origin == "classic"
+
+    def test_a_name_selects_that_preset(self):
+        view = _drive_landing(RichView(), ["classic"])
+
+        assert view._show_preset_picker(TableSetup(origin="x")).origin == "classic"
+
+    def test_the_aids_ride_along_unchanged(self):
+        """A preset names 22 rules; the §9.7 aids are not among them."""
+        aids = TableAids(live_round_score=False)
+        view = _drive_landing(RichView(), ["1"])
+
+        assert view._show_preset_picker(TableSetup(aids=aids)).aids == aids
+
+    def test_an_unknown_pick_reprompts(self):
+        view = _drive_landing(RichView(), ["99", "nope", "classic"])
+
+        assert view._show_preset_picker(TableSetup(origin="x")).origin == "classic"
+
+
+class TestShowFileLoader:
+    """The file loader: a path typed at the prompt."""
+
+    def test_blank_input_cancels(self):
+        setup = TableSetup(origin="house.toml")
+        view = _drive_landing(RichView(), [""])
+
+        assert view._show_file_loader(setup) is setup
+
+    def test_a_valid_path_is_loaded(self, tmp_path):
+        path = tmp_path / "house.toml"
+        path.write_text(
+            "[general]\ntarget_score = 1000\n"
+            "[table_aids]\nlive_round_score = false\n",
+            encoding="utf-8",
+        )
+        view = _drive_landing(RichView(), [str(path)])
+
+        result = view._show_file_loader(TableSetup())
+
+        assert result.rules == RuleConfig(target_score=1000)
+        assert result.aids == TableAids(live_round_score=False)
+        assert result.origin == "house.toml"
+
+    def test_a_quoted_path_is_accepted(self, tmp_path):
+        """Terminals paste paths with quotes; the loader strips them."""
+        path = tmp_path / "house.toml"
+        path.write_text("[general]\ntarget_score = 500\n", encoding="utf-8")
+        view = _drive_landing(RichView(), [f'"{path}"'])
+
+        assert view._show_file_loader(TableSetup()).rules.target_score == 500
+
+    def test_a_missing_file_reprompts_rather_than_leaving(self, tmp_path):
+        """Mistyping a filename must not cost the setup already assembled."""
+        setup = TableSetup(rules=RuleConfig(target_score=3000))
+        view = _drive_landing(RichView(), [str(tmp_path / "nope.toml"), ""])
+
+        assert view._show_file_loader(setup) is setup
+
+    def test_a_malformed_file_reprompts(self, tmp_path):
+        path = tmp_path / "broken.toml"
+        path.write_text("[general\n", encoding="utf-8")
+        setup = TableSetup()
+        view = _drive_landing(RichView(), [str(path), ""])
+
+        assert view._show_file_loader(setup) is setup
+
+    def test_an_impossible_table_reprompts(self, tmp_path):
+        """Core's own validation is a rejection notice, not a crash."""
+        path = tmp_path / "impossible.toml"
+        path.write_text(
+            "[scoring]\nmark_made_points = false\nmark_announced_points = false\n",
+            encoding="utf-8",
+        )
+        setup = TableSetup()
+        view = _drive_landing(RichView(), [str(path), ""])
+
+        assert view._show_file_loader(setup) is setup
 
 
 class TestShowEndGameAutoplay:

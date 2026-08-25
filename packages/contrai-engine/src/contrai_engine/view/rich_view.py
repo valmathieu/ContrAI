@@ -15,9 +15,11 @@ by the end-game scoreboard are tracked here, not in ``Game``.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Sequence
 
 from contrai_core.bid import (
@@ -29,6 +31,7 @@ from contrai_core.bid import (
 )
 
 from contrai_core import (
+    PRESETS,
     Auction,
     BasePlayer,
     Card,
@@ -38,6 +41,7 @@ from contrai_core import (
     rules_for,
 )
 from contrai_engine.options import DebugOptions, TableAids
+from contrai_engine.ruleset import TableSetup, load_setup
 from contrai_engine.view.bidding_rules import _illegal_bid_reason
 from contrai_engine.view.formatting import (
     _format_card_compact,
@@ -70,12 +74,17 @@ from contrai_engine.view.screens.endgame import (
     _panel_round_summary,
 )
 from contrai_engine.view.screens.landing import (
-    _landing_prompt_text,
     _landing_subtitle,
     _landing_suit_ribbon,
     _landing_title,
-    _panel_game_setup,
     _panel_players,
+)
+from contrai_engine.view.screens.setup import (
+    _file_prompt_text,
+    _panel_preset_list,
+    _panel_table_setup,
+    _preset_prompt_text,
+    _setup_prompt_text,
 )
 from contrai_engine.view.screens.recap import (
     _contract_made,
@@ -514,7 +523,7 @@ class RichView:
     # CLI flow screens
     # ------------------------------------------------------------------
 
-    def _render_landing_splash(self, selected_target: int) -> None:
+    def _render_landing_splash(self, setup: TableSetup) -> None:
         """Print the landing screen's title, subtitle, and setup panels.
 
         Shared by both the interactive loop and the autoplay branch of
@@ -526,60 +535,149 @@ class RichView:
         self.console.print(_landing_subtitle())
         self.console.print(_landing_suit_ribbon())
         self.console.print()
-        self.console.print(_panel_game_setup(selected_target))
+        self.console.print(_panel_table_setup(setup))
         self.console.print(_panel_players(self.options.autoplay))
 
-    def show_landing(self, selected_target: int = DEFAULT_TARGET) -> int:
-        """Render the landing screen and return the chosen target score.
+    def _setup_input(self) -> str:
+        """Read one lowercased, stripped line from the setup prompts."""
+        return self.console.input(
+            Text("> ", style=f"bold {GREEN_FG}").markup
+        ).strip().lower()
+
+    def show_landing(self, selected: TableSetup | None = None) -> TableSetup:
+        """Render the landing screen and return the setup to deal under.
+
+        The dispatcher for the whole pre-game setup: ``[Enter]`` deals,
+        ``[p]`` opens the preset picker, ``[f]`` the file loader, and
+        ``[l]`` toggles the §9.7 live round score. Each sub-screen
+        returns a setup, which becomes the one this screen re-renders —
+        so the summary panel always describes the table that pressing
+        Enter would actually seat.
 
         Under autoplay the screen renders once, pauses briefly, and
-        returns ``selected_target`` unchanged — there is no human to
-        type a choice, so the default/passed target stands.
+        returns ``selected`` unchanged: there is no human to type a
+        choice, so the setup the CLI resolved stands.
+
+        Args:
+            selected: The setup to open on, or ``None`` for the §9
+                catalogue defaults.
+
+        Returns:
+            The setup the next game is built from.
         """
+        setup = selected if selected is not None else TableSetup()
         if self.options.autoplay:
-            self._render_landing_splash(selected_target)
+            self._render_landing_splash(setup)
             self.console.print(_panel_prompt(
-                _autoplay_pause_text(
-                    _landing_prompt_text(selected_target).plain
-                ),
+                _autoplay_pause_text(_setup_prompt_text(setup).plain),
                 mandatory=False,
             ))
             self._pause("CONTRAI_AUTOPLAY_LANDING_PAUSE", 1.2)
-            return selected_target
+            return setup
+        # As in ``request_bid_action``, a rejection rides inside the next
+        # frame's Prompt panel: the loop's ``console.clear()`` would push a
+        # standalone print up into scrollback where nobody would see it.
+        notice: Optional[Text] = None
         while True:
-            self._render_landing_splash(selected_target)
+            self._render_landing_splash(setup)
             self.console.print(_panel_prompt(
-                _landing_prompt_text(selected_target),
-                mandatory=False,
+                _setup_prompt_text(setup), mandatory=False, notice=notice
             ))
+            notice = None
+            raw = self._setup_input()
+            if not raw:
+                return setup
+            if raw in ("p", "preset"):
+                setup = self._show_preset_picker(setup)
+            elif raw in ("f", "file"):
+                setup = self._show_file_loader(setup)
+            elif raw in ("l", "live"):
+                # The aid is the one setting the model never sees, so it is
+                # flipped here rather than routed through ``cycle_knob``.
+                setup = dataclasses.replace(
+                    setup,
+                    aids=TableAids(
+                        live_round_score=not setup.aids.live_round_score
+                    ),
+                )
+            else:
+                notice = Text(
+                    "✗ [Enter] to deal, or [p] preset · [f] load file · "
+                    "[l] live score.",
+                    style=RED,
+                )
+
+    def _show_preset_picker(self, current: TableSetup) -> TableSetup:
+        """Offer the named rulesets; return the pick, or ``current``.
+
+        The interface aids ride along unchanged: a preset names the 22
+        table *rules*, and §9.7's aids are not among them.
+
+        Args:
+            current: The setup in play, whose ``origin`` fills the radio.
+
+        Returns:
+            The chosen setup, or ``current`` when the player pressed
+            Enter without picking.
+        """
+        offers = {
+            name: TableSetup(rules=rules, aids=current.aids, origin=name)
+            for name, rules in sorted(PRESETS.items())
+        }
+        names = list(offers)
+        notice: Optional[Text] = None
+        while True:
+            self.console.clear()
+            self.console.print(_panel_preset_list(names, current.origin))
+            self.console.print(_panel_prompt(
+                _preset_prompt_text(names), mandatory=False, notice=notice
+            ))
+            notice = None
+            raw = self._setup_input()
+            if not raw:
+                return current
+            if raw.isdigit() and 1 <= int(raw) <= len(names):
+                return offers[names[int(raw) - 1]]
+            if raw in offers:
+                return offers[raw]
+            notice = Text(
+                f"✗ Pick 1–{len(names)}, or one of: {', '.join(names)}.",
+                style=RED,
+            )
+
+    def _show_file_loader(self, current: TableSetup) -> TableSetup:
+        """Load a setup from a TOML path typed at the prompt.
+
+        A bad path or a malformed document re-prompts with the loader's
+        own message instead of leaving the screen — mistyping a filename
+        must not cost the setup already assembled.
+
+        Args:
+            current: The setup in play, shown above the prompt and
+                returned unchanged if the player cancels.
+
+        Returns:
+            The loaded setup, or ``current``.
+        """
+        notice: Optional[Text] = None
+        while True:
+            self.console.clear()
+            self.console.print(_panel_table_setup(current))
+            self.console.print(_panel_prompt(
+                _file_prompt_text(), mandatory=False, notice=notice
+            ))
+            notice = None
+            # Terminals paste paths with quotes around them; a path is also
+            # the one setup input that is case-sensitive, so it is read raw.
             raw = self.console.input(
                 Text("> ", style=f"bold {GREEN_FG}").markup
-            ).strip()
+            ).strip().strip('"')
             if not raw:
-                return selected_target
+                return current
             try:
-                target = int(raw)
-            except ValueError:
-                self.console.print(
-                    Text(
-                        f"  ✗ Pick one of "
-                        f"{', '.join(str(v) for v, _, _ in TARGET_OPTIONS)}.",
-                        style=RED,
-                    )
-                )
-                self.console.input(Text("  Press Enter…", style=DIM).markup)
-                continue
-            if target not in {v for v, _, _ in TARGET_OPTIONS}:
-                self.console.print(
-                    Text(
-                        f"  ✗ {target} is not on the list. Pick one of "
-                        f"{', '.join(str(v) for v, _, _ in TARGET_OPTIONS)}.",
-                        style=RED,
-                    )
-                )
-                self.console.input(Text("  Press Enter…", style=DIM).markup)
-                continue
-            return target
+                return load_setup(Path(raw))
+            except (OSError, ValueError) as exc:
+                notice = Text(f"✗ {exc}", style=RED)
 
     def _render_end_game_screen(self, status: GameOverStatus) -> None:
         """Print the end-game banner and round-by-round summary table.

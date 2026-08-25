@@ -6,14 +6,21 @@ stateDiagram-v2
 
     [*] --> Landing : uv run contrai
 
-    Landing : <b>0. Landing</b><br/>target-score picker<br/>(500 / 1000 / 1500 / 2000 / 3000 / 4000 / 5000)
+    Landing : <b>0. Landing / table setup</b><br/>show_landing(setup) -> TableSetup<br/>summary: ruleset origin (+N changes) · target<br/>trump choices · live round score<br/>[Enter] deal · [p] preset · [f] file · [l] live score
+    PresetPicker : <b>0a. Preset picker</b><br/>numbered radio over PRESETS<br/>[Enter] keeps the current ruleset
+    FileLoader : <b>0b. Setup file</b><br/>path to a TOML setup document<br/>a bad path re-prompts inline · [Enter] cancels
     Bidding : <b>1. Bidding</b><br/>request_bid_action(player, history)<br/>"80 h" / "pass" / "double" / "redouble"<br/>(hint adapts to '(pass / redouble)'<br/>when contractor was just doubled)
     MidTrick : <b>2. Mid-trick</b><br/>request_card_action(player, trick, contract, playable)<br/>diamond + live-winner gold pill<br/>★ Belote badge under holder (Belote/Rebelote in log)
     TrickWon : <b>3. Trick won</b><br/>on_trick_complete(trick, winner, round)<br/>"Press [Enter] to continue…"
     RoundRecap : <b>4. Round recap</b><br/>show_round_recap(round, scores, is_final, is_tiebreaker)<br/>contract (doubled/redoubled verbose) · trump · made/failed<br/>Outcome: tricks won · round points<br/>Scoring: contract · tricks · last trick · belote · round score<br/>running totals · target<br/>"Press [Enter] to deal next round…"<br/>(or "…to see the final score…" when is_final,<br/>"…to deal the tiebreaker round…" when is_tiebreaker)
     EndGame : <b>5. End game</b><br/>show_end_game(status)<br/>[n] new · [r] rematch · [q] quit
 
-    Landing --> Bidding : Enter
+    Landing --> PresetPicker : [p]
+    PresetPicker --> Landing : a pick,<br/>or [Enter]
+    Landing --> FileLoader : [f]
+    FileLoader --> Landing : a loaded setup,<br/>or [Enter]
+    Landing --> Landing : [l] toggles the<br/>live round score
+    Landing --> Bidding : Enter<br/>(deal under the setup on screen)
     Bidding --> Bidding : AI bids,<br/>still bidding<br/>(view.on_bid_made paces)
     Bidding --> RoundRecap : all 4 pass<br/>(no contract → recap → redeal)
     Bidding --> MidTrick : contract set,<br/>play_all_tricks starts
@@ -24,9 +31,20 @@ stateDiagram-v2
     RoundRecap --> Bidding : Enter,<br/>no strict leader at target<br/>(incl. tie = sudden death),<br/>next deal
     RoundRecap --> EndGame : Enter,<br/>check_game_over true
 
-    EndGame --> Landing : [n] new game<br/>(fresh target prompt)
-    EndGame --> Bidding : [r] rematch<br/>(same target)
+    EndGame --> Landing : [n] new game<br/>(re-opens on the setup in play)
+    EndGame --> Bidding : [r] rematch<br/>(same setup)
     EndGame --> [*] : [q] quit
+
+    note left of Landing
+        The setup screen is a dispatcher: every
+        sub-screen returns a TableSetup, which
+        becomes the one the summary redraws — so
+        the panel always describes the table
+        [Enter] would actually seat. Only
+        `rules` reaches the Game; the §9.7
+        interface aids stay on the view, which
+        the CLI re-points on each return.
+    end note
 
     note right of MidTrick
         Hand row: green pill for legal plays,
@@ -65,6 +83,8 @@ stateDiagram-v2
     classDef screen5 fill:#FFD9B3,stroke:#B26A28,stroke-width:2px,color:#5C3A14;
 
     class Landing screen0
+    class PresetPicker screen0
+    class FileLoader screen0
     class Bidding screen1
     class MidTrick screen2
     class TrickWon screen3

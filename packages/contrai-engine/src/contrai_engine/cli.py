@@ -19,12 +19,14 @@ the :class:`~contrai_engine.options.TableAids` the view reads. A
 malformed, unreadable or impossible ruleset is reported as an
 ``argparse`` usage error rather than a traceback.
 
-The landing screen's target-score pick is folded onto that resolved
-ruleset with :func:`dataclasses.replace` before each :class:`Game` is
-built, so a run started under ``--rules`` opens on that file's target and
-the player can still change it. From then on the model owns the number —
-``Game.check_game_over()`` reads it off ``game.rules`` and the loop
-carries nothing alongside the game.
+That resolved setup is what the landing screen opens on and edits: a
+player can pick a preset, load a file, turn any of the 22 knobs or
+switch the live round score without leaving the screen, and what
+:meth:`RichView.show_landing` hands back is what the next :class:`Game`
+is built from. The model then owns every rule it names —
+``Game.check_game_over()`` reads the target off ``game.rules`` and the
+loop carries nothing alongside the game — while the interface aids stay
+on the view, re-pointed each time the screen returns.
 """
 
 from __future__ import annotations
@@ -222,14 +224,11 @@ def main() -> None:
                 pass
 
     view = RichView(options=options, aids=setup.aids)
-    target = view.show_landing(selected_target=setup.rules.target_score)
+    setup = view.show_landing(setup)
+    view.aids = setup.aids
     try:
         while True:
-            # The landing pick overrides whatever ``--rules`` / ``--preset``
-            # named: from here the model owns the target, so nothing else
-            # has to carry it alongside the game.
-            rules = dataclasses.replace(setup.rules, target_score=target)
-            game = _build_game(autoplay=options.autoplay, rules=rules)
+            game = _build_game(autoplay=options.autoplay, rules=setup.rules)
             view.attach(game, target_score=game.rules.target_score)
             while not game.check_game_over().game_over:
                 game.manage_round(view=view)
@@ -251,8 +250,9 @@ def main() -> None:
             if choice == "q":
                 break
             if choice == "n":
-                target = view.show_landing(selected_target=target)
-            # 'r' → rematch: same target, fresh game in the next loop tick.
+                setup = view.show_landing(setup)
+                view.aids = setup.aids
+            # 'r' → rematch: same setup, fresh game in the next loop tick.
     except (KeyboardInterrupt, EOFError):
         view.console.print("\nGoodbye.")
 

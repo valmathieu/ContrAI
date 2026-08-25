@@ -475,6 +475,7 @@ package "view/ package" as p_view {
     class RichView {
         + {static} LOG_MAX : int = 5
         + console : rich.Console
+        + aids : TableAids
         + target_score : int
         + history : list<RoundSummary>
         + last_completed_trick : (Sequence<Play>, BasePlayer)?
@@ -495,9 +496,14 @@ package "view/ package" as p_view {
         + on_trick_complete(plays, winner, round_) : None
         + on_round_complete(round_, running_scores) : None
         ..  CLI flow screens ..
-        + show_landing(selected_target=1500) : int
+        + show_landing(selected: TableSetup?) : TableSetup
         + show_round_recap(round_, running_scores, *, is_final=False) : None
         + show_end_game(status) : str <<'n' | 'r' | 'q'>>
+        ..  setup sub-screens (private) ..
+        - _show_preset_picker(current) : TableSetup
+        - _show_file_loader(current) : TableSetup
+        - _render_landing_splash(setup) : None
+        - _setup_input() : str
         ..  orchestration seam + log helpers (private) ..
         - _render_in_game(*, phase, …) : None
         - _find_human_player() : BasePlayer?
@@ -518,6 +524,7 @@ package "view/ package" as p_view {
 
     class "view screens\n(pure (data)->Panel/Text)" as p_view_screens <<modules>> #FFEFD9 {
         screens/landing.py
+        screens/setup.py
         screens/bidding.py
         screens/trick.py
         screens/recap.py
@@ -625,7 +632,7 @@ package "cli.py" as p_cli {
         + main() : None
         --
         - _build_parser() : ArgumentParser
-        - _parse_args(argv) : (DebugOptions, RuleConfig)
+        - _parse_args(argv) : (DebugOptions, TableSetup)
         - _build_game(autoplay, rules) : Game
         --
         Drives landing → game loop →
@@ -642,10 +649,13 @@ package "cli.py" as p_cli {
       TODO marker for a future seat
       picker on the landing screen.
       ""--rules FILE"" / ""--preset NAME"" are a
-      mutually exclusive pair; whichever is given
-      resolves to the ""RuleConfig"" the ""Game""
-      is built under. A bad ruleset leaves through
+      mutually exclusive pair; with ""--no-live-score""
+      they resolve to the ""TableSetup"" the landing
+      screen opens on. A bad ruleset leaves through
       ""parser.error"" — usage + message, exit 2.
+      What ""show~_landing"" hands back is what the
+      ""Game"" is built from; its ""aids"" are re-pointed
+      on the view, never threaded into the model.
     end note
 }
 
@@ -655,27 +665,67 @@ package "cli.py" as p_cli {
 package "ruleset.py" as p_ruleset {
     class "ruleset.py" as Ruleset <<module>> #FFEFD9 {
         SECTIONS : dict<str, tuple<str>>
+        AID~_SECTION : (str, tuple<str>)
+        SECTION~_HEADINGS : dict<str, str>
+        KNOB~_LABELS : dict<str, str>
+        .. setup document ..
+        parse~_setup(text) : TableSetup
+        dump~_setup(setup) : str
+        load~_setup(path) : TableSetup
+        save~_setup(path, setup) : None
+        setup~_path() : Path
+        resolve~_setup(*, preset, rules~_path, aids) : TableSetup
+        .. ruleset-only facade ..
+        parse~_ruleset(text) : RuleConfig
+        load~_ruleset(path) : RuleConfig
+        dump~_ruleset(config) : str
+        resolve~_rules(*, preset, rules~_path) : RuleConfig
+        .. catalogue operations ..
+        cycle~_knob(rules, field) : RuleConfig
+        non~_default~_knobs(rules) : tuple<(str, str)>
         --
-        parse_ruleset(text) : RuleConfig
-        load_ruleset(path) : RuleConfig
-        dump_ruleset(config) : str
-        resolve_rules(*, preset, rules_path) : RuleConfig
-        --
-        - _coerce(section, key, value) : Any
+        - _parse~_document(text) : (dict, dict)
+        - _coerce(section, key, value, types) : Any
         - _format(value) : str
+        - _display(value) : str
+        - _section~_block(section, keys, source) : str
+    }
+
+    class TableSetup <<dataclass, frozen>> {
+        + rules : RuleConfig = RuleConfig()
+        + aids : TableAids = TableAids()
+        + origin : str = "classic"
+    }
+
+    class TableAids <<dataclass, frozen>> {
+        + live~_round~_score : bool = True
     }
 
     class RulesetError <<ValueError>>
 
     Ruleset ..> RulesetError : <<raises>>
+    Ruleset ..> TableSetup : <<produces>>
+    TableSetup *-- TableAids
 
     note bottom of Ruleset
       **Loading lives in the engine** — core stays
       I/O-free, so it defines what a ruleset //is//
       and this module decides how one is //read//.
+      A **setup** document is the six §9 rule
+      sections plus an optional ""[table~_aids]"" —
+      the §9.7 interface aids, which are //not// rules
+      and so have no ""RuleConfig"" field. Optional on
+      the way in means the two formats are one: a
+      saved setup replays through ""--rules"", and a
+      hand-written six-section file still loads.
       ""SECTIONS"" is the six-section §9 layout, one
       entry per catalogue subsection; a test asserts
       it covers every ""RuleConfig"" field exactly once.
+      ""KNOB~_LABELS"" derives each knob's heading from
+      it, and ""cycle~_knob"" / ""non~_default~_knobs""
+      are the two operations the on-screen editor
+      needs — so the editor, the file format and the
+      catalogue cannot drift apart.
       **Unknown = error**, never a warning: an unknown
       section or key, a wrong type or an unknown enum
       token all raise ""RulesetError"", because a
