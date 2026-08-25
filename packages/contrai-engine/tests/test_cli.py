@@ -30,6 +30,7 @@ from contrai_engine.cli import _apply_seed, _build_game, _parse_args, main
 from contrai_engine.model.game import GameOverStatus
 from contrai_engine.model.player import AiPlayer, HumanPlayer
 from contrai_engine.options import DebugOptions, TableAids
+from contrai_engine.ruleset import TableSetup
 from contrai_engine.view.theme import DEFAULT_TARGET
 
 @pytest.fixture(autouse=True)
@@ -48,42 +49,38 @@ def _restore_random_state():
 
 
 class TestParseArgs:
-    """``_parse_args`` — argparse wiring for the debug-mode and ruleset flags.
+    """``_parse_args`` — argparse wiring for the debug-mode and setup flags.
 
-    It returns a ``(DebugOptions, RuleConfig)`` pair: the flags, and the
-    table ruleset ``--rules`` / ``--preset`` resolved to.
+    It returns a ``(DebugOptions, TableSetup)`` pair: the debug flags, and
+    the table setup ``--rules`` / ``--preset`` / ``--no-live-score``
+    resolved to — the ruleset the game is built under plus the interface
+    aids the view reads.
     """
 
     def test_no_flags_returns_all_off_defaults(self):
         """The back-compat anchor: an empty argv parses to the defaults."""
 
-        assert _parse_args([]) == (DebugOptions(), RuleConfig(), TableAids())
+        assert _parse_args([]) == (DebugOptions(), TableSetup())
 
     def test_debug_flag_alone(self):
-        assert _parse_args(["--debug"]) == (
-            DebugOptions(debug=True), RuleConfig(), TableAids(),
-        )
+        assert _parse_args(["--debug"]) == (DebugOptions(debug=True), TableSetup())
 
     def test_seed_flag_alone(self):
-        assert _parse_args(["--seed", "42"]) == (
-            DebugOptions(seed=42), RuleConfig(), TableAids(),
-        )
+        assert _parse_args(["--seed", "42"]) == (DebugOptions(seed=42), TableSetup())
 
     def test_autoplay_flag_alone(self):
         assert _parse_args(["--autoplay"]) == (
-            DebugOptions(autoplay=True), RuleConfig(), TableAids(),
+            DebugOptions(autoplay=True), TableSetup(),
         )
 
     def test_all_three_flags_combined(self):
         result = _parse_args(["--debug", "--seed", "7", "--autoplay"])
         assert result == (
-            DebugOptions(debug=True, autoplay=True, seed=7),
-            RuleConfig(),
-            TableAids(),
+            DebugOptions(debug=True, autoplay=True, seed=7), TableSetup(),
         )
 
     def test_seed_value_is_coerced_to_int(self):
-        options, _, _ = _parse_args(["--seed", "123"])
+        options, _ = _parse_args(["--seed", "123"])
         assert options.seed == 123
         assert isinstance(options.seed, int)
 
@@ -95,33 +92,33 @@ class TestParseArgs:
 
     def test_preset_classic_resolves_to_the_defaults(self):
         assert _parse_args(["--preset", "classic"]) == (
-            DebugOptions(), RuleConfig(), TableAids(),
+            DebugOptions(), TableSetup(origin="classic"),
         )
 
     def test_no_live_score_switches_the_aid_off(self):
         """``--no-live-score`` is the §9.7 aid's only CLI surface."""
 
-        assert _parse_args(["--no-live-score"])[2] == TableAids(
+        assert _parse_args(["--no-live-score"])[1].aids == TableAids(
             live_round_score=False
         )
 
     def test_live_score_is_on_without_the_flag(self):
-        assert _parse_args([])[2].live_round_score is True
+        assert _parse_args([])[1].aids.live_round_score is True
 
     def test_no_live_score_is_independent_of_the_ruleset_flags(self):
         """The aid is a view setting, so it composes with any ruleset."""
 
-        options, rules, aids = _parse_args(
-            ["--preset", "classic", "--no-live-score"]
-        )
-        assert (options, rules) == (DebugOptions(), RuleConfig())
-        assert aids == TableAids(live_round_score=False)
+        options, setup = _parse_args(["--preset", "classic", "--no-live-score"])
+        assert (options, setup.rules) == (DebugOptions(), RuleConfig())
+        assert setup.aids == TableAids(live_round_score=False)
 
     def test_rules_file_is_loaded(self, tmp_path):
         path = tmp_path / "table.toml"
         path.write_text("[general]\ntarget_score = 1000\n", encoding="utf-8")
 
-        assert _parse_args(["--rules", str(path)])[1] == RuleConfig(target_score=1000)
+        setup = _parse_args(["--rules", str(path)])[1]
+        assert setup.rules == RuleConfig(target_score=1000)
+        assert setup.origin == "table.toml"
 
     def test_rules_and_preset_are_mutually_exclusive(self, tmp_path):
         """``argparse``'s own group rejects the pair before ``resolve_rules``."""

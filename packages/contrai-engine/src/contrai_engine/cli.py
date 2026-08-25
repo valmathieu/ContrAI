@@ -11,9 +11,11 @@ module (:func:`_apply_seed`), and threading the result into both the
 view (:class:`RichView`) and the game's seating (:func:`_build_game`).
 
 The two mutually exclusive ruleset flags (``--rules FILE`` /
-``--preset NAME``) are resolved in the same pass, through
-:func:`contrai_engine.ruleset.resolve_rules`, into the
-:class:`~contrai_core.RuleConfig` the :class:`Game` is built under. A
+``--preset NAME``) and the ``--no-live-score`` aid switch are resolved in
+the same pass, through :func:`contrai_engine.ruleset.resolve_setup`, into
+the :class:`~contrai_engine.ruleset.TableSetup` the run starts from: the
+:class:`~contrai_core.RuleConfig` the :class:`Game` is built under, plus
+the :class:`~contrai_engine.options.TableAids` the view reads. A
 malformed, unreadable or impossible ruleset is reported as an
 ``argparse`` usage error rather than a traceback.
 
@@ -39,7 +41,7 @@ from contrai_engine.log_setup import configure_logging
 from contrai_engine.model.game import Game
 from contrai_engine.model.player import AiPlayer, HumanPlayer
 from contrai_engine.options import DebugOptions, TableAids
-from contrai_engine.ruleset import resolve_rules
+from contrai_engine.ruleset import TableSetup, resolve_setup
 from contrai_engine.view.rich_view import RichView
 
 
@@ -108,9 +110,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _parse_args(
     argv: list[str] | None = None,
-) -> tuple[DebugOptions, RuleConfig, TableAids]:
-    """Parse the CLI's flags into a :class:`DebugOptions`, a ``RuleConfig``
-    and a :class:`TableAids`.
+) -> tuple[DebugOptions, TableSetup]:
+    """Parse the CLI's flags into a :class:`DebugOptions` and a ``TableSetup``.
 
     Args:
         argv: Argument strings to parse, excluding the program name.
@@ -118,12 +119,11 @@ def _parse_args(
             ``argparse``'s own default.
 
     Returns:
-        The parsed flags, the resolved table ruleset, and the table's
-        interface aids. No seed generation happens here — that is
-        :func:`_apply_seed`'s job — so ``seed`` is ``None`` unless
-        ``--seed`` was passed explicitly, the ruleset is ``RuleConfig()``
-        unless a flag named another, and the aids are ``TableAids()``
-        unless ``--no-live-score`` switched one off.
+        The parsed debug flags and the resolved table setup — the ruleset
+        the game is built under plus the interface aids the view reads. No
+        seed generation happens here — that is :func:`_apply_seed`'s job —
+        so ``seed`` is ``None`` unless ``--seed`` was passed explicitly,
+        and the setup is ``TableSetup()`` unless a flag named another.
 
     Raises:
         SystemExit: If ``argv`` fails to parse (e.g. a non-integer
@@ -136,15 +136,17 @@ def _parse_args(
     parser = _build_parser()
     args = parser.parse_args(argv)
     options = DebugOptions(debug=args.debug, autoplay=args.autoplay, seed=args.seed)
-    aids = TableAids(live_round_score=not args.no_live_score)
+    # ``None`` rather than ``TableAids()`` when the flag is absent: only an
+    # explicitly typed flag may override a setup file's own [table_aids].
+    aids = TableAids(live_round_score=False) if args.no_live_score else None
     try:
-        rules = resolve_rules(preset=args.preset, rules_path=args.rules)
+        setup = resolve_setup(preset=args.preset, rules_path=args.rules, aids=aids)
     except (ValueError, OSError) as exc:
         # RulesetError, core's InvalidRuleConfigError, or an unreadable
         # file. ``parser.error`` prints usage + the message to stderr and
         # exits 2 — the same shape as any other bad flag.
         parser.error(str(exc))
-    return options, rules, aids
+    return options, setup
 
 
 def _apply_seed(options: DebugOptions) -> DebugOptions:
@@ -203,7 +205,7 @@ def _build_game(autoplay: bool = False, rules: RuleConfig | None = None) -> Game
 
 def main() -> None:
     """Entry point registered as the ``contrai`` console script."""
-    options, rules, aids = _parse_args()
+    options, setup = _parse_args()
     options = _apply_seed(options)
     configure_logging(options)
 
@@ -219,14 +221,14 @@ def main() -> None:
             except Exception:
                 pass
 
-    view = RichView(options=options, aids=aids)
-    target = view.show_landing(selected_target=rules.target_score)
+    view = RichView(options=options, aids=setup.aids)
+    target = view.show_landing(selected_target=setup.rules.target_score)
     try:
         while True:
             # The landing pick overrides whatever ``--rules`` / ``--preset``
             # named: from here the model owns the target, so nothing else
             # has to carry it alongside the game.
-            rules = dataclasses.replace(rules, target_score=target)
+            rules = dataclasses.replace(setup.rules, target_score=target)
             game = _build_game(autoplay=options.autoplay, rules=rules)
             view.attach(game, target_score=game.rules.target_score)
             while not game.check_game_over().game_over:

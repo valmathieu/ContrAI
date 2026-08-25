@@ -29,7 +29,7 @@ Source at `packages/contrai-engine/src/contrai_engine/`:
   - `screens/` — one module per screen of the five-screen design: `landing.py`, `bidding.py`, `trick.py`, `recap.py`, `endgame.py`. Each exposes pure `(data) -> Panel/Text` builders; `RichView` composes and prints them.
 - `cli.py` — `contrai` console-script entry point: landing → game-loop → end-game; also parses the three debug-mode flags and the two mutually exclusive ruleset flags `--rules FILE` / `--preset NAME` (see [CLI](#cli))
 - `options.py` — `DebugOptions`, the frozen value object the `--debug` / `--seed` / `--autoplay` flags parse into. Stdlib-only, read by the CLI and the view, **never** by the model
-- `ruleset.py` — TOML ⇄ `RuleConfig`: `parse_ruleset` / `load_ruleset` / `dump_ruleset`, the `SECTIONS` layout table, `resolve_rules` (the `--rules` / `--preset` resolution) and `RulesetError`. Stdlib `tomllib`, so no new dependency; loading lives here because core stays I/O-free
+- `ruleset.py` — TOML ⇄ `TableSetup`: `parse_setup` / `load_setup` / `dump_setup` / `save_setup` / `setup_path` / `resolve_setup`, plus the ruleset-only facade (`parse_ruleset` / `load_ruleset` / `dump_ruleset` / `resolve_rules`) that keeps a six-section `--rules` file exactly valid. Also the §9 catalogue *as data* — the `SECTIONS` TOML layout, `AID_SECTION`, `KNOB_LABELS`, `cycle_knob` and `non_default_knobs`, which the setup screen edits through — and `RulesetError`. Stdlib `tomllib`, so no new dependency; loading lives here because core stays I/O-free
 - `log_setup.py` — the one place that attaches a logging handler: a DEBUG-level `FileHandler` on the `contrai_engine` / `contrai_core` package roots, and a no-op unless `--debug` is set
 - `debug_state.py` — Rich-free plain-text projections shared by the debug view and the log (`sort_cards_trump_first`, `cards_still_in_play`, `hand_snapshot`, `deal_lines`, `round_result_lines`)
 - `tests/` — pytest suite (`test_model/`, `test_view/`)
@@ -115,6 +115,10 @@ A file is a *partial override* on the built-in defaults: it names only the knobs
 ```bash
 uv run python -c "from contrai_core import RuleConfig; from contrai_engine.ruleset import dump_ruleset; print(dump_ruleset(RuleConfig()), end='')" > table.toml
 ```
+
+A **setup** document is that same file plus an optional seventh section, `[table_aids]`, carrying the §9.7 interface aids (today: `live_round_score`). Because the extra section is optional on the way in, the two formats are one: a setup written by the game replays through `--rules` — its rules are read, its aids ignored — and a hand-written six-section file still loads, taking the aid defaults. `parse_setup` / `dump_setup` / `load_setup` / `save_setup` are the seven-section pair, `resolve_setup` folds `--rules` / `--preset` / `--no-live-score` into one `TableSetup` (an explicitly typed `--no-live-score` overrides a file's own `[table_aids]`; absent, the file's value stands), and `setup_path()` resolves where the last-used setup is remembered — `$CONTRAI_HOME/last-setup.toml`, else `~/.contrai/last-setup.toml`.
+
+The module also holds the §9 catalogue as data, so the file format and the on-screen editor cannot drift apart: `SECTIONS` is the TOML layout, `KNOB_LABELS` derives each knob's subsection heading from it, `cycle_knob(rules, field)` steps one knob to its next value (bools toggle, enums advance, `target_score` climbs `TARGET_SCORES` — each wrapping, so one key reaches every value), and `non_default_knobs(rules)` reports how far a table sits from `RuleConfig()`.
 
 **Trump choices.** No trump and all trump are off by default (`contree-domain.md` §9.2). Turn them on with a ruleset file:
 
