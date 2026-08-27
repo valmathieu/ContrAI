@@ -21,7 +21,15 @@ from rich.box import ROUNDED
 from rich.panel import Panel
 from rich.text import Text
 
-from contrai_engine.ruleset import TableSetup, non_default_knobs
+from contrai_core import RuleConfig
+
+from contrai_engine.ruleset import (
+    SECTION_HEADINGS,
+    SECTIONS,
+    TableSetup,
+    knob_value,
+    non_default_knobs,
+)
 from contrai_engine.view.theme import (
     BORDER,
     DIM,
@@ -39,6 +47,15 @@ WIDTH = 70
 
 LABEL_WIDTH = 18
 """Column the summary's values start at, so the four rows line up."""
+
+VALUE_WIDTH = 13
+"""Right-aligned value column in the knob grid — ``"anticlockwise"``, the
+longest value any knob takes, fits it exactly."""
+
+NAME_WIDTH = max(len(name) for fields in SECTIONS.values() for name in fields)
+"""Knob-name column, sized to the longest name in the *whole* catalogue
+rather than per section — so the values stay in one column as ``[n]``
+walks from a two-row subsection to a ten-row one."""
 
 
 def _target_annotation(value: int) -> tuple[str, str]:
@@ -152,6 +169,74 @@ def _panel_preset_list(names: Sequence[str], selected: str) -> Panel:
     )
 
 
+def _panel_knobs(rules: RuleConfig, section: str) -> Panel:
+    """One §9 subsection's knobs, numbered, with their current values.
+
+    Knobs are listed under their ``RuleConfig`` / TOML field name rather
+    than a prose paraphrase: that is the name the catalogue, the config
+    file and the docs all use, so what a player reads here is what they
+    would write in a file or grep for later. A value that differs from
+    the §9 default is picked out in gold, which turns the grid into its
+    own diff against ``classic``.
+
+    Args:
+        rules: The ruleset being edited.
+        section: A key of :data:`~contrai_engine.ruleset.SECTIONS`.
+
+    Returns:
+        The Table rules ``Panel``.
+
+    Raises:
+        KeyError: If ``section`` is not a catalogue section.
+    """
+    fields = SECTIONS[section]
+    order = list(SECTIONS)
+    baseline = RuleConfig()
+    body = Text()
+    body.append(SECTION_HEADINGS[section], style=f"bold {FG}")
+    body.append(
+        f"   section {order.index(section) + 1} of {len(order)}\n\n", style=DIM
+    )
+    for index, name in enumerate(fields, start=1):
+        changed = getattr(rules, name) != getattr(baseline, name)
+        body.append(f" {index:>2}. ", style=DIM)
+        body.append(name.ljust(NAME_WIDTH), style=FG)
+        body.append("   ")
+        body.append(
+            knob_value(rules, name).rjust(VALUE_WIDTH),
+            style=f"bold {GOLD}" if changed else FG,
+        )
+        body.append("\n")
+    return Panel(
+        body,
+        title=Text("Table rules", style=f"bold {TITLE}"),
+        border_style=BORDER,
+        box=ROUNDED,
+        width=WIDTH,
+    )
+
+
+def _knobs_prompt_text(count: int) -> Text:
+    """Prompt for the knob editor.
+
+    Args:
+        count: How many knobs the section on screen offers.
+
+    Returns:
+        The prompt ``Text``.
+    """
+    t = Text()
+    t.append(f"[1-{count}]", style=f"bold {FG}")
+    t.append(" cycle a knob  ·  ", style=FG)
+    t.append("[n]", style=f"bold {FG}")
+    t.append(" next section  ·  ", style=FG)
+    t.append("[b]", style=f"bold {FG}")
+    t.append(" back  ·  ", style=FG)
+    t.append("[Enter]", style=f"bold {GOLD}")
+    t.append(" done", style=FG)
+    return t
+
+
 def _setup_prompt_text(setup: TableSetup) -> Text:
     """The landing dispatcher's key list.
 
@@ -172,6 +257,8 @@ def _setup_prompt_text(setup: TableSetup) -> Text:
     t.append(" preset  ·  ", style=FG)
     t.append("[f]", style=f"bold {FG}")
     t.append(" load file  ·  ", style=FG)
+    t.append("[k]", style=f"bold {FG}")
+    t.append(" knobs  ·  ", style=FG)
     t.append("[l]", style=f"bold {FG}")
     t.append(
         " live score " + ("off" if setup.aids.live_round_score else "on"),

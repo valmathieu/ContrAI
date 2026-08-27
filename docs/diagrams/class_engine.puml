@@ -502,6 +502,7 @@ package "view/ package" as p_view {
         ..  setup sub-screens (private) ..
         - _show_preset_picker(current) : TableSetup
         - _show_file_loader(current) : TableSetup
+        - _show_knob_editor(current) : TableSetup
         - _render_landing_splash(setup) : None
         - _setup_input() : str
         ..  orchestration seam + log helpers (private) ..
@@ -682,6 +683,7 @@ package "ruleset.py" as p_ruleset {
         resolve~_rules(*, preset, rules~_path) : RuleConfig
         .. catalogue operations ..
         cycle~_knob(rules, field) : RuleConfig
+        knob~_value(rules, field) : str
         non~_default~_knobs(rules) : tuple<(str, str)>
         --
         - _parse~_document(text) : (dict, dict)

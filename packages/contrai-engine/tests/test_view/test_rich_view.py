@@ -25,14 +25,16 @@ from contrai_core import (
     Play,
     Position,
     Rank,
+    Rounding,
     RuleConfig,
     Suit,
     TeamSide,
+    TurnDirection,
 )
 from contrai_core.bid import ContractBid, DoubleBid, PassBid
 from contrai_engine.model.game import GameOverStatus
 from contrai_engine.options import DebugOptions, TableAids
-from contrai_engine.ruleset import TableSetup
+from contrai_engine.ruleset import SECTION_HEADINGS, SECTIONS, TableSetup
 from contrai_engine.view.rich_view import RichView
 from contrai_engine.view.screens.bidding import (
     _bidding_prompt_text,
@@ -1877,3 +1879,133 @@ class TestLiveRoundScoreAid:
         self._render(view)
 
         assert seen["live_score"] is False
+
+
+class TestShowKnobEditor:
+    """The per-knob editor: a numbered grid per §9 subsection."""
+
+    def test_blank_input_leaves_the_setup_untouched(self):
+        setup = TableSetup(origin="house.toml")
+        view = _drive_landing(RichView(), [""])
+
+        assert view._show_knob_editor(setup) == setup
+
+    def test_a_number_cycles_that_knob(self):
+        # [general] is the first section: 1 is target_score, 2 is
+        # turn_direction.
+        view = _drive_landing(RichView(), ["2", ""])
+
+        result = view._show_knob_editor(TableSetup())
+
+        assert result.rules.turn_direction is TurnDirection.CLOCKWISE
+
+    def test_the_target_score_climbs_the_ladder(self):
+        view = _drive_landing(RichView(), ["1", ""])
+
+        result = view._show_knob_editor(TableSetup())
+
+        assert result.rules.target_score == 3000
+
+    def test_n_walks_to_the_next_section(self):
+        # [trump] is the second section: 1 is extended_trump_choices.
+        view = _drive_landing(RichView(), ["n", "1", ""])
+
+        result = view._show_knob_editor(TableSetup())
+
+        assert result.rules.extended_trump_choices is True
+
+    def test_b_walks_back_and_wraps_to_the_last_section(self):
+        # Stepping back from [general] lands on [scoring], whose 9th knob
+        # is `rounding`.
+        view = _drive_landing(RichView(), ["b", "9", ""])
+
+        result = view._show_knob_editor(TableSetup())
+
+        assert result.rules.rounding is Rounding.NEAREST_10
+
+    def test_editing_marks_the_setup_custom(self):
+        view = _drive_landing(RichView(), ["2", ""])
+
+        assert view._show_knob_editor(TableSetup(origin="classic")).origin == "custom"
+
+    def test_a_knob_turned_and_turned_back_keeps_the_origin(self):
+        """Two of the two turn directions is where it started."""
+        view = _drive_landing(RichView(), ["2", "2", ""])
+
+        result = view._show_knob_editor(TableSetup(origin="house.toml"))
+
+        assert result.rules == RuleConfig()
+        assert result.origin == "house.toml"
+
+    def test_the_aids_are_not_the_editors_business(self):
+        aids = TableAids(live_round_score=False)
+        view = _drive_landing(RichView(), ["2", ""])
+
+        assert view._show_knob_editor(TableSetup(aids=aids)).aids == aids
+
+    def test_an_impossible_toggle_leaves_the_ruleset_alone(self):
+        """[scoring] 1 is mark_made_points, 2 is mark_announced_points.
+        Turning both off is the one combination §9 forbids: the editor
+        must refuse it and keep the config it had."""
+        opened = TableSetup(rules=RuleConfig(mark_made_points=False))
+        # Walk back to [scoring], try to turn the second one off, finish.
+        view = _drive_landing(RichView(), ["b", "2", ""])
+
+        result = view._show_knob_editor(opened)
+
+        assert result.rules == opened.rules
+        assert result.origin == opened.origin
+
+    def test_an_impossible_toggle_is_reported_with_cores_own_message(self):
+        opened = TableSetup(rules=RuleConfig(mark_made_points=False))
+        printed = []
+        view = RichView()
+        inputs = iter(["b", "2", ""])
+        view.console.clear = lambda *a, **k: None
+        view.console.print = lambda *a, **k: printed.extend(
+            getattr(getattr(a_, "renderable", None), "plain", "") for a_ in a
+        )
+        view.console.input = lambda *a, **k: next(inputs)
+
+        view._show_knob_editor(opened)
+
+        assert any("mark_made_points" in text for text in printed)
+
+    def test_an_out_of_range_number_reprompts(self):
+        view = _drive_landing(RichView(), ["99", "2", ""])
+
+        result = view._show_knob_editor(TableSetup())
+
+        assert result.rules.turn_direction is TurnDirection.CLOCKWISE
+
+    def test_an_unknown_key_reprompts(self):
+        view = _drive_landing(RichView(), ["zz", ""])
+
+        assert view._show_knob_editor(TableSetup()) == TableSetup()
+
+    def test_k_routes_the_landing_screen_to_the_editor(self, monkeypatch):
+        edited = TableSetup(rules=RuleConfig(target_score=500), origin="custom")
+        view = _drive_landing(RichView(), ["k", ""])
+        monkeypatch.setattr(
+            RichView, "_show_knob_editor", lambda self, current: edited
+        )
+
+        assert view.show_landing(TableSetup()) is edited
+
+    def test_every_section_can_be_reached_by_walking_forward(self):
+        """``[n]`` wraps, so the walk visits all six and returns."""
+        seen = []
+        view = RichView()
+        inputs = iter(["n"] * len(SECTIONS) + [""])
+        view.console.clear = lambda *a, **k: None
+        view.console.print = lambda *a, **k: [
+            seen.append(getattr(getattr(t, "renderable", None), "plain", ""))
+            for t in a
+        ]
+        view.console.input = lambda *a, **k: next(inputs)
+
+        view._show_knob_editor(TableSetup())
+
+        headings = {h for h in SECTION_HEADINGS.values()}
+        rendered = " ".join(seen)
+        assert all(h in rendered for h in headings)

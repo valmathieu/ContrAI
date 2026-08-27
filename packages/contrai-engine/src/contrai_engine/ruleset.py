@@ -437,6 +437,25 @@ def cycle_knob(rules: RuleConfig, field: str) -> RuleConfig:
     return dataclasses.replace(rules, **{field: value})
 
 
+def knob_value(rules: RuleConfig, field: str) -> str:
+    """One knob's current value, rendered for a human reading a panel.
+
+    Args:
+        rules: The ruleset to read.
+        field: The ``RuleConfig`` field name.
+
+    Returns:
+        ``on`` / ``off`` for a bool, the TOML token for an enum, the
+        number for ``target_score``.
+
+    Raises:
+        RulesetError: If ``field`` is not a ``RuleConfig`` field.
+    """
+    if field not in _FIELD_TYPES:
+        raise RulesetError(f"unknown knob {field!r}")
+    return _display(getattr(rules, field))
+
+
 def non_default_knobs(rules: RuleConfig) -> tuple[tuple[str, str], ...]:
     """The knobs ``rules`` sets away from the §9 catalogue defaults.
 

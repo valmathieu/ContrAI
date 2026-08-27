@@ -9,6 +9,7 @@ stateDiagram-v2
     Landing : <b>0. Landing / table setup</b><br/>show_landing(setup) -> TableSetup<br/>summary: ruleset origin (+N changes) · target<br/>trump choices · live round score<br/>[Enter] deal · [p] preset · [f] file · [l] live score
     PresetPicker : <b>0a. Preset picker</b><br/>numbered radio over PRESETS<br/>[Enter] keeps the current ruleset
     FileLoader : <b>0b. Setup file</b><br/>path to a TOML setup document<br/>a bad path re-prompts inline · [Enter] cancels
+    KnobEditor : <b>0c. Table rules</b><br/>one numbered grid per §9 subsection<br/>[1-n] cycles a knob · [n] / [b] walk the sections<br/>an impossible table is refused inline
     Bidding : <b>1. Bidding</b><br/>request_bid_action(player, history)<br/>"80 h" / "pass" / "double" / "redouble"<br/>(hint adapts to '(pass / redouble)'<br/>when contractor was just doubled)
     MidTrick : <b>2. Mid-trick</b><br/>request_card_action(player, trick, contract, playable)<br/>diamond + live-winner gold pill<br/>★ Belote badge under holder (Belote/Rebelote in log)
     TrickWon : <b>3. Trick won</b><br/>on_trick_complete(trick, winner, round)<br/>"Press [Enter] to continue…"
@@ -19,6 +20,9 @@ stateDiagram-v2
     PresetPicker --> Landing : a pick,<br/>or [Enter]
     Landing --> FileLoader : [f]
     FileLoader --> Landing : a loaded setup,<br/>or [Enter]
+    Landing --> KnobEditor : [k]
+    KnobEditor --> KnobEditor : [1-n] cycles a knob,<br/>[n] / [b] walk the sections
+    KnobEditor --> Landing : [Enter]<br/>(origin becomes 'custom'<br/>if anything changed)
     Landing --> Landing : [l] toggles the<br/>live round score
     Landing --> Bidding : Enter<br/>(deal under the setup on screen)
     Bidding --> Bidding : AI bids,<br/>still bidding<br/>(view.on_bid_made paces)
@@ -85,6 +89,7 @@ stateDiagram-v2
     class Landing screen0
     class PresetPicker screen0
     class FileLoader screen0
+    class KnobEditor screen0
     class Bidding screen1
     class MidTrick screen2
     class TrickWon screen3

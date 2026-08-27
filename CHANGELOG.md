@@ -33,6 +33,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) `contrai --no-live-score` hides the in-game `Round pts:` row — the running score is now a switchable table aid.
 - (engine) A table *setup* — the six rule sections plus `[table_aids]` — reads and writes as one TOML document. See [engine docs](docs/engine/index.md).
 - (engine) The landing screen now picks the whole table setup: `[p]` preset, `[f]` load a file, `[l]` live score. See [engine docs](docs/engine/index.md).
+- (engine) `[k]` on the setup screen cycles any of the 22 §9 knobs, grouped by subsection; an impossible table is refused inline.
 
 ### Changed
 

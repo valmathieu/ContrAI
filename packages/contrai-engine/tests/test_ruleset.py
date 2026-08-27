@@ -12,7 +12,8 @@ from contrai_engine.ruleset import (AID_SECTION, KNOB_LABELS, SECTIONS,
                                     RulesetError, TableSetup, cycle_knob,
                                     dump_ruleset, dump_setup, load_ruleset,
                                     load_setup, non_default_knobs,
-                                    parse_ruleset, parse_setup, resolve_rules,
+                                    knob_value, parse_ruleset, parse_setup,
+                                    resolve_rules,
                                     resolve_setup, save_setup, setup_path)
 
 #: Spec §3.1 under the uniform "= aligned at longest key" rule (the spec's
@@ -394,6 +395,34 @@ class TestCycleKnob:
         one_left = RuleConfig(mark_made_points=False)
         with pytest.raises(InvalidRuleConfigError, match="mark_made_points"):
             cycle_knob(one_left, "mark_announced_points")
+
+
+class TestKnobValue:
+    def test_bools_render_as_on_and_off(self):
+        assert knob_value(RuleConfig(), "solo_slam_available") == "on"
+        assert knob_value(RuleConfig(), "extended_trump_choices") == "off"
+
+    def test_enums_render_as_their_toml_token(self):
+        assert knob_value(RuleConfig(), "turn_direction") == "anticlockwise"
+        assert knob_value(RuleConfig(rounding=Rounding.NEAREST_5), "rounding") == (
+            "nearest_5"
+        )
+
+    def test_target_score_renders_as_its_number(self):
+        assert knob_value(RuleConfig(target_score=500), "target_score") == "500"
+
+    def test_every_value_fits_the_panel_column(self):
+        """The grid right-aligns values in a fixed column; nothing may
+        outgrow ``anticlockwise``, the longest a knob can take."""
+        for field in (n for fields in SECTIONS.values() for n in fields):
+            rules = RuleConfig()
+            for _ in range(8):
+                assert len(knob_value(rules, field)) <= len("anticlockwise")
+                rules = cycle_knob(rules, field)
+
+    def test_unknown_knob_raises(self):
+        with pytest.raises(RulesetError, match="unknown knob 'nope'"):
+            knob_value(RuleConfig(), "nope")
 
 
 class TestNonDefaultKnobs:

@@ -41,7 +41,7 @@ from contrai_core import (
     rules_for,
 )
 from contrai_engine.options import DebugOptions, TableAids
-from contrai_engine.ruleset import TableSetup, load_setup
+from contrai_engine.ruleset import SECTIONS, TableSetup, cycle_knob, load_setup
 from contrai_engine.view.bidding_rules import _illegal_bid_reason
 from contrai_engine.view.formatting import (
     _format_card_compact,
@@ -81,6 +81,8 @@ from contrai_engine.view.screens.landing import (
 )
 from contrai_engine.view.screens.setup import (
     _file_prompt_text,
+    _knobs_prompt_text,
+    _panel_knobs,
     _panel_preset_list,
     _panel_table_setup,
     _preset_prompt_text,
@@ -548,8 +550,9 @@ class RichView:
         """Render the landing screen and return the setup to deal under.
 
         The dispatcher for the whole pre-game setup: ``[Enter]`` deals,
-        ``[p]`` opens the preset picker, ``[f]`` the file loader, and
-        ``[l]`` toggles the §9.7 live round score. Each sub-screen
+        ``[p]`` opens the preset picker, ``[f]`` the file loader, ``[k]``
+        the per-knob editor, and ``[l]`` toggles the §9.7 live round
+        score. Each sub-screen
         returns a setup, which becomes the one this screen re-renders —
         so the summary panel always describes the table that pressing
         Enter would actually seat.
@@ -591,6 +594,8 @@ class RichView:
                 setup = self._show_preset_picker(setup)
             elif raw in ("f", "file"):
                 setup = self._show_file_loader(setup)
+            elif raw in ("k", "knobs"):
+                setup = self._show_knob_editor(setup)
             elif raw in ("l", "live"):
                 # The aid is the one setting the model never sees, so it is
                 # flipped here rather than routed through ``cycle_knob``.
@@ -603,7 +608,7 @@ class RichView:
             else:
                 notice = Text(
                     "✗ [Enter] to deal, or [p] preset · [f] load file · "
-                    "[l] live score.",
+                    "[k] knobs · [l] live score.",
                     style=RED,
                 )
 
@@ -644,6 +649,64 @@ class RichView:
                 f"✗ Pick 1–{len(names)}, or one of: {', '.join(names)}.",
                 style=RED,
             )
+
+    def _show_knob_editor(self, current: TableSetup) -> TableSetup:
+        """Walk the §9 subsections, cycling any knob to its next value.
+
+        One numbered grid per catalogue subsection, ``[n]`` / ``[b]`` to
+        walk them, a number to cycle that knob. Cycling — rather than
+        typing a value — is what lets one key reach every setting a knob
+        takes, whether it is a bool, one of three enum members or a rung
+        of the target ladder.
+
+        The two configurations §9 calls impossible are refused by core
+        itself; the refusal is rendered inline and the ruleset the editor
+        holds is left exactly as it was.
+
+        Args:
+            current: The setup being edited.
+
+        Returns:
+            ``current`` with the edited ruleset. Its ``origin`` becomes
+            ``"custom"`` once the rules genuinely differ from the ones
+            the editor opened on — a table that has been changed is no
+            longer the preset or the file it started as — but a knob
+            turned and turned back leaves the origin alone.
+        """
+        sections = list(SECTIONS)
+        index = 0
+        rules = current.rules
+        notice: Optional[Text] = None
+        while True:
+            section = sections[index]
+            fields = SECTIONS[section]
+            self.console.clear()
+            self.console.print(_panel_knobs(rules, section))
+            self.console.print(_panel_prompt(
+                _knobs_prompt_text(len(fields)), mandatory=False, notice=notice
+            ))
+            notice = None
+            raw = self._setup_input()
+            if not raw:
+                origin = current.origin if rules == current.rules else "custom"
+                return dataclasses.replace(current, rules=rules, origin=origin)
+            if raw in ("n", "next"):
+                index = (index + 1) % len(sections)
+            elif raw in ("b", "back"):
+                index = (index - 1) % len(sections)
+            elif raw.isdigit() and 1 <= int(raw) <= len(fields):
+                try:
+                    rules = cycle_knob(rules, fields[int(raw) - 1])
+                except ValueError as exc:
+                    # Core's own refusal, shown verbatim: it names both
+                    # knobs and says why the pair cannot stand.
+                    notice = Text(f"✗ {exc}", style=RED)
+            else:
+                notice = Text(
+                    f"✗ Pick 1–{len(fields)}, [n] next section, [b] back, "
+                    "or [Enter] to finish.",
+                    style=RED,
+                )
 
     def _show_file_loader(self, current: TableSetup) -> TableSetup:
         """Load a setup from a TOML path typed at the prompt.

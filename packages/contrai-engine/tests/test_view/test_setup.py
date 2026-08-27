@@ -2,8 +2,8 @@
 
 Covers the pre-deal builders: the four-row table summary (origin and its
 change count, target annotation, trump wording, live-score state), the
-numbered preset radio, and the three prompt lines the input loops print
-under them.
+numbered preset radio, the per-subsection knob grid, and the prompt lines
+the input loops print under them.
 
 The screen is laid out against the same fixed 70-column width as the rest
 of the landing screen, so the width assertions compare against the
@@ -16,10 +16,12 @@ import pytest
 
 from contrai_core import RuleConfig, TurnDirection
 from contrai_engine.options import TableAids
-from contrai_engine.ruleset import TableSetup
+from contrai_engine.ruleset import SECTION_HEADINGS, SECTIONS, TableSetup
 from contrai_engine.view.screens.setup import (
     WIDTH,
     _file_prompt_text,
+    _knobs_prompt_text,
+    _panel_knobs,
     _panel_preset_list,
     _panel_table_setup,
     _preset_prompt_text,
@@ -152,7 +154,7 @@ class TestSetupPromptText:
 
     def test_offers_every_key(self):
         plain = _setup_prompt_text(TableSetup()).plain
-        for key in ("[Enter]", "[p]", "[f]", "[l]"):
+        for key in ("[Enter]", "[p]", "[f]", "[k]", "[l]"):
             assert key in plain
 
     def test_live_key_names_the_state_it_moves_to(self):
@@ -186,3 +188,83 @@ class TestFilePromptText:
         assert "TOML" in plain
         assert "[Enter]" in plain
         assert "cancels" in plain
+
+
+class TestPanelKnobs:
+    """The per-subsection knob grid."""
+
+    @pytest.mark.parametrize("section", list(SECTIONS))
+    def test_every_section_lists_all_its_knobs_numbered(self, section):
+        text = _rows(_panel_knobs(RuleConfig(), section))
+        for index, name in enumerate(SECTIONS[section], start=1):
+            assert name in text
+            assert f"{index:>2}." in text
+
+    @pytest.mark.parametrize("section", list(SECTIONS))
+    def test_every_section_names_its_catalogue_heading(self, section):
+        text = _rows(_panel_knobs(RuleConfig(), section))
+        assert SECTION_HEADINGS[section] in text
+
+    @pytest.mark.parametrize("section", list(SECTIONS))
+    def test_every_section_says_where_it_sits_in_the_walk(self, section):
+        position = list(SECTIONS).index(section) + 1
+        text = _rows(_panel_knobs(RuleConfig(), section))
+        assert f"section {position} of {len(SECTIONS)}" in text
+
+    def test_bool_knobs_render_as_on_and_off(self):
+        text = _rows(_panel_knobs(RuleConfig(), "deal"))
+        assert "off" in text
+
+    def test_enum_knobs_render_as_their_token(self):
+        text = _rows(_panel_knobs(RuleConfig(), "general"))
+        assert "anticlockwise" in text
+
+    def test_target_score_renders_as_its_number(self):
+        text = _rows(_panel_knobs(RuleConfig(target_score=500), "general"))
+        assert "500" in text
+
+    def test_a_knob_reflects_the_config_it_is_handed(self):
+        on = _rows(_panel_knobs(RuleConfig(reshuffle_every_round=True), "deal"))
+        off = _rows(_panel_knobs(RuleConfig(), "deal"))
+        assert "on" in on
+        assert on != off
+
+    def test_an_unknown_section_raises(self):
+        with pytest.raises(KeyError):
+            _panel_knobs(RuleConfig(), "nope")
+
+    def test_panel_is_the_landing_width(self):
+        assert _panel_knobs(RuleConfig(), "scoring").width == WIDTH
+
+    @pytest.mark.parametrize("section", list(SECTIONS))
+    def test_no_row_overflows_the_panel(self, section):
+        """The longest knob name plus its value must still fit the frame."""
+        for line in _rows(_panel_knobs(RuleConfig(), section)).splitlines():
+            assert len(line) <= WIDTH - 4
+
+
+class TestKnobsPromptText:
+    """The knob editor's prompt."""
+
+    def test_offers_the_number_range_and_the_navigation_keys(self):
+        plain = _knobs_prompt_text(10).plain
+        assert "[1-10]" in plain
+        assert "[n]" in plain
+        assert "[b]" in plain
+        assert "[Enter]" in plain
+
+
+class TestSetupPromptOffersTheEditor:
+    """The dispatcher advertises the knob editor."""
+
+    def test_k_is_on_the_key_list(self):
+        assert "[k]" in _setup_prompt_text(TableSetup()).plain
+
+    def test_the_value_column_is_the_same_in_every_section(self):
+        """Walking with [n] must not slide the values sideways."""
+        columns = set()
+        for section in SECTIONS:
+            for line in _rows(_panel_knobs(RuleConfig(), section)).splitlines():
+                if line.strip().startswith(tuple("0123456789")):
+                    columns.add(len(line.rstrip()))
+        assert len(columns) == 1
