@@ -34,7 +34,13 @@ from contrai_core import (
 from contrai_core.bid import ContractBid, DoubleBid, PassBid
 from contrai_engine.model.game import GameOverStatus
 from contrai_engine.options import DebugOptions, TableAids
-from contrai_engine.ruleset import SECTION_HEADINGS, SECTIONS, TableSetup
+from contrai_engine.ruleset import (
+    SECTION_HEADINGS,
+    SECTIONS,
+    TableSetup,
+    save_setup,
+    setup_path,
+)
 from contrai_engine.view.rich_view import RichView
 from contrai_engine.view.screens.bidding import (
     _bidding_prompt_text,
@@ -2009,3 +2015,122 @@ class TestShowKnobEditor:
         headings = {h for h in SECTION_HEADINGS.values()}
         rendered = " ".join(seen)
         assert all(h in rendered for h in headings)
+
+
+@pytest.fixture(autouse=True)
+def contrai_home(tmp_path, monkeypatch):
+    """Point the last-setup cache at a scratch directory.
+
+    ``_remembered_setup`` reads the user's home by default, so without
+    this the preset picker's ``last used`` row would come and go with
+    whatever the developer running the suite last played. Autouse, so
+    every test in this file is isolated whether it asks or not.
+    """
+    home = tmp_path / "contrai-home"
+    monkeypatch.setenv("CONTRAI_HOME", str(home))
+    return home
+
+
+class TestRememberedSetup:
+    """The last-used setup: offered when it loads, invisible when it does not."""
+
+    def test_none_when_nothing_was_ever_saved(self, contrai_home):
+        assert RichView()._remembered_setup() is None
+
+    def test_a_saved_setup_comes_back_relabelled(self, contrai_home):
+        saved = TableSetup(
+            rules=RuleConfig(target_score=500),
+            aids=TableAids(live_round_score=False),
+            origin="house.toml",
+        )
+        save_setup(setup_path(), saved)
+
+        remembered = RichView()._remembered_setup()
+
+        assert remembered.rules == saved.rules
+        assert remembered.aids == saved.aids
+        # The label is what the picker lists it under, not where it came
+        # from three runs ago.
+        assert remembered.origin == "last used"
+
+    def test_a_corrupt_file_is_not_offered(self, contrai_home):
+        """A stale cache is a row that quietly does not appear."""
+        setup_path().parent.mkdir(parents=True, exist_ok=True)
+        setup_path().write_text("[general\n", encoding="utf-8")
+
+        assert RichView()._remembered_setup() is None
+
+    def test_a_file_naming_an_impossible_table_is_not_offered(self, contrai_home):
+        setup_path().parent.mkdir(parents=True, exist_ok=True)
+        setup_path().write_text(
+            "[scoring]\nmark_made_points = false\nmark_announced_points = false\n",
+            encoding="utf-8",
+        )
+
+        assert RichView()._remembered_setup() is None
+
+    def test_a_directory_where_the_file_should_be_is_not_offered(
+        self, contrai_home
+    ):
+        """An OSError that is not FileNotFoundError is swallowed too."""
+        setup_path().mkdir(parents=True, exist_ok=True)
+
+        assert RichView()._remembered_setup() is None
+
+
+class TestPresetPickerOffersTheRememberedSetup:
+    """``last used`` joins the radio when the cache loads."""
+
+    def test_not_listed_when_nothing_was_saved(self, contrai_home):
+        printed = []
+        view = RichView()
+        inputs = iter([""])
+        view.console.clear = lambda *a, **k: None
+        view.console.print = lambda *a, **k: printed.extend(
+            getattr(getattr(x, "renderable", None), "plain", "") for x in a
+        )
+        view.console.input = lambda *a, **k: next(inputs)
+
+        view._show_preset_picker(TableSetup())
+
+        assert not any("last used" in text for text in printed)
+
+    def test_listed_once_a_run_has_saved_one(self, contrai_home):
+        save_setup(setup_path(), TableSetup(rules=RuleConfig(target_score=500)))
+        printed = []
+        view = RichView()
+        inputs = iter([""])
+        view.console.clear = lambda *a, **k: None
+        view.console.print = lambda *a, **k: printed.extend(
+            getattr(getattr(x, "renderable", None), "plain", "") for x in a
+        )
+        view.console.input = lambda *a, **k: next(inputs)
+
+        view._show_preset_picker(TableSetup())
+
+        assert any("last used" in text for text in printed)
+
+    def test_it_can_be_picked_by_name(self, contrai_home):
+        saved = TableSetup(
+            rules=RuleConfig(target_score=500),
+            aids=TableAids(live_round_score=False),
+        )
+        save_setup(setup_path(), saved)
+        view = _drive_landing(RichView(), ["last used"])
+
+        result = view._show_preset_picker(TableSetup())
+
+        assert result.rules == saved.rules
+        # A remembered setup is a whole setup: its aids come back too,
+        # unlike a preset's, which only names rules.
+        assert result.aids == saved.aids
+
+    def test_it_can_be_picked_by_number(self, contrai_home):
+        save_setup(setup_path(), TableSetup(rules=RuleConfig(target_score=500)))
+        # classic is 1; the remembered row is appended after the presets.
+        view = _drive_landing(RichView(), ["2"])
+
+        result = view._show_preset_picker(TableSetup())
+
+        assert result.rules.target_score == 500
+        assert result.origin == "last used"

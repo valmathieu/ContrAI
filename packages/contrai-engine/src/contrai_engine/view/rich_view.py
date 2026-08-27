@@ -41,7 +41,13 @@ from contrai_core import (
     rules_for,
 )
 from contrai_engine.options import DebugOptions, TableAids
-from contrai_engine.ruleset import SECTIONS, TableSetup, cycle_knob, load_setup
+from contrai_engine.ruleset import (
+    SECTIONS,
+    TableSetup,
+    cycle_knob,
+    load_setup,
+    setup_path,
+)
 from contrai_engine.view.bidding_rules import _illegal_bid_reason
 from contrai_engine.view.formatting import (
     _format_card_compact,
@@ -629,6 +635,11 @@ class RichView:
             name: TableSetup(rules=rules, aids=current.aids, origin=name)
             for name, rules in sorted(PRESETS.items())
         }
+        # The remembered setup is a whole setup, aids included, so it is
+        # added after the presets rather than folded into one of them.
+        remembered = self._remembered_setup()
+        if remembered is not None:
+            offers["last used"] = remembered
         names = list(offers)
         notice: Optional[Text] = None
         while True:
@@ -649,6 +660,27 @@ class RichView:
                 f"✗ Pick 1–{len(names)}, or one of: {', '.join(names)}.",
                 style=RED,
             )
+
+    def _remembered_setup(self) -> Optional[TableSetup]:
+        """The setup a previous run left the landing screen with, if any.
+
+        Only ever *offered*, never applied on its own: a bare
+        ``uv run contrai`` still opens on the §9 defaults, so a headless
+        or smoke run stays deterministic whatever happens to be cached in
+        the user's home directory.
+
+        Returns:
+            The remembered setup, relabelled ``"last used"``, or ``None``
+            when there is no file, it cannot be read, or it no longer
+            parses — a stale cache is a row that quietly does not appear,
+            never an error the player has to go and clear.
+        """
+        try:
+            return dataclasses.replace(
+                load_setup(setup_path()), origin="last used"
+            )
+        except (OSError, ValueError):
+            return None
 
     def _show_knob_editor(self, current: TableSetup) -> TableSetup:
         """Walk the §9 subsections, cycling any knob to its next value.

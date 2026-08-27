@@ -34,6 +34,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) A table *setup* — the six rule sections plus `[table_aids]` — reads and writes as one TOML document. See [engine docs](docs/engine/index.md).
 - (engine) The landing screen now picks the whole table setup: `[p]` preset, `[f]` load a file, `[l]` live score. See [engine docs](docs/engine/index.md).
 - (engine) `[k]` on the setup screen cycles any of the 22 §9 knobs, grouped by subsection; an impossible table is refused inline.
+- (engine) The setup a run leaves the landing screen with is remembered and offered back as `last used`. See [engine docs](docs/engine/index.md).
 
 ### Changed
 

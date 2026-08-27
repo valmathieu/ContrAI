@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import logging
 import random
 import sys
 from pathlib import Path
@@ -43,7 +44,7 @@ from contrai_engine.log_setup import configure_logging
 from contrai_engine.model.game import Game
 from contrai_engine.model.player import AiPlayer, HumanPlayer
 from contrai_engine.options import DebugOptions, TableAids
-from contrai_engine.ruleset import TableSetup, resolve_setup
+from contrai_engine.ruleset import TableSetup, resolve_setup, save_setup, setup_path
 from contrai_engine.view.rich_view import RichView
 
 
@@ -53,6 +54,8 @@ from contrai_engine.view.rich_view import RichView
 # ``--autoplay`` is set, in which case South is an AI too (see
 # ``_build_game``).
 HUMAN_SEAT = Position.SOUTH
+
+logger = logging.getLogger(__name__)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -205,6 +208,26 @@ def _build_game(autoplay: bool = False, rules: RuleConfig | None = None) -> Game
     return Game(players, rules=rules)
 
 
+def _remember(setup: TableSetup, options: DebugOptions) -> None:
+    """Persist the setup a player left the landing screen with.
+
+    Never under ``--autoplay``: an unattended run must not rewrite what a
+    player chose. An unwritable home is not fatal either — the cache is a
+    convenience, and a game that refused to start because it could not
+    write one would be the worse trade.
+
+    Args:
+        setup: The setup to remember.
+        options: The run's debug flags, read for ``autoplay``.
+    """
+    if options.autoplay:
+        return
+    try:
+        save_setup(setup_path(), setup)
+    except OSError:
+        logger.debug("could not remember the table setup", exc_info=True)
+
+
 def main() -> None:
     """Entry point registered as the ``contrai`` console script."""
     options, setup = _parse_args()
@@ -226,6 +249,7 @@ def main() -> None:
     view = RichView(options=options, aids=setup.aids)
     setup = view.show_landing(setup)
     view.aids = setup.aids
+    _remember(setup, options)
     try:
         while True:
             game = _build_game(autoplay=options.autoplay, rules=setup.rules)
@@ -252,6 +276,7 @@ def main() -> None:
             if choice == "n":
                 setup = view.show_landing(setup)
                 view.aids = setup.aids
+                _remember(setup, options)
             # 'r' → rematch: same setup, fresh game in the next loop tick.
     except (KeyboardInterrupt, EOFError):
         view.console.print("\nGoodbye.")

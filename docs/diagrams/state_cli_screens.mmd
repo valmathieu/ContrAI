@@ -7,7 +7,7 @@ stateDiagram-v2
     [*] --> Landing : uv run contrai
 
     Landing : <b>0. Landing / table setup</b><br/>show_landing(setup) -> TableSetup<br/>summary: ruleset origin (+N changes) · target<br/>trump choices · live round score<br/>[Enter] deal · [p] preset · [f] file · [l] live score
-    PresetPicker : <b>0a. Preset picker</b><br/>numbered radio over PRESETS<br/>[Enter] keeps the current ruleset
+    PresetPicker : <b>0a. Preset picker</b><br/>numbered radio over PRESETS,<br/>plus 'last used' when the cache loads<br/>[Enter] keeps the current ruleset
     FileLoader : <b>0b. Setup file</b><br/>path to a TOML setup document<br/>a bad path re-prompts inline · [Enter] cancels
     KnobEditor : <b>0c. Table rules</b><br/>one numbered grid per §9 subsection<br/>[1-n] cycles a knob · [n] / [b] walk the sections<br/>an impossible table is refused inline
     Bidding : <b>1. Bidding</b><br/>request_bid_action(player, history)<br/>"80 h" / "pass" / "double" / "redouble"<br/>(hint adapts to '(pass / redouble)'<br/>when contractor was just doubled)
@@ -47,7 +47,12 @@ stateDiagram-v2
         [Enter] would actually seat. Only
         `rules` reaches the Game; the §9.7
         interface aids stay on the view, which
-        the CLI re-points on each return.
+        the CLI re-points on each return — and
+        saves to $CONTRAI_HOME/last-setup.toml,
+        except under --autoplay. That cache is
+        only ever *offered* on the picker, so a
+        bare `uv run contrai` still opens on the
+        §9 defaults.
     end note
 
     note right of MidTrick

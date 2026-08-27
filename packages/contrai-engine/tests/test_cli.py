@@ -29,7 +29,27 @@ from contrai_engine.cli import _apply_seed, _build_game, _parse_args, main
 from contrai_engine.model.game import GameOverStatus
 from contrai_engine.model.player import AiPlayer, HumanPlayer
 from contrai_engine.options import DebugOptions, TableAids
-from contrai_engine.ruleset import TableSetup
+from contrai_engine.ruleset import TableSetup, load_setup, save_setup, setup_path
+
+@pytest.fixture
+def contrai_home(tmp_path):
+    """The scratch directory the last-setup cache is redirected into."""
+
+    return tmp_path / "contrai-home"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_contrai_home(contrai_home, monkeypatch):
+    """Point the last-setup cache at a scratch directory.
+
+    main remembers the setup a player left the landing screen with, so
+    without this every test driving it would write into the real
+    ~/.contrai — and every test reading it back would see whatever the
+    developer running the suite last played.
+    """
+
+    monkeypatch.setenv("CONTRAI_HOME", str(contrai_home))
+
 
 @pytest.fixture(autouse=True)
 def _restore_random_state():
@@ -817,3 +837,106 @@ class TestMainStreamReconfigure:
         main()  # must not propagate
 
         assert _one_quiet_game.view.events[-1] == "show_end_game"
+
+
+class TestLastSetupPersistence:
+    """``main`` remembers the setup a player leaves the landing screen with.
+
+    ``CONTRAI_HOME`` points at a scratch directory for every test in this
+    file (the autouse ``_isolate_contrai_home`` fixture), so nothing here
+    touches the real ``~/.contrai``.
+    """
+
+    def test_a_run_writes_the_setup_it_dealt_under(
+        self, install_cli_doubles, contrai_home
+    ):
+        setup = TableSetup(
+            rules=RuleConfig(target_score=3000),
+            aids=TableAids(live_round_score=False),
+            origin="custom",
+        )
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            landing_setups=[setup],
+            end_game_choices=["q"],
+        )
+
+        main()
+
+        remembered = load_setup(contrai_home / "last-setup.toml")
+        assert remembered.rules == setup.rules
+        assert remembered.aids == setup.aids
+
+    def test_the_file_is_written_where_setup_path_says(
+        self, install_cli_doubles, contrai_home
+    ):
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)], end_game_choices=["q"]
+        )
+
+        main()
+
+        assert setup_path().is_file()
+        assert setup_path().parent == contrai_home
+
+    def test_a_new_game_remembers_the_second_pick_too(
+        self, install_cli_doubles, contrai_home
+    ):
+        """``[n]`` re-opens the screen, so what it returns is remembered."""
+        second = TableSetup(rules=RuleConfig(target_score=500))
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1), _FakeGame(rounds_to_play=1)],
+            landing_setups=[TableSetup(), second],
+            end_game_choices=["n", "q"],
+        )
+
+        main()
+
+        assert load_setup(setup_path()).rules == second.rules
+
+    def test_autoplay_writes_nothing(self, install_cli_doubles, contrai_home):
+        """An unattended run must not rewrite what a player chose."""
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            end_game_choices=["q"],
+            argv=("contrai", "--autoplay"),
+        )
+
+        main()
+
+        assert not setup_path().exists()
+
+    def test_an_unwritable_home_does_not_stop_the_game(
+        self, install_cli_doubles, monkeypatch
+    ):
+        """Persistence is a convenience; failing to save is not fatal."""
+
+        def _boom(*_args, **_kwargs):
+            raise OSError("read-only file system")
+
+        monkeypatch.setattr("contrai_engine.cli.save_setup", _boom)
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)], end_game_choices=["q"]
+        )
+
+        main()  # must not propagate
+
+        assert harness.view.events[-1] == "show_end_game"
+
+    def test_a_bare_start_is_still_the_catalogue_defaults(
+        self, install_cli_doubles, contrai_home
+    ):
+        """A remembered setup is offered, never applied: what the flags
+        resolve to is what the landing screen opens on."""
+        save_setup(
+            setup_path(),
+            TableSetup(rules=RuleConfig(target_score=500)),
+        )
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)], end_game_choices=["q"]
+        )
+
+        main()
+
+        assert harness.view.landing_received == [TableSetup()]
+        assert harness.rules_seen == [RuleConfig()]
