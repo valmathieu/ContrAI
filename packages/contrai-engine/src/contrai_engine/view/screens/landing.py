@@ -1,8 +1,10 @@
 """Landing screen rendering for the Rich terminal UI.
 
-The pre-game splash: the block-ASCII title and subtitle, the suit
-ribbon, the target-score radio, the seat roster, and the target prompt.
-Pure builders consuming scalars.
+The pre-game splash's fixed furniture: the block-ASCII title and
+subtitle, the suit ribbon, and the seat roster. What the table is playing
+— the ruleset summary, the preset radio, the knob editor and their
+prompts — lives in :mod:`contrai_engine.view.screens.setup`, because that
+half is edited and this half is not. Pure builders consuming scalars.
 """
 
 from __future__ import annotations
@@ -21,15 +23,10 @@ from contrai_engine.view.formatting import (
 from contrai_engine.view.theme import (
     BLUE,
     BORDER,
-    DEFAULT_TARGET,
     DIM,
     FG,
-    GOLD,
-    GOLD_BG,
-    GOLD_FG,
     GREEN_FG,
     ORANGE,
-    TARGET_OPTIONS,
     TITLE,
     YELLOW,
 )
@@ -80,45 +77,6 @@ def _landing_suit_ribbon() -> Text:
     ribbon.append(" " * pad)
     ribbon.append_text(inner)
     return ribbon
-
-
-def _panel_game_setup(selected: int) -> Panel:
-    """One radio row per §9.1 target score, highlighting the selected one."""
-    rows = Text()
-    rows.append("Target score", style=f"bold {FG}")
-    rows.append(" ", style=FG)
-    rows.append(
-        "(first team to reach the target wins the game)\n\n",
-        style=DIM,
-    )
-    for value, label, estimate in TARGET_OPTIONS:
-        is_sel = value == selected
-        line = Text()
-        if is_sel:
-            radio = "(●)"
-            line.append(f" {radio} ", style=f"bold {GOLD_FG} on {GOLD_BG}")
-            line.append(f"{value:<4}  ", style=f"bold {GOLD_FG} on {GOLD_BG}")
-            line.append(f"{label:<10}", style=f"{GOLD_FG} on {GOLD_BG}")
-            line.append(f"  ·  {estimate}", style=f"{GOLD_FG} on {GOLD_BG}")
-            if value == DEFAULT_TARGET:
-                line.append("   ← default", style=f"bold {GOLD} on {GOLD_BG}")
-            # Pad to fill the panel width with the gold background.
-            used = line.cell_len
-            line.append(" " * max(0, 60 - used), style=f"on {GOLD_BG}")
-        else:
-            line.append(" ( ) ", style=DIM)
-            line.append(f"{value:<4}  ", style=f"bold {FG}")
-            line.append(f"{label:<10}", style=FG)
-            line.append(f"  ·  {estimate}", style=DIM)
-        rows.append_text(line)
-        rows.append("\n")
-    return Panel(
-        rows,
-        title=Text("Game setup", style=f"bold {TITLE}"),
-        border_style=BORDER,
-        box=ROUNDED,
-        width=70,
-    )
 
 
 def _panel_players(autoplay: bool = False) -> Panel:
@@ -178,21 +136,3 @@ def _panel_players(autoplay: bool = False) -> Panel:
         box=ROUNDED,
         width=70,
     )
-
-
-def _landing_prompt_text(selected: int) -> Text:
-    """Prompt line asking for the target score, naming the default.
-
-    The offered values are read off :data:`TARGET_OPTIONS` rather than
-    spelled out, so the prompt and the radio above it can never disagree
-    about what the table accepts.
-    """
-    t = Text()
-    offered = " / ".join(str(value) for value, _, _ in TARGET_OPTIONS)
-    t.append(
-        f"Target score? [{offered}] (default ",
-        style=FG,
-    )
-    t.append(str(selected), style=f"bold {GOLD}")
-    t.append(")", style=FG)
-    return t

@@ -30,6 +30,11 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) `reshuffle_every_round` — the deck is shuffled before every deal instead of merely cut.
 - (engine) The landing picker offers all seven §9.1 targets and the chosen value lands on the ruleset the game is built under.
 - (engine) `solo_slam_gives_the_lead` — the Solo Slam declarer opens trick 1; play then continues in the normal order.
+- (engine) `contrai --no-live-score` hides the in-game `Round pts:` row — the running score is now a switchable table aid.
+- (engine) A table *setup* — the six rule sections plus `[table_aids]` — reads and writes as one TOML document. See [engine docs](docs/engine/index.md).
+- (engine) The landing screen now picks the whole table setup: `[p]` preset, `[f]` load a file, `[l]` live score. See [engine docs](docs/engine/index.md).
+- (engine) `[k]` on the setup screen cycles any of the 22 §9 knobs, grouped by subsection; an impossible table is refused inline.
+- (engine) The setup a run leaves the landing screen with is remembered and offered back as `last used`. See [engine docs](docs/engine/index.md).
 
 ### Changed
 
@@ -41,6 +46,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) **BREAKING:** The attack must now out-score the defense to make its contract (§7.5 default); an exact tie fails it. Set `attack_must_outscore_defense = false` for the old behaviour.
 - (core) **BREAKING:** Under-trumping is no longer compulsory — §6.2's exemption is the §9 default. Set `under_trump_exemption = false` to restore it.
 - (engine) **BREAKING:** `Game.check_game_over()` takes no argument — it reads `rules.target_score`, whose default is now 2000, not 1500.
+- (engine) **BREAKING:** `RichView.show_landing(setup)` takes and returns a `TableSetup`, not a target score. The target is now a ruleset knob.
 
 ### Fixed
 

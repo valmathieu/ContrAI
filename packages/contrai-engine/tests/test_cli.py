@@ -17,7 +17,6 @@ Rich rendering or blocking input. The real wiring — that a genuine
 
 from __future__ import annotations
 
-import dataclasses
 import random
 import sys
 
@@ -29,8 +28,28 @@ from contrai_core.team_side import TeamSide
 from contrai_engine.cli import _apply_seed, _build_game, _parse_args, main
 from contrai_engine.model.game import GameOverStatus
 from contrai_engine.model.player import AiPlayer, HumanPlayer
-from contrai_engine.options import DebugOptions
-from contrai_engine.view.theme import DEFAULT_TARGET
+from contrai_engine.options import DebugOptions, TableAids
+from contrai_engine.ruleset import TableSetup, load_setup, save_setup, setup_path
+
+@pytest.fixture
+def contrai_home(tmp_path):
+    """The scratch directory the last-setup cache is redirected into."""
+
+    return tmp_path / "contrai-home"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_contrai_home(contrai_home, monkeypatch):
+    """Point the last-setup cache at a scratch directory.
+
+    main remembers the setup a player left the landing screen with, so
+    without this every test driving it would write into the real
+    ~/.contrai — and every test reading it back would see whatever the
+    developer running the suite last played.
+    """
+
+    monkeypatch.setenv("CONTRAI_HOME", str(contrai_home))
+
 
 @pytest.fixture(autouse=True)
 def _restore_random_state():
@@ -48,29 +67,35 @@ def _restore_random_state():
 
 
 class TestParseArgs:
-    """``_parse_args`` — argparse wiring for the debug-mode and ruleset flags.
+    """``_parse_args`` — argparse wiring for the debug-mode and setup flags.
 
-    It returns a ``(DebugOptions, RuleConfig)`` pair: the flags, and the
-    table ruleset ``--rules`` / ``--preset`` resolved to.
+    It returns a ``(DebugOptions, TableSetup)`` pair: the debug flags, and
+    the table setup ``--rules`` / ``--preset`` / ``--no-live-score``
+    resolved to — the ruleset the game is built under plus the interface
+    aids the view reads.
     """
 
     def test_no_flags_returns_all_off_defaults(self):
         """The back-compat anchor: an empty argv parses to the defaults."""
 
-        assert _parse_args([]) == (DebugOptions(), RuleConfig())
+        assert _parse_args([]) == (DebugOptions(), TableSetup())
 
     def test_debug_flag_alone(self):
-        assert _parse_args(["--debug"]) == (DebugOptions(debug=True), RuleConfig())
+        assert _parse_args(["--debug"]) == (DebugOptions(debug=True), TableSetup())
 
     def test_seed_flag_alone(self):
-        assert _parse_args(["--seed", "42"]) == (DebugOptions(seed=42), RuleConfig())
+        assert _parse_args(["--seed", "42"]) == (DebugOptions(seed=42), TableSetup())
 
     def test_autoplay_flag_alone(self):
-        assert _parse_args(["--autoplay"]) == (DebugOptions(autoplay=True), RuleConfig())
+        assert _parse_args(["--autoplay"]) == (
+            DebugOptions(autoplay=True), TableSetup(),
+        )
 
     def test_all_three_flags_combined(self):
         result = _parse_args(["--debug", "--seed", "7", "--autoplay"])
-        assert result == (DebugOptions(debug=True, autoplay=True, seed=7), RuleConfig())
+        assert result == (
+            DebugOptions(debug=True, autoplay=True, seed=7), TableSetup(),
+        )
 
     def test_seed_value_is_coerced_to_int(self):
         options, _ = _parse_args(["--seed", "123"])
@@ -84,13 +109,34 @@ class TestParseArgs:
             _parse_args(["--seed", "not-a-number"])
 
     def test_preset_classic_resolves_to_the_defaults(self):
-        assert _parse_args(["--preset", "classic"]) == (DebugOptions(), RuleConfig())
+        assert _parse_args(["--preset", "classic"]) == (
+            DebugOptions(), TableSetup(origin="classic"),
+        )
+
+    def test_no_live_score_switches_the_aid_off(self):
+        """``--no-live-score`` is the §9.7 aid's only CLI surface."""
+
+        assert _parse_args(["--no-live-score"])[1].aids == TableAids(
+            live_round_score=False
+        )
+
+    def test_live_score_is_on_without_the_flag(self):
+        assert _parse_args([])[1].aids.live_round_score is True
+
+    def test_no_live_score_is_independent_of_the_ruleset_flags(self):
+        """The aid is a view setting, so it composes with any ruleset."""
+
+        options, setup = _parse_args(["--preset", "classic", "--no-live-score"])
+        assert (options, setup.rules) == (DebugOptions(), RuleConfig())
+        assert setup.aids == TableAids(live_round_score=False)
 
     def test_rules_file_is_loaded(self, tmp_path):
         path = tmp_path / "table.toml"
         path.write_text("[general]\ntarget_score = 1000\n", encoding="utf-8")
 
-        assert _parse_args(["--rules", str(path)])[1] == RuleConfig(target_score=1000)
+        setup = _parse_args(["--rules", str(path)])[1]
+        assert setup.rules == RuleConfig(target_score=1000)
+        assert setup.origin == "table.toml"
 
     def test_rules_and_preset_are_mutually_exclusive(self, tmp_path):
         """``argparse``'s own group rejects the pair before ``resolve_rules``."""
@@ -276,10 +322,12 @@ class _RecordingView:
         self,
         options: DebugOptions | None = None,
         *,
-        landing_targets: list[int] | None = None,
+        aids: TableAids | None = None,
+        landing_setups: list[TableSetup] | None = None,
         end_game_choices: list[str] | None = None,
     ) -> None:
         self.options = options
+        self.aids = aids
         self.console = _RecordingConsole()
         # One ordered log covering view *and* game calls alike (the fake
         # game appends through the view it is handed), so the per-round
@@ -290,13 +338,18 @@ class _RecordingView:
         self.round_completions: list[tuple[object, dict]] = []
         self.recaps: list[dict] = []
         self.end_game_statuses: list[GameOverStatus] = []
-        self._landing_targets = list(landing_targets or [DEFAULT_TARGET])
+        # ``None`` means "echo whatever you were handed" — the real
+        # screen's ``[Enter]``, i.e. deal the setup on display. A list
+        # scripts a player who edited something instead.
+        self._landing_setups = list(landing_setups) if landing_setups else None
         self._end_game_choices = list(end_game_choices or ["q"])
 
-    def show_landing(self, selected_target: object = _UNSET) -> int:
+    def show_landing(self, selected: object = _UNSET) -> TableSetup:
         self.events.append("show_landing")
-        self.landing_received.append(selected_target)
-        return self._landing_targets.pop(0)
+        self.landing_received.append(selected)
+        if self._landing_setups is None:
+            return selected if isinstance(selected, TableSetup) else TableSetup()
+        return self._landing_setups.pop(0)
 
     def attach(self, game: object, target_score: int) -> None:
         self.events.append("attach")
@@ -431,17 +484,21 @@ def install_cli_doubles(monkeypatch):
     def _install(
         *,
         games: list[_FakeGame],
-        landing_targets: list[int] | None = None,
+        landing_setups: list[TableSetup] | None = None,
         end_game_choices: list[str] | None = None,
         argv: tuple[str, ...] = ("contrai",),
     ) -> _Harness:
         harness = _Harness()
         queue = list(games)
 
-        def _make_view(options: DebugOptions | None = None) -> _RecordingView:
+        def _make_view(
+            options: DebugOptions | None = None,
+            aids: TableAids | None = None,
+        ) -> _RecordingView:
             harness.view = _RecordingView(
                 options,
-                landing_targets=landing_targets,
+                aids=aids,
+                landing_setups=landing_setups,
                 end_game_choices=end_game_choices,
             )
             return harness.view
@@ -490,11 +547,11 @@ class TestMain:
     def test_rematch_builds_a_second_game_without_a_new_landing(
         self, install_cli_doubles
     ):
-        """``"r"`` reuses the chosen target: fresh game, no second landing."""
+        """``"r"`` reuses the chosen setup: fresh game, no second landing."""
 
         harness = install_cli_doubles(
             games=[_FakeGame(rounds_to_play=1), _FakeGame(rounds_to_play=1)],
-            landing_targets=[1000],
+            landing_setups=[TableSetup(rules=RuleConfig(target_score=1000))],
             end_game_choices=["r", "q"],
         )
 
@@ -503,66 +560,69 @@ class TestMain:
         assert harness.build_calls == [False, False]
         assert harness.view.events.count("show_landing") == 1
         assert harness.view.events.count("attach") == 2
-        # Both games run to the same target — that is what "rematch" means.
+        # Both games run under the same setup — that is what "rematch" means.
         assert [target for _, target in harness.view.attached] == [1000, 1000]
 
-    def test_new_game_reruns_the_landing_with_the_current_target(
+    def test_new_game_reruns_the_landing_with_the_current_setup(
         self, install_cli_doubles
     ):
-        """``"n"`` re-shows the landing, pre-selecting the target in play."""
+        """``"n"`` re-shows the landing, opening on the setup in play."""
 
+        first = TableSetup(rules=RuleConfig(target_score=1000))
+        second = TableSetup(rules=RuleConfig(target_score=2000))
         harness = install_cli_doubles(
             games=[_FakeGame(rounds_to_play=1), _FakeGame(rounds_to_play=1)],
-            landing_targets=[1000, 2000],
+            landing_setups=[first, second],
             end_game_choices=["n", "q"],
         )
 
         main()
 
-        # First call seeds from the resolved ruleset's target; the second
-        # pre-selects whatever the first call returned.
-        assert harness.view.landing_received == [RuleConfig().target_score, 1000]
+        # First call opens on what the flags resolved to; the second opens
+        # on whatever the first call returned.
+        assert harness.view.landing_received == [TableSetup(), first]
         assert [target for _, target in harness.view.attached] == [1000, 2000]
 
-    def test_attach_receives_the_target_show_landing_returned(
+    def test_the_game_is_built_under_the_setup_the_landing_returned(
         self, install_cli_doubles
     ):
-        """The landing's return value is the target threaded into the view."""
+        """The screen's edit is what reaches the model — the whole point of
+        the setup screen, and the one thing no unit test above proves."""
 
         game = _FakeGame(rounds_to_play=1)
+        rules = RuleConfig(target_score=3000, extended_trump_choices=True)
         harness = install_cli_doubles(
             games=[game],
-            landing_targets=[3000],
+            landing_setups=[TableSetup(rules=rules, origin="custom")],
             end_game_choices=["q"],
         )
 
         main()
 
+        assert harness.rules_seen == [rules]
+        # ...and the target is the model's own number, not one the loop
+        # carries alongside the game: every ``check_game_over`` reads it
+        # off ``game.rules``.
         assert harness.view.attached == [(game, 3000)]
-        # ...and it is the model's own number, not a value the loop carries
-        # alongside the game: every ``check_game_over`` reads it off
-        # ``game.rules``.
-        assert game.rules.target_score == 3000
         assert set(game.targets_checked) == {3000}
 
-    def test_the_landing_pick_lands_on_the_ruleset(self, install_cli_doubles):
-        """The target chosen on the landing screen replaces the ruleset's,
-        so the model — not the view — owns the number from then on."""
+    def test_the_aid_the_landing_returned_is_repointed_on_the_view(
+        self, install_cli_doubles
+    ):
+        """The aids never reach the model, so the CLI hands them to the
+        view directly once the screen is done with them."""
 
         harness = install_cli_doubles(
             games=[_FakeGame(rounds_to_play=1)],
-            landing_targets=[3000],
+            landing_setups=[
+                TableSetup(aids=TableAids(live_round_score=False))
+            ],
             end_game_choices=["q"],
         )
 
         main()
 
-        # Every other knob survives the replace untouched.
-        assert harness.rules_seen[0] == dataclasses.replace(
-            RuleConfig(), target_score=3000
-        )
-        # ...and the view was attached against the model's own number.
-        assert harness.view.attached[0][1] == 3000
+        assert harness.view.aids == TableAids(live_round_score=False)
 
     def test_recap_flags_are_derived_from_check_game_over(
         self, install_cli_doubles
@@ -685,6 +745,29 @@ class TestMain:
 
         assert harness.rules_seen == [PRESETS["classic"]]
 
+    def test_no_live_score_reaches_the_view(self, install_cli_doubles):
+        """The aid is constructed into the view, not carried by the model."""
+
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            end_game_choices=["q"],
+            argv=("contrai", "--no-live-score"),
+        )
+
+        main()
+
+        assert harness.view.aids == TableAids(live_round_score=False)
+
+    def test_default_run_leaves_the_aid_on(self, install_cli_doubles):
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            end_game_choices=["q"],
+        )
+
+        main()
+
+        assert harness.view.aids == TableAids()
+
     @pytest.mark.parametrize(
         "error", [KeyboardInterrupt(), EOFError()], ids=["ctrl-c", "ctrl-d"]
     )
@@ -754,3 +837,106 @@ class TestMainStreamReconfigure:
         main()  # must not propagate
 
         assert _one_quiet_game.view.events[-1] == "show_end_game"
+
+
+class TestLastSetupPersistence:
+    """``main`` remembers the setup a player leaves the landing screen with.
+
+    ``CONTRAI_HOME`` points at a scratch directory for every test in this
+    file (the autouse ``_isolate_contrai_home`` fixture), so nothing here
+    touches the real ``~/.contrai``.
+    """
+
+    def test_a_run_writes_the_setup_it_dealt_under(
+        self, install_cli_doubles, contrai_home
+    ):
+        setup = TableSetup(
+            rules=RuleConfig(target_score=3000),
+            aids=TableAids(live_round_score=False),
+            origin="custom",
+        )
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            landing_setups=[setup],
+            end_game_choices=["q"],
+        )
+
+        main()
+
+        remembered = load_setup(contrai_home / "last-setup.toml")
+        assert remembered.rules == setup.rules
+        assert remembered.aids == setup.aids
+
+    def test_the_file_is_written_where_setup_path_says(
+        self, install_cli_doubles, contrai_home
+    ):
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)], end_game_choices=["q"]
+        )
+
+        main()
+
+        assert setup_path().is_file()
+        assert setup_path().parent == contrai_home
+
+    def test_a_new_game_remembers_the_second_pick_too(
+        self, install_cli_doubles, contrai_home
+    ):
+        """``[n]`` re-opens the screen, so what it returns is remembered."""
+        second = TableSetup(rules=RuleConfig(target_score=500))
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1), _FakeGame(rounds_to_play=1)],
+            landing_setups=[TableSetup(), second],
+            end_game_choices=["n", "q"],
+        )
+
+        main()
+
+        assert load_setup(setup_path()).rules == second.rules
+
+    def test_autoplay_writes_nothing(self, install_cli_doubles, contrai_home):
+        """An unattended run must not rewrite what a player chose."""
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            end_game_choices=["q"],
+            argv=("contrai", "--autoplay"),
+        )
+
+        main()
+
+        assert not setup_path().exists()
+
+    def test_an_unwritable_home_does_not_stop_the_game(
+        self, install_cli_doubles, monkeypatch
+    ):
+        """Persistence is a convenience; failing to save is not fatal."""
+
+        def _boom(*_args, **_kwargs):
+            raise OSError("read-only file system")
+
+        monkeypatch.setattr("contrai_engine.cli.save_setup", _boom)
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)], end_game_choices=["q"]
+        )
+
+        main()  # must not propagate
+
+        assert harness.view.events[-1] == "show_end_game"
+
+    def test_a_bare_start_is_still_the_catalogue_defaults(
+        self, install_cli_doubles, contrai_home
+    ):
+        """A remembered setup is offered, never applied: what the flags
+        resolve to is what the landing screen opens on."""
+        save_setup(
+            setup_path(),
+            TableSetup(rules=RuleConfig(target_score=500)),
+        )
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)], end_game_choices=["q"]
+        )
+
+        main()
+
+        assert harness.view.landing_received == [TableSetup()]
+        assert harness.rules_seen == [RuleConfig()]

@@ -11,24 +11,29 @@ module (:func:`_apply_seed`), and threading the result into both the
 view (:class:`RichView`) and the game's seating (:func:`_build_game`).
 
 The two mutually exclusive ruleset flags (``--rules FILE`` /
-``--preset NAME``) are resolved in the same pass, through
-:func:`contrai_engine.ruleset.resolve_rules`, into the
-:class:`~contrai_core.RuleConfig` the :class:`Game` is built under. A
+``--preset NAME``) and the ``--no-live-score`` aid switch are resolved in
+the same pass, through :func:`contrai_engine.ruleset.resolve_setup`, into
+the :class:`~contrai_engine.ruleset.TableSetup` the run starts from: the
+:class:`~contrai_core.RuleConfig` the :class:`Game` is built under, plus
+the :class:`~contrai_engine.options.TableAids` the view reads. A
 malformed, unreadable or impossible ruleset is reported as an
 ``argparse`` usage error rather than a traceback.
 
-The landing screen's target-score pick is folded onto that resolved
-ruleset with :func:`dataclasses.replace` before each :class:`Game` is
-built, so a run started under ``--rules`` opens on that file's target and
-the player can still change it. From then on the model owns the number —
-``Game.check_game_over()`` reads it off ``game.rules`` and the loop
-carries nothing alongside the game.
+That resolved setup is what the landing screen opens on and edits: a
+player can pick a preset, load a file, turn any of the 22 knobs or
+switch the live round score without leaving the screen, and what
+:meth:`RichView.show_landing` hands back is what the next :class:`Game`
+is built from. The model then owns every rule it names —
+``Game.check_game_over()`` reads the target off ``game.rules`` and the
+loop carries nothing alongside the game — while the interface aids stay
+on the view, re-pointed each time the screen returns.
 """
 
 from __future__ import annotations
 
 import argparse
 import dataclasses
+import logging
 import random
 import sys
 from pathlib import Path
@@ -38,8 +43,8 @@ from contrai_core.rule_config import PRESETS, RuleConfig
 from contrai_engine.log_setup import configure_logging
 from contrai_engine.model.game import Game
 from contrai_engine.model.player import AiPlayer, HumanPlayer
-from contrai_engine.options import DebugOptions
-from contrai_engine.ruleset import resolve_rules
+from contrai_engine.options import DebugOptions, TableAids
+from contrai_engine.ruleset import TableSetup, resolve_setup, save_setup, setup_path
 from contrai_engine.view.rich_view import RichView
 
 
@@ -49,6 +54,8 @@ from contrai_engine.view.rich_view import RichView
 # ``--autoplay`` is set, in which case South is an AI too (see
 # ``_build_game``).
 HUMAN_SEAT = Position.SOUTH
+
+logger = logging.getLogger(__name__)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -81,6 +88,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="run one full unattended game with an AI at every seat",
     )
+    parser.add_argument(
+        "--no-live-score",
+        action="store_true",
+        help="hide the running round points from the in-game Round panel",
+    )
     # A file and a named preset are two ways of saying the same thing, so
     # argparse refuses the pair itself — ``resolve_rules`` guards the same
     # case for non-CLI callers.
@@ -101,8 +113,10 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _parse_args(argv: list[str] | None = None) -> tuple[DebugOptions, RuleConfig]:
-    """Parse the CLI's flags into a :class:`DebugOptions` and a ``RuleConfig``.
+def _parse_args(
+    argv: list[str] | None = None,
+) -> tuple[DebugOptions, TableSetup]:
+    """Parse the CLI's flags into a :class:`DebugOptions` and a ``TableSetup``.
 
     Args:
         argv: Argument strings to parse, excluding the program name.
@@ -110,10 +124,11 @@ def _parse_args(argv: list[str] | None = None) -> tuple[DebugOptions, RuleConfig
             ``argparse``'s own default.
 
     Returns:
-        The parsed flags and the resolved table ruleset. No seed
-        generation happens here — that is :func:`_apply_seed`'s job — so
-        ``seed`` is ``None`` unless ``--seed`` was passed explicitly, and
-        the ruleset is ``RuleConfig()`` unless a flag named another.
+        The parsed debug flags and the resolved table setup — the ruleset
+        the game is built under plus the interface aids the view reads. No
+        seed generation happens here — that is :func:`_apply_seed`'s job —
+        so ``seed`` is ``None`` unless ``--seed`` was passed explicitly,
+        and the setup is ``TableSetup()`` unless a flag named another.
 
     Raises:
         SystemExit: If ``argv`` fails to parse (e.g. a non-integer
@@ -126,14 +141,17 @@ def _parse_args(argv: list[str] | None = None) -> tuple[DebugOptions, RuleConfig
     parser = _build_parser()
     args = parser.parse_args(argv)
     options = DebugOptions(debug=args.debug, autoplay=args.autoplay, seed=args.seed)
+    # ``None`` rather than ``TableAids()`` when the flag is absent: only an
+    # explicitly typed flag may override a setup file's own [table_aids].
+    aids = TableAids(live_round_score=False) if args.no_live_score else None
     try:
-        rules = resolve_rules(preset=args.preset, rules_path=args.rules)
+        setup = resolve_setup(preset=args.preset, rules_path=args.rules, aids=aids)
     except (ValueError, OSError) as exc:
         # RulesetError, core's InvalidRuleConfigError, or an unreadable
         # file. ``parser.error`` prints usage + the message to stderr and
         # exits 2 — the same shape as any other bad flag.
         parser.error(str(exc))
-    return options, rules
+    return options, setup
 
 
 def _apply_seed(options: DebugOptions) -> DebugOptions:
@@ -190,9 +208,29 @@ def _build_game(autoplay: bool = False, rules: RuleConfig | None = None) -> Game
     return Game(players, rules=rules)
 
 
+def _remember(setup: TableSetup, options: DebugOptions) -> None:
+    """Persist the setup a player left the landing screen with.
+
+    Never under ``--autoplay``: an unattended run must not rewrite what a
+    player chose. An unwritable home is not fatal either — the cache is a
+    convenience, and a game that refused to start because it could not
+    write one would be the worse trade.
+
+    Args:
+        setup: The setup to remember.
+        options: The run's debug flags, read for ``autoplay``.
+    """
+    if options.autoplay:
+        return
+    try:
+        save_setup(setup_path(), setup)
+    except OSError:
+        logger.debug("could not remember the table setup", exc_info=True)
+
+
 def main() -> None:
     """Entry point registered as the ``contrai`` console script."""
-    options, rules = _parse_args()
+    options, setup = _parse_args()
     options = _apply_seed(options)
     configure_logging(options)
 
@@ -208,15 +246,13 @@ def main() -> None:
             except Exception:
                 pass
 
-    view = RichView(options=options)
-    target = view.show_landing(selected_target=rules.target_score)
+    view = RichView(options=options, aids=setup.aids)
+    setup = view.show_landing(setup)
+    view.aids = setup.aids
+    _remember(setup, options)
     try:
         while True:
-            # The landing pick overrides whatever ``--rules`` / ``--preset``
-            # named: from here the model owns the target, so nothing else
-            # has to carry it alongside the game.
-            rules = dataclasses.replace(rules, target_score=target)
-            game = _build_game(autoplay=options.autoplay, rules=rules)
+            game = _build_game(autoplay=options.autoplay, rules=setup.rules)
             view.attach(game, target_score=game.rules.target_score)
             while not game.check_game_over().game_over:
                 game.manage_round(view=view)
@@ -238,8 +274,10 @@ def main() -> None:
             if choice == "q":
                 break
             if choice == "n":
-                target = view.show_landing(selected_target=target)
-            # 'r' → rematch: same target, fresh game in the next loop tick.
+                setup = view.show_landing(setup)
+                view.aids = setup.aids
+                _remember(setup, options)
+            # 'r' → rematch: same setup, fresh game in the next loop tick.
     except (KeyboardInterrupt, EOFError):
         view.console.print("\nGoodbye.")
 

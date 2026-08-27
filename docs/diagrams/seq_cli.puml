@@ -39,20 +39,28 @@ activate M
 
 M -> V : new RichView()
 activate V
-M -> V : show_landing(selected_target=rules.target_score)
+M -> V : show_landing(setup)
 note right of V
-  Target-score picker over core's own
-  TARGET~_SCORES ladder
-  (500 / 1000 / 1500 / 2000 / 3000 / 4000 / 5000).
-  Returns the chosen target.
+  Table-setup screen. Summarises the table —
+  ruleset origin (+N changes), target score,
+  trump choices, live round score — then
+  dispatches: ""[p]"" preset picker, ""[f]"" setup
+  file, ""[l]"" live-score toggle, ""[Enter]"" deals.
+  Each sub-screen returns a ""TableSetup"", which
+  becomes the one the summary redraws.
 end note
-V --> M : target : int
+V --> M : setup : TableSetup
+M -> V : view.aids = setup.aids
+note right of M
+  The §9.7 interface aids never reach the model,
+  so they are re-pointed on the view instead of
+  being threaded into the ""Game"".
+end note
 
 == New-game / rematch loop ==
 
 loop while True
-    M -> M : rules = replace(rules, target~_score=target)
-    M -> M : game = _build_game(rules=rules)
+    M -> M : game = _build_game(rules=setup.rules)
     activate G
     note right of M
       Hardcoded seating: South = ""HumanPlayer"",
@@ -103,11 +111,12 @@ loop while True
     alt choice == 'q'
         M ->x M : break  (leave the loop)
     else choice == 'n'  (new game)
-        M -> V : show_landing(selected_target=target)
-        V --> M : target  (fresh pick)
+        M -> V : show_landing(setup)
+        V --> M : setup  (re-opened on the one in play)
+        M -> V : view.aids = setup.aids
     else choice == 'r'  (rematch)
         note right of M
-          Same target; a fresh ""_build_game""
+          Same setup; a fresh ""_build_game""
           starts on the next loop tick.
         end note
     end
