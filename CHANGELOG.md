@@ -50,6 +50,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 ### Fixed
 
+- (engine) The expert AI no longer burns a trump when the under-trump exemption leaves it a plain card to discard.
 - (engine) The recap's Outcome table credits a belote to the side that *held* it, so a transfer to the defense no longer rewrites the play tally.
 - (core) The over-trump obligation ranks candidates with `trick_rank`, so an off-suit discard can no longer raise the bar at all trump.
 - (engine) A no-trump contract renders as `NT` / `No Trump` instead of `NoTrump No Trump`, and its bid cell no longer overflows the history column.

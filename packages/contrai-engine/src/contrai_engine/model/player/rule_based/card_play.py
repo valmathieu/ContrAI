@@ -424,9 +424,14 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
            No trump wins → fall through rather than waste one that
            would be over-ruffed.
         4. Cannot follow or usefully ruff → give up the cheapest card
-           we can afford (:meth:`_lowest_value_card`), excluding masters
-           (a master can still win its suit later). Nothing but masters
-           left → the first legal card goes.
+           we can afford (:meth:`_lowest_value_card`), sparing trump and
+           excluding masters (a master can still win its suit later).
+           Trump comes first: the under-trump exemption (§9.5) widens
+           the legal set to the whole hand exactly so a losing trump
+           need not be thrown, so a plain card is spent while one
+           exists. Nothing plain left — a pure-trump hand, or any hand
+           at all trump — falls back to the full legal set, and a set
+           of nothing but masters concedes its cheapest.
 
         Args:
             observation: The frozen play-phase view for this seat.
@@ -471,17 +476,24 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
                 if winning_trumps:
                     return min(winning_trumps, key=rules.rank_in_suit)
 
-        # 4. Can't follow or usefully ruff — give up the cheapest card
-        # (excluding masters).
-        non_master_cards = [
-            c for c in playable_cards if not self._is_master_card(c, rules, fallen)
+        # 4. Can't follow or usefully ruff — give up the cheapest card we
+        # can afford, sparing trump and preserving masters. With the
+        # under-trump exemption active (§6.2, §9.5 — on by default) the
+        # legal set is the *whole hand*, so a losing trump sits beside
+        # every plain card; the exemption exists precisely so that trump
+        # need not be thrown. Mirrors the lead path's own
+        # ``non_trump_cards or playable_cards`` default. A hand of pure
+        # trump — and every hand at all trump — falls through to the full
+        # set, which is the same choice as before.
+        affordable = [
+            c for c in playable_cards if not rules.is_trump(c.suit)
+        ] or list(playable_cards)
+        non_master = [
+            c for c in affordable if not self._is_master_card(c, rules, fallen)
         ]
-        if non_master_cards:
-            return self._lowest_value_card(
-                non_master_cards, observation.hand, rules
-            )
-
-        return playable_cards[0]
+        return self._lowest_value_card(
+            non_master or affordable, observation.hand, rules
+        )
 
     def _lowest_value_card(
         self,

@@ -877,6 +877,130 @@ class TestFollowingTeamLosing:
         assert (result.suit, result.rank) == (Suit.HEARTS, Rank.TEN)
 
 
+class TestConcedeSparesTrumpUnderTheExemption:
+    """The concede ladder must not spend a trump it was excused from.
+
+    With ``under_trump_exemption`` on (the §9.5 default), a seat that is
+    void in the led suit and holds only losing trump may discard instead
+    of under-trumping — so the legal set is the whole hand and a losing
+    trump sits beside every plain card. Conceding the trump there wastes
+    exactly what the exemption exists to preserve.
+    """
+
+    #: West leads ♥A, North follows ♥7, East cuts ♠J — every South trump
+    #: is below the ♠J, so the exemption opens South's whole hand.
+    @staticmethod
+    def _out_trumped_trick(players):
+        return (
+            Play(players["W"], _c(Suit.HEARTS, Rank.ACE)),
+            Play(players["N"], _c(Suit.HEARTS, Rank.SEVEN)),
+            Play(players["E"], _c(Suit.SPADES, Rank.JACK)),
+        )
+
+    def test_discards_the_plain_card_instead_of_a_losing_trump(self, players):
+        south = players["S"]
+        hand = [
+            _c(Suit.SPADES, Rank.SEVEN),
+            _c(Suit.SPADES, Rank.EIGHT),
+            _c(Suit.SPADES, Rank.QUEEN),
+            _c(Suit.CLUBS, Rank.SEVEN),
+        ]
+        obs = _obs(
+            south,
+            hand,
+            _contract(players["W"], 100, Suit.SPADES),
+            current_trick=self._out_trumped_trick(players),
+            # The exemption makes the whole hand legal.
+            legal_cards=hand,
+        )
+        result = south.cardplay.choose_card(obs)
+        # ♠7 and ♠8 are as cheap as the ♣7 and sit in a longer suit, so the
+        # length tie-break used to pick one of them. Trump is not spendable.
+        assert (result.suit, result.rank) == (Suit.CLUBS, Rank.SEVEN)
+
+    def test_pure_trump_hand_falls_back_to_the_cheapest_trump(self, players):
+        """Nothing plain to spare — the full legal set is the candidate set."""
+        south = players["S"]
+        hand = [
+            _c(Suit.SPADES, Rank.SEVEN),
+            _c(Suit.SPADES, Rank.QUEEN),
+            _c(Suit.SPADES, Rank.KING),
+        ]
+        obs = _obs(
+            south,
+            hand,
+            _contract(players["W"], 100, Suit.SPADES),
+            current_trick=self._out_trumped_trick(players),
+            legal_cards=hand,
+        )
+        result = south.cardplay.choose_card(obs)
+        assert (result.suit, result.rank) == (Suit.SPADES, Rank.SEVEN)
+
+    def test_all_trump_is_unchanged_because_nothing_is_spendable(self, players):
+        """Every card is trump at all trump, so the filter is a no-op.
+
+        East discards a club on the heart lead — there is no cross-suit
+        cutting at all trump (§6.4), so West's ♥A still holds the trick and
+        South, void in hearts, is free to throw anything.
+        """
+        south = players["S"]
+        current = (
+            Play(players["W"], _c(Suit.HEARTS, Rank.ACE)),
+            Play(players["N"], _c(Suit.HEARTS, Rank.SEVEN)),
+            Play(players["E"], _c(Suit.CLUBS, Rank.JACK)),
+        )
+        hand = [
+            _c(Suit.SPADES, Rank.SEVEN),
+            _c(Suit.SPADES, Rank.QUEEN),
+            _c(Suit.CLUBS, Rank.KING),
+        ]
+        obs = _obs(
+            south,
+            hand,
+            _contract(players["W"], 100, TrumpVariant.ALL_TRUMP),
+            current_trick=current,
+            legal_cards=hand,
+        )
+        result = south.cardplay.choose_card(obs)
+        # All-trump points: ♠7 = 0, ♠Q = 1, ♣K = 3.
+        assert (result.suit, result.rank) == (Suit.SPADES, Rank.SEVEN)
+
+    def test_all_masters_gives_up_the_cheapest_rather_than_the_first(
+        self, players
+    ):
+        """No non-master to shed — the ladder still ranks what is left.
+
+        Both remaining cards top their own suit, so the old ``playable[0]``
+        fallback conceded whichever happened to sit first in hand order.
+        """
+        south = players["S"]
+        # ♥ and ♦ walked down far enough that South's ♥K and ♦Q are masters.
+        hearts = (
+            Play(players["W"], _c(Suit.HEARTS, Rank.ACE)),
+            Play(players["N"], _c(Suit.HEARTS, Rank.SEVEN)),
+            Play(players["E"], _c(Suit.HEARTS, Rank.TEN)),
+            Play(players["S"], _c(Suit.HEARTS, Rank.EIGHT)),
+        )
+        diamonds = (
+            Play(players["W"], _c(Suit.DIAMONDS, Rank.ACE)),
+            Play(players["N"], _c(Suit.DIAMONDS, Rank.SEVEN)),
+            Play(players["E"], _c(Suit.DIAMONDS, Rank.KING)),
+            Play(players["S"], _c(Suit.DIAMONDS, Rank.TEN)),
+        )
+        hand = [_c(Suit.HEARTS, Rank.KING), _c(Suit.DIAMONDS, Rank.QUEEN)]
+        obs = _obs(
+            south,
+            hand,
+            _contract(players["W"], 100, Suit.SPADES),
+            current_trick=(Play(players["W"], _c(Suit.CLUBS, Rank.ACE)),),
+            completed_tricks=[hearts, diamonds],
+            legal_cards=hand,
+        )
+        result = south.cardplay.choose_card(obs)
+        # ♦Q costs 3, ♥K costs 4 — the cheaper master goes.
+        assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.QUEEN)
+
+
 # ---------------------------------------------------------------------------
 # Routing: opening vs leading vs following
 # ---------------------------------------------------------------------------
