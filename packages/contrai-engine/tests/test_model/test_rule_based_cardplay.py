@@ -318,13 +318,45 @@ class TestSubsequentLeadSparesTrump:
         result = north.cardplay.choose_card(obs).card
         assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.ACE)
 
-    def test_trump_ace_still_leads_while_an_opponent_may_ruff(self, players):
+    def _trump_jack_hand(self):
+        """Three trump (spades) topped by the Jack, two diamonds by the ace."""
+        return [
+            _c(Suit.SPADES, Rank.JACK),
+            _c(Suit.SPADES, Rank.KING),
+            _c(Suit.SPADES, Rank.QUEEN),
+            _c(Suit.DIAMONDS, Rank.ACE),
+            _c(Suit.DIAMONDS, Rank.SEVEN),
+        ]
+
+    def test_trump_winner_still_leads_while_an_opponent_may_ruff(
+        self, players
+    ):
         """Opponents may still hold trump — the unrestricted search stands.
 
         Read as a defender so the trump-pull branch is out of the way and
-        the ace choice is the only thing under test: with a ruff still
-        possible the trump ace is back in the running, and the longest
-        suit wins the tie as before.
+        the winner choice is the only thing under test. The trump Jack
+        tops its own ladder, so with a ruff still possible it is back in
+        the running and the longest suit wins the tie as before.
+        """
+        north, east = players["N"], players["E"]
+        obs = _obs(
+            north,
+            self._trump_jack_hand(),
+            _contract(east, 100, Suit.SPADES),
+            completed_tricks=[self._clean_trick(players)],
+        )
+        result = north.cardplay.choose_card(obs).card
+        assert (result.suit, result.rank) == (Suit.SPADES, Rank.JACK)
+
+    def test_the_trump_ace_is_not_a_winner_a_jack_and_9_still_beat(
+        self, players
+    ):
+        """A trump ace is the *third* card of the trump ladder.
+
+        The suit-length tie-break used to point straight at it, which
+        cashed a card the trump Jack and 9 both take. Asking the ladder
+        instead of naming ``Rank.ACE`` keeps it back and cashes the
+        genuinely unbeatable plain ace.
         """
         north, east = players["N"], players["E"]
         obs = _obs(
@@ -334,7 +366,24 @@ class TestSubsequentLeadSparesTrump:
             completed_tricks=[self._clean_trick(players)],
         )
         result = north.cardplay.choose_card(obs).card
-        assert (result.suit, result.rank) == (Suit.SPADES, Rank.ACE)
+        assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.ACE)
+
+    def test_trump_is_held_back_even_when_it_tops_its_ladder(self, players):
+        """The void filter still outranks the ladder: ♦A over the ♠J.
+
+        With both opponents proven out of trump the Jack cannot be taken
+        off us later, so cashing it now buys nothing the plain ace does
+        not already buy.
+        """
+        north, east = players["N"], players["E"]
+        obs = _obs(
+            north,
+            self._trump_jack_hand(),
+            _contract(east, 100, Suit.SPADES),
+            completed_tricks=[self._both_opponents_void(players)],
+        )
+        result = north.cardplay.choose_card(obs).card
+        assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.ACE)
 
     def test_all_trump_hand_leads_the_cheapest_trump(self, players):
         """Nothing plain left: spend the cheapest trump, not the ace.
@@ -1660,3 +1709,327 @@ class TestPureHelpers:
         assert strat._is_stronger_card(
             _c(Suit.SPADES, Rank.JACK), _c(Suit.SPADES, Rank.NINE), Suit.SPADES
         ) is True
+
+
+# ---------------------------------------------------------------------------
+# Per-mode play: one regime-neutral rule instead of three code paths
+# ---------------------------------------------------------------------------
+
+
+class TestRuffInferencePerMode:
+    """``_opponents_might_have_trump`` answers the question the callers ask.
+
+    The callers want to know "can what I play be cut?". At a suit contract
+    that is a counting question about one suit. At all trump the answer is
+    a flat ``False`` — there is no cross-suit cutting (§6.4) — and reading
+    it off spades as a stand-in for "the trump suit" is nonsense there.
+    """
+
+    @staticmethod
+    def _spades_all_fallen(players):
+        """Two tricks that put every spade on the table."""
+        first = (
+            Play(players["N"], _c(Suit.SPADES, Rank.JACK)),
+            Play(players["E"], _c(Suit.SPADES, Rank.NINE)),
+            Play(players["S"], _c(Suit.SPADES, Rank.ACE)),
+            Play(players["W"], _c(Suit.SPADES, Rank.TEN)),
+        )
+        second = (
+            Play(players["S"], _c(Suit.SPADES, Rank.KING)),
+            Play(players["W"], _c(Suit.SPADES, Rank.QUEEN)),
+            Play(players["N"], _c(Suit.SPADES, Rank.EIGHT)),
+            Play(players["E"], _c(Suit.SPADES, Rank.SEVEN)),
+        )
+        return [first, second]
+
+    def test_all_trump_never_fears_a_cut(self, players):
+        """Nothing can be cut at all trump, whatever has fallen."""
+        north = players["N"]
+        obs = _obs(
+            north,
+            [_c(Suit.HEARTS, Rank.JACK)],
+            _contract(north, 100, TrumpVariant.ALL_TRUMP),
+        )
+        strat = north.cardplay
+        fallen, voids = strat._derive_tracking(obs)
+        assert strat._opponents_might_have_trump(
+            TrumpVariant.ALL_TRUMP, fallen, voids, obs.hand
+        ) is False
+
+    def test_all_trump_answer_does_not_depend_on_the_spades_count(
+        self, players
+    ):
+        """The spades proxy is retired: draining spades changes nothing."""
+        north = players["N"]
+        obs = _obs(
+            north,
+            [_c(Suit.HEARTS, Rank.JACK)],
+            _contract(north, 100, TrumpVariant.ALL_TRUMP),
+            completed_tricks=self._spades_all_fallen(players),
+        )
+        strat = north.cardplay
+        fallen, voids = strat._derive_tracking(obs)
+        assert strat._opponents_might_have_trump(
+            TrumpVariant.ALL_TRUMP, fallen, voids, obs.hand
+        ) is False
+
+    def test_a_suit_contract_still_counts_its_trump(self, players):
+        """The control: at a suit contract the counting is unchanged."""
+        north = players["N"]
+        clean = (
+            Play(players["N"], _c(Suit.HEARTS, Rank.KING)),
+            Play(players["E"], _c(Suit.HEARTS, Rank.SEVEN)),
+            Play(players["S"], _c(Suit.HEARTS, Rank.QUEEN)),
+            Play(players["W"], _c(Suit.HEARTS, Rank.EIGHT)),
+        )
+        obs = _obs(
+            north,
+            [_c(Suit.SPADES, Rank.JACK)],
+            _contract(north, 100, Suit.SPADES),
+            completed_tricks=[clean],
+        )
+        strat = north.cardplay
+        fallen, voids = strat._derive_tracking(obs)
+        assert strat._opponents_might_have_trump(
+            Suit.SPADES, fallen, voids, obs.hand
+        ) is True
+
+    def test_a_suit_contract_stops_once_every_trump_has_fallen(self, players):
+        north = players["N"]
+        obs = _obs(
+            north,
+            [_c(Suit.HEARTS, Rank.KING)],
+            _contract(north, 100, Suit.SPADES),
+            completed_tricks=self._spades_all_fallen(players),
+        )
+        strat = north.cardplay
+        fallen, voids = strat._derive_tracking(obs)
+        assert strat._opponents_might_have_trump(
+            Suit.SPADES, fallen, voids, obs.hand
+        ) is False
+
+    def test_no_trump_has_nothing_to_hold(self, players):
+        north = players["N"]
+        obs = _obs(
+            north,
+            [_c(Suit.HEARTS, Rank.ACE)],
+            _contract(north, 100, TrumpVariant.NO_TRUMP),
+        )
+        strat = north.cardplay
+        fallen, voids = strat._derive_tracking(obs)
+        assert strat._opponents_might_have_trump(
+            TrumpVariant.NO_TRUMP, fallen, voids, obs.hand
+        ) is False
+
+
+class TestLeadTopsItsOwnLadder:
+    """A lead cashes the top of the *ladder*, never a hardcoded ace."""
+
+    @staticmethod
+    def _spades_all_fallen(players):
+        return TestRuffInferencePerMode._spades_all_fallen(players)
+
+    def test_all_trump_declarer_leads_the_unbeatable_jack(self, players):
+        """The Context reproduction: spades drained, Jack + 7 of hearts.
+
+        With the spades proxy in place the declarer read the table as
+        "no opponent holds trump", emptied its winner search with the
+        ``not is_trump`` filter — every card is trump at all trump — and
+        conceded the 7 while holding the master Jack.
+        """
+        north = players["N"]
+        hand = [
+            _c(Suit.HEARTS, Rank.JACK),
+            _c(Suit.HEARTS, Rank.SEVEN),
+            _c(Suit.CLUBS, Rank.EIGHT),
+        ]
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, TrumpVariant.ALL_TRUMP),
+            completed_tricks=self._spades_all_fallen(players),
+        )
+        result = north.cardplay.choose_card(obs).card
+        assert (result.suit, result.rank) == (Suit.HEARTS, Rank.JACK)
+
+    def test_all_trump_lead_prefers_the_jack_over_an_ace(self, players):
+        """At all trump an ace is only the third card of its ladder."""
+        north = players["N"]
+        clean = (
+            Play(players["N"], _c(Suit.CLUBS, Rank.KING)),
+            Play(players["E"], _c(Suit.CLUBS, Rank.SEVEN)),
+            Play(players["S"], _c(Suit.CLUBS, Rank.QUEEN)),
+            Play(players["W"], _c(Suit.CLUBS, Rank.EIGHT)),
+        )
+        hand = [_c(Suit.SPADES, Rank.ACE), _c(Suit.HEARTS, Rank.JACK)]
+        obs = _obs(
+            north,
+            hand,
+            _contract(players["E"], 100, TrumpVariant.ALL_TRUMP),
+            completed_tricks=[clean],
+        )
+        result = north.cardplay.choose_card(obs).card
+        assert (result.suit, result.rank) == (Suit.HEARTS, Rank.JACK)
+
+    def test_no_trump_lead_prefers_the_ace_over_a_jack(self, players):
+        """The mirror: at no trump the ace tops every ladder."""
+        north = players["N"]
+        clean = (
+            Play(players["N"], _c(Suit.CLUBS, Rank.KING)),
+            Play(players["E"], _c(Suit.CLUBS, Rank.SEVEN)),
+            Play(players["S"], _c(Suit.CLUBS, Rank.QUEEN)),
+            Play(players["W"], _c(Suit.CLUBS, Rank.EIGHT)),
+        )
+        hand = [_c(Suit.SPADES, Rank.ACE), _c(Suit.HEARTS, Rank.JACK)]
+        obs = _obs(
+            north,
+            hand,
+            _contract(players["E"], 100, TrumpVariant.NO_TRUMP),
+            completed_tricks=[clean],
+        )
+        result = north.cardplay.choose_card(obs).card
+        assert (result.suit, result.rank) == (Suit.SPADES, Rank.ACE)
+
+    def test_a_suit_contract_lead_is_unchanged(self, players):
+        """The control: a plain ace still tops a plain suit."""
+        north = players["N"]
+        both_void = (
+            Play(north, _c(Suit.HEARTS, Rank.ACE)),
+            Play(players["E"], _c(Suit.CLUBS, Rank.SEVEN)),
+            Play(players["S"], _c(Suit.HEARTS, Rank.KING)),
+            Play(players["W"], _c(Suit.DIAMONDS, Rank.SEVEN)),
+        )
+        hand = [_c(Suit.DIAMONDS, Rank.ACE), _c(Suit.CLUBS, Rank.JACK)]
+        obs = _obs(
+            north,
+            hand,
+            _contract(north, 100, Suit.SPADES),
+            completed_tricks=[both_void],
+        )
+        result = north.cardplay.choose_card(obs).card
+        assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.ACE)
+
+
+class TestOpeningLeadPerMode:
+    """The opening lead reads the regime, not the presence of trump cards."""
+
+    def test_no_trump_declarer_cashes_the_ace_of_its_longest_suit(
+        self, players
+    ):
+        """No trump to lead is not a reason to concede trick 1.
+
+        Nothing is trump at no trump, so the declaring branch's
+        ``if trump_cards:`` never fired and the ladder fell through to
+        the cheapest card — handing the opponents the opening trick.
+        """
+        north = players["N"]
+        hand = [
+            _c(Suit.HEARTS, Rank.ACE),
+            _c(Suit.HEARTS, Rank.KING),
+            _c(Suit.HEARTS, Rank.QUEEN),
+            _c(Suit.CLUBS, Rank.SEVEN),
+        ]
+        obs = _obs(
+            north, hand, _contract(north, 100, TrumpVariant.NO_TRUMP)
+        )
+        result = north.cardplay.choose_card(obs).card
+        assert (result.suit, result.rank) == (Suit.HEARTS, Rank.ACE)
+
+    def test_all_trump_declarer_leads_the_top_of_its_longest_suit(
+        self, players
+    ):
+        """Length gives the lead continuation; the ladder names the card.
+
+        A suit-blind global maximum on ``rank_in_suit`` would pick either
+        Jack — every suit ranks alike at all trump. The longest suit is
+        what has cards behind the lead.
+        """
+        north = players["N"]
+        hand = [
+            _c(Suit.HEARTS, Rank.JACK),
+            _c(Suit.HEARTS, Rank.NINE),
+            _c(Suit.HEARTS, Rank.ACE),
+            _c(Suit.CLUBS, Rank.JACK),
+        ]
+        obs = _obs(
+            north, hand, _contract(north, 100, TrumpVariant.ALL_TRUMP)
+        )
+        result = north.cardplay.choose_card(obs).card
+        assert (result.suit, result.rank) == (Suit.HEARTS, Rank.JACK)
+
+    def test_all_trump_defender_leads_the_top_of_its_shortest_suit(
+        self, players
+    ):
+        """The defender branch generalises the same way — top, not ace."""
+        north = players["N"]
+        hand = [
+            _c(Suit.SPADES, Rank.JACK),
+            _c(Suit.HEARTS, Rank.ACE),
+            _c(Suit.HEARTS, Rank.KING),
+            _c(Suit.HEARTS, Rank.QUEEN),
+        ]
+        obs = _obs(
+            north,
+            hand,
+            _contract(players["E"], 100, TrumpVariant.ALL_TRUMP),
+        )
+        result = north.cardplay.choose_card(obs).card
+        assert (result.suit, result.rank) == (Suit.SPADES, Rank.JACK)
+
+    def test_a_suit_contract_opening_is_unchanged(self, players):
+        """The control: the declarer still opens on its strongest trump."""
+        north = players["N"]
+        hand = [
+            _c(Suit.SPADES, Rank.JACK),
+            _c(Suit.SPADES, Rank.ACE),
+            _c(Suit.HEARTS, Rank.KING),
+            _c(Suit.DIAMONDS, Rank.EIGHT),
+        ]
+        obs = _obs(north, hand, _contract(north, 80, Suit.SPADES))
+        result = north.cardplay.choose_card(obs).card
+        assert (result.suit, result.rank) == (Suit.SPADES, Rank.JACK)
+
+
+class TestPerModeRulesCiteTheirRegime:
+    """A rule that fired *because* of the regime names the §9.2 knob."""
+
+    @pytest.mark.parametrize(
+        "mode", [TrumpVariant.NO_TRUMP, TrumpVariant.ALL_TRUMP]
+    )
+    def test_a_suitless_opening_cites_extended_trump_choices(
+        self, players, mode
+    ):
+        north = players["N"]
+        hand = [
+            _c(Suit.HEARTS, Rank.JACK),
+            _c(Suit.HEARTS, Rank.ACE),
+            _c(Suit.CLUBS, Rank.SEVEN),
+        ]
+        obs = _obs(north, hand, _contract(north, 100, mode))
+        citations = north.cardplay.choose_card(obs).rationale.citations
+        assert [c.knob for c in citations] == ["extended_trump_choices"]
+
+    def test_a_suit_contract_needs_no_permission_and_cites_nothing(
+        self, players
+    ):
+        north = players["N"]
+        hand = [
+            _c(Suit.SPADES, Rank.JACK),
+            _c(Suit.HEARTS, Rank.ACE),
+            _c(Suit.CLUBS, Rank.SEVEN),
+        ]
+        obs = _obs(north, hand, _contract(north, 100, Suit.SPADES))
+        assert north.cardplay.choose_card(obs).rationale.citations == ()
+
+    def test_the_detail_names_the_regime_it_played_under(self, players):
+        north = players["N"]
+        hand = [
+            _c(Suit.HEARTS, Rank.JACK),
+            _c(Suit.HEARTS, Rank.ACE),
+            _c(Suit.CLUBS, Rank.SEVEN),
+        ]
+        obs = _obs(
+            north, hand, _contract(north, 100, TrumpVariant.ALL_TRUMP)
+        )
+        detail = north.cardplay.choose_card(obs).rationale.detail
+        assert detail.startswith("all trump:")

@@ -556,9 +556,15 @@ class TestFullRoundLifecycleNoTrump:
         )
         assert sum(scores.values()) == expected_total
         # Regression pin: the concrete outcome observed from this exact
-        # stacked deal under the ``pinned_rng`` fixture's seed.
+        # stacked deal under the ``pinned_rng`` fixture's seed. The split
+        # moved when the no-trump declarer stopped conceding trick 1 —
+        # nothing is trump at no trump, so the opening ladder's
+        # ``if trump_cards:`` never fired and it fell through to the
+        # cheapest card. It cashes the top of its longest suit now, which
+        # changes the whole transcript from trick 1 on; the invariant
+        # above still holds, only the concrete division is re-derived.
         assert round_.contract_made is True
-        assert scores == {TeamSide.NS: 218, TeamSide.EW: 44}
+        assert scores == {TeamSide.NS: 208, TeamSide.EW: 54}
 
 
 # ---------------------------------------------------------------------------

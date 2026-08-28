@@ -7,7 +7,13 @@ from contrai_core.card import Card
 from contrai_core.card_queries import count_suit
 from contrai_core.play import PlayObservation
 from contrai_core.position import Position
-from contrai_core.rules import NoTrumpRules, TrumpRules, rules_for
+from contrai_core.rules import (
+    AllTrumpRules,
+    NoTrumpRules,
+    SingleSuitRules,
+    TrumpRules,
+    rules_for,
+)
 from contrai_core.trick import current_winner
 from contrai_core.types import ContractSuit, Rank, Suit
 
@@ -64,6 +70,80 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         return CardDecision(
             card, Rationale(rule, detail, considered, citations)
         )
+
+    @staticmethod
+    def _mode_name(rules: TrumpRules) -> str:
+        """The regime's name, for a rationale's ``detail`` sentence.
+
+        Args:
+            rules: The round's regime.
+
+        Returns:
+            ``"all trump"``, ``"no trump"``, or ``"suit contract"``.
+        """
+
+        if isinstance(rules, AllTrumpRules):
+            return "all trump"
+        if isinstance(rules, NoTrumpRules):
+            return "no trump"
+        return "suit contract"
+
+    @staticmethod
+    def _mode_citation(
+        observation: PlayObservation, rules: TrumpRules
+    ) -> tuple[RuleCitation, ...]:
+        """Cite ``extended_trump_choices`` when a suitless regime decided.
+
+        No trump and all trump are only on the table because the table
+        switched them on (§9.2), so a rule that fired *because* of the
+        regime should name the knob that put the regime there. A suit
+        contract cites nothing — it needs no permission.
+
+        Args:
+            observation: The seat's view, carrying the table ruleset.
+            rules: The round's regime.
+
+        Returns:
+            A one-tuple citing the knob under a suitless regime, else an
+            empty tuple.
+        """
+
+        if isinstance(rules, SingleSuitRules):
+            return ()
+        mode = "all trump" if isinstance(rules, AllTrumpRules) else "no trump"
+        return (
+            RuleCitation(
+                "extended_trump_choices",
+                str(observation.rules.extended_trump_choices),
+                f"ranked on the {mode} ladder, not the ace-high one",
+            ),
+        )
+
+    @staticmethod
+    def _top_of_ladder(cards, rules: TrumpRules) -> list[Card]:
+        """The cards nothing outranks within their own suit.
+
+        The regime-neutral spelling of "a winner": the ace at a suit
+        contract and at no trump, the Jack at all trump (§3.1–§3.4).
+        Asking :meth:`~contrai_core.rules.TrumpRules.higher_ranks` rather
+        than naming ``Rank.ACE`` is what lets one rule serve all three
+        regimes — and it matters, because at all trump the ace is only
+        the *third* card of its ladder and worth 6, so leading it as a
+        "winner" hands the trick to any Jack or 9 sitting behind it.
+
+        Unlike :meth:`_is_master_card` this asks nothing about what has
+        fallen: these cards win their suit from the first trick to the
+        last.
+
+        Args:
+            cards: The candidates to filter, usually a legal subset.
+            rules: The round's regime, supplying the in-suit ladders.
+
+        Returns:
+            The subset topping their own suit, in the given order.
+        """
+
+        return [c for c in cards if not rules.higher_ranks(c.rank, c.suit)]
 
     @staticmethod
     def _render(cards) -> tuple[str, ...]:
@@ -214,7 +294,26 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         return fallen, voids
 
     def _play_opening_card(self, observation: PlayObservation) -> CardDecision:
-        """Play the very first card of the round."""
+        """Play the very first card of the round.
+
+        Structured on the *regime*, not on whether the hand happens to
+        hold a trump card:
+
+        - **Suit contract, declaring side** — lead the strongest trump to
+          start drawing the opponents', avoiding the 9 first so the Jack
+          keeps its escort.
+        - **All trump, declaring side** — the whole hand is trump and no
+          suit can cut another (§6.4), so "strongest trump" is suit-blind
+          and meaningless. Lead the top of the *longest* suit instead:
+          length is what gives the lead something behind it.
+        - **No trump, declaring side** — nothing is trump at all. Same
+          rule as all trump, which in practice cashes the ace of the long
+          suit. Reading this branch off ``if trump_cards:`` meant it never
+          fired and the declarer conceded trick 1.
+        - **Defending** — cash the top of the *shortest* suit before the
+          declarer can cut it. "Top" is the ladder's, not the ace: at all
+          trump the ace is only the third card of its suit.
+        """
 
         contract = observation.contract
         playable_cards = observation.legal_cards
@@ -222,9 +321,8 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         rules = rules_for(observation.trump_suit)
 
         if contract and self.position.is_teammate(contract.declarer):
-            # Our team has the contract - play the strongest trump
             trump_cards = [c for c in playable_cards if rules.is_trump(c.suit)]
-            if trump_cards:
+            if trump_cards and not isinstance(rules, AllTrumpRules):
                 sorted_trumps = sorted(
                     trump_cards, key=rules.rank_in_suit, reverse=True
                 )
@@ -244,17 +342,31 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
                     "opponents' trump early.",
                     considered=self._render(sorted_trumps),
                 )
-        else:
-            # Opponents have contract - play an ace if we have one
-            aces = [c for c in playable_cards if c.rank == Rank.ACE]
-            if aces:
-                # Play ace from the shortest suit
+            # No single trump suit to draw — lead the top of the longest.
+            top_cards = self._top_of_ladder(playable_cards, rules)
+            if top_cards:
                 return self._decide(
-                    min(aces, key=lambda c: count_suit(hand, c.suit)),
-                    "cash an ace",
-                    "defending: cashed the ace of the shortest suit before "
-                    "the declarer can cut it.",
-                    considered=self._render(aces),
+                    max(top_cards, key=lambda c: count_suit(hand, c.suit)),
+                    "open on the top of the longest suit",
+                    f"{self._mode_name(rules)}: no single trump suit to "
+                    f"draw — led the top of the longest suit's own "
+                    f"ladder, which has continuation behind it.",
+                    considered=self._render(top_cards),
+                    citations=self._mode_citation(observation, rules),
+                )
+        else:
+            # Defending — cash a card nothing outranks, from the shortest
+            # suit, before the declarer gets a chance to cut it.
+            top_cards = self._top_of_ladder(playable_cards, rules)
+            if top_cards:
+                return self._decide(
+                    min(top_cards, key=lambda c: count_suit(hand, c.suit)),
+                    "cash the top of its ladder",
+                    f"{self._mode_name(rules)}, defending: cashed the top "
+                    f"of the shortest suit's own ladder before the "
+                    f"declarer can cut it.",
+                    considered=self._render(top_cards),
+                    citations=self._mode_citation(observation, rules),
                 )
 
         # Default: play the lowest value card (excluding trump unless only trumps available)
@@ -346,21 +458,31 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         # trump, so the cheap-trump default below is the better lead.
         # A round with no trump at all (no contract, or NO_TRUMP) answers
         # False here too, and its filter is a no-op: nothing is trump.
+        #
+        # Holding trump back only means something where trump is a proper
+        # subset of the deck. At all trump every card is trump and none of
+        # them can be cut (§6.4), so filtering them out would leave nothing
+        # to search and the ladder would fall straight through to conceding.
         winner_candidates = (
             playable_cards
-            if opponents_might_ruff
+            if opponents_might_ruff or isinstance(rules, AllTrumpRules)
             else [c for c in playable_cards if not rules.is_trump(c.suit)]
         )
 
-        # Play ace from the longest suit
-        aces = [c for c in winner_candidates if c.rank == Rank.ACE]
-        if aces:
+        # Lead the unconditional top of its own suit, from the longest
+        # suit — the ace at a suit contract and at no trump, the Jack at
+        # all trump. See :meth:`_top_of_ladder` for why the ladder is
+        # asked rather than a rank named.
+        top_cards = self._top_of_ladder(winner_candidates, rules)
+        if top_cards:
             return self._decide(
-                max(aces, key=lambda c: count_suit(hand, c.suit)),
-                "cash an ace",
-                "led the ace of the longest suit — it wins its suit "
-                "outright and the length gives it continuation.",
-                considered=self._render(aces),
+                max(top_cards, key=lambda c: count_suit(hand, c.suit)),
+                "cash the top of its ladder",
+                f"{self._mode_name(rules)}: led the highest card of its "
+                f"suit's own ladder from the longest suit — nothing "
+                f"outranks it and the length gives it continuation.",
+                considered=self._render(top_cards),
+                citations=self._mode_citation(observation, rules),
             )
 
         # Play master card from the longest suit
@@ -371,8 +493,8 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             return self._decide(
                 max(master_cards, key=lambda c: count_suit(hand, c.suit)),
                 "cash the master",
-                "no ace to lead — led the master of the longest suit, "
-                "everything above it having fallen.",
+                "nothing tops its own ladder outright — led the master of "
+                "the longest suit, everything above it having fallen.",
                 considered=self._render(master_cards),
             )
 
@@ -736,6 +858,15 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
            trump but couldn't), any unseen trumps sit in partner's hand,
            so pulling them helps nobody.
 
+        Both sources answer a question about *one* suit, which is what
+        "an opponent may still hold trump" means at a suit contract and
+        nowhere else. The two suitless regimes are settled before either
+        runs, because for them the callers' real question — *can what I
+        play be cut?* — has a constant answer: nothing is trump at no
+        trump, and at all trump nothing can be cut across suits at all
+        (contree-domain.md §6.4), so a held trump is never a threat to
+        another suit.
+
         Args:
             trump_suit: The round's trump, or ``None`` with no contract. A
                 round where nothing is trump answers ``False`` outright —
@@ -746,10 +877,18 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             hand: The observing seat's own hand (``observation.hand``).
 
         Returns:
-            True if at least one opponent might still hold a trump.
+            True if at least one opponent might still hold a trump that
+            could take a trick off us.
         """
 
         rules = rules_for(trump_suit)
+        # All trump: every suit is trump, so counting "the" trump suit is
+        # meaningless — and the answer the callers want is fixed anyway,
+        # since §6.4 forbids cutting across suits. Reading it off spades as
+        # a stand-in for "the trump suit" said False the moment the spades
+        # ran out, whatever the other three suits held.
+        if isinstance(rules, AllTrumpRules):
+            return False
         round_trumps = tuple(suit for suit in Suit if rules.is_trump(suit))
         if not round_trumps:
             return False
