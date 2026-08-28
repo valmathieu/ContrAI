@@ -790,6 +790,7 @@ package "play.py" as p_play {
         + completed_tricks : tuple<TrickRecord<ObservedPlay>>
         + current_trick : tuple<ObservedPlay>
         + legal_cards : tuple<Card>
+        + rules : RuleConfig = RuleConfig()
         --
         + trick_number : int            <<property>>
         + trump_suit : ContractSuit?    <<property>>
@@ -852,6 +853,17 @@ package "play.py" as p_play {
       ""observe()"" still takes the live player: it
       needs the identity to look up the hand and
       the legal actions. Only the output is sealed.
+      ----
+      ""rules"" rides along without breaching that
+      seal: the table ruleset is //public
+      information// — every seat agreed it before
+      the first deal — so it reveals nothing the
+      observer did not already know. It is what
+      lets a strategy reason about the regime it
+      plays under (the all-trump belote rule, the
+      under-trump exemption) and //cite// it in a
+      rationale, instead of re-deriving table
+      policy from the shape of the legal set.
     end note
 }
 

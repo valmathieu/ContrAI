@@ -35,6 +35,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) The landing screen now picks the whole table setup: `[p]` preset, `[f]` load a file, `[l]` live score. See [engine docs](docs/engine/index.md).
 - (engine) `[k]` on the setup screen cycles any of the 22 §9 knobs, grouped by subsection; an impossible table is refused inline.
 - (engine) The setup a run leaves the landing screen with is remembered and offered back as `last used`. See [engine docs](docs/engine/index.md).
+- (core) `PlayObservation.rules` — the seat's view carries the table ruleset, which is public information. See [core docs](docs/core/index.md).
 
 ### Changed
 
