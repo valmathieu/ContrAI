@@ -11,6 +11,7 @@ from contrai_core.bid import (
 )
 from contrai_core.types import Rank, Suit
 
+from ..rationale import BidDecision, Rationale, RuleCitation
 from ..strategy import BiddingStrategy, PlayerStateMixin
 
 #: The suits the bidding table searches. Every Suit member is a real
@@ -70,7 +71,38 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
     # Suit preference order (Spades, Hearts, Diamonds, Clubs)
     SUIT_PREFERENCE = SUITS
 
-    def choose_bid(self, auction: Auction) -> Bid:
+    def _decide(
+        self,
+        bid: Bid,
+        rule: str,
+        detail: str,
+        *,
+        considered: tuple[str, ...] = (),
+        citations: tuple[RuleCitation, ...] = (),
+    ) -> BidDecision:
+        """Pair a chosen bid with the rule that produced it.
+
+        Every ``return`` in the bidding ladder goes through here, so the
+        trace is written where the decision is taken rather than
+        reconstructed afterwards by a reader of the code.
+
+        Args:
+            bid: The bid the table settled on.
+            rule: The rule that fired, named as this class's docstrings
+                name it.
+            detail: One sentence on what that meant for this hand.
+            considered: The alternatives weighed, already rendered.
+            citations: The table knobs this branch consulted.
+
+        Returns:
+            The :class:`BidDecision` to hand back to the engine.
+        """
+
+        return BidDecision(
+            bid, Rationale(rule, detail, considered, citations)
+        )
+
+    def choose_bid(self, auction: Auction) -> BidDecision:
         """Choose a :class:`Bid` for the current auction state.
 
         The expert bidding table reads the :class:`Auction` history
@@ -83,7 +115,9 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
             auction: The current :class:`Auction` state.
 
         Returns:
-            A :class:`Bid` instance the engine will validate.
+            A :class:`BidDecision` — the bid the engine will validate,
+            and the :class:`~..rationale.Rationale` naming the rule that
+            chose it.
         """
 
         # A standing Double freezes the auction: no further
@@ -96,11 +130,15 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
         # here before delegating.
         if auction.has_redouble:
             # Already redoubled; nothing legal remains but to pass.
-            return PassBid(self._player)
+            return self._decide(
+                PassBid(self._player),
+                "the auction is frozen",
+                "a Redouble stands — nothing but a Pass is legal.",
+            )
         if auction.has_double:
             return self._choose_under_double(auction)
 
-        bid = self._choose_open_bid(auction)
+        decision = self._choose_open_bid(auction)
 
         # Safety net honouring the Auction design contract: callers must
         # only propose legal bids, there is no silent force-a-Pass in
@@ -108,11 +146,17 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
         # expert table still produced an illegal bid in some unmodeled
         # edge case, fall back to the always-legal Pass rather than
         # crash the whole game mid-auction.
-        if not auction.is_legal(bid):
-            return PassBid(self._player)
-        return bid
+        if not auction.is_legal(decision.bid):
+            return self._decide(
+                PassBid(self._player),
+                "withdraw an illegal bid",
+                f"the table proposed {decision.bid} but the auction "
+                f"refuses it — passed instead.",
+                considered=(str(decision.bid),),
+            )
+        return decision
 
-    def _choose_under_double(self, auction: Auction) -> Bid:
+    def _choose_under_double(self, auction: Auction) -> BidDecision:
         """Pick a bid when a Double has frozen the auction.
 
         With a Double standing, the only legal actions are :class:`PassBid`
@@ -134,8 +178,18 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
         if contract_bid is not None and contract_bid.player.team is self.team:
             redouble = RedoubleBid(self._player)
             if auction.is_legal(redouble) and self._should_redouble():
-                return redouble
-        return PassBid(self._player)
+                return self._decide(
+                    redouble,
+                    "redouble our own contract",
+                    "our contract was doubled and the hand backs it — "
+                    "redoubled.",
+                )
+        return self._decide(
+            PassBid(self._player),
+            "the auction is frozen",
+            "a Double stands: only a Pass, or a Redouble from the "
+            "contracting side, is legal.",
+        )
 
     def _choose_open_bid(self, auction: Auction) -> Bid:
         """Strategy core: pick a :class:`Bid` for an open (unfrozen) auction.
@@ -150,8 +204,9 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
             auction: The current :class:`Auction` state.
 
         Returns:
-            A :class:`PassBid`, :class:`ContractBid`, or
-            :class:`DoubleBid`. Legality is re-checked by the caller.
+            A :class:`BidDecision` wrapping a :class:`PassBid`,
+            :class:`ContractBid`, or :class:`DoubleBid`. Legality is
+            re-checked by the caller.
         """
 
         bids = auction.bids
@@ -181,7 +236,12 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
             # Support partner's bid
             return self._support_partner_bid(partner_bid, last_bid, bids)
 
-        return PassBid(self._player)
+        return self._decide(
+            PassBid(self._player),
+            "nothing to add",
+            "our side already spoke and the hand adds no contract of its "
+            "own — passed.",
+        )
 
     def _get_partner_bid(self, bids):
         """Return our side's most recent non-pass :class:`Bid`, or ``None``.
@@ -195,8 +255,8 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
                 return bid
         return None
 
-    def _check_double(self, last_bid):
-        """Return a :class:`DoubleBid` if we should Double, else ``None``.
+    def _check_double(self, last_bid) -> BidDecision | None:
+        """Return a Double :class:`BidDecision` if we should Double.
 
         Only the Double decision lives here — the Redouble
         is a defence of our *own* contract and is handled on
@@ -204,6 +264,10 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
 
         Args:
             last_bid: The standing :class:`ContractBid`, or ``None``.
+
+        Returns:
+            The Double decision, or ``None`` when the standing contract
+            is ours or the hand does not threaten it.
         """
 
         if last_bid is None:
@@ -212,7 +276,13 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
         # Double only if the standing contract belongs to the opponents
         # and we hold enough external strength to threaten it.
         if last_bid.player.team is not self.team and self._should_double(last_bid):
-            return DoubleBid(self._player)
+            return self._decide(
+                DoubleBid(self._player),
+                "double the opponents",
+                f"we expect to hold {last_bid.suit} "
+                f"{last_bid.get_numeric_value()} under its contract — "
+                f"doubled.",
+            )
 
         return None
 
@@ -432,18 +502,36 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
             last_bid: The standing :class:`ContractBid`, or ``None``.
 
         Returns:
-            A :class:`ContractBid` for the chosen suit, or a
-            :class:`PassBid` when nothing legal improves the auction.
+            A :class:`BidDecision` carrying a :class:`ContractBid` for
+            the chosen suit, or a :class:`PassBid` when nothing legal
+            improves the auction.
         """
 
         if best_contract == 0 or best_suit is None:
-            return PassBid(self._player)
+            return self._decide(
+                PassBid(self._player),
+                "no contract in hand",
+                "no trump choice clears the bidding table's opening "
+                "row — passed.",
+            )
 
         # Check if we can overbid the last bid
         if last_bid is not None and best_contract <= last_bid.get_numeric_value():
-            return PassBid(self._player)
+            return self._decide(
+                PassBid(self._player),
+                "the standing bid is out of reach",
+                f"the hand is worth {best_contract} in {best_suit}, which "
+                f"does not raise the standing "
+                f"{last_bid.get_numeric_value()} — passed.",
+                considered=(f"{best_contract} {best_suit}",),
+            )
 
-        return self._contract_bid(best_contract, best_suit)
+        return self._decide(
+            self._contract_bid(best_contract, best_suit),
+            "open on the bidding table",
+            f"the hand reaches {best_contract} in {best_suit} on the "
+            f"bidding table — bid it.",
+        )
 
     def _team_opening_bid(self, bids, suit):
         """Return our team's first :class:`ContractBid` in ``suit``, or ``None``.
@@ -491,9 +579,10 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
             bids: Chronological bid history, to locate the anchor.
 
         Returns:
-            A :class:`ContractBid` raising partner's suit to the team
-            ceiling, or a :class:`PassBid` when we add nothing, opened
-            the suit ourselves, or the ceiling is already reached.
+            A :class:`BidDecision` carrying a :class:`ContractBid`
+            raising partner's suit to the team ceiling, or a
+            :class:`PassBid` when we add nothing, opened the suit
+            ourselves, or the ceiling is already reached.
         """
 
         partner_suit = partner_bid.suit
@@ -504,7 +593,12 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
         # very cards that priced it.
         anchor = self._team_opening_bid(bids, partner_suit)
         if anchor is None or anchor.player is self._player:
-            return PassBid(self._player)
+            return self._decide(
+                PassBid(self._player),
+                "our cards are already priced in",
+                f"we opened {partner_suit} ourselves, so the standing bid "
+                f"already values this hand — passed.",
+            )
 
         # Calculate our contribution to partner's suit
         contribution = 0
@@ -523,17 +617,33 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
             contribution += 10
 
         if contribution == 0:
-            return PassBid(self._player)
+            return self._decide(
+                PassBid(self._player),
+                "nothing to add to partner's bid",
+                f"no external ace and no {partner_suit} complement — the "
+                f"hand adds nothing to partner's contract.",
+            )
 
         # The team ceiling: partner's evaluation + our complement. Once
         # the standing contract reaches it, our support is spent.
         ceiling = anchor.get_numeric_value() + contribution
         if ceiling <= last_bid.get_numeric_value():
-            return PassBid(self._player)
+            return self._decide(
+                PassBid(self._player),
+                "our support is spent",
+                f"the team ceiling in {partner_suit} is {ceiling} and the "
+                f"standing bid already reaches it — passed.",
+                considered=(f"{ceiling} {partner_suit}",),
+            )
 
         # An off-ladder ceiling (e.g. overshooting a partner's Slam)
         # falls back to Pass inside _contract_bid.
-        return self._contract_bid(ceiling, partner_suit)
+        return self._decide(
+            self._contract_bid(ceiling, partner_suit),
+            "support partner",
+            f"partner opened {partner_suit} and this hand adds "
+            f"{contribution} — raised to the team ceiling of {ceiling}.",
+        )
 
     def _contract_bid(self, numeric, suit) -> Bid:
         """Build a :class:`ContractBid` from a bidding-table numeric + suit.

@@ -10,7 +10,7 @@ while private helpers and constants are reached through
 import itertools
 
 import pytest
-from contrai_engine.model.player import AiPlayer
+from contrai_engine.model.player import AiPlayer, BidDecision, Rationale
 from contrai_core import (
     Auction,
     ContractBid,
@@ -195,13 +195,13 @@ class TestAiPlayerBidding:
     def test_choose_bid_pass_weak_hand(self, ai_player, sample_cards_weak):
         """Test that AI passes with weak hand"""
         ai_player.hand = sample_cards_weak
-        bid = ai_player.choose_bid(_auction())
+        bid = ai_player.choose_bid(_auction()).bid
         assert isinstance(bid, PassBid)
 
     def test_choose_bid_initial_bid_strong_hand(self, ai_player, sample_cards_strong_spades):
         """Test initial bid with strong hand"""
         ai_player.hand = sample_cards_strong_spades
-        bid = ai_player.choose_bid(_auction())
+        bid = ai_player.choose_bid(_auction()).bid
 
         assert isinstance(bid, ContractBid)
         assert bid.value == 130
@@ -212,7 +212,7 @@ class TestAiPlayerBidding:
         ai_player.hand = sample_cards_strong_spades
 
         auction = _auction([ContractBid(ai_opponent_player, 90, Suit.HEARTS)])
-        bid = ai_player.choose_bid(auction)
+        bid = ai_player.choose_bid(auction).bid
 
         assert isinstance(bid, ContractBid)
         assert bid.value > 90
@@ -238,7 +238,7 @@ class TestAiPlayerBidding:
             ContractBid(partner, 80, Suit.SPADES),
             PassBid(ai_opponent_player),
         ])
-        bid = ai_player.choose_bid(auction)
+        bid = ai_player.choose_bid(auction).bid
 
         # Should support with higher bid due to 3 external aces + trump complement
         assert isinstance(bid, ContractBid)
@@ -255,7 +255,7 @@ class TestAiPlayerBidding:
             ContractBid(partner, 140, Suit.SPADES),
             PassBid(ai_opponent_player),
         ])
-        bid = ai_player.choose_bid(auction)
+        bid = ai_player.choose_bid(auction).bid
 
         assert isinstance(bid, PassBid)
 
@@ -278,7 +278,7 @@ class TestAiPlayerBidding:
         ai_player.hand = sample_cards_strong_spades  # max contract 130
         partner = ai_player.team.players[1]
         auction = _auction([ContractBid(partner, 80, Suit.SPADES)])
-        bid = ai_player.choose_bid(auction)
+        bid = ai_player.choose_bid(auction).bid
         assert isinstance(bid, ContractBid)
         assert bid.value == 130
         assert bid.suit == Suit.SPADES
@@ -299,7 +299,7 @@ class TestAiPlayerBidding:
             ContractBid(partner, 80, Suit.SPADES),
             DoubleBid(ai_opponent_player),
         ])
-        bid = ai_player.choose_bid(auction)
+        bid = ai_player.choose_bid(auction).bid
         assert isinstance(bid, PassBid)
 
     def test_choose_bid_passes_when_own_team_doubled_opponent(
@@ -318,7 +318,7 @@ class TestAiPlayerBidding:
             ContractBid(ai_opponent_player, 120, Suit.HEARTS),
             DoubleBid(partner),
         ])
-        bid = ai_player.choose_bid(auction)
+        bid = ai_player.choose_bid(auction).bid
         assert isinstance(bid, PassBid)
 
     def test_choose_bid_passes_after_redouble(
@@ -332,7 +332,7 @@ class TestAiPlayerBidding:
             DoubleBid(ai_opponent_player),
             RedoubleBid(partner),
         ])
-        bid = ai_player.choose_bid(auction)
+        bid = ai_player.choose_bid(auction).bid
         assert isinstance(bid, PassBid)
 
     def test_choose_bid_surcoinches_when_strategy_approves(
@@ -352,7 +352,7 @@ class TestAiPlayerBidding:
             DoubleBid(ai_opponent_player),
         ])
         ai_player.bidding._should_redouble = lambda: True  # type: ignore[method-assign]
-        bid = ai_player.choose_bid(auction)
+        bid = ai_player.choose_bid(auction).bid
         assert isinstance(bid, RedoubleBid)
         assert auction.is_legal(bid)
 
@@ -369,10 +369,15 @@ class TestAiPlayerBidding:
         ai_player.hand = sample_cards_weak
         auction = _auction([ContractBid(ai_opponent_player, 140, Suit.SPADES)])
         ai_player.bidding._choose_open_bid = (  # type: ignore[method-assign]
-            lambda _auction: ContractBid(ai_player, 90, Suit.SPADES)
+            lambda _auction: BidDecision(
+                ContractBid(ai_player, 90, Suit.SPADES),
+                Rationale("forced", "an illegal raise, planted by the test"),
+            )
         )
-        bid = ai_player.choose_bid(auction)
-        assert isinstance(bid, PassBid)
+        decision = ai_player.choose_bid(auction)
+        assert isinstance(decision.bid, PassBid)
+        # The withdrawal is an explained decision, not a silent swallow.
+        assert decision.rationale.rule == "withdraw an illegal bid"
 
     # --- Slam / Solo Slam bidding -----------------------------------------
     # _estimate_tricks is capped at 8 (`min(tricks, 8)`), so a hand holding
@@ -416,7 +421,7 @@ class TestAiPlayerBidding:
     ):
         """choose_bid lifts the Solo Slam wire choice to a ContractBid."""
         ai_player.hand = sample_cards_slam_spades
-        bid = ai_player.choose_bid(_auction())
+        bid = ai_player.choose_bid(_auction()).bid
         assert isinstance(bid, ContractBid)
         assert bid.value is SlamLevel.SOLO_SLAM
         assert bid.suit == Suit.SPADES
@@ -447,7 +452,7 @@ class TestAiPlayerBidding:
         partner = ai_player.team.players[1]
         auction = _auction([ContractBid(partner, SlamLevel.SLAM, Suit.SPADES)])
         # Must not TypeError on the 130-vs-Slam comparison.
-        bid = ai_player.choose_bid(auction)
+        bid = ai_player.choose_bid(auction).bid
         assert isinstance(bid, PassBid)
 
     def test_choose_bid_passes_when_partner_announced_solo_slam(
@@ -457,7 +462,7 @@ class TestAiPlayerBidding:
         ai_player.hand = sample_cards_strong_spades
         partner = ai_player.team.players[1]
         auction = _auction([ContractBid(partner, SlamLevel.SOLO_SLAM, Suit.SPADES)])
-        bid = ai_player.choose_bid(auction)
+        bid = ai_player.choose_bid(auction).bid
         assert isinstance(bid, PassBid)
 
     # --- Best-contract resolution ------------------------------------------
@@ -585,7 +590,7 @@ class TestAiPlayerDoubling:
 
         # Opponent bids in Spades
         auction = _auction([ContractBid(opponent1, 120, Suit.SPADES)])
-        bid = player.choose_bid(auction)
+        bid = player.choose_bid(auction).bid
 
         assert isinstance(bid, DoubleBid)
 
@@ -607,7 +612,7 @@ class TestAiPlayerDoubling:
 
         # Opponent bids in Hearts
         auction = _auction([ContractBid(opponent1, 100, Suit.HEARTS)])
-        bid = player.choose_bid(auction)
+        bid = player.choose_bid(auction).bid
 
         assert isinstance(bid, PassBid)
 
@@ -711,7 +716,7 @@ class TestSupportCeiling:
             ContractBid(south, 80, Suit.SPADES),
             ContractBid(east, 90, Suit.DIAMONDS),
         ])
-        bid = north.choose_bid(auction)
+        bid = north.choose_bid(auction).bid
 
         assert isinstance(bid, ContractBid)
         assert bid.value == 110
@@ -733,7 +738,7 @@ class TestSupportCeiling:
             ContractBid(south, 80, Suit.SPADES),
             ContractBid(east, 120, Suit.DIAMONDS),
         ])
-        bid = north.choose_bid(auction)
+        bid = north.choose_bid(auction).bid
 
         assert isinstance(bid, PassBid)
 
@@ -755,7 +760,7 @@ class TestSupportCeiling:
             ContractBid(south, 140, Suit.SPADES),
             PassBid(west),
         ])
-        bid = north.choose_bid(auction)
+        bid = north.choose_bid(auction).bid
 
         assert isinstance(bid, PassBid)
 
@@ -777,7 +782,7 @@ class TestSupportCeiling:
             PassBid(south),
             PassBid(west),
         ])
-        bid = north.choose_bid(auction)
+        bid = north.choose_bid(auction).bid
 
         assert isinstance(bid, PassBid)
 
@@ -823,7 +828,7 @@ class TestSupportCeiling:
         for player in itertools.cycle([north, east, south, west]):
             if auction.is_terminal():
                 break
-            auction = auction.apply(player.choose_bid(auction))
+            auction = auction.apply(player.choose_bid(auction).bid)
             # A converging auction is short; a long one means the
             # escalation loop is back.
             assert len(auction.bids) <= 24, "auction failed to converge"

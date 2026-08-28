@@ -48,6 +48,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (core) **BREAKING:** Under-trumping is no longer compulsory — §6.2's exemption is the §9 default. Set `under_trump_exemption = false` to restore it.
 - (engine) **BREAKING:** `Game.check_game_over()` takes no argument — it reads `rules.target_score`, whose default is now 2000, not 1500.
 - (engine) **BREAKING:** `RichView.show_landing(setup)` takes and returns a `TableSetup`, not a target score. The target is now a ruleset knob.
+- (engine) **BREAKING:** AI strategies return `BidDecision` / `CardDecision` carrying a `Rationale`, not a bare `Bid` / `Card`. Read `.bid` / `.card`. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
 
 ### Fixed
 

@@ -6,13 +6,20 @@ defined here, injected at construction (see :mod:`.ai`). Today's expert
 rules are the first concrete implementation (see :mod:`.rule_based`);
 future AI levels (MCTS, learned policies) are new
 strategy classes, never edits to ``AiPlayer``.
+
+Both hooks answer with a *decision* — :class:`~.rationale.BidDecision` /
+:class:`~.rationale.CardDecision` — rather than a bare :class:`Bid` or
+:class:`Card`, so every level explains itself through the same seam it
+acts through. See :mod:`.rationale` for why the trace rides the return
+type.
 """
 
 from abc import ABC, abstractmethod
 
 from contrai_core.auction import Auction
-from contrai_core.bid import Bid
 from contrai_core.position import Position
+
+from .rationale import BidDecision, CardDecision
 
 
 class PlayerStateMixin:
@@ -56,19 +63,23 @@ class BiddingStrategy(ABC):
     """Interface for an AI bidding policy.
 
     Implementations decide what :class:`Bid` to make given the current
-    :class:`Auction` state. The owning :class:`AiPlayer` delegates
-    :meth:`AiPlayer.choose_bid` straight through to :meth:`choose_bid`.
+    :class:`Auction` state, and say **why** — the return is a
+    :class:`~.rationale.BidDecision`, never a bare bid. The owning
+    :class:`AiPlayer` delegates :meth:`AiPlayer.choose_bid` straight
+    through to :meth:`choose_bid`.
     """
 
     @abstractmethod
-    def choose_bid(self, auction: Auction) -> Bid:
+    def choose_bid(self, auction: Auction) -> BidDecision:
         """Choose a :class:`Bid` for the current auction state.
 
         Args:
             auction: The current :class:`Auction` state.
 
         Returns:
-            A :class:`Bid` instance the engine will validate.
+            A :class:`~.rationale.BidDecision` — the bid the engine will
+            validate, paired with the :class:`~.rationale.Rationale`
+            naming the rule that produced it.
         """
 
 
@@ -82,19 +93,23 @@ class CardPlayStrategy(ABC):
     inferred voids) is derived from that public history; the observation
     is the only input, so a strategy can never read another seat's hand.
     The owning :class:`AiPlayer` delegates :meth:`AiPlayer.choose_card`
-    to this object.
+    to this object, which answers with a
+    :class:`~.rationale.CardDecision` — the card *and* the reasoning
+    behind it, never a bare card.
     """
 
     @abstractmethod
-    def choose_card(self, observation):
+    def choose_card(self, observation) -> CardDecision:
         """Choose a card to play in the current trick.
 
         Args:
             observation: The :class:`~contrai_core.PlayObservation` for
                 the observing seat — its hand, legal cards, the contract,
-                and the public trick history.
+                the public trick history, and the table ruleset.
 
         Returns:
-            The chosen :class:`Card`, drawn from
-            ``observation.legal_cards``.
+            A :class:`~.rationale.CardDecision` — the chosen card, drawn
+            from ``observation.legal_cards``, paired with the
+            :class:`~.rationale.Rationale` naming the rule that produced
+            it.
         """

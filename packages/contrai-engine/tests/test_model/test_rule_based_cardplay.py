@@ -106,7 +106,7 @@ class TestOpeningLead:
             _c(Suit.DIAMONDS, Rank.EIGHT),
         ]
         obs = _obs(north, hand, _contract(north, 80, Suit.SPADES))
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         assert (result.suit, result.rank) == (Suit.SPADES, Rank.JACK)
 
     def test_opponents_contract_plays_ace_from_shortest_suit(self, players):
@@ -123,7 +123,7 @@ class TestOpeningLead:
         ]
         # Opponent East declares; aces are ♠A (2-card suit) and ♦A (3-card).
         obs = _obs(north, hand, _contract(east, 100, Suit.HEARTS))
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         assert (result.suit, result.rank) == (Suit.SPADES, Rank.ACE)
 
     def test_aceless_lead_takes_the_cheapest_from_the_longest_suit(
@@ -143,7 +143,7 @@ class TestOpeningLead:
             _c(Suit.CLUBS, Rank.QUEEN),
         ]
         obs = _obs(north, hand, _contract(east, 100, Suit.HEARTS))
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         assert (result.suit, result.rank) == (Suit.CLUBS, Rank.EIGHT)
 
 
@@ -174,7 +174,7 @@ class TestSubsequentLead:
             _contract(north, 100, Suit.SPADES),
             completed_tricks=[self._prior_trick(players)],
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         assert (result.suit, result.rank) == (Suit.SPADES, Rank.JACK)
 
     def test_leads_ace_when_both_opponents_known_void(self, players):
@@ -198,7 +198,7 @@ class TestSubsequentLead:
             _contract(north, 100, Suit.SPADES),
             completed_tricks=[both_void],
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         # Not a trump — the pull stopped; the ace goes out instead.
         assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.ACE)
 
@@ -231,7 +231,7 @@ class TestSubsequentLead:
             _contract(north, 100, Suit.SPADES),
             completed_tricks=[both_void],
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         assert (result.suit, result.rank) == (Suit.CLUBS, Rank.EIGHT)
 
 
@@ -299,7 +299,7 @@ class TestSubsequentLeadSparesTrump:
             _contract(north, 100, Suit.SPADES),
             completed_tricks=[self._both_opponents_void(players)],
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.ACE)
 
     def test_defender_cashes_the_plain_ace_not_the_trump_ace(self, players):
@@ -315,7 +315,7 @@ class TestSubsequentLeadSparesTrump:
             _contract(east, 100, Suit.SPADES),
             completed_tricks=[self._both_opponents_void(players)],
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.ACE)
 
     def test_trump_ace_still_leads_while_an_opponent_may_ruff(self, players):
@@ -333,7 +333,7 @@ class TestSubsequentLeadSparesTrump:
             _contract(east, 100, Suit.SPADES),
             completed_tricks=[self._clean_trick(players)],
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         assert (result.suit, result.rank) == (Suit.SPADES, Rank.ACE)
 
     def test_all_trump_hand_leads_the_cheapest_trump(self, players):
@@ -357,7 +357,7 @@ class TestSubsequentLeadSparesTrump:
             _contract(north, 100, Suit.SPADES),
             completed_tricks=[self._both_opponents_void(players)],
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         assert (result.suit, result.rank) == (Suit.SPADES, Rank.SEVEN)
 
 
@@ -391,7 +391,7 @@ class TestFollowingTeamWinning:
             _contract(north, 100, Suit.HEARTS),
             current_trick=self._partner_master_spade_lead(players),
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.KING)
 
     def test_dumps_highest_points_non_trump_non_master(self, players):
@@ -407,7 +407,7 @@ class TestFollowingTeamWinning:
             _contract(north, 100, Suit.HEARTS),
             current_trick=self._partner_master_spade_lead(players),
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         # Highest-points non-trump non-master → ♦10.
         assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.TEN)
 
@@ -424,7 +424,7 @@ class TestFollowingTeamWinning:
             _contract(north, 100, Suit.HEARTS),
             current_trick=self._partner_master_spade_lead(players),
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         # ♣A preserved (master), ♥9 preserved (trump), ♦K dumped.
         assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.KING)
 
@@ -441,7 +441,7 @@ class TestFollowingTeamWinning:
             _contract(north, 100, Suit.HEARTS),
             current_trick=self._partner_master_spade_lead(players),
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         assert (result.suit, result.rank) == (Suit.HEARTS, Rank.SEVEN)
 
     def test_follows_suit_with_highest_points(self, players):
@@ -469,7 +469,7 @@ class TestFollowingTeamWinning:
             current_trick=current,
             legal_cards=playable,
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         # ♥10 is worth the most points among the followable hearts.
         assert (result.suit, result.rank) == (Suit.HEARTS, Rank.TEN)
 
@@ -492,7 +492,7 @@ class TestFollowingTeamWinning:
             current_trick=self._partner_master_spade_lead(players),
             legal_cards=playable,
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         # ♠10 preserved to win a later spade trick; ♠K piles 4 points.
         assert (result.suit, result.rank) == (Suit.SPADES, Rank.KING)
 
@@ -515,7 +515,7 @@ class TestFollowingTeamWinning:
             current_trick=self._partner_master_spade_lead(players),
             legal_cards=playable,
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         assert (result.suit, result.rank) == (Suit.SPADES, Rank.SEVEN)
 
     def test_follow_suit_forced_master_when_only_suit_card(self, players):
@@ -533,7 +533,7 @@ class TestFollowingTeamWinning:
             current_trick=self._partner_master_spade_lead(players),
             legal_cards=[_c(Suit.SPADES, Rank.TEN)],
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         assert (result.suit, result.rank) == (Suit.SPADES, Rank.TEN)
 
     def test_trump_led_follow_preserves_new_trump_master(self, players):
@@ -560,7 +560,7 @@ class TestFollowingTeamWinning:
             current_trick=current,
             legal_cards=playable,
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         # ♥9 (14 trump points) outscores ♥A (11) but is the new master —
         # the Ace goes onto partner's locked trick instead.
         assert (result.suit, result.rank) == (Suit.HEARTS, Rank.ACE)
@@ -597,7 +597,7 @@ class TestFollowingTeamWinning:
             completed_tricks=[prior],
             legal_cards=playable,
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         # Without the anticipation rule the ♥Q (3 points) would pile on;
         # with East expected to ruff, the ♥J (2 points) is conceded instead.
         assert (result.suit, result.rank) == (Suit.HEARTS, Rank.JACK)
@@ -628,7 +628,7 @@ class TestFollowingTeamWinning:
             current_trick=current,
             completed_tricks=[prior],
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         # Without the rule the ♦10 (10 points) would be piled on; with the
         # ruff expected the worthless ♣8 goes instead.
         assert (result.suit, result.rank) == (Suit.CLUBS, Rank.EIGHT)
@@ -659,7 +659,7 @@ class TestFollowingTeamLosing:
             current_trick=current,
             legal_cards=playable,
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         assert (result.suit, result.rank) == (Suit.HEARTS, Rank.ACE)
 
     def test_follows_suit_low_when_cannot_beat(self, players):
@@ -678,7 +678,7 @@ class TestFollowingTeamLosing:
             current_trick=current,
             legal_cards=playable,
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         # Cannot beat ♥A — throw the lowest heart by points.
         assert (result.suit, result.rank) == (Suit.HEARTS, Rank.EIGHT)
 
@@ -697,7 +697,7 @@ class TestFollowingTeamLosing:
             _contract(north, 100, Suit.SPADES),
             current_trick=current,
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         # Both trumps beat a bare heart; the lowest winning trump goes in.
         assert (result.suit, result.rank) == (Suit.SPADES, Rank.NINE)
 
@@ -727,7 +727,7 @@ class TestFollowingTeamLosing:
             current_trick=current,
             completed_tricks=[prior],
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         # ♦7 is the cheapest non-master card in hand.
         assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.SEVEN)
 
@@ -755,7 +755,7 @@ class TestFollowingTeamLosing:
             _contract(players["E"], 100, Suit.HEARTS),
             current_trick=current,
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         assert (result.suit, result.rank) == (Suit.SPADES, Rank.SEVEN)
 
     def test_discard_breaks_point_ties_from_the_longest_suit(self, players):
@@ -779,7 +779,7 @@ class TestFollowingTeamLosing:
             _contract(players["E"], 100, Suit.HEARTS),
             current_trick=current,
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         assert (result.suit, result.rank) == (Suit.SPADES, Rank.EIGHT)
 
     def test_discard_picks_randomly_when_points_and_length_tie(self, players):
@@ -803,7 +803,7 @@ class TestFollowingTeamLosing:
             current_trick=current,
         )
         seen = {
-            north.cardplay.choose_card(obs).suit for _ in range(50)
+            north.cardplay.choose_card(obs).card.suit for _ in range(50)
         }
         assert seen == {Suit.DIAMONDS, Suit.SPADES}
 
@@ -836,7 +836,7 @@ class TestFollowingTeamLosing:
             completed_tricks=[prior],
             legal_cards=playable,
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         # Both hearts beat the ♥8; without the rule the ♥10 (10 points)
         # would go in — with the ruff expected the ♥Q hedges instead.
         assert (result.suit, result.rank) == (Suit.HEARTS, Rank.QUEEN)
@@ -873,7 +873,7 @@ class TestFollowingTeamLosing:
             completed_tricks=[hearts_void, trump_void],
             legal_cards=playable,
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         assert (result.suit, result.rank) == (Suit.HEARTS, Rank.TEN)
 
 
@@ -913,7 +913,7 @@ class TestConcedeSparesTrumpUnderTheExemption:
             # The exemption makes the whole hand legal.
             legal_cards=hand,
         )
-        result = south.cardplay.choose_card(obs)
+        result = south.cardplay.choose_card(obs).card
         # ♠7 and ♠8 are as cheap as the ♣7 and sit in a longer suit, so the
         # length tie-break used to pick one of them. Trump is not spendable.
         assert (result.suit, result.rank) == (Suit.CLUBS, Rank.SEVEN)
@@ -933,7 +933,7 @@ class TestConcedeSparesTrumpUnderTheExemption:
             current_trick=self._out_trumped_trick(players),
             legal_cards=hand,
         )
-        result = south.cardplay.choose_card(obs)
+        result = south.cardplay.choose_card(obs).card
         assert (result.suit, result.rank) == (Suit.SPADES, Rank.SEVEN)
 
     def test_all_trump_is_unchanged_because_nothing_is_spendable(self, players):
@@ -961,7 +961,7 @@ class TestConcedeSparesTrumpUnderTheExemption:
             current_trick=current,
             legal_cards=hand,
         )
-        result = south.cardplay.choose_card(obs)
+        result = south.cardplay.choose_card(obs).card
         # All-trump points: ♠7 = 0, ♠Q = 1, ♣K = 3.
         assert (result.suit, result.rank) == (Suit.SPADES, Rank.SEVEN)
 
@@ -996,7 +996,7 @@ class TestConcedeSparesTrumpUnderTheExemption:
             completed_tricks=[hearts, diamonds],
             legal_cards=hand,
         )
-        result = south.cardplay.choose_card(obs)
+        result = south.cardplay.choose_card(obs).card
         # ♦Q costs 3, ♥K costs 4 — the cheaper master goes.
         assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.QUEEN)
 
@@ -1022,7 +1022,7 @@ class TestRouting:
         north, east = players["N"], players["E"]
         obs = _obs(north, self._hand(), _contract(east, 100, Suit.HEARTS))
         assert obs.trick_number == 0
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         # Opening → ace from the shortest suit (♠A).
         assert (result.suit, result.rank) == (Suit.SPADES, Rank.ACE)
 
@@ -1041,7 +1041,7 @@ class TestRouting:
             completed_tricks=[prior],
         )
         assert obs.trick_number == 1
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         # Leading → ace from the longest suit (♦A).
         assert (result.suit, result.rank) == (Suit.DIAMONDS, Rank.ACE)
 
@@ -1056,7 +1056,7 @@ class TestRouting:
             _contract(north, 100, Suit.SPADES),
             current_trick=current,
         )
-        result = north.cardplay.choose_card(obs)
+        result = north.cardplay.choose_card(obs).card
         # Following a losing trick it cannot beat → lowest heart.
         assert (result.suit, result.rank) == (Suit.HEARTS, Rank.SEVEN)
 
