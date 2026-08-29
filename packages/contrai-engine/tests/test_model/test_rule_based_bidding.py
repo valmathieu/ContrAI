@@ -12,6 +12,7 @@ import itertools
 import pytest
 from contrai_engine.model.player import AiPlayer, BidDecision, Rationale
 from contrai_core import (
+    AllTrumpBelote,
     Auction,
     ContractBid,
     DoubleBid,
@@ -19,12 +20,13 @@ from contrai_core import (
     PassBid,
     Position,
     RedoubleBid,
+    RuleConfig,
     SlamLevel,
 )
 from contrai_core.card import Card
 from contrai_core.rules import rules_for
 from contrai_core.team import Team
-from contrai_core.types import Suit, Rank, TrumpVariant
+from contrai_core.types import CONTRACT_SUITS, Suit, Rank, TrumpVariant
 
 
 def _auction(bids=()):
@@ -1058,3 +1060,486 @@ class TestTopCardTricks:
         assert strategy._top_card_tricks(
             rules_for(Suit.SPADES), Suit.SPADES
         ) == 0
+
+
+# ---------------------------------------------------------------------------
+# The honours table: one table serving both suitless modes
+# ---------------------------------------------------------------------------
+
+
+def _extended(bids=()):
+    """An auction at a table that has switched the extended modes on."""
+    return Auction(tuple(bids), rules=RuleConfig(extended_trump_choices=True))
+
+
+def _seated_player():
+    """A North player wired into a North-South team."""
+    player = AiPlayer("TestBot", Position.NORTH)
+    partner = AiPlayer("Partner", Position.SOUTH)
+    team = Team("North-South", [player, partner])
+    player.team = team
+    partner.team = team
+    return player
+
+
+def _hand(*cards):
+    return Hand(list(cards))
+
+
+def _masters(rank, suits):
+    """One card of ``rank`` in each of ``suits``."""
+    return [Card(suit, rank) for suit in suits]
+
+
+class TestExtendedModesAreOnlyEvaluatedWhenBookable:
+    """A classic table offers four suits and nothing else."""
+
+    def test_the_default_table_evaluates_exactly_the_four_suits(self):
+        player = _seated_player()
+        player.hand = _hand(*_masters(Rank.JACK, list(Suit)))
+        evaluations = player.bidding._evaluate_modes(RuleConfig())
+        assert set(evaluations) == set(Suit)
+
+    def test_an_extended_table_evaluates_all_six_trump_choices(self):
+        player = _seated_player()
+        player.hand = _hand(*_masters(Rank.JACK, list(Suit)))
+        evaluations = player.bidding._evaluate_modes(
+            RuleConfig(extended_trump_choices=True)
+        )
+        assert set(evaluations) == set(CONTRACT_SUITS)
+
+    def test_the_default_table_never_names_a_suitless_mode(self):
+        """The regression guard behind every pre-existing bidding test."""
+        player = _seated_player()
+        player.hand = _hand(*_masters(Rank.JACK, list(Suit)))
+        bid = player.choose_bid(Auction()).bid
+        if isinstance(bid, ContractBid):
+            assert bid.suit in set(Suit)
+
+
+class TestHonoursTableAnchors:
+    """The house convention's three anchors, in both suitless modes.
+
+    80 = two masters, 90 = three, 100 = four — two Jacks at all trump,
+    two aces at no trump. One table serves both because the difference
+    between them is carried entirely by the ladder ``rules_for(mode)``
+    hands back.
+    """
+
+    #: Filler that tops no ladder in either regime: 8s and 7s are the
+    #: bottom two rungs of both the plain and the trump ladder.
+    _FILLER = (Rank.EIGHT, Rank.SEVEN)
+
+    def _hand_with(self, master_rank, master_suits, filler_suits):
+        cards = _masters(master_rank, master_suits)
+        for suit in filler_suits:
+            for rank in self._FILLER:
+                cards.append(Card(suit, rank))
+        return Hand(cards[:8])
+
+    @pytest.mark.parametrize(
+        "mode, master_rank, expected",
+        [
+            (TrumpVariant.ALL_TRUMP, Rank.JACK, 80),
+            (TrumpVariant.NO_TRUMP, Rank.ACE, 80),
+        ],
+    )
+    def test_two_masters_reach_eighty(self, mode, master_rank, expected):
+        player = _seated_player()
+        player.hand = self._hand_with(
+            master_rank,
+            [Suit.SPADES, Suit.HEARTS],
+            [Suit.DIAMONDS, Suit.CLUBS, Suit.SPADES],
+        )
+        evaluation = player.bidding._evaluate_mode(
+            mode, RuleConfig(extended_trump_choices=True)
+        )
+        assert evaluation["contract"] == expected
+
+    @pytest.mark.parametrize(
+        "mode, master_rank",
+        [
+            (TrumpVariant.ALL_TRUMP, Rank.JACK),
+            (TrumpVariant.NO_TRUMP, Rank.ACE),
+        ],
+    )
+    def test_three_masters_reach_ninety(self, mode, master_rank):
+        player = _seated_player()
+        player.hand = self._hand_with(
+            master_rank,
+            [Suit.SPADES, Suit.HEARTS, Suit.DIAMONDS],
+            [Suit.CLUBS, Suit.SPADES, Suit.HEARTS],
+        )
+        evaluation = player.bidding._evaluate_mode(
+            mode, RuleConfig(extended_trump_choices=True)
+        )
+        assert evaluation["contract"] == 90
+
+    @pytest.mark.parametrize(
+        "mode, master_rank",
+        [
+            (TrumpVariant.ALL_TRUMP, Rank.JACK),
+            (TrumpVariant.NO_TRUMP, Rank.ACE),
+        ],
+    )
+    def test_four_masters_reach_a_hundred(self, mode, master_rank):
+        player = _seated_player()
+        player.hand = self._hand_with(
+            master_rank, list(Suit), [Suit.SPADES, Suit.HEARTS]
+        )
+        evaluation = player.bidding._evaluate_mode(
+            mode, RuleConfig(extended_trump_choices=True)
+        )
+        assert evaluation["contract"] == 100
+
+
+class TestComplementsClimb:
+    """A complement is the card whose only superior is in the same hand.
+
+    The 9 under its own Jack at all trump, the 10 under its own ace at no
+    trump. Both are certain tricks the moment the hand holds them, which
+    is why the ladder prices them the same as a master.
+    """
+
+    @pytest.mark.parametrize(
+        "mode, master_rank, complement_rank",
+        [
+            (TrumpVariant.ALL_TRUMP, Rank.JACK, Rank.NINE),
+            (TrumpVariant.NO_TRUMP, Rank.ACE, Rank.TEN),
+        ],
+    )
+    def test_two_masters_plus_their_two_complements_reach_a_hundred(
+        self, mode, master_rank, complement_rank
+    ):
+        player = _seated_player()
+        player.hand = Hand([
+            Card(Suit.SPADES, master_rank),
+            Card(Suit.SPADES, complement_rank),
+            Card(Suit.HEARTS, master_rank),
+            Card(Suit.HEARTS, complement_rank),
+            Card(Suit.DIAMONDS, Rank.EIGHT),
+            Card(Suit.DIAMONDS, Rank.SEVEN),
+            Card(Suit.CLUBS, Rank.EIGHT),
+            Card(Suit.CLUBS, Rank.SEVEN),
+        ])
+        evaluation = player.bidding._evaluate_mode(
+            mode, RuleConfig(extended_trump_choices=True)
+        )
+        assert evaluation["contract"] == 100
+
+    @pytest.mark.parametrize(
+        "mode, master_rank, complement_rank",
+        [
+            (TrumpVariant.ALL_TRUMP, Rank.JACK, Rank.NINE),
+            (TrumpVariant.NO_TRUMP, Rank.ACE, Rank.TEN),
+        ],
+    )
+    def test_an_unbacked_second_card_is_not_a_complement(
+        self, mode, master_rank, complement_rank
+    ):
+        """The masters are elsewhere, so the second cards can be beaten."""
+        player = _seated_player()
+        player.hand = Hand([
+            Card(Suit.SPADES, master_rank),
+            Card(Suit.HEARTS, master_rank),
+            Card(Suit.DIAMONDS, complement_rank),
+            Card(Suit.CLUBS, complement_rank),
+            Card(Suit.DIAMONDS, Rank.EIGHT),
+            Card(Suit.DIAMONDS, Rank.SEVEN),
+            Card(Suit.CLUBS, Rank.EIGHT),
+            Card(Suit.CLUBS, Rank.SEVEN),
+        ])
+        masters, complements = player.bidding._honours(rules_for(mode))
+        assert (masters, complements) == (2, 0)
+
+
+class TestTheOpeningFloor:
+    """A hand cannot open on complements alone: ``masters >= 2``."""
+
+    @pytest.mark.parametrize(
+        "mode, master_rank, complement_rank",
+        [
+            (TrumpVariant.ALL_TRUMP, Rank.JACK, Rank.NINE),
+            (TrumpVariant.NO_TRUMP, Rank.ACE, Rank.TEN),
+        ],
+    )
+    def test_one_master_and_its_complement_is_no_bid(
+        self, mode, master_rank, complement_rank
+    ):
+        """Two honours, one master — below the rung two Jacks reserve."""
+        player = _seated_player()
+        player.hand = Hand([
+            Card(Suit.SPADES, master_rank),
+            Card(Suit.SPADES, complement_rank),
+            Card(Suit.HEARTS, Rank.EIGHT),
+            Card(Suit.HEARTS, Rank.SEVEN),
+            Card(Suit.DIAMONDS, Rank.EIGHT),
+            Card(Suit.DIAMONDS, Rank.SEVEN),
+            Card(Suit.CLUBS, Rank.EIGHT),
+            Card(Suit.CLUBS, Rank.SEVEN),
+        ])
+        evaluation = player.bidding._evaluate_mode(
+            mode, RuleConfig(extended_trump_choices=True)
+        )
+        assert evaluation["contract"] == 0
+
+
+class TestTheAceTrapAtAllTrump:
+    """The sharpest test of the task: eight cards, two opposite readings."""
+
+    def test_four_aces_and_four_tens_name_no_trump_not_all_trump(self):
+        """At no trump 4 masters + 4 complements; at all trump neither."""
+        player = _seated_player()
+        player.hand = Hand(
+            _masters(Rank.ACE, list(Suit)) + _masters(Rank.TEN, list(Suit))
+        )
+        bid = player.choose_bid(_extended()).bid
+        assert isinstance(bid, ContractBid)
+        assert bid.suit is TrumpVariant.NO_TRUMP
+
+    def test_the_same_hand_counts_no_honours_at_all_trump(self):
+        player = _seated_player()
+        player.hand = Hand(
+            _masters(Rank.ACE, list(Suit)) + _masters(Rank.TEN, list(Suit))
+        )
+        assert player.bidding._honours(
+            rules_for(TrumpVariant.ALL_TRUMP)
+        ) == (0, 0)
+
+    def test_and_eight_honours_at_no_trump(self):
+        player = _seated_player()
+        player.hand = Hand(
+            _masters(Rank.ACE, list(Suit)) + _masters(Rank.TEN, list(Suit))
+        )
+        assert player.bidding._honours(
+            rules_for(TrumpVariant.NO_TRUMP)
+        ) == (4, 4)
+
+    def test_the_mirror_hand_names_all_trump(self):
+        """Four Jacks and four 9s: 8 honours at all trump, 0 at no trump."""
+        player = _seated_player()
+        player.hand = Hand(
+            _masters(Rank.JACK, list(Suit)) + _masters(Rank.NINE, list(Suit))
+        )
+        bid = player.choose_bid(_extended()).bid
+        assert isinstance(bid, ContractBid)
+        assert bid.suit is TrumpVariant.ALL_TRUMP
+
+
+class TestNoModeIsBidPastItsLadderTop:
+    """``ladder_top`` is the ceiling, never re-derived."""
+
+    @pytest.mark.parametrize(
+        "belote, ceiling",
+        [
+            (AllTrumpBelote.NONE, 160),
+            (AllTrumpBelote.SINGLE, 180),
+            (AllTrumpBelote.FOUR, 240),
+        ],
+    )
+    def test_all_trump_stops_at_its_regimes_ceiling(self, belote, ceiling):
+        player = _seated_player()
+        rules = RuleConfig(
+            extended_trump_choices=True, all_trump_belote=belote
+        )
+        # The strongest all-trump hand there is, K + Q pairs included.
+        player.hand = Hand([
+            Card(suit, rank)
+            for suit in Suit
+            for rank in (Rank.JACK, Rank.NINE)
+        ])
+        evaluation = player.bidding._evaluate_mode(
+            TrumpVariant.ALL_TRUMP, rules
+        )
+        assert evaluation["contract"] <= ceiling
+
+    def test_a_belote_rich_hand_stops_at_the_ceiling_too(self):
+        player = _seated_player()
+        rules = RuleConfig(
+            extended_trump_choices=True,
+            all_trump_belote=AllTrumpBelote.FOUR,
+        )
+        player.hand = Hand([
+            Card(suit, rank)
+            for suit in Suit
+            for rank in (Rank.KING, Rank.QUEEN)
+        ])
+        evaluation = player.bidding._evaluate_mode(
+            TrumpVariant.ALL_TRUMP, rules
+        )
+        assert evaluation["contract"] <= 240
+
+    def test_no_trump_stops_at_one_sixty(self):
+        player = _seated_player()
+        player.hand = Hand(
+            _masters(Rank.ACE, list(Suit)) + _masters(Rank.TEN, list(Suit))
+        )
+        evaluation = player.bidding._evaluate_mode(
+            TrumpVariant.NO_TRUMP, RuleConfig(extended_trump_choices=True)
+        )
+        assert evaluation["contract"] <= 160
+
+
+class TestBeloteLiftsAllTrump:
+    """The only thing that can lift a bid past the honours ladder's 140."""
+
+    def _kq_rich(self):
+        """Two masters, plus a K + Q pair in every suit."""
+        return Hand([
+            Card(Suit.SPADES, Rank.JACK),
+            Card(Suit.HEARTS, Rank.JACK),
+            Card(Suit.SPADES, Rank.KING),
+            Card(Suit.SPADES, Rank.QUEEN),
+            Card(Suit.HEARTS, Rank.KING),
+            Card(Suit.HEARTS, Rank.QUEEN),
+            Card(Suit.DIAMONDS, Rank.KING),
+            Card(Suit.DIAMONDS, Rank.QUEEN),
+        ])
+
+    def _contract_under(self, belote):
+        player = _seated_player()
+        player.hand = self._kq_rich()
+        return player.bidding._evaluate_mode(
+            TrumpVariant.ALL_TRUMP,
+            RuleConfig(
+                extended_trump_choices=True, all_trump_belote=belote
+            ),
+        )["contract"]
+
+    def test_four_reaches_higher_than_single(self):
+        assert self._contract_under(
+            AllTrumpBelote.FOUR
+        ) > self._contract_under(AllTrumpBelote.SINGLE)
+
+    def test_single_adds_no_more_than_twenty_over_none(self):
+        single = self._contract_under(AllTrumpBelote.SINGLE)
+        none = self._contract_under(AllTrumpBelote.NONE)
+        assert 0 <= single - none <= 20
+
+    def test_the_add_on_is_inert_at_no_trump(self):
+        """``NoTrumpRules.belote_suits`` is empty — nothing to credit."""
+        player = _seated_player()
+        player.hand = self._kq_rich()
+        contracts = {
+            belote: player.bidding._evaluate_mode(
+                TrumpVariant.NO_TRUMP,
+                RuleConfig(
+                    extended_trump_choices=True, all_trump_belote=belote
+                ),
+            )["contract"]
+            for belote in AllTrumpBelote
+        }
+        assert len(set(contracts.values())) == 1
+
+
+class TestSupportComplementIsModeAware:
+    """``_support_partner_bid``'s +10 reads the mode's own ladder."""
+
+    def test_a_jack_supports_a_suit_contract(self):
+        player = _seated_player()
+        partner = player.team.players[1]
+        opponent = AiPlayer("Opponent", Position.WEST)
+        opponent.team = Team("East-West", [opponent, AiPlayer("OP", Position.EAST)])
+        player.hand = Hand([
+            Card(Suit.SPADES, Rank.JACK),
+            Card(Suit.HEARTS, Rank.SEVEN),
+            Card(Suit.HEARTS, Rank.EIGHT),
+            Card(Suit.DIAMONDS, Rank.SEVEN),
+            Card(Suit.DIAMONDS, Rank.EIGHT),
+            Card(Suit.CLUBS, Rank.SEVEN),
+            Card(Suit.CLUBS, Rank.EIGHT),
+            Card(Suit.SPADES, Rank.SEVEN),
+        ])
+        auction = Auction((
+            ContractBid(partner, 80, Suit.SPADES),
+            PassBid(opponent),
+        ))
+        bid = player.choose_bid(auction).bid
+        assert isinstance(bid, ContractBid)
+        assert bid.get_numeric_value() == 90
+
+    def test_an_all_trump_honour_supports_an_all_trump_contract(self):
+        """The Jack of any suit is an honour once every suit is trump."""
+        player = _seated_player()
+        partner = player.team.players[1]
+        opponent = AiPlayer("Opponent", Position.WEST)
+        opponent.team = Team("East-West", [opponent, AiPlayer("OP", Position.EAST)])
+        player.hand = Hand([
+            Card(Suit.HEARTS, Rank.JACK),
+            Card(Suit.SPADES, Rank.SEVEN),
+            Card(Suit.SPADES, Rank.EIGHT),
+            Card(Suit.DIAMONDS, Rank.SEVEN),
+            Card(Suit.DIAMONDS, Rank.EIGHT),
+            Card(Suit.CLUBS, Rank.SEVEN),
+            Card(Suit.CLUBS, Rank.EIGHT),
+            Card(Suit.HEARTS, Rank.SEVEN),
+        ])
+        auction = _extended((
+            ContractBid(partner, 80, TrumpVariant.ALL_TRUMP),
+            PassBid(opponent),
+        ))
+        bid = player.choose_bid(auction).bid
+        assert isinstance(bid, ContractBid)
+        assert bid.get_numeric_value() == 90
+
+    def test_a_plain_jack_is_no_honour_at_no_trump(self):
+        """A Jack tops nothing on the plain ladder — nothing to add."""
+        player = _seated_player()
+        partner = player.team.players[1]
+        opponent = AiPlayer("Opponent", Position.WEST)
+        opponent.team = Team("East-West", [opponent, AiPlayer("OP", Position.EAST)])
+        player.hand = Hand([
+            Card(Suit.HEARTS, Rank.JACK),
+            Card(Suit.SPADES, Rank.SEVEN),
+            Card(Suit.SPADES, Rank.EIGHT),
+            Card(Suit.DIAMONDS, Rank.SEVEN),
+            Card(Suit.DIAMONDS, Rank.EIGHT),
+            Card(Suit.CLUBS, Rank.SEVEN),
+            Card(Suit.CLUBS, Rank.EIGHT),
+            Card(Suit.HEARTS, Rank.SEVEN),
+        ])
+        auction = _extended((
+            ContractBid(partner, 80, TrumpVariant.NO_TRUMP),
+            PassBid(opponent),
+        ))
+        bid = player.choose_bid(auction).bid
+        assert isinstance(bid, PassBid)
+
+
+class TestTheBidRationaleCitesTheTable:
+    """A bid says which modes were on the table and what capped it."""
+
+    def test_an_extended_open_cites_the_knobs_it_consulted(self):
+        player = _seated_player()
+        player.hand = Hand(
+            _masters(Rank.JACK, list(Suit)) + _masters(Rank.NINE, list(Suit))
+        )
+        rationale = player.choose_bid(_extended()).rationale
+        knobs = {c.knob for c in rationale.citations}
+        assert "extended_trump_choices" in knobs
+        assert "all_trump_belote" in knobs
+
+    def test_the_runners_up_are_listed(self):
+        """A hand that scores in two modes names the one it did not bid.
+
+        ♠ A K Q J 10 plus the other three aces reaches 140 in spades on
+        the suit table and 110 at no trump on the honours table (four ace
+        masters and the ♠10 backed by its own ace).
+        """
+        player = _seated_player()
+        player.hand = Hand([
+            Card(Suit.SPADES, Rank.ACE),
+            Card(Suit.SPADES, Rank.KING),
+            Card(Suit.SPADES, Rank.QUEEN),
+            Card(Suit.SPADES, Rank.JACK),
+            Card(Suit.SPADES, Rank.TEN),
+            Card(Suit.HEARTS, Rank.ACE),
+            Card(Suit.DIAMONDS, Rank.ACE),
+            Card(Suit.CLUBS, Rank.ACE),
+        ])
+        decision = player.choose_bid(_extended())
+        assert decision.bid.suit is Suit.SPADES
+        assert any(
+            str(TrumpVariant.NO_TRUMP) in entry
+            for entry in decision.rationale.considered
+        )

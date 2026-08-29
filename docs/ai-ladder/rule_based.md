@@ -6,6 +6,60 @@ Hand-coded expert strategies (expert bidding table + card-play heuristics; specs
 
 When the heuristics run out of ways to contest a trick they concede the cheapest card they can afford, and that ladder **spares trump before it spares points**. The ordering is load-bearing under the §9.5 under-trump exemption: a seat void in the led suit and holding only losing trump is excused from under-trumping, so its whole hand becomes legal and a worthless trump sits beside every plain card — ranking on points alone would pick the trump roughly as often as not and throw away the very card the exemption was written to preserve. Trump is filtered out first, masters second, and the full legal set is the fallback for a pure-trump hand and for every hand at all trump, where nothing is spendable in that sense.
 
+## Bidding tables
+
+Two tables, chosen by the *shape* of the trump being priced rather than by a chain of `if mode is NO_TRUMP`. `_evaluate_modes(rules)` sweeps whatever `bookable_suits(rules)` returns — four suits at a classic table, six when `extended_trump_choices` is on — so the AI can never evaluate a mode the auction would refuse.
+
+### The suit table
+
+Unchanged: rows from 80 to 160 plus the two Slam-family rows, gated on trump length, the trump ladder's own honours (Jack / 9 / Ace), aces held **outside** the trump suit, a trick floor, and a Belote requirement at the top. Trump length matters here and nowhere else — long trump wins tricks by exhaustion, which a plain suit cannot, since anyone may cut it.
+
+### The honours table
+
+No trump and all trump share **one** table, because everything that separates them is carried by the ladder `rules_for(mode)` hands back:
+
+| Contract | Honours (masters + complements) | `tricks_min` |
+| --- | --- | --- |
+| 80 | 2 | 2 |
+| 90 | 3 | 3 |
+| 100 | 4 | 4 |
+| 110 | 5 | 5 |
+| 120 | 6 | 6 |
+| 130 | 7 | 7 |
+| 140 | 8 | 8 |
+
+- A **master** is a card nothing outranks in its own suit — `rules.higher_ranks(rank, suit) == ()`. The Ace at no trump, the Jack at all trump.
+- A **complement** is the card whose *only* superior is held in the same hand — `len(rules.higher_ranks(rank, suit)) == 1` and that rank is in hand. The 10 under its own Ace, the 9 under its own Jack.
+
+Both are **certain tricks** the moment the hand holds them, which is why the ladder prices them identically at +10 over a base of 60. Read at all trump the table says: 80 is two Jacks, 90 three, 100 four, and every 9 sitting under its own Jack adds a rung. Read at no trump: the same rows with Ace for Jack and 10 for 9. That reproduces the house convention's three stated anchors exactly and degrades gracefully in between — three Aces plus one guarded 10 is also 100.
+
+Below every row sits the **opening floor**, `masters >= 2`. A hand cannot open on complements alone: a lone Jack + 9 is two honours but one master, and the 80 rung is the convention's for *two Jacks*. Structurally `complements <= masters`, so every higher row's master floor follows from the honour count and needs no column of its own.
+
+**The point argument behind the convention.** At no trump the Ace is 19 of its suit's 38 (§3.4), so four Aces are half the deck on their own. At all trump the Jack is 14 and the 9 is nine (§3.3) — four Jacks alone are 56 of 152 — while an Ace is only the *third* card of its ladder and worth six. An ace-heavy hand is therefore a lock at no trump and a **trap** at all trump, and the same eight cards (four Aces, four Tens) count 8 honours in one mode and 0 in the other. That single fact is why the table can be shared: the ladder, not the table, is what differs.
+
+**`tricks_min` tracks the honour count**, and deliberately so. Every honour is a certain trick, and `_estimate_tricks` reads position off the *same* ladder `_honours` does, so it provably returns at least `honours` — the floor can never independently fail. Floors set any higher gated the convention's own anchors shut: two Jacks and junk is two certain tricks and cannot be filled to four without adding honours, which would then be a different row. The column earns its place as an **agreement invariant**: the day `_honours` and `_top_card_tricks` stop answering the same question about what tops a ladder, these rows fall out and the tests say so.
+
+**The belote add-on** is the only thing that can lift a bid past the honours ladder's own 140 ceiling. Each K + Q pair the table will actually mark is +20 (§6.6): one per pair under `four`, at most one under `single`, none under `none`, read off `rules_for(mode).belote_suits` filtered by `all_trump_belote`. At no trump the add-on is structurally zero — `NoTrumpRules.belote_suits` is empty — so the knob is inert there whatever it says. The `single` credit is a deliberate over-estimate: only the first pair *announced in play* marks, and an opponent may announce first, so crediting a full +20 for a pair merely held is optimistic and tunable.
+
+**The cap is never re-derived.** Every evaluation ends at `ladder_top(mode, rules)`, which already encodes all trump's three ceilings (160 / 180 / 240 by belote regime) and no trump's 160.
+
+**The Slam rows are shared and unchanged** — trick-gated at `tricks_min = 8` and mode-independent, since the Slam family exists under every trump choice at the same base values (§5.2). A hand of four Jacks and four 9s reaches them through the trick estimator, not the honours ladder.
+
+### What it measures
+
+300 seeded auctions and rounds under `extended_trump_choices = true`, `all_trump_belote = single`. The baseline on `dev` was **0 no-trump and 0 all-trump contracts in 300 auctions** — the AI could not name either mode.
+
+| | contracts / 300 | avg value | made |
+| --- | --- | --- | --- |
+| all trump | 142 | 99.4 | 57.0% |
+| no trump | 84 | 96.9 | 54.8% |
+| the four suits | 70 | 98.3 | 91.4% |
+| all passed | 4 | — | — |
+
+With the extended modes switched **off** the same 300 deals reproduce the classic table exactly: 125 all-pass, 175 suit contracts, **zero** of either new mode. The belote regime moves all trump the way it should — under `none` the average all-trump value drops to 94.9 and the mode is bid 124 times rather than 142.
+
+Two calibration signals fall out of that table and neither is addressed here. The honours rows are **loose** — a 55–57% make rate against 91% for suit contracts — while the suit table stays **conservative**, all-pass collapsing from 125 to 4 the moment a second family of tables is available. The seven honour rows are starting values; balancing the two tables against each other wants its own measured branch, not a guess folded into this one.
+
 ## Per-mode play
 
 No trump and all trump were *playable* by the engine well before they were playable by the AI. Three heuristics silently assumed trump is exactly one suit, and each is now one regime-neutral rule instead of three parallel code paths — the `TrumpRules` ladder answers the mode-specific part, so nothing branches on `if mode is NO_TRUMP`.

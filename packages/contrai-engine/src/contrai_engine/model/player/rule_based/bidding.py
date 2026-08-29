@@ -8,16 +8,32 @@ from contrai_core.bid import (
     PassBid,
     RedoubleBid,
     SlamLevel,
+    bookable_suits,
+    ladder_top,
 )
+from contrai_core.rule_config import AllTrumpBelote, RuleConfig
 from contrai_core.rules import TrumpRules, rules_for
-from contrai_core.types import Rank, Suit
+from contrai_core.types import CONTRACT_SUITS, ContractSuit, Rank, Suit
 
 from ..rationale import BidDecision, Rationale, RuleCitation
 from ..strategy import BiddingStrategy, PlayerStateMixin
 
-#: The suits the bidding table searches. Every Suit member is a real
+#: The card suits every per-suit sweep walks. Every Suit member is a real
 #: card suit, so no filtering is needed.
 SUITS = tuple(Suit)
+
+#: Points a single honour is worth on the honours table, over a base of 60.
+#: The house convention names 2 / 3 / 4 masters as 80 / 90 / 100 and then
+#: climbs by complements, which is one +10 step per honour throughout.
+HONOUR_STEP = 10
+
+#: What the honours table counts up from. ``60 + 10 x honours`` reproduces
+#: all three of the convention's stated anchors exactly.
+HONOURS_BASE = 60
+
+#: Marked points a Belote the table will actually score is worth to an
+#: all-trump evaluation (contree-domain.md §6.6).
+BELOTE_POINTS = 20
 
 
 class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
@@ -51,7 +67,11 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
     # ``contrai-core``; they're translated back to the ``SlamLevel``
     # members at the bid-return boundary (see ``_make_initial_bid`` /
     # ``_support_partner_bid``).
-    BIDDING_TABLE = [
+    # --- The suit table -------------------------------------------------
+    # Columns: (contract, trump_expected, trump_min, aces, tricks_min,
+    # belote_required). ``aces`` counts aces held *outside* the candidate
+    # trump suit; ``trump_expected`` names ranks on the trump ladder.
+    SUIT_TABLE = [
         # (contract, trump_expected, trump_min, aces, tricks_min, belote_required)
         (80, {'jack_or_nine': True, 'jack_and_nine': False}, 3, 1, 4, False),
         (90, {'jack_or_nine': False, 'jack_and_nine': True}, 3, 1, 4, False),
@@ -69,7 +89,63 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
         (SOLO_SLAM_NUMERIC, {}, 0, 0, 8, False),  # Solo Slam — same gate as Slam for now.
     ]
 
-    # Suit preference order (Spades, Hearts, Diamonds, Clubs)
+    #: Backwards-readable alias: the suit table is what ``BIDDING_TABLE``
+    #: always was, now one of two.
+    BIDDING_TABLE = SUIT_TABLE
+
+    # --- The honours table ----------------------------------------------
+    # One table serves **both** suitless modes, because the difference
+    # between them is carried entirely by the ladder ``rules_for(mode)``
+    # hands back: a master is the Ace at no trump and the Jack at all
+    # trump, a complement the 10 under its own Ace and the 9 under its own
+    # Jack. Read at all trump, row 1 is "two Jacks", row 3 "four Jacks",
+    # and every 9 sitting under its own Jack adds a rung. Read at no
+    # trump, the same rows with Ace for Jack and 10 for 9.
+    #
+    # Columns: (contract, honours, tricks_min). ``honours`` is
+    # masters + complements — note this is a *different* question from the
+    # suit table's ``aces`` column, which counts aces held outside the
+    # trump suit. ``tricks_min`` is the same sanity floor the suit table
+    # uses, fed by the regime-correct ``_estimate_tricks(mode)``.
+    #
+    # ``tricks_min`` tracks the honour count exactly, and that is a
+    # deliberate, measured choice rather than an oversight. Every honour
+    # is a *certain* trick — a master is unbeatable in its suit, and a
+    # complement's only superior sits in the same hand — so
+    # ``_estimate_tricks`` provably returns at least ``honours``, both
+    # helpers reading position off the same ladder. Floors set any higher
+    # gated the convention's own anchors shut: two Jacks and junk is 2
+    # certain tricks and cannot be filled to 4 without adding honours,
+    # which would then be a different row. The floor therefore earns its
+    # place as an *agreement invariant* — the day ``_honours`` and
+    # ``_top_card_tricks`` stop answering the same question about what
+    # tops a ladder, these rows fall out and the tests say so.
+    #
+    # The seven rows are starting values to be tuned; the honours are the
+    # intended driver.
+    HONOURS_TABLE = [
+        # (contract, honours, tricks_min)
+        (80, 2, 2),
+        (90, 3, 3),
+        (100, 4, 4),
+        (110, 5, 5),
+        (120, 6, 6),
+        (130, 7, 7),
+        (140, 8, 8),
+    ]
+
+    #: A hand cannot open on complements alone. Structurally
+    #: ``complements <= masters``, so this one floor below every row is
+    #: what keeps a lone Jack + 9 — two honours, one master — off the 80
+    #: rung the convention reserves for two Jacks.
+    MASTERS_FLOOR = 2
+
+    #: Mode preference order, breaking a tie on value and belote. Reuses
+    #: the core enumeration (card suits, then NO_TRUMP, then ALL_TRUMP)
+    #: rather than restating an order of its own.
+    MODE_PREFERENCE = CONTRACT_SUITS
+
+    #: The old name, kept for the suit-only sweeps that still read it.
     SUIT_PREFERENCE = SUITS
 
     def _decide(
@@ -221,10 +297,11 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
         if double_action is not None:
             return double_action
 
-        # Evaluate our hand once and resolve it to the single best
-        # (contract, suit) pair — ties already broken (belote first,
-        # then the fixed preference order).
-        best_contract, best_suit = self._find_best_contract(self._evaluate_suits())
+        # Evaluate our hand once, across every trump the *table* offers,
+        # and resolve it to the single best (contract, mode) pair — ties
+        # already broken (belote first, then the fixed mode order).
+        evaluations = self._evaluate_modes(auction.rules)
+        best_contract, best_suit = self._find_best_contract(evaluations)
 
         # Determine bidding strategy
         if partner_bid is None or (
@@ -232,10 +309,14 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
             and best_contract > partner_bid.get_numeric_value()
         ):
             # Make initial bid or overbid partner
-            return self._make_initial_bid(best_contract, best_suit, last_bid)
+            return self._make_initial_bid(
+                best_contract, best_suit, last_bid, auction.rules, evaluations
+            )
         if isinstance(partner_bid, ContractBid):
             # Support partner's bid
-            return self._support_partner_bid(partner_bid, last_bid, bids)
+            return self._support_partner_bid(
+                partner_bid, last_bid, bids, auction.rules
+            )
 
         return self._decide(
             PassBid(self._player),
@@ -310,17 +391,65 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
         return False
 
     def _evaluate_suits(self):
-        """Evaluate each suit for potential trump contracts."""
+        """Evaluate each card suit as a potential trump.
 
-        evaluations = {}
+        The suit-only sweep, kept because several helpers and tests read
+        exactly the four suits. :meth:`_evaluate_modes` is the general
+        form the auction path uses.
 
-        for suit in SUITS:
-            evaluations[suit] = self._evaluate_suit_as_trump(suit)
+        Returns:
+            One evaluation dict per :class:`~contrai_core.Suit`.
+        """
 
-        return evaluations
+        return {
+            suit: self._evaluate_mode(suit, RuleConfig()) for suit in SUITS
+        }
+
+    def _evaluate_modes(self, rules: RuleConfig) -> dict:
+        """Evaluate every trump choice the table actually offers.
+
+        Args:
+            rules: The table ruleset. ``extended_trump_choices`` decides
+                whether no trump and all trump are on the table at all —
+                asked through :func:`~contrai_core.bookable_suits` rather
+                than re-derived, so the AI can never evaluate a mode the
+                auction would refuse.
+
+        Returns:
+            One evaluation dict per bookable trump choice.
+        """
+
+        return {
+            mode: self._evaluate_mode(mode, rules)
+            for mode in bookable_suits(rules)
+        }
+
+    def _evaluate_mode(self, mode: ContractSuit, rules: RuleConfig) -> dict:
+        """Evaluate one trump choice for this hand.
+
+        Dispatches on the *shape* of the mode, not on a chain of
+        ``if mode is NO_TRUMP``: a card suit is priced by the suit table
+        (trump length, external aces, the trump ladder's own honours),
+        while the two suitless modes share the honours table, since what
+        separates them is entirely carried by the ladder
+        ``rules_for(mode)`` returns.
+
+        Args:
+            mode: The trump choice to price.
+            rules: The table ruleset, supplying the belote regime and the
+                ladder cap.
+
+        Returns:
+            An evaluation dict with at least ``contract`` (the highest
+            reachable value, 0 for none) and ``has_belote``.
+        """
+
+        if isinstance(mode, Suit):
+            return self._evaluate_suit_as_trump(mode)
+        return self._evaluate_suitless_mode(mode, rules)
 
     def _evaluate_suit_as_trump(self, suit):
-        """Evaluate a specific suit as potential trump."""
+        """Evaluate a specific card suit as potential trump."""
 
         trump_cards = self.hand.cards_of_suit(suit)
 
@@ -353,6 +482,156 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
             'external_aces': external_aces,
             'estimated_tricks': estimated_tricks
         }
+
+    def _evaluate_suitless_mode(
+        self, mode: ContractSuit, rules: RuleConfig
+    ) -> dict:
+        """Price no trump or all trump off the shared honours table.
+
+        Three things stack, in order:
+
+        1. **The honours ladder.** ``60 + 10 x (masters + complements)``,
+           expressed as :attr:`HONOURS_TABLE` so the trick floors sit
+           beside the values they gate. Below every row is the
+           :attr:`MASTERS_FLOOR`: a hand cannot open on complements alone.
+        2. **The belote add-on.** Each K + Q pair the table will actually
+           mark is +20 (§6.6). One per pair under ``four``, at most one
+           under ``single``, none under ``none``. At no trump this is
+           structurally zero — ``NoTrumpRules.belote_suits`` is empty —
+           so the knob is inert there whatever it says. This is the only
+           thing that lifts an all-trump bid past the honours ladder's own
+           140 ceiling.
+        3. **The ladder cap.** :func:`~contrai_core.ladder_top` already
+           encodes the three all-trump ceilings (160 / 180 / 240) and no
+           trump's 160. Never re-derive one.
+
+        The ``single`` credit is deliberately optimistic: only the first
+        pair *announced in play* marks, and an opponent may announce
+        first, so crediting a full +20 for a pair held is a tunable
+        over-estimate.
+
+        Args:
+            mode: ``NO_TRUMP`` or ``ALL_TRUMP``.
+            rules: The table ruleset.
+
+        Returns:
+            The evaluation dict, shaped like the suit one.
+        """
+
+        mode_rules = rules_for(mode)
+        masters, complements = self._honours(mode_rules)
+        estimated_tricks = self._estimate_tricks(mode)
+        belote_suits = self._markable_belote_suits(mode_rules, rules)
+
+        contract = self._max_honours_contract(
+            masters, complements, estimated_tricks
+        )
+        if contract:
+            contract = min(
+                contract + BELOTE_POINTS * len(belote_suits),
+                ladder_top(mode, rules),
+            )
+
+        return {
+            'contract': contract,
+            'has_belote': bool(belote_suits),
+            'masters': masters,
+            'complements': complements,
+            'belote_count': len(belote_suits),
+            'estimated_tricks': estimated_tricks,
+        }
+
+    def _honours(self, rules: TrumpRules) -> tuple[int, int]:
+        """Masters and complements the hand holds under ``rules``.
+
+        A *master* is a card nothing outranks in its own suit — the Ace
+        at no trump, the Jack at all trump. A *complement* is the card
+        directly below one, held alongside the very master that would
+        otherwise beat it: the 10 under its own Ace, the 9 under its own
+        Jack. Both are certain tricks the moment the hand holds them,
+        which is why the ladder prices them the same.
+
+        Asking the ladder rather than naming ranks is what lets one
+        counter serve both regimes — and it is the same question
+        :meth:`_top_card_tricks` asks, so the bid and the trick estimate
+        can never disagree about what a top card is.
+
+        Args:
+            rules: The regime's rules, supplying the in-suit ladders.
+
+        Returns:
+            A ``(masters, complements)`` pair.
+        """
+
+        masters = complements = 0
+        for card in self.hand:
+            higher = rules.higher_ranks(card.rank, card.suit)
+            if not higher:
+                masters += 1
+            elif len(higher) == 1 and self.hand.has_card(card.suit, higher[0]):
+                complements += 1
+        return masters, complements
+
+    def _markable_belote_suits(
+        self, mode_rules: TrumpRules, rules: RuleConfig
+    ) -> tuple[Suit, ...]:
+        """The K + Q pairs this table would actually mark under ``mode``.
+
+        The rules object answers where a belote *can* live — every suit at
+        all trump, none at no trump — and the table's ``all_trump_belote``
+        regime then says how many of the pairs held actually score
+        (§6.6, §9.2).
+
+        Args:
+            mode_rules: The mode's own rules object.
+            rules: The table ruleset, carrying the belote regime.
+
+        Returns:
+            The suits whose held pair would mark, at most one under
+            ``single`` and none under ``none``.
+        """
+
+        held = tuple(
+            suit
+            for suit in mode_rules.belote_suits
+            if self.hand.has_card(suit, Rank.KING)
+            and self.hand.has_card(suit, Rank.QUEEN)
+        )
+        if len(mode_rules.belote_suits) <= 1:
+            # A suit contract's single trump suit, or no trump's empty
+            # tuple: the all-trump regime does not apply.
+            return held
+        if rules.all_trump_belote is AllTrumpBelote.NONE:
+            return ()
+        if rules.all_trump_belote is AllTrumpBelote.SINGLE:
+            return held[:1]
+        return held
+
+    def _max_honours_contract(
+        self, masters: int, complements: int, estimated_tricks: int
+    ) -> int:
+        """Return the highest :attr:`HONOURS_TABLE` row the hand satisfies.
+
+        Args:
+            masters: Cards nothing outranks in their own suit.
+            complements: Cards whose only superior is in this same hand.
+            estimated_tricks: Estimate from :meth:`_estimate_tricks`, run
+                under the mode being priced.
+
+        Returns:
+            The numeric contract value, or 0 when no row matches — which
+            includes every hand below the :attr:`MASTERS_FLOOR`.
+        """
+
+        if masters < self.MASTERS_FLOOR:
+            return 0
+
+        honours = masters + complements
+        max_contract = 0
+        for contract, honours_req, tricks_req in self.HONOURS_TABLE:
+            if honours >= honours_req and estimated_tricks >= tricks_req:
+                max_contract = contract
+        return max_contract
 
     def _max_table_contract(
         self, trump_ranks, trump_count, external_aces, estimated_tricks, has_belote
@@ -495,66 +774,136 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
             return 1
         return 0
 
-    def _find_best_contract(self, suit_evaluations: dict) -> tuple[int, Suit | None]:
-        """Resolve the suit evaluations to the single best (contract, suit).
+    def _find_best_contract(
+        self, mode_evaluations: dict
+    ) -> tuple[int, ContractSuit | None]:
+        """Resolve the mode evaluations to the single best (contract, mode).
 
         Folds the two questions the open-bid path used to answer
         separately — "what is the highest contract I can reach?" and
-        "in which suit?" — into one pass. Ties on the contract value
-        are broken here as well: suits carrying a Belote (King + Queen
-        of trump) win first, then the fixed preference order
-        (Spades, Hearts, Diamonds, Clubs) decides among the rest.
+        "under which trump?" — into one pass. Ties on the contract value
+        are broken here as well: modes carrying a Belote win first, then
+        :attr:`MODE_PREFERENCE` — the core enumeration, card suits then
+        no trump then all trump — decides among the rest.
 
         Args:
-            suit_evaluations: Per-suit evaluation dicts from
-                :meth:`_evaluate_suits`.
+            mode_evaluations: Per-mode evaluation dicts from
+                :meth:`_evaluate_modes`.
 
         Returns:
-            The highest reachable bidding-table contract and the single
-            suit chosen for it, or ``(0, None)`` when no suit supports
-            any contract.
+            The highest reachable contract and the single trump chosen
+            for it, or ``(0, None)`` when no mode supports any contract.
         """
 
         max_contract = max(
-            evaluation['contract'] for evaluation in suit_evaluations.values()
+            evaluation['contract'] for evaluation in mode_evaluations.values()
         )
         if max_contract == 0:
             return 0, None
 
-        # Suits tied on the best contract value.
+        # Modes tied on the best contract value.
         candidates = [
-            suit for suit, evaluation in suit_evaluations.items()
+            mode for mode, evaluation in mode_evaluations.items()
             if evaluation['contract'] == max_contract
         ]
 
-        # Prefer belote-carrying suits; narrow the field when any exist.
+        # Prefer belote-carrying modes; narrow the field when any exist.
         belote_suits = [
-            suit for suit in candidates if suit_evaluations[suit]['has_belote']
+            mode for mode in candidates if mode_evaluations[mode]['has_belote']
         ]
         if belote_suits:
             candidates = belote_suits
 
         # Break the remaining tie with the fixed preference order. The
-        # order covers every suit, so the first hit always exists.
+        # order covers every contract trump, so the first hit always
+        # exists whether the table offers four modes or six.
         chosen_suit = next(
-            suit for suit in self.SUIT_PREFERENCE if suit in candidates
+            suit for suit in self.MODE_PREFERENCE if suit in candidates
         )
         return max_contract, chosen_suit
 
-    def _make_initial_bid(self, best_contract, best_suit, last_bid):
+    def _table_citations(
+        self, rules: RuleConfig, mode: ContractSuit
+    ) -> tuple[RuleCitation, ...]:
+        """The table knobs that shaped which modes were on offer.
+
+        Every open bid names them, because they are what decides the
+        search space and its ceiling: which trumps were biddable at all,
+        what capped the mode chosen, and whether the Solo Slam was on the
+        ladder.
+
+        Args:
+            rules: The table ruleset the auction runs under.
+            mode: The trump chosen, whose ladder top is being cited.
+
+        Returns:
+            Three citations, in evaluation order.
+        """
+
+        offered = ", ".join(str(m) for m in bookable_suits(rules))
+        return (
+            RuleCitation(
+                "extended_trump_choices",
+                str(rules.extended_trump_choices),
+                f"modes evaluated: {offered}",
+            ),
+            RuleCitation(
+                "all_trump_belote",
+                str(rules.all_trump_belote),
+                f"capped {mode} at {ladder_top(mode, rules)}",
+            ),
+            RuleCitation(
+                "solo_slam_available",
+                str(rules.solo_slam_available),
+                "Solo Slam on the ladder"
+                if rules.solo_slam_available
+                else "Solo Slam withdrawn from the ladder",
+            ),
+        )
+
+    @staticmethod
+    def _runners_up(evaluations: dict, chosen: ContractSuit) -> tuple[str, ...]:
+        """The modes weighed and rejected, strongest first.
+
+        Args:
+            evaluations: Per-mode evaluation dicts.
+            chosen: The mode actually bid, excluded from the list.
+
+        Returns:
+            ``"<mode> <value>"`` per rejected mode that reached any
+            contract at all, highest value first.
+        """
+
+        rejected = [
+            (mode, evaluation["contract"])
+            for mode, evaluation in evaluations.items()
+            if mode != chosen and evaluation["contract"]
+        ]
+        rejected.sort(key=lambda pair: pair[1], reverse=True)
+        return tuple(f"{mode} {value}" for mode, value in rejected)
+
+    def _make_initial_bid(
+        self, best_contract, best_suit, last_bid, rules=None, evaluations=None
+    ):
         """Make an initial bid or overbid.
 
         Args:
             best_contract: Our highest reachable bidding-table contract
                 (from :meth:`_find_best_contract`).
-            best_suit: The single suit resolved for it, or ``None``.
+            best_suit: The single trump resolved for it, or ``None``.
             last_bid: The standing :class:`ContractBid`, or ``None``.
+            rules: The table ruleset, for the rationale's citations.
+                ``None`` falls back to the §9 defaults.
+            evaluations: The per-mode evaluations, for the rationale's
+                runner-up list. ``None`` lists nothing.
 
         Returns:
             A :class:`BidDecision` carrying a :class:`ContractBid` for
-            the chosen suit, or a :class:`PassBid` when nothing legal
+            the chosen trump, or a :class:`PassBid` when nothing legal
             improves the auction.
         """
+
+        rules = rules if rules is not None else RuleConfig()
 
         if best_contract == 0 or best_suit is None:
             return self._decide(
@@ -562,6 +911,7 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
                 "no contract in hand",
                 "no trump choice clears the bidding table's opening "
                 "row — passed.",
+                considered=self._runners_up(evaluations or {}, None),
             )
 
         # Check if we can overbid the last bid
@@ -572,7 +922,7 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
                 f"the hand is worth {best_contract} in {best_suit}, which "
                 f"does not raise the standing "
                 f"{last_bid.get_numeric_value()} — passed.",
-                considered=(f"{best_contract} {best_suit}",),
+                considered=(f"{best_suit} {best_contract}",),
             )
 
         return self._decide(
@@ -580,6 +930,8 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
             "open on the bidding table",
             f"the hand reaches {best_contract} in {best_suit} on the "
             f"bidding table — bid it.",
+            considered=self._runners_up(evaluations or {}, best_suit),
+            citations=self._table_citations(rules, best_suit),
         )
 
     def _team_opening_bid(self, bids, suit):
@@ -604,7 +956,7 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
                 return bid
         return None
 
-    def _support_partner_bid(self, partner_bid, last_bid, bids):
+    def _support_partner_bid(self, partner_bid, last_bid, bids, rules=None):
         """Support partner's suit up to a fixed team ceiling.
 
         The ceiling is partner's *opening* bid in the suit (their full
@@ -622,10 +974,20 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
         standing contract already reaches the ceiling (our complement
         is spent, whether by our earlier raise or an opponent overbid).
 
+        Our contribution is priced on the *mode's own* ladder. The
+        trump complement is a Jack or 9 at a suit contract; under the two
+        suitless modes it is an honour — a master, or a complement backed
+        by its own master (:meth:`_honours`). Naming the Jack and the 9
+        there would credit a hand for cards no ladder tops: a plain Jack
+        wins nothing at no trump, where the Ace, 10, King and Queen all
+        beat it.
+
         Args:
             partner_bid: Our side's most recent standing :class:`ContractBid`.
             last_bid: The standing :class:`ContractBid`, or ``None``.
             bids: Chronological bid history, to locate the anchor.
+            rules: The table ruleset. ``None`` falls back to the §9
+                defaults, which offer only the four suits.
 
         Returns:
             A :class:`BidDecision` carrying a :class:`ContractBid`
@@ -651,19 +1013,29 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
 
         # Calculate our contribution to partner's suit
         contribution = 0
+        mode_rules = rules_for(partner_suit)
 
-        # +10 per external ace
-        for card in self.hand:
-            if card.suit != partner_suit and card.rank == Rank.ACE:
-                contribution += 10
+        if isinstance(partner_suit, Suit):
+            # +10 per ace held outside the trump suit. Only meaningful
+            # where "outside the trump suit" names something: at all
+            # trump every suit is trump, and at no trump the aces are
+            # already counted as the honours below.
+            for card in self.hand:
+                if card.suit != partner_suit and card.rank == Rank.ACE:
+                    contribution += 10
 
-        # +10 if we have trump complement (Jack or 9)
-        trump_cards = self.hand.cards_of_suit(partner_suit)
-        has_jack = any(card.rank == Rank.JACK for card in trump_cards)
-        has_nine = any(card.rank == Rank.NINE for card in trump_cards)
-
-        if has_jack or has_nine:
-            contribution += 10
+            # +10 for the trump complement (Jack or 9 of trump).
+            trump_cards = self.hand.cards_of_suit(partner_suit)
+            if any(
+                card.rank in (Rank.JACK, Rank.NINE) for card in trump_cards
+            ):
+                contribution += HONOUR_STEP
+        else:
+            # A suitless mode has no "outside" to count aces in and no
+            # single complement to hold: what this hand adds is whatever
+            # its honours are worth on the mode's own ladder.
+            masters, complements = self._honours(mode_rules)
+            contribution += HONOUR_STEP * (masters + complements)
 
         if contribution == 0:
             return self._decide(
