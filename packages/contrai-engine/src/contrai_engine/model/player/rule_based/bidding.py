@@ -35,6 +35,23 @@ HONOURS_BASE = 60
 #: all-trump evaluation (contree-domain.md §6.6).
 BELOTE_POINTS = 20
 
+#: What one expected trick is worth when pricing a defensive threat.
+POINTS_PER_TRICK = 20
+
+#: Cards plus the last-trick bonus. Regime-independent by §3.5, so the
+#: doubling threshold never had to change with the mode — only the
+#: estimator feeding it did.
+CARD_CEILING = 162
+
+#: Expected tricks a Slam-family Double asks for. A Slam fails on one
+#: trick, so this is that trick plus a margin over a coin-flip estimate.
+SLAM_DOUBLE_TRICKS = 2
+
+#: Extra defensive points demanded before doubling at a table where
+#: ``any_failure_marks_160`` flattens every failure to 160: the upside of
+#: a marginal double shrinks, so the bar rises.
+MARGIN_UNDER_FLAT_160 = 20
+
 
 class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
     """Expert bidding policy driven by a bidding table.
@@ -293,7 +310,7 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
         partner_bid = self._get_partner_bid(bids)
 
         # Check if we can Double the opponents' standing contract
-        double_action = self._check_double(last_bid)
+        double_action = self._check_double(last_bid, auction.rules)
         if double_action is not None:
             return double_action
 
@@ -337,51 +354,166 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
                 return bid
         return None
 
-    def _check_double(self, last_bid) -> BidDecision | None:
+    def _check_double(self, last_bid, rules=None) -> BidDecision | None:
         """Return a Double :class:`BidDecision` if we should Double.
 
         Only the Double decision lives here — the Redouble
         is a defence of our *own* contract and is handled on
         the frozen-auction path in :meth:`_choose_under_double`.
 
+        A Double the table forbids is refused *here*, with the knob
+        named, rather than left for ``choose_bid``'s ``is_legal`` net to
+        swallow: a withheld Double is a decision the AI made, and §6.1
+        asks it to say so.
+
         Args:
             last_bid: The standing :class:`ContractBid`, or ``None``.
+            rules: The table ruleset. ``None`` falls back to the §9
+                defaults.
 
         Returns:
-            The Double decision, or ``None`` when the standing contract
-            is ours or the hand does not threaten it.
+            The Double decision, an explained Pass when the table
+            forbids doubling this contract, or ``None`` when the standing
+            contract is ours or the hand does not threaten it.
         """
 
         if last_bid is None:
             return None
 
+        rules = rules if rules is not None else RuleConfig()
+
         # Double only if the standing contract belongs to the opponents
         # and we hold enough external strength to threaten it.
-        if last_bid.player.team is not self.team and self._should_double(last_bid):
+        if last_bid.player.team is self.team or not self._should_double(
+            last_bid, rules
+        ):
+            return None
+
+        # The two Slam switches (§9.4) are checked before the Double is
+        # proposed, so a table that shields its Slams produces an
+        # explained Pass rather than a bid quietly refused downstream.
+        knob = self._slam_double_knob(last_bid, rules)
+        if knob is not None:
             return self._decide(
-                DoubleBid(self._player),
-                "double the opponents",
-                f"we expect to hold {last_bid.suit} "
-                f"{last_bid.get_numeric_value()} under its contract — "
-                f"doubled.",
+                PassBid(self._player),
+                "the table shields this contract",
+                f"the hand would double {last_bid.suit} "
+                f"{last_bid.get_numeric_value()}, but this table does not "
+                f"allow it — passed.",
+                citations=(knob,),
             )
 
+        return self._decide(
+            DoubleBid(self._player),
+            "double the opponents",
+            f"we expect to hold {last_bid.suit} "
+            f"{last_bid.get_numeric_value()} under its contract — "
+            f"doubled.",
+            citations=self._double_citations(rules),
+        )
+
+    @staticmethod
+    def _slam_double_knob(last_bid, rules: RuleConfig):
+        """The §9.4 switch forbidding a Double of ``last_bid``, if any.
+
+        Args:
+            last_bid: The standing :class:`ContractBid`.
+            rules: The table ruleset.
+
+        Returns:
+            A :class:`RuleCitation` naming the switch that forbids the
+            Double, or ``None`` when the table allows it.
+        """
+
+        value = last_bid.value
+        if value is SlamLevel.SLAM and not rules.slam_can_be_doubled:
+            return RuleCitation(
+                "slam_can_be_doubled", "False", "Double withheld from a Slam"
+            )
+        if (
+            value is SlamLevel.SOLO_SLAM
+            and not rules.solo_slam_can_be_doubled
+        ):
+            return RuleCitation(
+                "solo_slam_can_be_doubled",
+                "False",
+                "Double withheld from a Solo Slam",
+            )
         return None
 
-    def _should_double(self, opponent_bid):
-        """Determine if we should double opponent's bid.
+    @staticmethod
+    def _double_citations(rules: RuleConfig) -> tuple[RuleCitation, ...]:
+        """The scoring conventions a numeric Double was weighed against.
+
+        Args:
+            rules: The table ruleset.
+
+        Returns:
+            The two §9.6 knobs that move the doubling threshold.
+        """
+
+        return (
+            RuleCitation(
+                "attack_must_outscore_defense",
+                str(rules.attack_must_outscore_defense),
+                "an exact split fails the attack"
+                if rules.attack_must_outscore_defense
+                else "an exact split makes the attack",
+            ),
+            RuleCitation(
+                "any_failure_marks_160",
+                str(rules.any_failure_marks_160),
+                f"required margin {MARGIN_UNDER_FLAT_160}"
+                if rules.any_failure_marks_160
+                else "the failed pile marks in full",
+            ),
+        )
+
+    def _should_double(self, opponent_bid, rules=None) -> bool:
+        """Determine if we should double the opponents' contract.
+
+        Two different questions, because a Slam is not a numeric
+        contract:
+
+        - **The Slam family.** A Slam fails the moment the defense takes
+          a single trick, so the numeric threshold does not apply at all
+          — fed a Slam's 250 or a Solo Slam's 500 it yields a *negative*
+          bar that every hand clears, which is why the AI used to double
+          every Slam it saw holding nothing. The test is simply whether
+          we expect to take a trick, run through the mode's own
+          estimator.
+        - **Numeric contracts.** Keep *estimated defensive points beyond
+          what the attack can afford to concede*. The 162 ceiling (152 in
+          cards plus the last-trick bonus) is regime-independent by §3.5,
+          so only the estimator needed fixing; ``attack_must_outscore_defense``
+          is what makes an exact split a failure for the attack, and
+          ``any_failure_marks_160`` shrinks the upside of a marginal
+          double — a failure then marks a flat 160 rather than the real
+          pile — so a fixed margin is added when it is on.
 
         Args:
             opponent_bid: The opposing :class:`ContractBid` in play.
+            rules: The table ruleset. ``None`` falls back to the §9
+                defaults.
+
+        Returns:
+            Whether the hand justifies a Double.
         """
 
+        rules = rules if rules is not None else RuleConfig()
         value = opponent_bid.get_numeric_value()
         suit = opponent_bid.suit
+        tricks = self._estimate_tricks(suit)
 
-        strength = self._estimate_tricks(suit) * 20  # Each expected trick worth 20 points
+        if isinstance(opponent_bid.value, SlamLevel):
+            # All eight tricks or nothing: one trick for the defense is
+            # the whole contract. Ask for a margin over that single
+            # trick rather than betting on a coin-flip estimate.
+            return tricks >= SLAM_DOUBLE_TRICKS
 
-        # Double if we have significant external strength
-        return strength > 162 - value
+        strength = tricks * POINTS_PER_TRICK
+        margin = MARGIN_UNDER_FLAT_160 if rules.any_failure_marks_160 else 0
+        return strength > CARD_CEILING - value + margin
 
     @staticmethod
     def _should_redouble():

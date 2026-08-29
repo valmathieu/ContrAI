@@ -36,6 +36,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) `[k]` on the setup screen cycles any of the 22 §9 knobs, grouped by subsection; an impossible table is refused inline.
 - (engine) The setup a run leaves the landing screen with is remembered and offered back as `last used`. See [engine docs](docs/engine/index.md).
 - (core) `PlayObservation.rules` — the seat's view carries the table ruleset, which is public information. See [core docs](docs/core/index.md).
+- (engine) The expert AI's doubling consults the table's Slam switches and its failure convention. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
 - (engine) The expert AI bids no trump and all trump off a shared honours table — masters plus their complements — capped at each mode's ladder top. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
 
 ### Changed
@@ -55,6 +56,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 - (engine) The expert AI plays no trump and all trump correctly — it no longer treats spades as "the trump suit" nor cashes an ace that a Jack beats. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
 - (engine) `_estimate_tricks` reads each mode's own ladder, so four aces no longer estimate a sweep at all trump.
+- (engine) The expert AI no longer doubles every Slam regardless of its hand — a Slam is judged on whether the defense expects a trick.
 - (engine) The expert AI no longer burns a trump when the under-trump exemption leaves it a plain card to discard.
 - (engine) The recap's Outcome table credits a belote to the side that *held* it, so a transfer to the defense no longer rewrites the play tally.
 - (core) The over-trump obligation ranks candidates with `trick_rank`, so an off-suit discard can no longer raise the bar at all trump.

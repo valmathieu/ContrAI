@@ -1543,3 +1543,232 @@ class TestTheBidRationaleCitesTheTable:
             str(TrumpVariant.NO_TRUMP) in entry
             for entry in decision.rationale.considered
         )
+
+
+# ---------------------------------------------------------------------------
+# Doubling against the contract the table actually scores
+# ---------------------------------------------------------------------------
+
+
+class TestDoublingTheSlamFamily:
+    """A Slam is not a numeric contract and must not be priced as one.
+
+    ``estimated defensive points > 162 - value`` is meaningful up to 180.
+    Fed a Slam's 250 or a Solo Slam's 500 it yields a *negative*
+    threshold, which every hand clears — so the AI doubled every Slam it
+    ever saw, holding anything.
+    """
+
+    def _sides(self):
+        player = AiPlayer("TestBot", Position.NORTH)
+        partner = AiPlayer("Partner", Position.SOUTH)
+        team = Team("North-South", [player, partner])
+        player.team = team
+        partner.team = team
+        opponent = AiPlayer("Opponent", Position.WEST)
+        other = AiPlayer("Opponent2", Position.EAST)
+        opponent_team = Team("East-West", [opponent, other])
+        opponent.team = opponent_team
+        other.team = opponent_team
+        return player, opponent
+
+    _JUNK = [
+        (Suit.SPADES, Rank.SEVEN), (Suit.SPADES, Rank.EIGHT),
+        (Suit.HEARTS, Rank.SEVEN), (Suit.HEARTS, Rank.EIGHT),
+        (Suit.DIAMONDS, Rank.SEVEN), (Suit.DIAMONDS, Rank.EIGHT),
+        (Suit.CLUBS, Rank.SEVEN), (Suit.CLUBS, Rank.EIGHT),
+    ]
+
+    @pytest.mark.parametrize(
+        "level", [SlamLevel.SLAM, SlamLevel.SOLO_SLAM]
+    )
+    def test_a_hand_with_no_trick_does_not_double_a_slam(self, level):
+        player, opponent = self._sides()
+        player.hand = Hand([Card(s, r) for s, r in self._JUNK])
+        auction = _auction([ContractBid(opponent, level, Suit.SPADES)])
+        bid = player.choose_bid(auction).bid
+        assert isinstance(bid, PassBid)
+
+    @pytest.mark.parametrize(
+        "level", [SlamLevel.SLAM, SlamLevel.SOLO_SLAM]
+    )
+    def test_a_hand_holding_certain_tricks_doubles_a_slam(self, level):
+        """A Slam fails the instant the defense takes one trick."""
+        player, opponent = self._sides()
+        player.hand = Hand([
+            Card(Suit.HEARTS, Rank.JACK),
+            Card(Suit.HEARTS, Rank.NINE),
+            Card(Suit.HEARTS, Rank.ACE),
+            Card(Suit.DIAMONDS, Rank.ACE),
+            Card(Suit.DIAMONDS, Rank.TEN),
+            Card(Suit.CLUBS, Rank.ACE),
+            Card(Suit.CLUBS, Rank.TEN),
+            Card(Suit.SPADES, Rank.SEVEN),
+        ])
+        auction = _auction([ContractBid(opponent, level, Suit.SPADES)])
+        bid = player.choose_bid(auction).bid
+        assert isinstance(bid, DoubleBid)
+
+
+class TestDoublingConsultsTheTableSwitches:
+    """A withheld Double is an explained decision, not a swallowed bid."""
+
+    def _sides(self):
+        return TestDoublingTheSlamFamily()._sides()
+
+    def _strong(self):
+        return Hand([
+            Card(Suit.HEARTS, Rank.JACK),
+            Card(Suit.HEARTS, Rank.NINE),
+            Card(Suit.HEARTS, Rank.ACE),
+            Card(Suit.DIAMONDS, Rank.ACE),
+            Card(Suit.DIAMONDS, Rank.TEN),
+            Card(Suit.CLUBS, Rank.ACE),
+            Card(Suit.CLUBS, Rank.TEN),
+            Card(Suit.SPADES, Rank.SEVEN),
+        ])
+
+    def test_slam_can_be_doubled_off_withholds_the_double(self):
+        player, opponent = self._sides()
+        player.hand = self._strong()
+        auction = Auction(
+            (ContractBid(opponent, SlamLevel.SLAM, Suit.SPADES),),
+            rules=RuleConfig(slam_can_be_doubled=False),
+        )
+        decision = player.choose_bid(auction)
+        assert isinstance(decision.bid, PassBid)
+        assert [c.knob for c in decision.rationale.citations] == [
+            "slam_can_be_doubled"
+        ]
+
+    def test_solo_slam_can_be_doubled_off_withholds_the_double(self):
+        player, opponent = self._sides()
+        player.hand = self._strong()
+        auction = Auction(
+            (ContractBid(opponent, SlamLevel.SOLO_SLAM, Suit.SPADES),),
+            rules=RuleConfig(solo_slam_can_be_doubled=False),
+        )
+        decision = player.choose_bid(auction)
+        assert isinstance(decision.bid, PassBid)
+        assert [c.knob for c in decision.rationale.citations] == [
+            "solo_slam_can_be_doubled"
+        ]
+
+    def test_with_the_switches_on_the_double_still_goes_in(self):
+        player, opponent = self._sides()
+        player.hand = self._strong()
+        auction = _auction(
+            [ContractBid(opponent, SlamLevel.SLAM, Suit.SPADES)]
+        )
+        assert isinstance(player.choose_bid(auction).bid, DoubleBid)
+
+
+class TestDoublingUsesTheModesOwnEstimator:
+    """The threat is priced on the contract's regime, not on plain suits.
+
+    One hand, two contracts of the same value, opposite answers — which
+    is only possible because the doubling threshold is fed by
+    ``_estimate_tricks(mode)`` rather than by a plain-suit count.
+    """
+
+    def _sides(self):
+        return TestDoublingTheSlamFamily()._sides()
+
+    def _aces_and_tens(self):
+        return Hand(
+            [Card(suit, Rank.ACE) for suit in Suit]
+            + [Card(suit, Rank.TEN) for suit in Suit]
+        )
+
+    def test_an_ace_heavy_hand_does_not_threaten_an_all_trump_contract(self):
+        """Those aces all sit under their own Jack and 9 at all trump."""
+        player, opponent = self._sides()
+        player.hand = self._aces_and_tens()
+        bid = ContractBid(opponent, 110, TrumpVariant.ALL_TRUMP)
+        assert player.bidding._should_double(bid, RuleConfig()) is False
+
+    def test_the_same_hand_threatens_the_same_value_at_no_trump(self):
+        """Every one of those aces is a master at no trump."""
+        player, opponent = self._sides()
+        player.hand = self._aces_and_tens()
+        bid = ContractBid(opponent, 110, TrumpVariant.NO_TRUMP)
+        assert player.bidding._should_double(bid, RuleConfig()) is True
+
+    def test_the_all_trump_contract_is_not_doubled_end_to_end(self):
+        """Through ``choose_bid``: whatever it does, it does not Double.
+
+        The hand still overbids in no trump, which is right — it is worth
+        far more there than the 110 on the table.
+        """
+        player, opponent = self._sides()
+        player.hand = self._aces_and_tens()
+        auction = Auction(
+            (ContractBid(opponent, 110, TrumpVariant.ALL_TRUMP),),
+            rules=RuleConfig(extended_trump_choices=True),
+        )
+        assert not isinstance(player.choose_bid(auction).bid, DoubleBid)
+
+    def test_the_no_trump_contract_is_doubled_end_to_end(self):
+        player, opponent = self._sides()
+        player.hand = self._aces_and_tens()
+        auction = Auction(
+            (ContractBid(opponent, 110, TrumpVariant.NO_TRUMP),),
+            rules=RuleConfig(extended_trump_choices=True),
+        )
+        assert isinstance(player.choose_bid(auction).bid, DoubleBid)
+
+
+class TestDoublingReadsTheFailureConvention:
+    """``any_failure_marks_160`` shrinks the upside of a marginal double."""
+
+    def _sides(self):
+        return TestDoublingTheSlamFamily()._sides()
+
+    def _marginal(self):
+        """Three bare aces: 3 x 20 = 60 defensive points.
+
+        Against a 120 spade contract the default bar is 162 - 120 = 42,
+        which 60 clears. With ``any_failure_marks_160`` on the bar rises
+        by the flat-160 margin to 62, which it does not — the whole point
+        of a *marginal* hand.
+        """
+        return Hand([
+            Card(Suit.HEARTS, Rank.ACE),
+            Card(Suit.HEARTS, Rank.SEVEN),
+            Card(Suit.DIAMONDS, Rank.ACE),
+            Card(Suit.DIAMONDS, Rank.SEVEN),
+            Card(Suit.CLUBS, Rank.ACE),
+            Card(Suit.CLUBS, Rank.SEVEN),
+            Card(Suit.SPADES, Rank.EIGHT),
+            Card(Suit.SPADES, Rank.SEVEN),
+        ])
+
+    def test_the_hand_really_is_marginal(self):
+        """Guard the fixture: 60 points sits between the two bars."""
+        player, _ = self._sides()
+        player.hand = self._marginal()
+        assert player.bidding._estimate_tricks(Suit.SPADES) == 3
+
+    def test_the_marginal_hand_doubles_under_the_default(self):
+        player, opponent = self._sides()
+        player.hand = self._marginal()
+        auction = _auction([ContractBid(opponent, 120, Suit.SPADES)])
+        assert isinstance(player.choose_bid(auction).bid, DoubleBid)
+
+    def test_the_same_hand_holds_off_when_a_failure_marks_a_flat_160(self):
+        player, opponent = self._sides()
+        player.hand = self._marginal()
+        auction = Auction(
+            (ContractBid(opponent, 120, Suit.SPADES),),
+            rules=RuleConfig(any_failure_marks_160=True),
+        )
+        assert isinstance(player.choose_bid(auction).bid, PassBid)
+
+    def test_the_double_cites_what_it_consulted(self):
+        player, opponent = self._sides()
+        player.hand = self._marginal()
+        auction = _auction([ContractBid(opponent, 120, Suit.SPADES)])
+        rationale = player.choose_bid(auction).rationale
+        knobs = {c.knob for c in rationale.citations}
+        assert "attack_must_outscore_defense" in knobs
+        assert "any_failure_marks_160" in knobs

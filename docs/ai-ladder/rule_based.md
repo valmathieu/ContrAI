@@ -60,6 +60,20 @@ With the extended modes switched **off** the same 300 deals reproduce the classi
 
 Two calibration signals fall out of that table and neither is addressed here. The honours rows are **loose** — a 55–57% make rate against 91% for suit contracts — while the suit table stays **conservative**, all-pass collapsing from 125 to 4 the moment a second family of tables is available. The seven honour rows are starting values; balancing the two tables against each other wants its own measured branch, not a guess folded into this one.
 
+## Doubling
+
+The heuristic stays what it was — *can the defense hold them under the contract?* — but it is now asked correctly, and it says which table rules it consulted. A full expected-value model over §7.2's two components is deliberately **not** attempted at this rung of the ladder; it wants its own branch.
+
+**A Slam is not a numeric contract.** The threshold `estimated defensive points > 162 - value` is meaningful up to 180. Fed a Slam's 250 or a Solo Slam's 500 it yields a *negative* bar that every hand clears, so the AI doubled every Slam it ever saw while holding nothing at all. A Slam fails the moment the defense takes one trick, so the question there is simply *do we expect to take a trick* — asked with a margin over a coin-flip estimate, and run through the mode's own estimator.
+
+**The 162 ceiling is regime-independent** (152 in cards plus the last-trick bonus, §3.5), so the numeric threshold itself never needed changing. Only the estimator feeding it did — which it got in the previous section, and which is what makes the same eight cards a real threat to a no-trump contract and no threat at all to an all-trump one of the same value.
+
+**Two §9.6 conventions move the bar.** `attack_must_outscore_defense` is what makes an exact split a failure for the attack, and is cited on every numeric Double. `any_failure_marks_160` shrinks the *upside*: a failure then marks a flat 160 rather than the pile actually taken, so a marginal double is worth less and the required margin rises.
+
+**A withheld Double is an explained decision.** `slam_can_be_doubled` and `solo_slam_can_be_doubled` (§9.4) are checked *before* the Double is proposed, not left to `choose_bid`'s `is_legal` safety net. The net would have produced the same Pass, but silently — and a decision the AI made for a reason should say the reason, which is what §6.1 asks of every rung.
+
+`_should_redouble()` stays out of scope: the AI never redoubles under any ruleset, which is a classic-ruleset gap ([issue #10](https://github.com/valmathieu/ContrAI/issues/10)) rather than a variant question. The policy above applies to it as a follow-up.
+
 ## Per-mode play
 
 No trump and all trump were *playable* by the engine well before they were playable by the AI. Three heuristics silently assumed trump is exactly one suit, and each is now one regime-neutral rule instead of three parallel code paths — the `TrumpRules` ladder answers the mode-specific part, so nothing branches on `if mode is NO_TRUMP`.
