@@ -20,6 +20,8 @@ No trump and all trump were *playable* by the engine well before they were playa
 
 Each of these rationales names the regime it played under and cites `extended_trump_choices`, the §9.2 knob that put no trump and all trump on the table at all.
 
+**The trick estimator asks the ladder too.** `_estimate_tricks(mode)` resolves the regime once and sums `_top_card_tricks` across all four suits, adding the length bonus only where the regime treats a suit as trump. The per-suit rule is what the trump-only version always said, read off `rules.higher_ranks` instead of spelled out as *Jack and 9 → 2, Jack alone → 1, 9 with support → 1*: **the top of the ladder is a trick, and the second is a trick when the hand holds another card of the suit to back it.** The same code then answers for a plain suit (ace, then ten) and for an all-trump one (Jack, then 9). Before, a hand of four aces and four tens estimated a clean sweep of 8 at *every* mode — correct at no trump, badly wrong at all trump, where each of those aces sits under its own Jack and 9. It reads 8 and 0 respectively now. That matters beyond bidding: `_should_double` prices its threat with the same estimator, so a doubling decision against an all-trump contract was being made on plain-suit assumptions.
+
 ## Explainability
 
 Every return path of both strategies is explained. `choose_bid` answers with a `BidDecision` and `choose_card` with a `CardDecision` (`model/player/rationale.py`); each carries a `Rationale` naming four things:

@@ -22,8 +22,9 @@ from contrai_core import (
     SlamLevel,
 )
 from contrai_core.card import Card
+from contrai_core.rules import rules_for
 from contrai_core.team import Team
-from contrai_core.types import Suit, Rank
+from contrai_core.types import Suit, Rank, TrumpVariant
 
 
 def _auction(bids=()):
@@ -167,14 +168,27 @@ class TestAiPlayerBidding:
         # Strong spades hand with 3 external aces should estimate 7 tricks
         assert tricks == 7
 
-    def test_evaluate_trump_tricks(self, ai_player, sample_cards_strong_spades):
-        """Test trump tricks evaluation"""
-        ai_player.hand = sample_cards_strong_spades
-        expected_tricks = ai_player.bidding._evaluate_trump_tricks(Suit.SPADES)
+    def test_trump_suit_tricks_split_into_ladder_plus_length(
+        self, ai_player, sample_cards_strong_spades
+    ):
+        """The old ``_evaluate_trump_tricks`` total, now in its two halves.
 
-        # Strong spades hand with Jack + 9 + Ace + King should expect good trick count
-        # Jack + 9 = 2 tricks, plus additional tricks from trump length
-        assert expected_tricks == 4
+        Jack + 9 are the top two of the trump ladder (2 tricks); the two
+        further spades, one of them the ace, add 2 more by exhaustion.
+        The 4 they used to sum to is unchanged — only the split is new,
+        and only the ladder half is regime-dependent.
+        """
+        ai_player.hand = sample_cards_strong_spades
+        rules = rules_for(Suit.SPADES)
+        ladder = ai_player.bidding._top_card_tricks(rules, Suit.SPADES)
+        assert ladder == 2
+        # The length bonus is inlined in _estimate_tricks; reading it back
+        # off the total for the spade suit alone keeps the old number pinned.
+        held = ai_player.hand.cards_of_suit(Suit.SPADES)
+        length_bonus = len(held) - 3 + any(
+            c.rank == Rank.ACE for c in held
+        )
+        assert ladder + length_bonus == 4
 
     def test_get_partner_bid(self, ai_player, ai_opponent_player):
         """Test getting partner's bid"""
@@ -839,3 +853,208 @@ class TestSupportCeiling:
         assert final.suit == Suit.SPADES
         # A sane 110 stays below the opponents' double threshold.
         assert not auction.has_double
+
+
+class TestEstimateTricksPerMode:
+    """``_estimate_tricks`` must read the regime's own ladder.
+
+    The estimator asks one question per suit — *what tops this suit, and
+    is the second card backed?* — and used to answer it with rank
+    literals: Jack and 9 for the named trump suit, Ace and 10 for the
+    rest. That is correct for exactly one regime. At all trump every
+    suit ranks ``J 9 A 10 K Q 8 7``, so an ace is only the third card of
+    its ladder and an ace-heavy hand is a trap, not a lock.
+    """
+
+    @pytest.fixture
+    def strategy(self):
+        player = AiPlayer("TestBot", Position.NORTH)
+        partner = AiPlayer("Partner", Position.SOUTH)
+        team = Team("North-South", [player, partner])
+        player.team = team
+        partner.team = team
+        return player.bidding
+
+    @pytest.fixture
+    def four_aces_four_tens(self):
+        """Every ace and every ten — eight certain tricks at no trump."""
+        return Hand([
+            Card(suit, rank)
+            for suit in Suit
+            for rank in (Rank.ACE, Rank.TEN)
+        ])
+
+    @pytest.fixture
+    def four_jacks_four_nines(self):
+        """Every Jack and every 9 — eight certain tricks at all trump."""
+        return Hand([
+            Card(suit, rank)
+            for suit in Suit
+            for rank in (Rank.JACK, Rank.NINE)
+        ])
+
+    def test_all_aces_and_tens_sweep_at_no_trump(
+        self, strategy, four_aces_four_tens
+    ):
+        strategy._player.hand = four_aces_four_tens
+        assert strategy._estimate_tricks(TrumpVariant.NO_TRUMP) == 8
+
+    def test_all_aces_and_tens_are_a_trap_at_all_trump(
+        self, strategy, four_aces_four_tens
+    ):
+        """The sharpest failure: each ace is beaten by its own Jack and 9."""
+        strategy._player.hand = four_aces_four_tens
+        assert strategy._estimate_tricks(TrumpVariant.ALL_TRUMP) < 8
+
+    def test_all_jacks_and_nines_sweep_at_all_trump(
+        self, strategy, four_jacks_four_nines
+    ):
+        strategy._player.hand = four_jacks_four_nines
+        assert strategy._estimate_tricks(TrumpVariant.ALL_TRUMP) == 8
+
+    def test_all_jacks_and_nines_are_worth_little_at_no_trump(
+        self, strategy, four_jacks_four_nines
+    ):
+        """A Jack tops nothing on the plain ladder — Ace, 10, K and Q beat it."""
+        strategy._player.hand = four_jacks_four_nines
+        assert strategy._estimate_tricks(TrumpVariant.NO_TRUMP) == 0
+
+    def test_the_same_hand_reads_differently_in_each_regime(
+        self, strategy, four_aces_four_tens
+    ):
+        """One hand, three regimes, three answers — the point of the change."""
+        strategy._player.hand = four_aces_four_tens
+        no_trump = strategy._estimate_tricks(TrumpVariant.NO_TRUMP)
+        all_trump = strategy._estimate_tricks(TrumpVariant.ALL_TRUMP)
+        assert no_trump > all_trump
+
+    def test_a_suit_contract_estimate_is_unchanged(self, strategy):
+        """The regression guard: today's suit numbers must not move.
+
+        The strong-spades hand (J + 9 + A + K of trump, three external
+        aces) estimated 7 before the ladder rewrite and must still.
+        """
+        strategy._player.hand = Hand([
+            Card(Suit.SPADES, Rank.JACK),
+            Card(Suit.SPADES, Rank.NINE),
+            Card(Suit.SPADES, Rank.ACE),
+            Card(Suit.SPADES, Rank.KING),
+            Card(Suit.HEARTS, Rank.ACE),
+            Card(Suit.DIAMONDS, Rank.ACE),
+            Card(Suit.CLUBS, Rank.ACE),
+            Card(Suit.CLUBS, Rank.JACK),
+        ])
+        assert strategy._estimate_tricks(Suit.SPADES) == 7
+
+    def test_a_weak_hand_estimates_nothing_in_any_regime(self, strategy):
+        strategy._player.hand = Hand([
+            Card(Suit.SPADES, Rank.SEVEN),
+            Card(Suit.SPADES, Rank.EIGHT),
+            Card(Suit.HEARTS, Rank.SEVEN),
+            Card(Suit.HEARTS, Rank.EIGHT),
+            Card(Suit.DIAMONDS, Rank.SEVEN),
+            Card(Suit.DIAMONDS, Rank.EIGHT),
+            Card(Suit.CLUBS, Rank.SEVEN),
+            Card(Suit.CLUBS, Rank.EIGHT),
+        ])
+        for mode in (
+            Suit.SPADES, TrumpVariant.NO_TRUMP, TrumpVariant.ALL_TRUMP
+        ):
+            assert strategy._estimate_tricks(mode) == 0
+
+    def test_the_estimate_is_capped_at_eight(
+        self, strategy, four_jacks_four_nines
+    ):
+        """Eight tricks exist in a round, however good the hand reads."""
+        strategy._player.hand = four_jacks_four_nines
+        for mode in (
+            Suit.SPADES, TrumpVariant.NO_TRUMP, TrumpVariant.ALL_TRUMP
+        ):
+            assert strategy._estimate_tricks(mode) <= 8
+
+
+class TestTopCardTricks:
+    """The per-suit ladder rule the estimator is built from.
+
+    *Top of the ladder is a trick; the second is a trick when the hand
+    holds another card of the suit to back it.* One rule, read off
+    ``rules.higher_ranks`` — which is the same question
+    :meth:`_honours` asks, so the bid value and the trick floor gating
+    it can never disagree about what a top card is.
+    """
+
+    @pytest.fixture
+    def strategy(self):
+        player = AiPlayer("TestBot", Position.NORTH)
+        partner = AiPlayer("Partner", Position.SOUTH)
+        team = Team("North-South", [player, partner])
+        player.team = team
+        partner.team = team
+        return player.bidding
+
+    def test_trump_jack_and_nine_are_two_tricks(self, strategy):
+        strategy._player.hand = Hand([
+            Card(Suit.SPADES, Rank.JACK),
+            Card(Suit.SPADES, Rank.NINE),
+        ])
+        assert strategy._top_card_tricks(
+            rules_for(Suit.SPADES), Suit.SPADES
+        ) == 2
+
+    def test_trump_jack_alone_is_one_trick(self, strategy):
+        strategy._player.hand = Hand([Card(Suit.SPADES, Rank.JACK)])
+        assert strategy._top_card_tricks(
+            rules_for(Suit.SPADES), Suit.SPADES
+        ) == 1
+
+    def test_the_second_card_needs_backing(self, strategy):
+        """A bare 9 takes nothing; a 9 with an escort takes a trick."""
+        rules = rules_for(Suit.SPADES)
+        strategy._player.hand = Hand([Card(Suit.SPADES, Rank.NINE)])
+        assert strategy._top_card_tricks(rules, Suit.SPADES) == 0
+        strategy._player.hand = Hand([
+            Card(Suit.SPADES, Rank.NINE),
+            Card(Suit.SPADES, Rank.SEVEN),
+        ])
+        assert strategy._top_card_tricks(rules, Suit.SPADES) == 1
+
+    def test_the_same_rule_reads_the_plain_ladder(self, strategy):
+        """Ace and 10 lead a plain suit exactly as Jack and 9 lead trump."""
+        rules = rules_for(Suit.SPADES)
+        strategy._player.hand = Hand([
+            Card(Suit.HEARTS, Rank.ACE),
+            Card(Suit.HEARTS, Rank.TEN),
+        ])
+        assert strategy._top_card_tricks(rules, Suit.HEARTS) == 2
+
+    def test_the_same_rule_reads_the_all_trump_ladder(self, strategy):
+        rules = rules_for(TrumpVariant.ALL_TRUMP)
+        strategy._player.hand = Hand([
+            Card(Suit.HEARTS, Rank.JACK),
+            Card(Suit.HEARTS, Rank.NINE),
+        ])
+        assert strategy._top_card_tricks(rules, Suit.HEARTS) == 2
+        strategy._player.hand = Hand([
+            Card(Suit.HEARTS, Rank.ACE),
+            Card(Suit.HEARTS, Rank.TEN),
+        ])
+        assert strategy._top_card_tricks(rules, Suit.HEARTS) == 0
+
+    def test_the_same_rule_reads_the_no_trump_ladder(self, strategy):
+        rules = rules_for(TrumpVariant.NO_TRUMP)
+        strategy._player.hand = Hand([
+            Card(Suit.HEARTS, Rank.ACE),
+            Card(Suit.HEARTS, Rank.TEN),
+        ])
+        assert strategy._top_card_tricks(rules, Suit.HEARTS) == 2
+        strategy._player.hand = Hand([
+            Card(Suit.HEARTS, Rank.JACK),
+            Card(Suit.HEARTS, Rank.NINE),
+        ])
+        assert strategy._top_card_tricks(rules, Suit.HEARTS) == 0
+
+    def test_an_empty_suit_is_no_tricks(self, strategy):
+        strategy._player.hand = Hand([Card(Suit.HEARTS, Rank.ACE)])
+        assert strategy._top_card_tricks(
+            rules_for(Suit.SPADES), Suit.SPADES
+        ) == 0

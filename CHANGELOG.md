@@ -53,6 +53,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 ### Fixed
 
 - (engine) The expert AI plays no trump and all trump correctly — it no longer treats spades as "the trump suit" nor cashes an ace that a Jack beats. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
+- (engine) `_estimate_tricks` reads each mode's own ladder, so four aces no longer estimate a sweep at all trump.
 - (engine) The expert AI no longer burns a trump when the under-trump exemption leaves it a plain card to discard.
 - (engine) The recap's Outcome table credits a belote to the side that *held* it, so a transfer to the defense no longer rewrites the play tally.
 - (core) The over-trump obligation ranks candidates with `trick_rank`, so an off-suit discard can no longer raise the bar at all trump.

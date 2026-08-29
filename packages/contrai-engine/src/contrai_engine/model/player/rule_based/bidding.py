@@ -9,6 +9,7 @@ from contrai_core.bid import (
     RedoubleBid,
     SlamLevel,
 )
+from contrai_core.rules import TrumpRules, rules_for
 from contrai_core.types import Rank, Suit
 
 from ..rationale import BidDecision, Rationale, RuleCitation
@@ -395,56 +396,104 @@ class RuleBasedBiddingStrategy(BiddingStrategy, PlayerStateMixin):
 
         return max_contract
 
-    def _estimate_tricks(self, trump_suit):
-        """Estimate number of tricks we can take with this trump suit."""
+    def _estimate_tricks(self, mode) -> int:
+        """Estimate the tricks this hand takes under ``mode``.
 
+        Resolves the regime's :class:`~contrai_core.rules.TrumpRules`
+        once, then sums per suit: the ladder's own top cards
+        (:meth:`_top_card_tricks`) everywhere, plus the length bonus in
+        the suits the regime treats as trump — long trump wins tricks by
+        exhaustion, which a plain suit cannot, since anyone may cut it.
+
+        The sum collapses to today's arithmetic at a suit contract (one
+        trump ladder plus three plain ones), to a pure plain sweep at no
+        trump, and to a four-suit trump-ladder sweep at all trump — with
+        no branch on the mode anywhere in it.
+
+        Args:
+            mode: The trump choice being evaluated — a card
+                :class:`~contrai_core.Suit`, ``NO_TRUMP`` or
+                ``ALL_TRUMP``.
+
+        Returns:
+            The estimate, capped at the 8 tricks a round holds.
+        """
+
+        rules = rules_for(mode)
         tricks = 0
 
-        # Count our strength inside their trump suit
-        tricks += self._evaluate_trump_tricks(trump_suit)
+        for suit in SUITS:
+            held = self.hand.cards_of_suit(suit)
+            if not held:
+                continue
 
-        # Count our strength outside their trump suit
-        for card in self.hand:
-            if card.suit != trump_suit:
-                if card.rank == Rank.ACE:
-                    tricks += 1
-                if card.rank == Rank.TEN and self.hand.count_suit(card.suit) > 1:
-                    tricks += 1
-                if (
-                    card.rank in (Rank.KING, Rank.QUEEN)
-                    and self.hand.has_card(card.suit, Rank.ACE)
-                    and self.hand.has_card(card.suit, Rank.TEN)
-                ):
-                    tricks += 1
+            tricks += self._top_card_tricks(rules, suit)
+
+            if rules.is_trump(suit):
+                # Trump length wins tricks by exhaustion once the top
+                # cards have drawn the suit out.
+                if len(held) >= 3:
+                    has_ace = any(card.rank == Rank.ACE for card in held)
+                    tricks += len(held) - 3 + has_ace
+            else:
+                # A plain honour behind its suit's own top two: a King or
+                # Queen escorted by both the ace and the ten is expected
+                # to survive to a trick of its own.
+                tricks += sum(
+                    1
+                    for card in held
+                    if card.rank in (Rank.KING, Rank.QUEEN)
+                    and self.hand.has_card(suit, Rank.ACE)
+                    and self.hand.has_card(suit, Rank.TEN)
+                )
 
         return min(tricks, 8)  # Maximum 8 tricks in a round
 
-    def _evaluate_trump_tricks(self, suit):
-        """Evaluate potential tricks won with trump suit."""
+    def _top_card_tricks(self, rules: TrumpRules, suit: Suit) -> int:
+        """Tricks the top of ``suit``'s own ladder is expected to take.
 
-        trump_cards = self.hand.cards_of_suit(suit)
-        expected_won_tricks = 0
+        The ladder is the regime's, not a rank list: the Jack and 9 lead
+        a trump suit and every all-trump suit, the ace and 10 lead a
+        plain one (§3.1–§3.4). Naming ranks here would have been correct
+        for exactly one regime — which is why an ace-heavy hand reads as
+        unbeatable at no trump and as a trap at all trump, where every
+        ace sits under its own Jack and 9.
 
-        has_jack = False
-        has_nine = False
-        has_ace = False
+        The rule is what the trump-only version always said, read off
+        the ladder instead of spelled out: *the top card is a trick; the
+        second is a trick when the hand holds another card of the suit
+        to back it* — a bare second card falls to the top one the first
+        time the suit is led.
 
-        if len(trump_cards) > 0:
-            has_jack = any(card.rank == Rank.JACK for card in trump_cards)
-            has_nine = any(card.rank == Rank.NINE for card in trump_cards)
-            has_ace = any(card.rank == Rank.ACE for card in trump_cards)
+        This is the same question :meth:`_honours` asks, in the same
+        terms, so the bid value and the trick floor gating it can never
+        disagree about what a top card is.
 
-            if has_jack and has_nine:
-                expected_won_tricks = 2  # Both Jack and 9
-            elif has_jack:
-                expected_won_tricks = 1 # Only Jack
-            elif has_nine and len(trump_cards) > 1:
-                expected_won_tricks = 1 # Only 9 but with support
+        Args:
+            rules: The regime's rules, supplying the in-suit ladder.
+            suit: The suit to read.
 
-            if len(trump_cards) >= 3:
-                expected_won_tricks += len(trump_cards) - 3 + has_ace
+        Returns:
+            0, 1 or 2 expected tricks.
+        """
 
-        return expected_won_tricks
+        held = self.hand.cards_of_suit(suit)
+        if not held:
+            return 0
+
+        ranks = {card.rank for card in held}
+        # Read position off the ladder: a rank is "the top" when nothing
+        # outranks it, "the second" when exactly one rank does.
+        has_top = any(not rules.higher_ranks(r, suit) for r in ranks)
+        has_second = any(len(rules.higher_ranks(r, suit)) == 1 for r in ranks)
+
+        if has_top and has_second:
+            return 2
+        if has_top:
+            return 1
+        if has_second and len(held) > 1:
+            return 1
+        return 0
 
     def _find_best_contract(self, suit_evaluations: dict) -> tuple[int, Suit | None]:
         """Resolve the suit evaluations to the single best (contract, suit).
