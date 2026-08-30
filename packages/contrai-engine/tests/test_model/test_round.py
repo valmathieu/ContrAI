@@ -38,13 +38,35 @@ from contrai_core.team_side import TeamSide
 from contrai_core.exceptions import IllegalPlayError, PlayRuleViolation
 from contrai_core.types import CONTRACT_SUITS, Rank, Suit, TrumpVariant
 
-from contrai_engine.model.player import AiPlayer, HumanPlayer
+from contrai_engine.model.player import (
+    AiPlayer,
+    BidDecision,
+    CardDecision,
+    HumanPlayer,
+    Rationale,
+)
 from contrai_engine.model.round import Round
 
 
 # ---------------------------------------------------------------------------
 # Scenario builders. The shared ``players`` fixture lives in ``conftest.py``.
 # ---------------------------------------------------------------------------
+
+
+#: The rationale every stub below attaches. The decision *shape* is what
+#: ``Round`` unwraps; what a stub says about its reasoning is irrelevant to
+#: the lifecycle under test, so one shared value keeps the stubs readable.
+_STUB = Rationale("stub", "test double")
+
+
+def _card_choice(card):
+    """Wrap ``card`` as the :class:`CardDecision` ``Round`` now expects."""
+    return CardDecision(card, _STUB)
+
+
+def _bid_choice(bid):
+    """Wrap ``bid`` as the :class:`BidDecision` ``Round`` now expects."""
+    return BidDecision(bid, _STUB)
 
 
 class _StubDeck:
@@ -110,10 +132,10 @@ class TestPlayTrickRejectsIllegalCard:
         )
         # Scripted choices: N leads its only heart, E tries the illegal trump.
         players["N"].choose_card = (
-            lambda observation, _card=n_card: _card
+            lambda observation, _card=n_card: _card_choice(_card)
         )
         players["E"].choose_card = (
-            lambda observation, _card=e_illegal: _card
+            lambda observation, _card=e_illegal: _card_choice(_card)
         )
 
         with pytest.raises(IllegalPlayError) as excinfo:
@@ -163,7 +185,7 @@ class TestPlayTrickHumanUsesView:
         # Bots play their single legal card straight through choose_card.
         for player in (east, south, west):
             player.choose_card = (  # type: ignore[method-assign]
-                lambda observation, _card=cards[player]: _card
+                lambda observation, _card=cards[player]: _card_choice(_card)
             )
 
         view_calls = []
@@ -212,7 +234,7 @@ class TestSyncHandsMirrorsPlayState:
         round_ = _make_round(players, hands, contract, deck=_StubDeck())
         for seat, card in played.items():
             players[seat].choose_card = (
-                lambda observation, _card=card: _card
+                lambda observation, _card=card: _card_choice(_card)
             )
 
         # Capture the Hand object identities before the trick runs.
@@ -253,13 +275,13 @@ class TestCardIdentityFlowsFromSeed:
 
         def n_choose(observation):
             captured["playable"] = observation.legal_cards
-            return observation.legal_cards[0]
+            return _card_choice(observation.legal_cards[0])
 
         players["N"].choose_card = n_choose
         for seat in ("E", "S", "W"):
             card = hands[seat][0]
             players[seat].choose_card = (
-                lambda observation, _card=card: _card
+                lambda observation, _card=card: _card_choice(_card)
             )
 
         # The exact Card objects the seed will draw from N's hand.
@@ -286,7 +308,7 @@ class TestAuctionRetention:
         for ai, choices in scripted.items():
             queue = list(choices)
             ai.choose_bid = lambda _auction, _p=ai, _q=queue: (
-                _q.pop(0) if _q else PassBid(_p)
+                _bid_choice(_q.pop(0) if _q else PassBid(_p))
             )
 
         # A capture view anchors the identity: the auction present when the
@@ -315,7 +337,7 @@ class TestPlayStateSeeding:
     def _script_first_playable(self, order):
         for player in order:
             player.choose_card = (
-                lambda observation: observation.legal_cards[0]
+                lambda observation: _card_choice(observation.legal_cards[0])
             )
 
     def test_play_all_tricks_validates_the_deal(self, players):
@@ -348,7 +370,7 @@ class TestPlayStateSeeding:
         )
         for seat, card in cards.items():
             players[seat].choose_card = (
-                lambda observation, _card=card: _card
+                lambda observation, _card=card: _card_choice(_card)
             )
 
         assert round_.play_state is None
@@ -373,7 +395,7 @@ class TestPlayThroughReachesTerminal:
         round_.contract = _contract(players["N"], 100, Suit.SPADES)
         for player in order:
             player.choose_card = (
-                lambda observation: observation.legal_cards[0]
+                lambda observation: _card_choice(observation.legal_cards[0])
             )
 
         round_.play_all_tricks()
@@ -408,7 +430,7 @@ class TestRulesThreading:
         round_.contract = _contract(players["N"], 100, Suit.SPADES)
         for player in order:
             player.choose_card = (
-                lambda observation: observation.legal_cards[0]
+                lambda observation: _card_choice(observation.legal_cards[0])
             )
 
         round_.play_all_tricks()
@@ -435,7 +457,7 @@ class TestRulesThreading:
         )
         for seat, card in cards.items():
             players[seat].choose_card = (
-                lambda observation, _card=card: _card
+                lambda observation, _card=card: _card_choice(_card)
             )
 
         round_.play_trick()
@@ -481,7 +503,7 @@ class TestPlayTrickHandsObservation:
         def _record(seat):
             def choose(observation, _seat=seat):
                 seen[_seat] = observation
-                return observation.legal_cards[0]
+                return _card_choice(observation.legal_cards[0])
             return choose
 
         for seat in ("N", "E", "S", "W"):
@@ -527,7 +549,7 @@ class TestPlayTrickHandsObservation:
         seen: list = []
         for seat in ("N", "E", "S", "W"):
             players[seat].choose_card = (
-                lambda observation: (
+                lambda observation: _card_choice(
                     seen.append(observation) or observation.legal_cards[0]
                 )
             )
@@ -919,7 +941,7 @@ class TestManageBiddingAutoPasses:
         for ai, choices in scripted.items():
             queue = list(choices)
             ai.choose_bid = lambda _auction, _p=ai, _q=queue: (
-                _q.pop(0) if _q else PassBid(_p)
+                _bid_choice(_q.pop(0) if _q else PassBid(_p))
             )
 
         # Stub view: records request_bid_action calls. Asserting it
@@ -969,7 +991,7 @@ class TestContractFixedLogging:
         for ai, choices in scripted.items():
             queue = list(choices)
             ai.choose_bid = lambda _auction, _p=ai, _q=queue: (
-                _q.pop(0) if _q else PassBid(_p)
+                _bid_choice(_q.pop(0) if _q else PassBid(_p))
             )
 
         round_ = _empty_round(players)  # order N, E, S, W
@@ -990,7 +1012,7 @@ class TestContractFixedLogging:
         """An all-passed auction never fixes a contract, so the
         "contract fixed" line must never appear."""
         for ai in players.values():
-            ai.choose_bid = lambda _auction, _p=ai: PassBid(_p)
+            ai.choose_bid = lambda _auction, _p=ai: _bid_choice(PassBid(_p))
 
         round_ = _empty_round(players)
 
@@ -1024,7 +1046,7 @@ class TestTrickCompletedLogging:
         round_ = _make_round(players, hands, contract, deck=_StubDeck())
         for seat, cards in hands.items():
             players[seat].choose_card = (
-                lambda observation, _card=cards[0]: _card
+                lambda observation, _card=cards[0]: _card_choice(_card)
             )
         return round_
 
@@ -1115,7 +1137,7 @@ class TestSoloSlamGivesTheLead:
         round_ = self._round(players, SlamLevel.SOLO_SLAM, rules)
         for player in round_.players_order:
             player.choose_card = (
-                lambda observation: observation.legal_cards[0]
+                lambda observation: _card_choice(observation.legal_cards[0])
             )
         round_.play_all_tricks()
         assert round_.play_state.is_terminal()

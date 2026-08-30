@@ -620,6 +620,11 @@ class PlayState:
         through what is handed over — not directly, and not through
         ``player.team.players`` either.
 
+        The table ruleset rides along unchanged: it is public information
+        every seat agreed to before the deal, so it reveals nothing the
+        observer did not already know, and it is what a strategy needs to
+        reason about — and cite — the rules it is playing under.
+
         The observing player is still passed in live: the state needs the
         identity to look up the hand and the legal actions. Only what
         comes back out is sealed.
@@ -650,6 +655,7 @@ class PlayState:
             ),
             current_trick=_seal_plays(self.current_trick),
             legal_cards=self.legal_actions(player),
+            rules=self.rules,
         )
 
     # ------------------------------------------------------------------
@@ -739,6 +745,14 @@ class PlayObservation:
             as :class:`ObservedPlay` records — also public.
         legal_cards: The observer's legal plays right now, a subset of
             ``hand``.
+        rules: The table ruleset the round is played under. The table
+            ruleset is **public information** — every player at the table
+            agreed it before the first deal — so carrying it does not
+            widen what this observation reveals. It is what lets a
+            strategy reason about the rules it is playing under (the
+            all-trump belote regime, the under-trump exemption) and cite
+            them in its rationale, instead of re-deriving table policy
+            from the legal set.
     """
 
     position: Position
@@ -748,6 +762,7 @@ class PlayObservation:
     completed_tricks: tuple[TrickRecord[ObservedPlay], ...]
     current_trick: tuple[ObservedPlay, ...]
     legal_cards: tuple[Card, ...]
+    rules: RuleConfig = field(default_factory=RuleConfig)
 
     @property
     def trick_number(self) -> int:

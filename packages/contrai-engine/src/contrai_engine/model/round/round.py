@@ -17,6 +17,7 @@ from contrai_core.rules import rules_for
 from contrai_core.team_side import TeamSide
 from contrai_core.types import Rank, Suit, TrumpVariant
 
+from ..player.rationale import BidDecision, CardDecision
 from .components import Mark
 from .scoring import RoundScore, UnannouncedSlam, score_round
 
@@ -111,6 +112,16 @@ class Round:
         #: The pairs in the order they were first announced. Under the
         #: ``single`` regime the head of this list is the one that marks.
         self.belote_order: List[tuple[Player, Suit]] = []
+
+        #: Every AI bid this round, in bidding order, with the rationale
+        #: that produced it. A human seat appends nothing — a person's
+        #: reasoning is not the engine's to record — so the debug strip
+        #: simply shows no rationale for that seat. A ``Round`` is built
+        #: fresh per round, so these need no clearing.
+        self.bid_decisions: List[BidDecision] = []
+        #: Every AI card play this round, in play order, with the
+        #: rationale that produced it. Same human-seat rule as above.
+        self.card_decisions: List[CardDecision] = []
 
     @property
     def round_scores(self) -> Dict[TeamSide, int]:
@@ -247,7 +258,13 @@ class Round:
 
         bid: Optional[Bid] = None
         if hasattr(player, 'choose_bid'):
-            bid = player.choose_bid(auction)
+            # An AI answers with a BidDecision — unwrap the bid and keep
+            # the trace on the round. A human's hook returns None, so
+            # nothing is recorded for that seat.
+            decision = player.choose_bid(auction)
+            if decision is not None:
+                self.bid_decisions.append(decision)
+                bid = decision.bid
         if (
             view is not None
             and getattr(player, 'is_human', False)
@@ -516,12 +533,18 @@ class Round:
                 # authoritative play state — its own hand, legal cards, and
                 # the public trick history — attaching the retained
                 # auction's bids (empty until the auction is set).
-                card = player.choose_card(
+                # The answer is a CardDecision: unwrap the card and keep
+                # the trace on the round for the debug strip.
+                decision = player.choose_card(
                     self.play_state.observe(
                         player,
                         bids=self.auction.bids if self.auction else (),
                     )
                 )
+                card = None
+                if decision is not None:
+                    self.card_decisions.append(decision)
+                    card = decision.card
             else:
                 # Simple fallback: play first playable card
                 card = playable_cards[0] if playable_cards else None

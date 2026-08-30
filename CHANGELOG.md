@@ -35,6 +35,10 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) The landing screen now picks the whole table setup: `[p]` preset, `[f]` load a file, `[l]` live score. See [engine docs](docs/engine/index.md).
 - (engine) `[k]` on the setup screen cycles any of the 22 §9 knobs, grouped by subsection; an impossible table is refused inline.
 - (engine) The setup a run leaves the landing screen with is remembered and offered back as `last used`. See [engine docs](docs/engine/index.md).
+- (core) `PlayObservation.rules` — the seat's view carries the table ruleset, which is public information. See [core docs](docs/core/index.md).
+- (engine) `contrai --debug` shows why each AI played what it played — rule, detail and the table knobs it cited. See [engine docs](docs/engine/index.md).
+- (engine) The expert AI's doubling consults the table's Slam switches and its failure convention. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
+- (engine) The expert AI bids no trump and all trump off a shared honours table — masters plus their complements — capped at each mode's ladder top. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
 
 ### Changed
 
@@ -47,9 +51,14 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (core) **BREAKING:** Under-trumping is no longer compulsory — §6.2's exemption is the §9 default. Set `under_trump_exemption = false` to restore it.
 - (engine) **BREAKING:** `Game.check_game_over()` takes no argument — it reads `rules.target_score`, whose default is now 2000, not 1500.
 - (engine) **BREAKING:** `RichView.show_landing(setup)` takes and returns a `TableSetup`, not a target score. The target is now a ruleset knob.
+- (engine) **BREAKING:** AI strategies return `BidDecision` / `CardDecision` carrying a `Rationale`, not a bare `Bid` / `Card`. Read `.bid` / `.card`. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
 
 ### Fixed
 
+- (engine) The expert AI plays no trump and all trump correctly — it no longer treats spades as "the trump suit" nor cashes an ace that a Jack beats. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
+- (engine) `_estimate_tricks` reads each mode's own ladder, so four aces no longer estimate a sweep at all trump.
+- (engine) The expert AI no longer doubles every Slam regardless of its hand — a Slam is judged on whether the defense expects a trick.
+- (engine) The expert AI no longer burns a trump when the under-trump exemption leaves it a plain card to discard.
 - (engine) The recap's Outcome table credits a belote to the side that *held* it, so a transfer to the defense no longer rewrites the play tally.
 - (core) The over-trump obligation ranks candidates with `trick_rank`, so an off-suit discard can no longer raise the bar at all trump.
 - (engine) A no-trump contract renders as `NT` / `No Trump` instead of `NoTrump No Trump`, and its bid cell no longer overflows the history column.

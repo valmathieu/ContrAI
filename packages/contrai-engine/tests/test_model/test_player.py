@@ -2,14 +2,20 @@
 
 from contrai_engine.model.player import (
     AiPlayer,
+    BidDecision,
+    CardDecision,
     HumanPlayer,
+    Rationale,
     RuleBasedBiddingStrategy,
     RuleBasedCardPlayStrategy,
 )
 from contrai_core import (
     Auction,
+    Card,
     PassBid,
     Position,
+    Rank,
+    Suit,
 )
 
 
@@ -44,9 +50,15 @@ class TestAiPlayerStrategyInjection:
         assert player.cardplay._player is player
 
     def test_choose_bid_delegates_to_bidding_strategy(self):
-        """AiPlayer.choose_bid routes straight to the injected strategy."""
+        """AiPlayer.choose_bid routes straight to the injected strategy.
+
+        The whole ``BidDecision`` is passed back, rationale included —
+        the player never unwraps or re-wraps it.
+        """
         player = AiPlayer("Bot", Position.SOUTH)
-        sentinel = PassBid(player)
+        sentinel = BidDecision(
+            PassBid(player), Rationale("stub", "a spy's decision")
+        )
         calls = []
 
         def spy(auction):
@@ -62,7 +74,9 @@ class TestAiPlayerStrategyInjection:
     def test_choose_card_delegates_to_cardplay_strategy(self):
         """AiPlayer.choose_card routes the observation straight to the strategy."""
         player = AiPlayer("Bot", Position.SOUTH)
-        sentinel = object()
+        sentinel = CardDecision(
+            Card(Suit.SPADES, Rank.SEVEN), Rationale("stub", "a spy's decision")
+        )
         calls = []
 
         def spy(observation):

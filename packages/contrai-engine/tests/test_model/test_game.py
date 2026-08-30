@@ -14,7 +14,12 @@ import pytest
 from contrai_engine.debug_state import round_result_lines
 from contrai_engine.model import game as game_module
 from contrai_engine.model.game import Game
-from contrai_engine.model.player import AiPlayer
+from contrai_engine.model.player import (
+    AiPlayer,
+    BidDecision,
+    CardDecision,
+    Rationale,
+)
 from contrai_engine.model.round import Mark, RoundScore
 from contrai_core.deck import Deck
 from contrai_core.team_side import TeamSide
@@ -26,6 +31,11 @@ from contrai_core.hand import Hand
 from contrai_core.position import Position
 from contrai_core.rule_config import RuleConfig, TurnDirection
 from contrai_core.types import Suit
+
+#: The rationale the scripted AI doubles below attach. ``Round`` unwraps
+#: the decision; what a stub says about its reasoning is irrelevant here.
+_STUB = Rationale("stub", "test double")
+
 
 class DummyPlayer:
     """Minimal player stand-in: name, seat position, and an empty hand.
@@ -896,14 +906,16 @@ def test_manage_round_completed_logs_round_result_against_a_genuine_round(
     }
     for ai, choices in scripted.items():
         queue = list(choices)
-        ai.choose_bid = lambda _auction, _p=ai, _q=queue: (
-            _q.pop(0) if _q else PassBid(_p)
+        ai.choose_bid = lambda _auction, _p=ai, _q=queue: BidDecision(
+            _q.pop(0) if _q else PassBid(_p), _STUB
         )
     # Real play: every seat always plays its first legal card — the same
     # deal-content-agnostic strategy
     # TestPlayThroughReachesTerminal uses in test_round.py.
     for ai in (north, east, south, west):
-        ai.choose_card = lambda observation: observation.legal_cards[0]
+        ai.choose_card = lambda observation: CardDecision(
+            observation.legal_cards[0], _STUB
+        )
 
     with caplog.at_level(logging.DEBUG, logger="contrai_engine"):
         game.manage_round()

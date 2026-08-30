@@ -52,8 +52,8 @@ package "model/player/ (subpackage)" as p_player {
     abstract class Player <<abstract>> {
         + is_human : bool <<property>>
         --
-        + {abstract} choose_bid(auction: Auction) : Bid?
-        + {abstract} choose_card(observation: PlayObservation) : Card?
+        + {abstract} choose_bid(auction: Auction) : BidDecision?
+        + {abstract} choose_card(observation: PlayObservation) : CardDecision?
     }
 
     class HumanPlayer {
@@ -67,8 +67,8 @@ package "model/player/ (subpackage)" as p_player {
         + cardplay : CardPlayStrategy
         --
         + __init__(name, position: Position, bidding=…, cardplay=…)
-        + choose_bid(auction) : Bid       <<delegates>>
-        + choose_card(observation) : Card  <<delegates>>
+        + choose_bid(auction) : BidDecision   <<delegates>>
+        + choose_card(observation) : CardDecision <<delegates>>
     }
 
     ' --- strategy.py: shared player access + abstract interfaces ---
@@ -82,11 +82,53 @@ package "model/player/ (subpackage)" as p_player {
     }
 
     abstract class BiddingStrategy <<abstract>> {
-        + {abstract} choose_bid(auction: Auction) : Bid
+        + {abstract} choose_bid(auction: Auction) : BidDecision
     }
     abstract class CardPlayStrategy <<abstract>> {
-        + {abstract} choose_card(observation: PlayObservation) : Card
+        + {abstract} choose_card(observation: PlayObservation) : CardDecision
     }
+
+    ' --- rationale.py: the explainability channel ---
+    class RuleCitation <<frozen dataclass>> #FFF3D9 {
+        + knob : str
+        + value : str
+        + effect : str
+    }
+    class Rationale <<frozen dataclass>> #FFF3D9 {
+        + rule : str
+        + detail : str
+        + considered : tuple<str> = ()
+        + citations : tuple<RuleCitation> = ()
+    }
+    class BidDecision <<frozen dataclass>> #FFF3D9 {
+        + bid : Bid
+        + rationale : Rationale
+    }
+    class CardDecision <<frozen dataclass>> #FFF3D9 {
+        + card : Card
+        + rationale : Rationale
+    }
+
+    note bottom of Rationale
+      The trace rides the **return type**, not a
+      side-channel attribute on the strategy: a
+      strategy evaluated off the live turn order
+      — a search rolling out a hypothetical
+      world, a harness scoring one policy
+      against another — would overwrite an
+      attribute before anyone read it.
+      The rungs above the expert rules need the
+      same channel for a different payload: an
+      MCTS level explains itself with visit
+      counts and a principal variation, a
+      learned policy with top-k probabilities.
+      Both fit ""considered"" / ""citations""
+      without a second seam (CLAUDE.md §6.1).
+      ""RuleCitation"" names the ""RuleConfig"" knob
+      that decided something //here// — e.g.
+      ""under~_trump~_exemption"" = True,
+      //discarded instead of under-trumping//.
+    end note
 
     ' --- rule_based/ : the first concrete level (expert) ---
     class RuleBasedBiddingStrategy {
@@ -95,12 +137,14 @@ package "model/player/ (subpackage)" as p_player {
         + {static} SLAM_NUMERIC : int
         + {static} SOLO_SLAM_NUMERIC : int
         --
-        + choose_bid(auction) : Bid
-        - _choose_under_double(auction) : Bid
-        - _choose_open_bid(auction) : Bid
+        + choose_bid(auction) : BidDecision
+        - _decide(bid, rule, detail, …) : BidDecision
+        - _choose_under_double(auction) : BidDecision
+        - _choose_open_bid(auction) : BidDecision
     }
     class RuleBasedCardPlayStrategy {
-        + choose_card(observation) : Card
+        + choose_card(observation) : CardDecision
+        - _decide(card, rule, detail, …) : CardDecision
         - _derive_tracking(observation) : (fallen, voids)
         - _is_master_card(card, trump_suit, fallen) : bool
     }
@@ -285,6 +329,8 @@ package "model/round/ package" as p_round {
         + belote_order : list<(Player, Suit)>
         + belote_counts_by_side : dict<TeamSide, int> <<property>>
         + rules : RuleConfig
+        + bid_decisions : list<BidDecision>
+        + card_decisions : list<CardDecision>
         --
         + __init__(players_order, dealer, deck, round_number, rules=None)
         + deal_cards() : None
@@ -766,6 +812,13 @@ RuleBasedCardPlayStrategy ..> p_contractsuit : is_trump / trump_suits
 PlayerStateMixin ..> AiPlayer : <<reads live state>>
 AiPlayer o-- "1" BiddingStrategy : bidding
 AiPlayer o-- "1" CardPlayStrategy : cardplay
+BidDecision *-- "1" Rationale
+CardDecision *-- "1" Rationale
+Rationale o-- "0..*" RuleCitation
+BiddingStrategy ..> BidDecision  : returns
+CardPlayStrategy ..> CardDecision : returns
+Round --> BidDecision  : bid~_decisions
+Round --> CardDecision : card~_decisions
 p_levels ..> AiPlayer : <<builds>>
 
 ' Game composes / aggregates engine + core types

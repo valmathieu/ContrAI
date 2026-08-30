@@ -72,6 +72,7 @@ from contrai_engine.view.screens.bidding import (
 )
 from contrai_engine.view.screens.debug import (
     _autoplay_pause_text,
+    _panel_ai_rationale,
     _panel_debug_hands,
 )
 from contrai_engine.view.screens.endgame import (
@@ -890,6 +891,9 @@ class RichView:
                     seed=self.options.seed,
                 )
             )
+            # Why each AI seat played what it played. A human seat has no
+            # entry — Round records no rationale for one.
+            self.console.print(_panel_ai_rationale(round_))
         # Hand panel — always rendered when a human is seated, so the
         # slot stays put across AI bid frames, AI play frames, and the
         # trick-won pause. ``interactive`` is true only when the human
