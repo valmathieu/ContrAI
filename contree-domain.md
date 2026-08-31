@@ -442,9 +442,9 @@ The multiplier `M` from §7.2 applies whether the contract is made or failed. Do
 
 - Each game is played to a **target score** agreed beforehand: 500, 1000, 1500, **2000** (default), 3000, 4000 or 5000 (§9).
 - The first team to reach or exceed the target at the end of a round wins the game.
-- If both teams cross the target in the same round, the higher score wins.
+- If both teams cross the target in the same round, the higher score wins — unless the Belote option below holds that team back, in which case the win goes to the other one.
 - If both teams sit at the **same score** at or above the target, nobody has won yet: play continues with one additional round (sudden death).
-- **Table option — win on Belote points alone** (on by default, §9): a team may cross the target on Belote points like on any others. Switched off, a team taken past the target by the Belote of the very round that crossed it has not won yet — the win waits until points from play confirm it. Only that round's Belote is discounted (all of it, where the all-trump *four* regime awarded several); Belote banked in earlier rounds is ordinary score. This applies to attacking and defending teams alike.
+- **Table option — win on Belote points alone** (on by default, §9): a team may cross the target on Belote points like on any others. Switched off, a team taken past the target by Belote points has not won yet — the win waits until points from play confirm it. Belote stays discounted (all of it, where the all-trump *four* regime awarded several) until the team marks points from play in some later round; a round that marks it nothing — an all-pass redeal included — confirms nothing. This applies to attacking and defending teams alike, and it is the team's *marked* Belote that is discounted, so a bonus transferred to the defense is discounted there.
 - Each game starts again from zero, and the **match** goes to the first team to win the agreed number of games (**1** by default, §9).
 
 ---

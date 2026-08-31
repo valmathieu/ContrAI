@@ -242,7 +242,7 @@ package "model/game.py" as p_game {
         + current_round : Round?
         + round_number : int
         + scores : dict<TeamSide, int>
-        + last_round_belote : dict<TeamSide, int>
+        + unconfirmed_belote : dict<TeamSide, int>
         + rules : RuleConfig
         --
         + __init__(players: list<Player>, rules=None)
@@ -253,7 +253,7 @@ package "model/game.py" as p_game {
         + set_players_order() : None
         --
         - _has_crossed(side, target_score) : bool
-        - _record_round_belote() : None
+        - _track_unconfirmed_belote() : None
     }
 
     class GameOverStatus <<frozen dataclass>> {
@@ -275,17 +275,22 @@ package "model/game.py" as p_game {
       formation and any later seat lookup never
       re-scan the player list.
       ----
-      ""last_round_belote"" is the belote the
-      round most recently scored credited each
-      side, refreshed on **both** exits of
-      ""manage_round"" — a redeal awards none, so
-      a stale credit would deny a later win.
-      ""_has_crossed"" reads it: with the table's
-      ""win_on_belote_points_alone"" off, a side
-      carried past the target by //that round's//
-      belote has not won yet (§8). Belote banked
-      in earlier rounds is ordinary score and is
-      never discounted.
+      ""unconfirmed_belote"" is the belote each
+      side has marked but that play has not
+      confirmed. ""_track_unconfirmed_belote""
+      runs on **both** exits of ""manage_round"":
+      it clears a side's credit only when that
+      side marks points from play, then adds
+      this round's own belote. A redeal marks
+      nothing, so the credit simply persists.
+      ""_has_crossed"" subtracts it: with the
+      table's ""win_on_belote_points_alone"" off,
+      a side carried past the target by belote
+      play has not confirmed has not won (§8).
+      ""check_game_over"" therefore walks every
+      side at/above the target highest-first, so
+      a gated leader cannot mask a legitimate
+      crossing behind it.
     end note
 
     note bottom of GameOverStatus

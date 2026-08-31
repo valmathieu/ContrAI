@@ -22,7 +22,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) `any_failure_marks_160`, the two `failed_slam_marks_*` switches and `unannounced_slam_substitute` reshape what a failed or swept round marks.
 - (engine) `belote_counts_toward_contract` and `belote_lost_when_contract_fails` decide whether a belote makes the contract and who keeps it.
 - (engine) `rounding` — marks are written exact, to the nearest 10, or to the nearest 5; halves round up. Contract success stays exact.
-- (engine) `win_on_belote_points_alone` — switched off, the Belote of the crossing round does not carry a team past the target.
+- (engine) `win_on_belote_points_alone` — switched off, Belote cannot carry a team past the target until points from play confirm it. See [engine docs](docs/engine/index.md).
 - (core) `Position.next_in(direction)` — the seat's successor either way round the table; `next` stays the anticlockwise shorthand.
 - (core) `bookable_values(rules)` and `Auction` gate the Slam family on `solo_slam_available`, `slam_can_be_doubled` and `solo_slam_can_be_doubled`. See [core docs](docs/core/index.md).
 - (core) `under_trump_exemption` — a void seat facing an unbeatable opponent cut may discard instead of under-trumping. See [core docs](docs/core/index.md).
