@@ -17,6 +17,7 @@ from contrai_core import (
     Position,
     Suit,
     TeamSide,
+    rules_for,
 )
 from rich.align import Align
 from rich.box import ROUNDED
@@ -211,6 +212,7 @@ def _panel_last_trick(
         dimmed=True,
         width=18,
         belote_by_position=_belote_by_position(round_),
+        narrow_badges=True,
     )
     body.append("\n")
     body.append("Won: ", style=DIM)
@@ -340,7 +342,8 @@ def _render_diamond(
     winner_position: Optional[Position],
     dimmed: bool,
     width: int,
-    belote_by_position: Optional[dict[Position, str]] = None,
+    belote_by_position: Optional[dict[Position, tuple[Suit, ...]]] = None,
+    narrow_badges: bool = False,
 ) -> Text:
     """Render the 4-player diamond: N top, E right, S bottom, W left.
 
@@ -350,22 +353,55 @@ def _render_diamond(
     here unchanged.
 
     ``belote_by_position`` maps a :class:`~contrai_core.Position` member
-    to either ``"belote"`` or ``"rebelote"`` for seats that have
-    announced. The badge persists for the rest of the round.
+    to the suits that seat has announced a *marking* belote in, in
+    announcement order. The badge persists for the rest of the round.
+
+    ``narrow_badges`` says the caller's panel cannot fit two full badges
+    side by side — the 18-cell ``Last trick`` diamond, where the W and E
+    badges share one row. It only licenses the compact spelling; whether
+    one is actually used is decided here, from the crowding.
     """
     belote_by_position = belote_by_position or {}
+    # A belote's suit is worth naming only where more than one of them can
+    # exist: at a suit contract the pair is in trump by definition, so the
+    # glyph would just repeat the Round panel's trump line. Asking the
+    # rules object rather than comparing against ALL_TRUMP keeps this
+    # honest if another regime ever gains belote suits.
+    _name_suits = len(rules_for(trump).belote_suits) > 1
+    # Two badges only ever share a row under the all-trump `four` regime;
+    # compacting is what keeps that row inside a narrow panel. A lone
+    # badge is always spelled in full — even the widest, "★ Belote ×2
+    # (♣♦)", measures 16 cells and fits the 18-cell diamond centred.
+    _compact = (
+        narrow_badges
+        and _name_suits
+        and sum(1 for suits in belote_by_position.values() if suits) > 1
+    )
 
     def _belote_badge(pos: Position) -> Optional[Text]:
-        # The seat badge always reads "★ Belote" once the holder
-        # has played either the K or the Q of trump. The belote /
-        # rebelote distinction is narrative-only and lives in the
-        # event log; under the seat we just signal "this player
-        # has the K+Q pair".
-        if belote_by_position.get(pos) is None:
+        # The badge signals "this seat has announced a belote that
+        # marks". The belote / rebelote distinction is narrative-only and
+        # lives in the event log, so the badge does not spell it; what it
+        # does spell, under all trump, is which pair — and how many.
+        suits = belote_by_position.get(pos)
+        if not suits:
             return None
+        gold = f"bold {GOLD}"
         t = Text()
-        t.append("★ ", style=f"bold {GOLD}")
-        t.append("Belote", style=f"bold {GOLD}")
+        # Four shapes: "★ Belote", "★ Belote ♣", "★ Belote ×2 (♣♦)" and
+        # their compact counterparts "★♣" / "★×2 ♣♦".
+        t.append("★" if _compact else "★ Belote", style=gold)
+        if not _name_suits:
+            return t
+        if len(suits) > 1:
+            t.append(f"×{len(suits)} " if _compact else f" ×{len(suits)} (",
+                     style=gold)
+        elif not _compact:
+            t.append(" ", style=gold)
+        for suit in suits:
+            t.append(_suit_glyph(suit), style=f"bold {_suit_color(suit)}")
+        if len(suits) > 1 and not _compact:
+            t.append(")", style=gold)
         return t
 
     plays_by_pos: dict[Position, tuple[BasePlayer, Card]] = {}

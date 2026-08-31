@@ -9,7 +9,16 @@ playable-pill styling, and the per-play prompt texts.
 
 from __future__ import annotations
 
-from contrai_core import Card, Play, Position, Rank, Suit, TeamSide, rules_for
+from contrai_core import (
+    Card,
+    Play,
+    Position,
+    Rank,
+    Suit,
+    TeamSide,
+    TrumpVariant,
+    rules_for,
+)
 from contrai_engine.model.player import HumanPlayer
 from contrai_engine.view.screens.trick import (
     _ai_card_announcement,
@@ -66,11 +75,12 @@ class _StubPlayState:
 
 class _StubRound:
     def __init__(self, *, contract=None, dealer=None,
-                 round_number=1, team_tricks=None):
+                 round_number=1, team_tricks=None, announced_belotes=()):
         self.contract = contract
         self.dealer = dealer
         self.round_number = round_number
         self.team_tricks = team_tricks or {}
+        self.announced_belotes = announced_belotes
         self.play_state = _StubPlayState(
             self.team_tricks, contract.suit if contract else None
         )
@@ -220,7 +230,7 @@ class TestRenderDiamond:
             (), Suit.HEARTS,
             pending_position=Position.NORTH, winner_position=None,
             dimmed=False, width=42,
-            belote_by_position={Position.SOUTH: "belote"},
+            belote_by_position={Position.SOUTH: (Suit.HEARTS,)},
         ).plain
         assert "★ Belote" in text
 
@@ -231,6 +241,145 @@ class TestRenderDiamond:
             dimmed=False, width=42,
         ).plain
         assert "Belote" not in text
+
+
+class TestBeloteBadgeSpelling:
+    """The badge names its pair's suit exactly when more than one exists.
+
+    A suit contract has one belote suit, so naming it would only repeat
+    the trump line. All trump has four, and a bare ★ Belote under two
+    seats is precisely what makes a ``single`` table look like it is
+    paying four bonuses.
+    """
+
+    def _badges(self, belote_by_position, trump, **kwargs):
+        return _render_diamond(
+            (), trump,
+            pending_position=None, winner_position=None,
+            dimmed=False, width=42,
+            belote_by_position=belote_by_position,
+            **kwargs,
+        ).plain
+
+    def test_a_suit_contract_names_no_suit(self):
+        text = self._badges(
+            {Position.SOUTH: (Suit.HEARTS,)}, Suit.HEARTS
+        )
+        assert "★ Belote" in text
+        assert "★ Belote ♥" not in text
+
+    def test_all_trump_names_the_pair_suit(self):
+        text = self._badges(
+            {Position.SOUTH: (Suit.CLUBS,)}, TrumpVariant.ALL_TRUMP
+        )
+        assert "★ Belote ♣" in text
+
+    def test_two_pairs_get_a_multiplier_and_both_suits(self):
+        text = self._badges(
+            {Position.NORTH: (Suit.CLUBS, Suit.DIAMONDS)},
+            TrumpVariant.ALL_TRUMP,
+        )
+        assert "★ Belote ×2 (♣♦)" in text
+
+    def test_each_seat_gets_its_own_badge(self):
+        text = self._badges(
+            {
+                Position.NORTH: (Suit.CLUBS, Suit.DIAMONDS),
+                Position.SOUTH: (Suit.HEARTS,),
+            },
+            TrumpVariant.ALL_TRUMP,
+        )
+        assert "★ Belote ×2 (♣♦)" in text
+        assert "★ Belote ♥" in text
+
+    def test_no_trump_never_badges(self):
+        # No belote suit exists at no trump, so nothing can be announced;
+        # a stray entry must not produce a suit-naming badge.
+        text = self._badges(
+            {Position.SOUTH: ()}, TrumpVariant.NO_TRUMP
+        )
+        assert "Belote" not in text
+
+
+class TestBeloteBadgeCompaction:
+    """The narrow ``Last trick`` panel spells crowded badges short.
+
+    Its diamond is 18 cells wide and the W / E badges share one row, so
+    two full badges cannot fit. Compaction is derived from the crowding,
+    not configured: a lone badge is always spelled in full, and only the
+    ``four`` regime can ever badge two seats.
+    """
+
+    def _row(self, belote_by_position, **kwargs):
+        return _render_diamond(
+            (), TrumpVariant.ALL_TRUMP,
+            pending_position=None, winner_position=None,
+            dimmed=True, width=18,
+            belote_by_position=belote_by_position,
+            **kwargs,
+        ).plain
+
+    def test_one_badge_is_spelled_in_full_even_when_narrow(self):
+        text = self._row(
+            {Position.NORTH: (Suit.CLUBS,)}, narrow_badges=True
+        )
+        assert "★ Belote ♣" in text
+
+    def test_two_badges_compact_to_star_plus_glyph(self):
+        text = self._row(
+            {
+                Position.WEST: (Suit.CLUBS,),
+                Position.EAST: (Suit.HEARTS,),
+            },
+            narrow_badges=True,
+        )
+        assert "★♣" in text
+        assert "★♥" in text
+        assert "Belote" not in text
+
+    def test_a_compacted_multi_pair_badge_keeps_its_multiplier(self):
+        text = self._row(
+            {
+                Position.WEST: (Suit.CLUBS, Suit.DIAMONDS),
+                Position.EAST: (Suit.HEARTS, Suit.SPADES),
+            },
+            narrow_badges=True,
+        )
+        assert "★×2 ♣♦" in text
+        assert "★×2 ♥♠" in text
+
+    def test_the_compacted_west_east_row_fits_the_panel(self):
+        # The case the compaction exists for: the widest crowded row must
+        # still measure at most the diamond's 18 cells.
+        text = self._row(
+            {
+                Position.WEST: (Suit.CLUBS, Suit.DIAMONDS),
+                Position.EAST: (Suit.HEARTS, Suit.SPADES),
+            },
+            narrow_badges=True,
+        )
+        assert max(len(line) for line in text.split("\n")) <= 18
+
+    def test_a_lone_multi_pair_badge_also_fits(self):
+        text = self._row(
+            {Position.NORTH: (Suit.CLUBS, Suit.DIAMONDS)},
+            narrow_badges=True,
+        )
+        assert "★ Belote ×2 (♣♦)" in text
+        assert max(len(line) for line in text.split("\n")) <= 18
+
+    def test_the_wide_panel_never_compacts(self):
+        text = _render_diamond(
+            (), TrumpVariant.ALL_TRUMP,
+            pending_position=None, winner_position=None,
+            dimmed=False, width=42,
+            belote_by_position={
+                Position.WEST: (Suit.CLUBS,),
+                Position.EAST: (Suit.HEARTS,),
+            },
+        ).plain
+        assert "★ Belote ♣" in text
+        assert "★ Belote ♥" in text
 
 
 class TestPanelCurrentTrick:
@@ -303,6 +452,51 @@ class TestPanelLastTrick:
         panel = _panel_last_trick(round_, (plays, north), trick_index=3)
         assert "Won: N" in panel.renderable.plain
         assert "Last trick (#2)" in panel.title.plain
+
+
+class TestPanelBeloteBadges:
+    """Which spelling each panel gets, end to end from the round.
+
+    The two panels read the same ``announced_belotes``; only the narrow
+    one is allowed to compact, and only when the badges would collide.
+    """
+
+    @staticmethod
+    def _all_trump_round(north, east, announced):
+        contract = _StubContract(100, TrumpVariant.ALL_TRUMP, player=north)
+        return _StubRound(contract=contract, announced_belotes=announced)
+
+    def test_last_trick_compacts_two_crowded_badges(self, four_players):
+        north, east, _south, west = four_players
+        round_ = self._all_trump_round(north, east, (
+            (west, Suit.CLUBS),
+            (east, Suit.HEARTS),
+        ))
+        plays = (Play(north, Card(Suit.SPADES, Rank.ACE)),)
+        text = _panel_last_trick(round_, (plays, north), trick_index=3)
+        text = text.renderable.plain
+        assert "★♣" in text
+        assert "★♥" in text
+
+    def test_last_trick_spells_a_lone_badge_in_full(self, four_players):
+        north, east, *_ = four_players
+        round_ = self._all_trump_round(north, east, ((east, Suit.HEARTS),))
+        plays = (Play(north, Card(Suit.SPADES, Rank.ACE)),)
+        panel = _panel_last_trick(round_, (plays, north), trick_index=3)
+        assert "★ Belote ♥" in panel.renderable.plain
+
+    def test_current_trick_never_compacts(self, four_players):
+        north, east, _south, west = four_players
+        round_ = self._all_trump_round(north, east, (
+            (west, Suit.CLUBS),
+            (east, Suit.HEARTS),
+        ))
+        panel = _panel_current_trick(
+            round_, (), "playing", north, None, trick_index=1
+        )
+        text = panel.renderable.plain
+        assert "★ Belote ♣" in text
+        assert "★ Belote ♥" in text
 
 
 class TestPanelHand:

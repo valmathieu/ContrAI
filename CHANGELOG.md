@@ -40,6 +40,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) The expert AI's doubling consults the table's Slam switches and its failure convention. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
 - (engine) The expert AI bids no trump and all trump off a shared honours table — masters plus their complements — capped at each mode's ladder top. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
 - (engine) The round recap says when a side is past the target but held back by the Belote gate. See [engine docs](docs/engine/index.md).
+- (engine) `Round.announced_belotes` — the trick diamond badges only belotes that mark, naming their suit under all trump (`★ Belote ×2 (♣♦)`). See [engine docs](docs/engine/index.md).
 
 ### Changed
 

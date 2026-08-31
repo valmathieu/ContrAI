@@ -339,6 +339,7 @@ package "model/round/ package" as p_round {
         + belote_state : dict<(Player, Suit), str>
         + belote_order : list<(Player, Suit)>
         + belote_counts_by_side : dict<TeamSide, int> <<property>>
+        + announced_belotes : tuple<(Player, Suit)> <<property>>
         + rules : RuleConfig
         + bid_decisions : list<BidDecision>
         + card_decisions : list<CardDecision>
@@ -412,6 +413,15 @@ package "model/round/ package" as p_round {
       //every pair//, so a side can mark up to +80
       (contree-domain.md §6.6). The bonus survives
       every scoring shape, including the losing side's.
+
+      ""announced_belotes"" is the //display// view of
+      the same question: the pairs announced //so far//
+      that mark, in announcement order. It intersects
+      ""belote_order"" with ""_scoring_belotes"", so a
+      pair a seat merely //holds// under //four// never
+      reaches the screen, and //single// badges the one
+      pair that marks rather than all four announcers.
+      The two agree once the last card is played.
     end note
 
     note right of Round

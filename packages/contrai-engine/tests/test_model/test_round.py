@@ -842,6 +842,92 @@ class TestAllTrumpBelote:
             }
 
 
+class TestAnnouncedBelotes:
+    """``announced_belotes`` — the pairs announced *and* marking, in order.
+
+    The display counterpart of ``_scoring_belotes``: it answers what the
+    table has actually seen so far, where the scorer answers what will
+    be marked at the end. The two agree once every card is played.
+    """
+
+    def _all_trump_round(self, players, regime):
+        round_ = _make_round(
+            players,
+            _TWO_SIDED_BELOTE_HANDS,
+            contract=_contract(players["N"], 100, TrumpVariant.ALL_TRUMP),
+            rules=RuleConfig(
+                extended_trump_choices=True, all_trump_belote=regime
+            ),
+        )
+        round_._detect_belote_pairs()
+        return round_
+
+    def test_nothing_announced_yet_is_empty(self, players):
+        round_ = self._all_trump_round(players, AllTrumpBelote.FOUR)
+        assert round_.announced_belotes == ()
+
+    def test_four_regime_reports_every_announced_pair(self, players):
+        round_ = self._all_trump_round(players, AllTrumpBelote.FOUR)
+        round_._transition_belote_state(players["N"], Suit.SPADES)
+        round_._transition_belote_state(players["E"], Suit.CLUBS)
+        assert round_.announced_belotes == (
+            (players["N"], Suit.SPADES),
+            (players["E"], Suit.CLUBS),
+        )
+
+    def test_four_regime_hides_a_held_but_unannounced_pair(self, players):
+        # N holds ♠ and ♥ but has only announced ♠. The ♥ pair is still
+        # hidden information — ``_scoring_belotes`` counts it because the
+        # scorer may, but nothing the human sees is allowed to.
+        round_ = self._all_trump_round(players, AllTrumpBelote.FOUR)
+        round_._transition_belote_state(players["N"], Suit.SPADES)
+        assert (players["N"], Suit.HEARTS) in round_._scoring_belotes()
+        assert round_.announced_belotes == ((players["N"], Suit.SPADES),)
+
+    def test_it_follows_announcement_order_not_seat_order(self, players):
+        round_ = self._all_trump_round(players, AllTrumpBelote.FOUR)
+        round_._transition_belote_state(players["E"], Suit.CLUBS)
+        round_._transition_belote_state(players["N"], Suit.HEARTS)
+        assert round_.announced_belotes == (
+            (players["E"], Suit.CLUBS),
+            (players["N"], Suit.HEARTS),
+        )
+
+    def test_single_regime_reports_only_the_first_announced(self, players):
+        # Both sides announce; only E's pair marks, so only E's is shown.
+        round_ = self._all_trump_round(players, AllTrumpBelote.SINGLE)
+        round_._transition_belote_state(players["E"], Suit.CLUBS)
+        round_._transition_belote_state(players["N"], Suit.SPADES)
+        assert round_.announced_belotes == ((players["E"], Suit.CLUBS),)
+
+    def test_single_regime_is_unmoved_by_a_rebelote(self, players):
+        # The second card of the *same* pair advances belote_state but
+        # appends nothing, so the marking pair does not change.
+        round_ = self._all_trump_round(players, AllTrumpBelote.SINGLE)
+        round_._transition_belote_state(players["N"], Suit.SPADES)
+        round_._transition_belote_state(players["N"], Suit.SPADES)
+        assert round_.announced_belotes == ((players["N"], Suit.SPADES),)
+
+    def test_none_regime_reports_nothing(self, players):
+        round_ = self._all_trump_round(players, AllTrumpBelote.NONE)
+        assert round_.announced_belotes == ()
+
+    def test_a_suit_contract_reports_the_announced_pair(self, players):
+        round_ = _make_round(
+            players,
+            _TWO_SIDED_BELOTE_HANDS,
+            contract=_contract(players["N"], 100, Suit.HEARTS),
+        )
+        round_._detect_belote_pairs()
+        assert round_.announced_belotes == ()
+        round_._transition_belote_state(players["N"], Suit.HEARTS)
+        assert round_.announced_belotes == ((players["N"], Suit.HEARTS),)
+
+    def test_no_contract_reports_nothing(self, players):
+        round_ = _make_round(players, _TWO_SIDED_BELOTE_HANDS, contract=None)
+        assert round_.announced_belotes == ()
+
+
 # ---------------------------------------------------------------------------
 # Auto-pass when partner has doubled / redoubled (end-to-end)
 # ---------------------------------------------------------------------------

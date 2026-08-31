@@ -134,26 +134,30 @@ def _explain_constraint(
     return hint
 
 
-def _belote_by_position(round_) -> dict[Position, str]:
-    """Project ``round_.belote_state`` ((player, suit) → kind) onto seats.
+def _belote_by_position(round_) -> dict[Position, tuple[Suit, ...]]:
+    """Group ``round_.announced_belotes`` by seat, keeping their suits.
 
-    One seat gets one badge however many pairs it holds — under the
-    all-trump ``four`` regime a seat can be mid-announcement in two suits
-    at once — so the strongest kind reached in any of them wins:
-    ``"rebelote"`` (both cards of some pair played) outranks ``"belote"``.
+    The round tracks belote per ``(holder, suit)`` pair and the diamond
+    badges per seat, so the pairs of one seat collapse into that seat's
+    tuple of suits — under the all-trump ``four`` regime a seat can hold
+    two, and the badge names both. Announcement order is preserved, so
+    the badge lists the suits in the order the table heard them.
 
-    Returns an empty dict when no round is active, the round has no
-    belote_state, or none has been triggered yet. Used to render the
-    persistent ★ Belote/Rebelote badge in the trick diamond.
+    Reading :attr:`~contrai_engine.model.round.Round.announced_belotes`
+    rather than the raw ``belote_state`` is what keeps the regime's
+    verdict and the screen in agreement: a ``single`` table announces up
+    to four times and marks once, and only the marking pair is badged.
+
+    Returns an empty dict when no round is active, the round does not
+    expose the property, or nothing has been announced yet.
     """
     if round_ is None:
         return {}
-    state = getattr(round_, "belote_state", None) or {}
-    badges: dict[Position, str] = {}
-    for (player, _suit), kind in state.items():
+    announced = getattr(round_, "announced_belotes", None) or ()
+    badges: dict[Position, tuple[Suit, ...]] = {}
+    for player, suit in announced:
         seat = player.position
-        if badges.get(seat) != "rebelote":
-            badges[seat] = kind
+        badges[seat] = badges.get(seat, ()) + (suit,)
     return badges
 
 

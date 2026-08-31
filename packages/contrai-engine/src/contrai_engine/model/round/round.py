@@ -391,6 +391,30 @@ class Round:
         return tuple(self.belote_order[:1])
 
     @property
+    def announced_belotes(self) -> tuple[tuple[Player, Suit], ...]:
+        """The pairs announced so far that mark, in announcement order.
+
+        The display counterpart of :meth:`_scoring_belotes`: that method
+        answers what will be *marked* at the end of the round, this one
+        what the table has actually *seen*. Both halves of the
+        intersection matter. Announced, because under the ``four`` regime
+        ``_scoring_belotes`` counts pairs a seat merely holds — surfacing
+        those would show the human a King + Queen no one has played yet.
+        Marking, because under ``single`` three of the four announcements
+        a deal can carry are worth nothing, and a badge drawn for them
+        says the table is paying four bonuses.
+
+        The two agree once the last card is played: every held pair is
+        announced within the eight tricks, so they differ only mid-round.
+
+        Returns:
+            ``(holder, suit)`` pairs, ordered by first announcement.
+        """
+
+        scoring = set(self._scoring_belotes())
+        return tuple(key for key in self.belote_order if key in scoring)
+
+    @property
     def belote_counts_by_side(self) -> Dict[TeamSide, int]:
         """How many belotes each side marks this round.
 
