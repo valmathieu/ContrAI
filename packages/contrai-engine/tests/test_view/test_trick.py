@@ -9,6 +9,8 @@ playable-pill styling, and the per-play prompt texts.
 
 from __future__ import annotations
 
+from rich.console import Console
+
 from contrai_core import (
     Card,
     Play,
@@ -497,6 +499,113 @@ class TestPanelBeloteBadges:
         text = panel.renderable.plain
         assert "★ Belote ♣" in text
         assert "★ Belote ♥" in text
+
+
+def _rendered(panel) -> str:
+    """The panel as the terminal actually draws it, crop included.
+
+    A panel's ``renderable`` always holds the full text; a fixed
+    ``height`` discards the overflow only at print time. So the crop is
+    only observable through a real ``Console``.
+    """
+    console = Console(width=60, force_terminal=False, no_color=True)
+    with console.capture() as capture:
+        console.print(panel)
+    return capture.get()
+
+
+class TestDiamondPanelHeight:
+    """The panels grow a row per belote badge row instead of cropping.
+
+    Both trick panels used to be pinned at ``height=8``, which fits the
+    diamond plus exactly *one* badge row. The all-trump ``four`` regime
+    can badge three rows (N, the shared W/E row, and S), and every row
+    past the first silently pushed the ``Won: …`` / ``→ …`` footer out of
+    the panel.
+    """
+
+    @staticmethod
+    def _round(four_players, announced):
+        north, *_ = four_players
+        contract = _StubContract(100, TrumpVariant.ALL_TRUMP, player=north)
+        return _StubRound(contract=contract, announced_belotes=announced)
+
+    @staticmethod
+    def _three_badge_rows(four_players):
+        north, east, south, west = four_players
+        return (
+            (north, Suit.CLUBS), (north, Suit.DIAMONDS),
+            (west, Suit.HEARTS), (east, Suit.SPADES),
+            (south, Suit.HEARTS),
+        )
+
+    def test_no_badges_keeps_the_established_height(self, four_players):
+        north, *_ = four_players
+        round_ = self._round(four_players, ())
+        panel = _panel_current_trick(
+            round_, (), "playing", north, None, trick_index=1
+        )
+        assert panel.height == 8
+
+    def test_current_trick_footer_survives_three_badge_rows(
+        self, four_players
+    ):
+        north, _east, south, _west = four_players
+        round_ = self._round(four_players, self._three_badge_rows(four_players))
+        panel = _panel_current_trick(
+            round_, (), "playing", south, None, trick_index=1
+        )
+        assert "→ South's turn" in _rendered(panel)
+
+    def test_current_trick_keeps_every_badge_row(self, four_players):
+        north, _east, south, _west = four_players
+        round_ = self._round(four_players, self._three_badge_rows(four_players))
+        panel = _panel_current_trick(
+            round_, (), "playing", south, None, trick_index=1
+        )
+        text = _rendered(panel)
+        assert "★ Belote ×2 (♣♦)" in text     # N row
+        assert "★ Belote ♥" in text           # W on the shared row
+        assert "★ Belote ♠" in text           # E on the shared row
+
+    def test_last_trick_footer_survives_three_badge_rows(self, four_players):
+        north, *_ = four_players
+        round_ = self._round(four_players, self._three_badge_rows(four_players))
+        plays = (Play(north, Card(Suit.SPADES, Rank.ACE)),)
+        panel = _panel_last_trick(round_, (plays, north), trick_index=4)
+        assert "Won: N" in _rendered(panel)
+
+    def test_the_two_panels_stay_flush(self, four_players):
+        """Side by side in the grid, so they must agree on height."""
+
+        north, _east, south, _west = four_players
+        round_ = self._round(four_players, self._three_badge_rows(four_players))
+        plays = (Play(north, Card(Suit.SPADES, Rank.ACE)),)
+        current = _panel_current_trick(
+            round_, (), "playing", south, None, trick_index=4
+        )
+        last = _panel_last_trick(round_, (plays, north), trick_index=4)
+        assert current.height == last.height
+
+    def test_the_placeholder_matches_the_grown_panel(self, four_players):
+        """Trick 1 badges before any trick has completed to echo."""
+
+        north, _east, south, _west = four_players
+        round_ = self._round(four_players, self._three_badge_rows(four_players))
+        current = _panel_current_trick(
+            round_, (), "playing", south, None, trick_index=1
+        )
+        assert _panel_last_trick(round_, None, trick_index=1).height == (
+            current.height
+        )
+
+    def test_bidding_phase_is_unaffected(self, four_players):
+        """No trick, no badges — the auction diamond keeps its height."""
+
+        north, *_ = four_players
+        round_ = self._round(four_players, self._three_badge_rows(four_players))
+        panel = _panel_current_trick(round_, None, "bidding", north, None)
+        assert panel.height == 8
 
 
 class TestPanelHand:

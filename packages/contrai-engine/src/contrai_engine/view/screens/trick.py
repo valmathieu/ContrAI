@@ -178,6 +178,39 @@ def _round_running_points(round_: Optional[Round]) -> tuple[int, int]:
     return points[TeamSide.NS], points[TeamSide.EW]
 
 
+def _diamond_panel_height(round_: Optional[Round]) -> int:
+    """Panel height fitting the trick diamond plus its belote badge rows.
+
+    The diamond is four lines — a leading blank, N, the shared W/E row,
+    S — and the panel adds a footer under it. ``8`` covers that plus
+    exactly *one* badge row, which is all a suit contract or the
+    all-trump ``single`` regime can ever produce. ``four`` can badge all
+    three rows, and every row past the first has to be paid for: a
+    ``Panel`` given a fixed ``height`` discards the overflow silently, so
+    the cost of guessing is the ``Won: …`` / ``→ …`` footer disappearing.
+
+    Both trick panels size themselves this way from the same round, so
+    they report the same height and stay flush side by side in the grid.
+
+    Args:
+        round_: The round being played, or ``None`` before one exists.
+
+    Returns:
+        The panel height, ``8`` through ``10``.
+    """
+    badges = _belote_by_position(round_)
+    rows = sum(
+        1
+        for row in (
+            (Position.NORTH,),
+            (Position.WEST, Position.EAST),
+            (Position.SOUTH,),
+        )
+        if any(badges.get(seat) for seat in row)
+    )
+    return 8 + max(0, rows - 1)
+
+
 def _panel_last_trick(
     round_: Optional[Round],
     last_completed_trick: Optional[tuple[Sequence[Play], BasePlayer]],
@@ -200,7 +233,7 @@ def _panel_last_trick(
             border_style=BORDER_DIM,
             box=ROUNDED,
             width=22,
-            height=8,
+            height=_diamond_panel_height(round_),
         )
     plays, winner = last_completed_trick
     trump = round_.contract.suit if round_ and round_.contract else None
@@ -230,7 +263,7 @@ def _panel_last_trick(
         border_style=BORDER_DIM,
         box=ROUNDED,
         width=22,
-        height=8,
+        height=_diamond_panel_height(round_),
     )
 
 
@@ -280,6 +313,8 @@ def _panel_current_trick(
             body.append(f"→ {current_player.position} to bid", style=DIM)
         return Panel(
             body,
+            # Fixed: the auction diamond carries no belote badges — no
+            # card has been played, so nothing can have been announced.
             title=Text("Bidding", style=f"bold {TITLE}"),
             border_style=BORDER,
             box=ROUNDED,
@@ -296,7 +331,7 @@ def _panel_current_trick(
             border_style=BORDER,
             box=ROUNDED,
             width=46,
-            height=8,
+            height=_diamond_panel_height(round_),
         )
 
     trump = round_.contract.suit if round_ and round_.contract else None
@@ -330,7 +365,7 @@ def _panel_current_trick(
         border_style=BORDER,
         box=ROUNDED,
         width=46,
-        height=8,
+        height=_diamond_panel_height(round_),
     )
 
 
