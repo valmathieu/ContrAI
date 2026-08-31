@@ -261,6 +261,7 @@ package "model/game.py" as p_game {
         + winner : TeamSide?
         + tied_teams : list<TeamSide>?
         + final_scores : dict<TeamSide, int>
+        + belote_gated : TeamSide? = None
     }
 
     Game ..> GameOverStatus : <<check_game_over>>
@@ -305,7 +306,12 @@ package "model/game.py" as p_game {
       ""game_over"" False and fills
       ""tied_teams"": sudden death,
       tiebreaker rounds until one team
-      leads. ""cli.py"" loops on
+      leads. ""belote_gated"" names the
+      leader the §8 gate is holding back,
+      so the recap can say why a side is
+      past the target and the game goes
+      on; clear on a win and on a tie.
+      ""cli.py"" loops on
       ""game_over"" and the end-game
       banner reads off the rest.
       Every team named here is a
@@ -548,7 +554,7 @@ package "view/ package" as p_view {
         + on_round_complete(round_, running_scores) : None
         ..  CLI flow screens ..
         + show_landing(selected: TableSetup?) : TableSetup
-        + show_round_recap(round_, running_scores, *, is_final=False) : None
+        + show_round_recap(round_, running_scores, *, is_final=False, is_tiebreaker=False, belote_gated=None) : None
         + show_end_game(status) : str <<'n' | 'r' | 'q'>>
         ..  setup sub-screens (private) ..
         - _show_preset_picker(current) : TableSetup

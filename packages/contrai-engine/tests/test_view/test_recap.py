@@ -1216,3 +1216,65 @@ class TestRoundRecapPanel:
         )
         assert "final score" in output
         assert "deal the next round" not in output
+
+    def test_recap_panel_shows_the_belote_gate_notice(self):
+        """``belote_gated`` names the side the §8 gate is holding back."""
+        view = RichView()
+        contract = self._StubContract(100, Suit.HEARTS, TeamSide.NS)
+        round_ = self._StubRound(
+            round_number=14,
+            contract=contract,
+            round_scores={TeamSide.NS: 20, TeamSide.EW: 0},
+        )
+        panel = _panel_round_recap(
+            round_, {TeamSide.NS: 2010, TeamSide.EW: 1200},
+            belote_gated=TeamSide.NS,
+        )
+        text = panel.renderable.plain
+        assert "N-S past the target on Belote alone" in text
+        assert "the game continues" in text
+
+    def test_recap_panel_omits_the_belote_gate_notice_by_default(self):
+        """A normal round recap carries no gate copy."""
+        view = RichView()
+        contract = self._StubContract(100, Suit.HEARTS, TeamSide.NS)
+        round_ = self._StubRound(
+            round_number=3,
+            contract=contract,
+            round_scores={TeamSide.NS: 162, TeamSide.EW: 0},
+        )
+        panel = _panel_round_recap(round_, {TeamSide.NS: 500, TeamSide.EW: 0})
+        assert "Belote alone" not in panel.renderable.plain
+
+    def test_show_round_recap_forwards_the_belote_gate(self):
+        """``show_round_recap`` hands ``belote_gated`` to the panel."""
+        view = RichView()
+        contract = self._StubContract(100, Suit.HEARTS, TeamSide.EW)
+        round_ = self._StubRound(
+            round_number=14,
+            contract=contract,
+            round_scores={TeamSide.NS: 0, TeamSide.EW: 20},
+        )
+        output = self._capture_recap_prompt(
+            view, round_, {TeamSide.NS: 1200, TeamSide.EW: 2010},
+            belote_gated=TeamSide.EW,
+        )
+        assert "E-W past the target on Belote alone" in output
+
+    def test_show_round_recap_gated_prompt_is_the_ordinary_one(self):
+        """The gate leaves the prompt alone — the next round is just the
+        next round, unlike a tiebreaker."""
+        view = RichView()
+        contract = self._StubContract(100, Suit.HEARTS, TeamSide.NS)
+        round_ = self._StubRound(
+            round_number=14,
+            contract=contract,
+            round_scores={TeamSide.NS: 20, TeamSide.EW: 0},
+        )
+        output = self._capture_recap_prompt(
+            view, round_, {TeamSide.NS: 2010, TeamSide.EW: 1200},
+            belote_gated=TeamSide.NS,
+        )
+        assert "deal the next round" in output
+        assert "tiebreaker" not in output
+        assert "final score" not in output

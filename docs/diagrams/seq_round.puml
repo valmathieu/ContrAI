@@ -171,7 +171,7 @@ note right of V
   ""history"" for the end-game
   scoreboard table.
 end note
-C -> V : show_round_recap(round_, scores,\n  is_final=status.game_over,\n  is_tiebreaker=status.tied_teams is not None)
+C -> V : show_round_recap(round_, scores,\n  is_final=status.game_over,\n  is_tiebreaker=status.tied_teams is not None,\n  belote_gated=status.belote_gated)
 activate V
 note right of V
   Full-screen recap panel:
@@ -186,6 +186,10 @@ note right of V
   level at/above the target) the panel
   announces sudden death and the
   prompt deals the tiebreaker round.
+  When ""belote_gated"" names a side,
+  the panel says it is past the target
+  on Belote alone and the game
+  continues; the prompt is unchanged.
 end note
 V --> C : (Enter pressed)
 deactivate V

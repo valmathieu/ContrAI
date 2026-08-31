@@ -48,12 +48,19 @@ class GameOverStatus:
             the sudden-death signal: the game continues with tiebreaker
             rounds until one team leads. ``None`` when no such tie exists.
         final_scores: Snapshot of every team's score at the moment of the check.
+        belote_gated: The leading side sitting at or above the target that
+            the §8 belote gate is holding back — the game continues, and
+            the recap says why. ``None`` whenever nobody is being held: a
+            win (the game is over, the signal would be noise), a tie
+            (sudden death is decided before the gate) and an ordinary
+            mid-game round all leave it clear.
     """
 
     game_over: bool
     winner: TeamSide | None
     tied_teams: list[TeamSide] | None
     final_scores: dict[TeamSide, int]
+    belote_gated: TeamSide | None = None
 
 class Game:
     """
@@ -341,14 +348,23 @@ class Game:
         the §8 belote gate (:meth:`_has_crossed`) can hold the leader back
         while a lower side has genuinely crossed, so the sides are walked
         highest-first and the win goes to the first one the gate accepts.
+        When it accepts none, the leader is named in ``belote_gated``:
+        without it the verdict would be byte-identical to an ordinary
+        mid-game round, and the player would watch a side sit past the
+        target while the game deals again with no explanation.
 
         Returns:
             GameOverStatus: Whether the game is over, the winner (always set
-                when over), any teams tied at/above the target, and a
-                snapshot of the final scores.
+                when over), any teams tied at/above the target, any side
+                the belote gate is holding back, and a snapshot of the
+                final scores.
         """
         target_score = self.rules.target_score
         max_score = max(self.scores.values())
+        # Names the side the §8 gate is holding back, once the walk below
+        # has found every contender blocked. Every other path leaves it
+        # clear, so the recap only speaks up when it has something to say.
+        belote_gated: TeamSide | None = None
 
         if max_score >= target_score:
             # Find the side(s) sharing the top score.
@@ -387,11 +403,16 @@ class Game:
                         final_scores=self.scores.copy(),
                     )
 
+            # Nobody passed. Name the leader — the side the player can see
+            # sitting past the target while the game deals again.
+            belote_gated = contenders[0]
+
         return GameOverStatus(
             game_over=False,
             winner=None,
             tied_teams=None,
             final_scores=self.scores.copy(),
+            belote_gated=belote_gated,
         )
 
     def _has_crossed(self, side: TeamSide, target_score: int) -> bool:

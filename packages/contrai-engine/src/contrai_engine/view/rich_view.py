@@ -461,6 +461,7 @@ class RichView:
         *,
         is_final: bool = False,
         is_tiebreaker: bool = False,
+        belote_gated: TeamSide | None = None,
     ) -> None:
         """Full-screen recap shown after each round; waits for Enter.
 
@@ -473,6 +474,10 @@ class RichView:
         scoreboard, not another deal. When ``is_tiebreaker`` is true
         (both teams level at/above the target) the panel carries a
         sudden-death notice and the prompt deals the tiebreaker round.
+        ``belote_gated`` names a side sitting past the target that the §8
+        belote gate is holding back; the panel says so, but the prompt is
+        left alone — unlike a tiebreaker, the next round here really is
+        just the next round.
         """
         self.console.clear()
         self.console.print(
@@ -481,6 +486,7 @@ class RichView:
                 running_scores,
                 self.target_score,
                 tiebreaker=is_tiebreaker,
+                belote_gated=belote_gated,
             )
         )
         if is_final:

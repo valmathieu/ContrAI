@@ -84,7 +84,7 @@ loop while True
         end note
 
         M -> G : status = check_game_over()
-        M -> V : show_round_recap(current_round, scores,\n              is_final=status.game_over,\n              is_tiebreaker=status.tied_teams is not None)
+        M -> V : show_round_recap(current_round, scores,\n              is_final=status.game_over,\n              is_tiebreaker=status.tied_teams is not None,\n              belote_gated=status.belote_gated)
         note right of V
           Between-round recap (contract, made/failed,
           per-team round points, running totals). Blocks
@@ -93,7 +93,10 @@ loop while True
           the end-game banner, not a fresh deal. When
           ""is_tiebreaker"" (teams level at/above the
           target) the panel announces sudden death and
-          the prompt deals the tiebreaker round.
+          the prompt deals the tiebreaker round. When
+          ""belote_gated"" names a side, the panel says
+          it is past the target on Belote alone and the
+          game continues — the prompt is left alone.
         end note
     end
 

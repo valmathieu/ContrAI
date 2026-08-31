@@ -366,6 +366,7 @@ class _RecordingView:
         *,
         is_final: bool = False,
         is_tiebreaker: bool = False,
+        belote_gated: TeamSide | None = None,
     ) -> None:
         self.events.append("show_round_recap")
         self.recaps.append(
@@ -374,6 +375,7 @@ class _RecordingView:
                 "scores": running_scores,
                 "is_final": is_final,
                 "is_tiebreaker": is_tiebreaker,
+                "belote_gated": belote_gated,
             }
         )
 
@@ -399,6 +401,7 @@ class _FakeGame:
         *,
         rounds_to_play: int = 1,
         tied_after: tuple[int, ...] = (),
+        belote_gated_after: tuple[int, ...] = (),
         raises: BaseException | None = None,
     ) -> None:
         self.rounds_to_play = rounds_to_play
@@ -407,6 +410,7 @@ class _FakeGame:
         self.scores = {TeamSide.NS: 0, TeamSide.EW: 0}
         self.targets_checked: list[int] = []
         self._tied_after = set(tied_after)
+        self._belote_gated_after = set(belote_gated_after)
         self._raises = raises
 
     rules: RuleConfig = RuleConfig()
@@ -421,11 +425,15 @@ class _FakeGame:
         # ``Game`` never reports it alongside ``game_over``. Mirror that
         # here rather than letting a test script an impossible verdict.
         tied = self.rounds_played in self._tied_after and not over
+        # Same invariant for the §8 belote gate: a side it holds back has
+        # not won, so the real ``Game`` never names one alongside a win.
+        gated = self.rounds_played in self._belote_gated_after and not over
         return GameOverStatus(
             game_over=over,
             winner=TeamSide.NS if over else None,
             tied_teams=[TeamSide.NS, TeamSide.EW] if tied else None,
             final_scores=dict(self.scores),
+            belote_gated=TeamSide.NS if gated else None,
         )
 
     def manage_round(self, view: _RecordingView) -> None:
@@ -627,23 +635,30 @@ class TestMain:
     def test_recap_flags_are_derived_from_check_game_over(
         self, install_cli_doubles
     ):
-        """``is_final``/``is_tiebreaker`` track the status of each round."""
+        """The three recap flags track the status of each round."""
 
         harness = install_cli_doubles(
-            games=[_FakeGame(rounds_to_play=2, tied_after=(1,))],
+            games=[_FakeGame(rounds_to_play=3, tied_after=(1,),
+                             belote_gated_after=(2,))],
             end_game_choices=["q"],
         )
 
         main()
 
         recaps = harness.view.recaps
-        assert len(recaps) == 2
+        assert len(recaps) == 3
         # Round 1 left the teams level at/above target: sudden death.
         assert recaps[0]["is_final"] is False
         assert recaps[0]["is_tiebreaker"] is True
-        # Round 2 clinched it.
-        assert recaps[1]["is_final"] is True
+        assert recaps[0]["belote_gated"] is None
+        # Round 2 put N-S past the target on belote the gate holds back.
+        assert recaps[1]["is_final"] is False
         assert recaps[1]["is_tiebreaker"] is False
+        assert recaps[1]["belote_gated"] is TeamSide.NS
+        # Round 3 clinched it.
+        assert recaps[2]["is_final"] is True
+        assert recaps[2]["is_tiebreaker"] is False
+        assert recaps[2]["belote_gated"] is None
 
     def test_each_round_repeats_the_manage_complete_recap_sequence(
         self, install_cli_doubles

@@ -46,6 +46,7 @@ def _panel_round_recap(
     target_score: int = DEFAULT_TARGET,
     *,
     tiebreaker: bool = False,
+    belote_gated: TeamSide | None = None,
 ) -> Panel:
     """Between-rounds recap panel — what just happened, in one read.
 
@@ -58,7 +59,9 @@ def _panel_round_recap(
     tally — belote only on a failed/doubled round), then the round-score
     total. A final Running line carries the game-level totals and the
     target. When ``tiebreaker`` is set (both teams level at/above the
-    target) a sudden-death notice closes the panel.
+    target) a sudden-death notice closes the panel; when ``belote_gated``
+    names a side, a notice says that side is past the target on Belote
+    the table's §8 option has not let it win on yet.
     """
     body = Text()
     body.append("\n")
@@ -132,6 +135,17 @@ def _panel_round_recap(
         body.append("\n\n")
         body.append(
             "  Scores level at the target — tiebreaker round follows",
+            style=f"bold {GOLD}",
+        )
+
+    if belote_gated is not None:
+        # §8, gate off: the side is past the target on Belote points
+        # play has not confirmed, so the scoreboard reading past the
+        # target is not a win yet. Say so, or the game just deals again.
+        body.append("\n\n")
+        body.append(
+            f"  {_team_abbr(belote_gated)} past the target on Belote alone"
+            " — the game continues",
             style=f"bold {GOLD}",
         )
 

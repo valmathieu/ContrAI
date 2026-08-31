@@ -557,6 +557,9 @@ class TestWinOnBelotePointsAlone:
         assert status.game_over is False
         assert status.winner is None
         assert status.tied_teams is None
+        # The verdict would otherwise be indistinguishable from an
+        # ordinary mid-game round, and the recap could say nothing.
+        assert status.belote_gated is TeamSide.NS
 
     def test_off_points_from_play_confirm_the_win(self, players):
         # The same lead, but nothing about it is still unconfirmed.
@@ -769,6 +772,35 @@ class TestWinOnBelotePointsAlone:
         assert status.game_over is False
         assert status.winner is None
         assert status.tied_teams is None
+        # The leader is the side named: it is the one the player sees
+        # sitting past the target while the game deals again.
+        assert status.belote_gated is TeamSide.NS
+
+    def test_the_signal_is_clear_when_nobody_is_gated(self, players):
+        game = self._game(players,
+                          rules=RuleConfig(win_on_belote_points_alone=False),
+                          scores={TeamSide.NS: 900, TeamSide.EW: 700})
+        assert game.check_game_over().belote_gated is None
+
+    def test_a_tie_does_not_set_the_belote_signal(self, players):
+        # Sudden death is decided before the gate is ever consulted.
+        game = self._game(players,
+                          rules=RuleConfig(win_on_belote_points_alone=False),
+                          scores={TeamSide.NS: 2010, TeamSide.EW: 2010},
+                          unconfirmed_belote={TeamSide.NS: 20,
+                                              TeamSide.EW: 20})
+        assert game.check_game_over().belote_gated is None
+
+    def test_a_win_clears_the_belote_signal(self, players):
+        # N-S are gated but E-W take the game: the signal would be noise
+        # on a verdict that is already over.
+        game = self._game(players,
+                          rules=RuleConfig(win_on_belote_points_alone=False),
+                          scores={TeamSide.NS: 2010, TeamSide.EW: 2005},
+                          unconfirmed_belote={TeamSide.NS: 20})
+        status = game.check_game_over()
+        assert status.winner is TeamSide.EW
+        assert status.belote_gated is None
 
 
 def test_next_dealer_picks_random_when_none(game, monkeypatch):
