@@ -598,7 +598,7 @@ class Round:
                 if kind is not None and view is not None and hasattr(
                     view, 'on_belote_announced'
                 ):
-                    view.on_belote_announced(player, kind, self)
+                    view.on_belote_announced(player, kind, card.suit, self)
 
         # Who won is a pure rule of the trick given trump, and the play
         # state has already applied it — the winner of the trick just

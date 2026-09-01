@@ -29,6 +29,7 @@ from contrai_core import (
     RuleConfig,
     Suit,
     TeamSide,
+    TrumpVariant,
     TurnDirection,
 )
 from contrai_core.bid import ContractBid, DoubleBid, PassBid
@@ -532,7 +533,7 @@ class TestBeloteAnnouncement:
         view = self._make_view(monkeypatch)
         north, *_ = four_players
         round_ = self._StubRound(self._StubContract(Suit.HEARTS), {north: "belote"})
-        view.on_belote_announced(north, "belote", round_)
+        view.on_belote_announced(north, "belote", Suit.HEARTS, round_)
         line = view.event_log[-1].plain
         assert "Belote" in line
         assert "Rebelote" not in line
@@ -542,8 +543,26 @@ class TestBeloteAnnouncement:
         north, *_ = four_players
         round_ = self._StubRound(self._StubContract(Suit.HEARTS),
                                  {north: "rebelote"})
-        view.on_belote_announced(north, "rebelote", round_)
+        view.on_belote_announced(north, "rebelote", Suit.HEARTS, round_)
         assert "Rebelote" in view.event_log[-1].plain
+
+    def test_on_belote_announced_names_the_pairs_own_suit(
+        self, monkeypatch, four_players
+    ):
+        """All trump's contract glyph is the string "AT", not a suit.
+
+        Logging it left four different pairs narrating identically; the
+        pair's own suit is what tells them apart.
+        """
+        view = self._make_view(monkeypatch)
+        north, *_ = four_players
+        round_ = self._StubRound(
+            self._StubContract(TrumpVariant.ALL_TRUMP), {north: "belote"}
+        )
+        view.on_belote_announced(north, "belote", Suit.CLUBS, round_)
+        line = view.event_log[-1].plain
+        assert "♣" in line
+        assert "AT" not in line
 
     def test_on_belote_announced_sleeps(self, monkeypatch, four_players):
         """Announcement uses the AI card delay so it lands visibly."""
@@ -556,7 +575,7 @@ class TestBeloteAnnouncement:
         north, *_ = four_players
         view = RichView()
         round_ = self._StubRound(self._StubContract(Suit.HEARTS), {})
-        view.on_belote_announced(north, "belote", round_)
+        view.on_belote_announced(north, "belote", Suit.HEARTS, round_)
         assert sleep_calls == [0.01]
 
     def test_diamond_renders_belote_badge_for_announcer(

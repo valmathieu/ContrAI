@@ -37,6 +37,7 @@ from contrai_core import (
     Card,
     Contract,
     Play,
+    Suit,
     TeamSide,
     rules_for,
 )
@@ -427,15 +428,28 @@ class RichView:
         self._pause("CONTRAI_AI_CARD_DELAY", 0.9)
 
     def on_belote_announced(
-        self, player: BasePlayer, kind: str, round_: "Round"
+        self, player: BasePlayer, kind: str, suit: Suit, round_: "Round"
     ) -> None:
         """Belote / rebelote announcement: log + brief pause.
 
         The persistent ★ badge under the player's seat is rendered by
-        ``_render_diamond`` from ``round_.belote_state``, so this hook
-        only needs to record the moment and pace it visibly. The pause
-        uses the card delay so it fits the per-play rhythm."""
-        trump = round_.contract.suit if round_ and round_.contract else None
+        ``_render_diamond`` from ``round_.announced_belotes``, so this
+        hook only needs to record the moment and pace it visibly. The
+        pause uses the card delay so it fits the per-play rhythm.
+
+        The line names the *pair's* suit, not the contract's: at all
+        trump the contract suit is ``ALL_TRUMP``, whose glyph is the
+        string ``AT``, so all four pairs a deal can hold would otherwise
+        narrate identically. Under ``single`` the later announcements are
+        still logged — a seat really does say it at the table — they just
+        carry no badge, because they mark nothing.
+
+        Args:
+            player: The seat announcing.
+            kind: ``"belote"`` or ``"rebelote"``.
+            suit: The suit of the King + Queen pair being announced.
+            round_: The round in progress.
+        """
         line = Text()
         label = _position_short(player.position)
         color = _position_color(player.position)
@@ -445,12 +459,9 @@ class RichView:
             "Belote" if kind == "belote" else "Rebelote",
             style=f"bold {GOLD}",
         )
-        if trump is not None:
-            line.append(" (", style=DIM)
-            line.append(_suit_glyph(trump), style=_suit_color(trump))
-            line.append(").", style=DIM)
-        else:
-            line.append(".", style=DIM)
+        line.append(" (", style=DIM)
+        line.append(_suit_glyph(suit), style=_suit_color(suit))
+        line.append(").", style=DIM)
         self._log(line)
         self._pause("CONTRAI_AI_CARD_DELAY", 0.9)
 

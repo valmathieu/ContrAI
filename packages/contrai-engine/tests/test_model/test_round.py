@@ -928,6 +928,54 @@ class TestAnnouncedBelotes:
         assert round_.announced_belotes == ()
 
 
+class TestBeloteAnnouncementHook:
+    """``view.on_belote_announced`` is told which pair announced.
+
+    The contract's own glyph cannot say it: at all trump the contract
+    suit is ``ALL_TRUMP``, which renders as the string ``AT``, so four
+    different pairs would narrate identically.
+    """
+
+    class _RecordingView:
+        def __init__(self):
+            self.announcements = []
+
+        def on_belote_announced(self, player, kind, suit, round_):
+            self.announcements.append((player, kind, suit))
+
+    def test_the_pair_suit_reaches_the_view(self, players):
+        # All trump, so the contract's own suit is ALL_TRUMP and cannot
+        # name the pair. N holds K♣ + Q♣ and leads the King.
+        cards = {
+            "N": Card(Suit.CLUBS, Rank.KING),
+            "E": Card(Suit.CLUBS, Rank.SEVEN),
+            "S": Card(Suit.CLUBS, Rank.EIGHT),
+            "W": Card(Suit.CLUBS, Rank.NINE),
+        }
+        round_ = _make_round(
+            players,
+            {
+                "N": [cards["N"], Card(Suit.CLUBS, Rank.QUEEN)],
+                "E": [cards["E"]],
+                "S": [cards["S"]],
+                "W": [cards["W"]],
+            },
+            contract=_contract(players["N"], 100, TrumpVariant.ALL_TRUMP),
+            deck=_StubDeck(),
+            rules=RuleConfig(extended_trump_choices=True),
+        )
+        round_._detect_belote_pairs()
+        for seat in ("N", "E", "S", "W"):
+            players[seat].choose_card = (
+                lambda observation, _c=cards[seat]: _card_choice(_c)
+            )
+        view = self._RecordingView()
+        round_.play_trick(view=view)
+        assert view.announcements == [
+            (players["N"], "belote", Suit.CLUBS)
+        ]
+
+
 # ---------------------------------------------------------------------------
 # Auto-pass when partner has doubled / redoubled (end-to-end)
 # ---------------------------------------------------------------------------

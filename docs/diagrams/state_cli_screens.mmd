@@ -11,7 +11,7 @@ stateDiagram-v2
     FileLoader : <b>0b. Setup file</b><br/>path to a TOML setup document<br/>a bad path re-prompts inline · [Enter] cancels
     KnobEditor : <b>0c. Table rules</b><br/>one numbered grid per §9 subsection<br/>[1-n] cycles a knob · [n] / [b] walk the sections<br/>an impossible table is refused inline
     Bidding : <b>1. Bidding</b><br/>request_bid_action(player, history)<br/>"80 h" / "pass" / "double" / "redouble"<br/>(hint adapts to '(pass / redouble)'<br/>when contractor was just doubled)
-    MidTrick : <b>2. Mid-trick</b><br/>request_card_action(player, trick, contract, playable)<br/>diamond + live-winner gold pill<br/>★ Belote badge under holder (Belote/Rebelote in log)
+    MidTrick : <b>2. Mid-trick</b><br/>request_card_action(player, trick, contract, playable)<br/>diamond + live-winner gold pill<br/>★ Belote badge under holder, naming its suit at all trump (Belote/Rebelote in log)
     TrickWon : <b>3. Trick won</b><br/>on_trick_complete(trick, winner, round)<br/>"Press [Enter] to continue…"
     RoundRecap : <b>4. Round recap</b><br/>show_round_recap(round, scores, is_final, is_tiebreaker, belote_gated)<br/>contract (doubled/redoubled verbose) · trump · made/failed<br/>Outcome: tricks won · round points<br/>Scoring: contract · tricks · last trick · belote · round score<br/>running totals · target<br/>gold notice when belote_gated: "past the target on Belote alone"<br/>"Press [Enter] to deal next round…"<br/>(or "…to see the final score…" when is_final,<br/>"…to deal the tiebreaker round…" when is_tiebreaker;<br/>belote_gated leaves the prompt alone)
     EndGame : <b>5. End game</b><br/>show_end_game(status)<br/>[n] new · [r] rematch · [q] quit

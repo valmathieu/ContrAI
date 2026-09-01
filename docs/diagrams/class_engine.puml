@@ -477,7 +477,7 @@ package "model/round/ package" as p_round {
         (once, immediately after the final
         Contract is built)
       * ""view.on_card_played(player, card, plays)""
-      * ""view.on_belote_announced(player, kind, self)""
+      * ""view.on_belote_announced(player, kind, card.suit, self)""
       * ""view.on_trick_complete(plays, winner, self)""
       ""Game.manage_round"" additionally fires
       ""view.on_round_dealt(round_)"" after the deal
@@ -559,7 +559,7 @@ package "view/ package" as p_view {
         + on_bid_made(player, bid, history) : None
         + on_contract_established(round_) : None
         + on_card_played(player, card, plays) : None
-        + on_belote_announced(player, kind, round_) : None
+        + on_belote_announced(player, kind, suit, round_) : None
         + on_trick_complete(plays, winner, round_) : None
         + on_round_complete(round_, running_scores) : None
         ..  CLI flow screens ..
