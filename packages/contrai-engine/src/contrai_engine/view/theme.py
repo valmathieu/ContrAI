@@ -96,7 +96,7 @@ SUIT_ALIASES = {
 
 # Contract-trump glyphs. The four card suits get their Unicode pip; the
 # two variants get a two-letter tag rather than falling through to the
-# enum value ("NoTrump", 7 cells), which overflows the 11-cell bid column
+# enum value ("No Trump", 8 cells), which overflows the 11-cell bid column
 # of the bidding history.
 TRUMP_GLYPH: dict[ContractSuit, str] = {
     Suit.SPADES: "♠",
