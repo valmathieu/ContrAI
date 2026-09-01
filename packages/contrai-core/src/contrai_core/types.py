@@ -70,11 +70,15 @@ class TrumpVariant(Enum):
     them in the auction is a separate, ruleset-level question.
     """
 
-    NO_TRUMP = "NoTrump"
-    ALL_TRUMP = "AllTrump"
+    # Two words, spaced: the value *is* the display name (see __str__),
+    # and every place a trump is spelled out rather than glyphed — the
+    # AI's bidding rationale, the debug log's "contract fixed" line —
+    # reads it verbatim. Camel-cased, it rendered "90 NoTrump by West".
+    NO_TRUMP = "No Trump"
+    ALL_TRUMP = "All Trump"
 
     def __str__(self) -> str:
-        """Render as the plain display name, e.g. ``"NoTrump"``.
+        """Render as the plain display name, e.g. ``"No Trump"``.
 
         Same reason as :meth:`Suit.__str__`: a contract embeds its trump
         directly in text, and these members flow through the very same

@@ -317,7 +317,7 @@ class TestBidLabel:
         # seat letter, a space, then the bid label — and pads the rest to
         # keep the seats in vertical lanes, so the cell must stay under 11
         # for the lanes to hold. "S 240 NT" is 8. Falling back to the enum
-        # value ("NoTrump", 7 cells) makes it "S 240 NoTrump", 13, and the
+        # value ("No Trump", 8 cells) makes it "S 240 No Trump", 14, and the
         # column overflows.
         north, *_ = four_players
         label = _bid_label(ContractBid(north, 240, variant)).plain

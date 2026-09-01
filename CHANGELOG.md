@@ -64,6 +64,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) The recap's Outcome table credits a belote to the side that *held* it, so a transfer to the defense no longer rewrites the play tally.
 - (core) The over-trump obligation ranks candidates with `trick_rank`, so an off-suit discard can no longer raise the bar at all trump.
 - (engine) A no-trump contract renders as `NT` / `No Trump` instead of `NoTrump No Trump`, and its bid cell no longer overflows the history column.
+- (core) `TrumpVariant` spells out `No Trump` / `All Trump`, so AI rationale and debug lines no longer read `NoTrump`.
 - (engine) The trick panels grow to fit their belote badges, so a second badge row no longer crops the `Won: …` / `→ …` footer.
 - (engine) **BREAKING:** `view.on_belote_announced(player, kind, suit, round_)` takes the announced pair's suit, so the log names it instead of all trump's `AT`.
 
