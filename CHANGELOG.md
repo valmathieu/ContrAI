@@ -8,6 +8,10 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-01
+
+Configurable-table release: the rules of the table become data — a `RuleConfig` of the 22 §9 knobs threaded from the auction through play to the score sheet. All trump joins no trump as a playable regime, a round mark decomposes into made and announced points, seven flow-and-play conventions become switchable, the landing screen edits and remembers the whole setup, and the expert AI bids, plays and doubles under whichever table it sits at — returning a rationale with every decision.
+
 ### Added
 
 - (core) `RuleConfig` — frozen dataclass of the 22 table-rule knobs of §9 with its three enums, the `classic` preset and `InvalidRuleConfigError`. No knob changes behaviour yet. See [core docs](docs/core/index.md).
@@ -38,7 +42,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (core) `PlayObservation.rules` — the seat's view carries the table ruleset, which is public information. See [core docs](docs/core/index.md).
 - (engine) `contrai --debug` shows why each AI played what it played — rule, detail and the table knobs it cited, in play order. See [engine docs](docs/engine/index.md).
 - (engine) The expert AI's doubling consults the table's Slam switches and its failure convention. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
-- (engine) The expert AI bids no trump and all trump off a shared honours table — masters plus their complements — capped at each mode's ladder top. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
+- (engine) The expert AI bids no trump and all trump off a shared honours table, capped at each mode's ladder top. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
 - (engine) The round recap says when a side is past the target but held back by the Belote gate. See [engine docs](docs/engine/index.md).
 - (engine) `Round.announced_belotes` — the trick diamond badges only belotes that mark, naming their suit under all trump (`★ Belote ×2 (♣♦)`). See [engine docs](docs/engine/index.md).
 
@@ -57,7 +61,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 ### Fixed
 
-- (engine) The expert AI plays no trump and all trump correctly — it no longer treats spades as "the trump suit" nor cashes an ace that a Jack beats. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
+- (engine) The expert AI plays no trump and all trump correctly — it no longer treats spades as trump nor cashes an ace a Jack beats. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
 - (engine) `_estimate_tricks` reads each mode's own ladder, so four aces no longer estimate a sweep at all trump.
 - (engine) The expert AI no longer doubles every Slam regardless of its hand — a Slam is judged on whether the defense expects a trick.
 - (engine) The expert AI no longer burns a trump when the under-trump exemption leaves it a plain card to discard.
@@ -162,7 +166,8 @@ First playable release: a complete CLI Contrée engine backed by a shared domain
 - (analyzer) Streamlit opening-hand strength dashboard built on the suit-agnostic `SuitSlot` abstraction — hypergeometric distribution plots and a bidding truth-table.
 - (scraper) Playwright spectator-mode scraper v1 for `app.belote-rebelote.fr`: login, Online → Spectator → Contree → Tournament navigation, seat identification, and `#tour` round polling.
 
-[Unreleased]: https://github.com/valmathieu/ContrAI/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/valmathieu/ContrAI/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/valmathieu/ContrAI/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/valmathieu/ContrAI/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/valmathieu/ContrAI/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/valmathieu/ContrAI/releases/tag/v0.1.0
