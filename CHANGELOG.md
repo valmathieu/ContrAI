@@ -36,7 +36,7 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 - (engine) `[k]` on the setup screen cycles any of the 22 §9 knobs, grouped by subsection; an impossible table is refused inline.
 - (engine) The setup a run leaves the landing screen with is remembered and offered back as `last used`. See [engine docs](docs/engine/index.md).
 - (core) `PlayObservation.rules` — the seat's view carries the table ruleset, which is public information. See [core docs](docs/core/index.md).
-- (engine) `contrai --debug` shows why each AI played what it played — rule, detail and the table knobs it cited. See [engine docs](docs/engine/index.md).
+- (engine) `contrai --debug` shows why each AI played what it played — rule, detail and the table knobs it cited, in play order. See [engine docs](docs/engine/index.md).
 - (engine) The expert AI's doubling consults the table's Slam switches and its failure convention. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
 - (engine) The expert AI bids no trump and all trump off a shared honours table — masters plus their complements — capped at each mode's ladder top. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
 - (engine) The round recap says when a side is past the target but held back by the Belote gate. See [engine docs](docs/engine/index.md).

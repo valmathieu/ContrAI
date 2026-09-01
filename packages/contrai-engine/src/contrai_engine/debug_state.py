@@ -235,15 +235,22 @@ def last_decisions(round_, limit: int = 4) -> list[dict]:
     reasoning is not the engine's to record — and that seat simply has no
     entry here.
 
+    Entries come out in **play order**: the bidding first, then the
+    cards, each in the order they happened. A reader following the strip
+    frame by frame sees a new decision appear *below* the ones already
+    there, the way a log grows, instead of the previous explanation
+    being pushed down by the newest one.
+
     Args:
         round_: The round whose ``card_decisions`` / ``bid_decisions``
             to project. ``None``, or any object without those lists,
             projects an empty list rather than raising: the debug strip
             renders during frames where no round exists yet.
-        limit: How many entries to keep, newest first.
+        limit: How many entries to keep. It is the *newest* ``limit``
+            that survive the trim — only their order is chronological.
 
     Returns:
-        Up to ``limit`` entries, card plays before bids and newest first
+        Up to ``limit`` entries, bids before card plays and oldest first
         within each, each holding:
 
         - ``kind`` — ``"card"`` or ``"bid"``;
@@ -258,15 +265,21 @@ def last_decisions(round_, limit: int = 4) -> list[dict]:
     cards = list(getattr(round_, "card_decisions", ()) or ())
     bids = list(getattr(round_, "bid_decisions", ()) or ())
 
+    # Bidding always precedes play within a round, so concatenating the
+    # two lists in their natural (append) order *is* chronological order.
     entries: list[dict] = [
-        _decision_entry("card", _card_label(decision.card), decision.rationale)
-        for decision in reversed(cards)
+        _decision_entry("bid", str(decision.bid), decision.rationale)
+        for decision in bids
     ]
     entries.extend(
-        _decision_entry("bid", str(decision.bid), decision.rationale)
-        for decision in reversed(bids)
+        _decision_entry("card", _card_label(decision.card), decision.rationale)
+        for decision in cards
     )
-    return entries[:limit]
+    if limit <= 0:
+        # ``entries[-0:]`` is the whole list, not an empty one — spell
+        # the empty case out rather than let the slice invert it.
+        return []
+    return entries[-limit:]
 
 
 def _decision_entry(kind: str, action: str, rationale) -> dict:

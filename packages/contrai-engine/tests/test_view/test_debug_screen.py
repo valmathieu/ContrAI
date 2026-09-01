@@ -221,7 +221,8 @@ class TestPanelAiRationale:
         assert "under_trump_exemption = True" in body
         assert "discarded instead of under-trumping" in body
 
-    def test_several_decisions_render_newest_first(self):
+    def test_several_decisions_render_oldest_first(self):
+        """The newest block prints below the ones already explained."""
         panel = _panel_ai_rationale(
             self._Round([
                 self._decision(rule="first", detail="a."),
@@ -229,7 +230,22 @@ class TestPanelAiRationale:
             ])
         )
         body = panel.renderable.plain
-        assert body.index("second") < body.index("first")
+        assert body.index("first") < body.index("second")
+
+    def test_a_bid_renders_above_the_cards_it_preceded(self):
+        panel = _panel_ai_rationale(
+            self._Round(
+                [self._decision(rule="pull trump")],
+                bid_decisions=[
+                    BidDecision(
+                        PassBid(None),
+                        Rationale("no contract in hand", "nothing to bid."),
+                    )
+                ],
+            )
+        )
+        body = panel.renderable.plain
+        assert body.index("no contract in hand") < body.index("pull trump")
 
     def test_a_bid_decision_renders_too(self):
         panel = _panel_ai_rationale(

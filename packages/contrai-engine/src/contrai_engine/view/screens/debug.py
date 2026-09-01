@@ -166,7 +166,8 @@ def _panel_debug_hands(
 def _panel_ai_rationale(round_) -> Panel:
     """The debug strip's rationale panel: why each AI seat acted.
 
-    One block per recent AI decision — newest first — reading the
+    One block per recent AI decision — oldest first, so the newest is
+    printed *below* the explanations already on screen — reading the
     Rich-free projection in
     :func:`~contrai_engine.debug_state.last_decisions`. Each shows what
     was played or bid, the rule that fired, the sentence explaining it,

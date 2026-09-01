@@ -324,23 +324,24 @@ class TestLastDecisions:
                 assert set(citation) == {"knob", "value", "effect"}
                 assert all(isinstance(v, str) for v in citation.values())
 
-    def test_newest_first(self):
+    def test_oldest_first(self):
+        """Play order, so a new decision lands below the previous ones."""
         entries = last_decisions(self._round())
-        assert entries[0]["rule"] == "concede cheaply"
-        assert entries[1]["rule"] == "open on trump"
+        assert entries[-2]["rule"] == "open on trump"
+        assert entries[-1]["rule"] == "concede cheaply"
 
     def test_card_decisions_carry_their_card_label(self):
         entries = last_decisions(self._round())
-        assert entries[1]["action"] == "J♠"
+        assert entries[-2]["action"] == "J♠"
 
-    def test_bid_decisions_are_included_after_the_cards(self):
+    def test_bid_decisions_are_included_before_the_cards(self):
         entries = last_decisions(self._round())
-        assert entries[-1]["rule"] == "no contract in hand"
-        assert entries[-1]["kind"] == "bid"
+        assert entries[0]["rule"] == "no contract in hand"
+        assert entries[0]["kind"] == "bid"
 
     def test_citations_survive_as_plain_dicts(self):
         entries = last_decisions(self._round())
-        assert entries[0]["citations"] == [
+        assert entries[-1]["citations"] == [
             {
                 "knob": "under_trump_exemption",
                 "value": "True",
@@ -349,9 +350,21 @@ class TestLastDecisions:
         ]
 
     def test_the_limit_keeps_only_the_newest(self):
+        """The trim drops the oldest; the survivors stay in play order."""
         entries = last_decisions(self._round(), limit=1)
         assert len(entries) == 1
         assert entries[0]["rule"] == "concede cheaply"
+
+    def test_the_limit_keeps_the_newest_in_play_order(self):
+        entries = last_decisions(self._round(), limit=2)
+        assert [entry["rule"] for entry in entries] == [
+            "open on trump",
+            "concede cheaply",
+        ]
+
+    def test_a_zero_limit_keeps_nothing(self):
+        """``entries[-0:]`` would be the whole list — guard against it."""
+        assert last_decisions(self._round(), limit=0) == []
 
     def test_a_round_with_no_ai_decisions_projects_nothing(self):
         """A table of humans records no reasoning, so there is none to show."""
