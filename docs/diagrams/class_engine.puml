@@ -35,8 +35,11 @@ enum TeamSide   <<from contrai-core>> #E1F0FF
 class Team      <<from contrai-core>> #E1F0FF
 class Deck      <<from contrai-core>> #E1F0FF
 class Contract  <<from contrai-core>> #E1F0FF
-class Auction   <<from contrai-core>> #E1F0FF
+class Auction   <<from contrai-core>> #E1F0FF {
+    + rules : RuleConfig
+}
 class PlayState <<from contrai-core>> #E1F0FF
+class RuleConfig <<from contrai-core>> #E1F0FF
 enum Suit       <<from contrai-core>> #E1F0FF
 class "ContractSuit" as p_contractsuit <<from contrai-core>> #E1F0FF
 
@@ -49,8 +52,8 @@ package "model/player/ (subpackage)" as p_player {
     abstract class Player <<abstract>> {
         + is_human : bool <<property>>
         --
-        + {abstract} choose_bid(auction: Auction) : Bid?
-        + {abstract} choose_card(observation: PlayObservation) : Card?
+        + {abstract} choose_bid(auction: Auction) : BidDecision?
+        + {abstract} choose_card(observation: PlayObservation) : CardDecision?
     }
 
     class HumanPlayer {
@@ -64,8 +67,8 @@ package "model/player/ (subpackage)" as p_player {
         + cardplay : CardPlayStrategy
         --
         + __init__(name, position: Position, bidding=…, cardplay=…)
-        + choose_bid(auction) : Bid       <<delegates>>
-        + choose_card(observation) : Card  <<delegates>>
+        + choose_bid(auction) : BidDecision   <<delegates>>
+        + choose_card(observation) : CardDecision <<delegates>>
     }
 
     ' --- strategy.py: shared player access + abstract interfaces ---
@@ -79,11 +82,53 @@ package "model/player/ (subpackage)" as p_player {
     }
 
     abstract class BiddingStrategy <<abstract>> {
-        + {abstract} choose_bid(auction: Auction) : Bid
+        + {abstract} choose_bid(auction: Auction) : BidDecision
     }
     abstract class CardPlayStrategy <<abstract>> {
-        + {abstract} choose_card(observation: PlayObservation) : Card
+        + {abstract} choose_card(observation: PlayObservation) : CardDecision
     }
+
+    ' --- rationale.py: the explainability channel ---
+    class RuleCitation <<frozen dataclass>> #FFF3D9 {
+        + knob : str
+        + value : str
+        + effect : str
+    }
+    class Rationale <<frozen dataclass>> #FFF3D9 {
+        + rule : str
+        + detail : str
+        + considered : tuple<str> = ()
+        + citations : tuple<RuleCitation> = ()
+    }
+    class BidDecision <<frozen dataclass>> #FFF3D9 {
+        + bid : Bid
+        + rationale : Rationale
+    }
+    class CardDecision <<frozen dataclass>> #FFF3D9 {
+        + card : Card
+        + rationale : Rationale
+    }
+
+    note bottom of Rationale
+      The trace rides the **return type**, not a
+      side-channel attribute on the strategy: a
+      strategy evaluated off the live turn order
+      — a search rolling out a hypothetical
+      world, a harness scoring one policy
+      against another — would overwrite an
+      attribute before anyone read it.
+      The rungs above the expert rules need the
+      same channel for a different payload: an
+      MCTS level explains itself with visit
+      counts and a principal variation, a
+      learned policy with top-k probabilities.
+      Both fit ""considered"" / ""citations""
+      without a second seam (CLAUDE.md §6.1).
+      ""RuleCitation"" names the ""RuleConfig"" knob
+      that decided something //here// — e.g.
+      ""under~_trump~_exemption"" = True,
+      //discarded instead of under-trumping//.
+    end note
 
     ' --- rule_based/ : the first concrete level (expert) ---
     class RuleBasedBiddingStrategy {
@@ -92,12 +137,14 @@ package "model/player/ (subpackage)" as p_player {
         + {static} SLAM_NUMERIC : int
         + {static} SOLO_SLAM_NUMERIC : int
         --
-        + choose_bid(auction) : Bid
-        - _choose_under_double(auction) : Bid
-        - _choose_open_bid(auction) : Bid
+        + choose_bid(auction) : BidDecision
+        - _decide(bid, rule, detail, …) : BidDecision
+        - _choose_under_double(auction) : BidDecision
+        - _choose_open_bid(auction) : BidDecision
     }
     class RuleBasedCardPlayStrategy {
-        + choose_card(observation) : Card
+        + choose_card(observation) : CardDecision
+        - _decide(card, rule, detail, …) : CardDecision
         - _derive_tracking(observation) : (fallen, voids)
         - _is_master_card(card, trump_suit, fallen) : bool
     }
@@ -195,13 +242,18 @@ package "model/game.py" as p_game {
         + current_round : Round?
         + round_number : int
         + scores : dict<TeamSide, int>
+        + unconfirmed_belote : dict<TeamSide, int>
+        + rules : RuleConfig
         --
-        + __init__(players: list<Player>)
+        + __init__(players: list<Player>, rules=None)
         + start_new_round() : None
         + manage_round(view=None) : None
-        + check_game_over(target_score=1500) : GameOverStatus
+        + check_game_over() : GameOverStatus
         + next_dealer() : None
         + set_players_order() : None
+        --
+        - _has_crossed(side, target_score) : bool
+        - _track_unconfirmed_belote() : None
     }
 
     class GameOverStatus <<frozen dataclass>> {
@@ -209,6 +261,7 @@ package "model/game.py" as p_game {
         + winner : TeamSide?
         + tied_teams : list<TeamSide>?
         + final_scores : dict<TeamSide, int>
+        + belote_gated : TeamSide? = None
     }
 
     Game ..> GameOverStatus : <<check_game_over>>
@@ -222,11 +275,30 @@ package "model/game.py" as p_game {
       once into ""players_by_position"" so team
       formation and any later seat lookup never
       re-scan the player list.
+      ----
+      ""unconfirmed_belote"" is the belote each
+      side has marked but that play has not
+      confirmed. ""_track_unconfirmed_belote""
+      runs on **both** exits of ""manage_round"":
+      it clears a side's credit only when that
+      side marks points from play, then adds
+      this round's own belote. A redeal marks
+      nothing, so the credit simply persists.
+      ""_has_crossed"" subtracts it: with the
+      table's ""win_on_belote_points_alone"" off,
+      a side carried past the target by belote
+      play has not confirmed has not won (§8).
+      ""check_game_over"" therefore walks every
+      side at/above the target highest-first, so
+      a gated leader cannot mask a legitimate
+      crossing behind it.
     end note
 
     note bottom of GameOverStatus
       Frozen verdict returned by
-      ""Game.check_game_over(target)"".
+      ""Game.check_game_over()"", whose
+      target is read off ""Game.rules""
+      (§9.1) rather than passed in.
       Over only when one team strictly
       leads at/above the target —
       ""winner"" is then always set.
@@ -234,7 +306,12 @@ package "model/game.py" as p_game {
       ""game_over"" False and fills
       ""tied_teams"": sudden death,
       tiebreaker rounds until one team
-      leads. ""cli.py"" loops on
+      leads. ""belote_gated"" names the
+      leader the §8 gate is holding back,
+      so the recap can say why a side is
+      past the target and the game goes
+      on; clear on a win and on a tie.
+      ""cli.py"" loops on
       ""game_over"" and the end-game
       banner reads off the rest.
       Every team named here is a
@@ -254,13 +331,20 @@ package "model/round/ package" as p_round {
         + contract : Contract?
         + auction : Auction?
         + play_state : PlayState?
-        + round_scores : dict<TeamSide, int>
-        + contract_made : bool?
-        + unannounced_slam : UnannouncedSlam?
-        + belote_holder : Player?
-        + belote_state : dict<Player, str>
+        + round_score : RoundScore?
+        + round_scores : dict<TeamSide, int> <<property>>
+        + contract_made : bool? <<property>>
+        + unannounced_slam : UnannouncedSlam? <<property>>
+        + belote_pairs : dict<Player, tuple<Suit>>
+        + belote_state : dict<(Player, Suit), str>
+        + belote_order : list<(Player, Suit)>
+        + belote_counts_by_side : dict<TeamSide, int> <<property>>
+        + announced_belotes : tuple<(Player, Suit)> <<property>>
+        + rules : RuleConfig
+        + bid_decisions : list<BidDecision>
+        + card_decisions : list<CardDecision>
         --
-        + __init__(players_order, dealer, deck, round_number)
+        + __init__(players_order, dealer, deck, round_number, rules=None)
         + deal_cards() : None
         + manage_bidding(view=None) : Contract?
         + play_trick(view=None) : None
@@ -269,9 +353,12 @@ package "model/round/ package" as p_round {
         + handle_failed_contract() : dict<TeamSide, int>
         --
         - _gather_bid(player, auction, view) : Bid
-        - _detect_belote_holder() : None
+        - _belote_suits() : tuple<Suit>
+        - _detect_belote_pairs() : None
         - _is_belote_event(player, card) : bool
-        - _transition_belote_state(player) : str?
+        - _transition_belote_state(player, suit) : str?
+        - _scoring_belotes() : tuple<(Player, Suit)>
+        - _play_seating() : tuple<tuple<Player>, tuple<tuple<Card>>>
         - _sync_hands() : None
         - _trick_after_play() : Sequence<Play>
     }
@@ -279,17 +366,71 @@ package "model/round/ package" as p_round {
     ' --- scoring.py: the pure scoring transformation ---
     class "scoring.py" as r_scoring <<module>> #FFEFD9 {
         score_round(round) : RoundScore
+        sweep_substitute(tag) : int
         count_player_tricks(trick_winners, player) : int
         UnannouncedSlam <<enum>> : {SLAM, GRAND_SLAM}
-        RoundScore <<dataclass>>
+    }
+
+    class RoundScore <<dataclass>> #FFEFD9 {
+        + scores : dict<TeamSide, int>
+        + contract_made : bool?
+        + unannounced_slam : UnannouncedSlam?
+        + marks : dict<TeamSide, Mark>
+        + belote_points : dict<TeamSide, int>
+        + card_points : dict<TeamSide, int>
+        + last_trick_side : TeamSide?
+        + multiplier : int
+    }
+
+    ' --- components.py: the §7.2 arithmetic, over plain ints ---
+    class "components.py" as p_components <<module>> #FFF8E1 {
+        contract_components(...) : tuple<Mark, Mark>
+        marked_total(mark, multiplier, rules) : int
+        FLAT_FAILURE_PILE : int
+    }
+
+    class Mark <<frozen dataclass>> #FFF8E1 {
+        + made : int
+        + announced : int
     }
 
     Round ..> r_scoring : <<delegates scoring>>
+    Round *-- "0..1" RoundScore : round_score
+    r_scoring ..> p_components : <<delegates §7.2>>
+    r_scoring ..> RoundScore : <<builds>>
+    RoundScore "1" o-- "2" Mark : marks
+    p_components ..> Mark : <<builds>>
+    p_components ..> RuleConfig : <<reads §9.6>>
+
+    note bottom of r_scoring
+      **Belote is +20 //per pair//.** The scorer reads
+      ""round.belote_counts_by_side"" and multiplies;
+      how many pairs mark is the Round's call.
+      A suit contract has one belote suit and so at
+      most one pair, no trump has none, and all trump
+      has four — where the table's ""all_trump_belote""
+      regime picks //none// / //the first announced// /
+      //every pair//, so a side can mark up to +80
+      (contree-domain.md §6.6). The bonus survives
+      every scoring shape, including the losing side's.
+
+      ""announced_belotes"" is the //display// view of
+      the same question: the pairs announced //so far//
+      that mark, in announcement order. It intersects
+      ""belote_order"" with ""_scoring_belotes"", so a
+      pair a seat merely //holds// under //four// never
+      reaches the screen, and //single// badges the one
+      pair that marks rather than all four announcers.
+      The two agree once the last card is played.
+    end note
 
     note right of Round
       ""manage_bidding"" drives a core
-      ""Auction"" through the cyclic
-      ""players_order"". Each turn: query
+      ""Auction.empty(rules=self.rules)"" through
+      the cyclic ""players_order"" — the table
+      ruleset is what decides the trump choices
+      on offer and each mode's ladder top.
+      Each turn: query
       ""legal_actions(player)""; if the only
       legal action is Pass (partner just
       doubled / redoubled), auto-apply it
@@ -323,11 +464,12 @@ package "model/round/ package" as p_round {
       while AI seats read the frozen
       ""PlayObservation"" projected by
       ""play_state.observe(player, bids=...)"".
-      ""calculate_round_scores"" is
-      a thin wrapper that publishes
-      ""score_round""'s ""RoundScore"" onto
+      ""calculate_round_scores"" is a thin
+      wrapper that publishes ""score_round""'s
+      ""RoundScore"" onto ""round_score"";
       ""round_scores"" / ""contract_made"" /
-      ""unannounced_slam"".
+      ""unannounced_slam"" are read-only
+      properties over it, so they cannot drift.
       ----
       During play Round fires (each hasattr-guarded):
       * ""view.on_bid_made(player, bid, history)""
@@ -335,7 +477,7 @@ package "model/round/ package" as p_round {
         (once, immediately after the final
         Contract is built)
       * ""view.on_card_played(player, card, plays)""
-      * ""view.on_belote_announced(player, kind, self)""
+      * ""view.on_belote_announced(player, kind, card.suit, self)""
       * ""view.on_trick_complete(plays, winner, self)""
       ""Game.manage_round"" additionally fires
       ""view.on_round_dealt(round_)"" after the deal
@@ -354,13 +496,31 @@ package "model/round/ package" as p_round {
       trick counts and the +10 last-trick bonus
       from ""trick_winners"" — never the
       view-facing mirrors.
-      Four scoring shapes (numeric share-pile,
-      unannounced-Slam 250 / 500 substitute, doubled
-      winner-takes-all, Slam / Solo Slam grid),
-      belote +20 to the K+Q holder layered on
-      every shape. ""UnannouncedSlam"" tags an
+      Its own job is only **reading the round**
+      and **judging made/failed** — the arithmetic
+      is ""components.py""'s. ""UnannouncedSlam"" tags an
       undeclared all-trick sweep on a numeric
-      contract.
+      contract, and picks the flat substitute that
+      stands in for its pile.
+    end note
+
+    note bottom of p_components
+      **A mark is two components** (§7.2): the
+      //made points// the trick pile is worth and
+      the //announced points// the contract is
+      worth. ""contract_components"" splits the
+      round into one ""Mark"" per side;
+      ""marked_total"" reduces a ""Mark"" to the
+      number written down, applying the §7.3
+      marking conventions and placing the
+      double/redouble multiplier.
+      ----
+      Pure arithmetic over ints and a
+      ""RuleConfig"" — no ""Round"", no ""Contract"",
+      no ""PlayState"" — so the §7.2 grids are
+      testable exactly as the domain reference
+      prints them, and each §9.6 scoring row is
+      one expression rather than a new branch.
     end note
 }
 
@@ -382,6 +542,7 @@ package "view/ package" as p_view {
     class RichView {
         + {static} LOG_MAX : int = 5
         + console : rich.Console
+        + aids : TableAids
         + target_score : int
         + history : list<RoundSummary>
         + last_completed_trick : (Sequence<Play>, BasePlayer)?
@@ -398,13 +559,19 @@ package "view/ package" as p_view {
         + on_bid_made(player, bid, history) : None
         + on_contract_established(round_) : None
         + on_card_played(player, card, plays) : None
-        + on_belote_announced(player, kind, round_) : None
+        + on_belote_announced(player, kind, suit, round_) : None
         + on_trick_complete(plays, winner, round_) : None
         + on_round_complete(round_, running_scores) : None
         ..  CLI flow screens ..
-        + show_landing(selected_target=1500) : int
-        + show_round_recap(round_, running_scores, *, is_final=False) : None
+        + show_landing(selected: TableSetup?) : TableSetup
+        + show_round_recap(round_, running_scores, *, is_final=False, is_tiebreaker=False, belote_gated=None) : None
         + show_end_game(status) : str <<'n' | 'r' | 'q'>>
+        ..  setup sub-screens (private) ..
+        - _show_preset_picker(current) : TableSetup
+        - _show_file_loader(current) : TableSetup
+        - _show_knob_editor(current) : TableSetup
+        - _render_landing_splash(setup) : None
+        - _setup_input() : str
         ..  orchestration seam + log helpers (private) ..
         - _render_in_game(*, phase, …) : None
         - _find_human_player() : BasePlayer?
@@ -425,11 +592,14 @@ package "view/ package" as p_view {
 
     class "view screens\n(pure (data)->Panel/Text)" as p_view_screens <<modules>> #FFEFD9 {
         screens/landing.py
+        screens/setup.py
         screens/bidding.py
         screens/trick.py
         screens/recap.py
         screens/endgame.py
     }
+
+    p_view_screens ..> RoundScore : <<projects the components>>
 
     note right of RichView
       Stateful orchestrator (in ""rich_view.py"").
@@ -462,14 +632,21 @@ package "view/ package" as p_view {
       its own module:
       * theme — colour tokens + lookup tables
         (""POSITION_SHORT"" and friends are
-        keyed by ""Position"")
+        keyed by ""Position""; ""TRUMP_GLYPH"" /
+        ""TRUMP_LABEL"" are keyed by
+        ""ContractSuit"", giving the two suitless
+        variants the tags ""NT"" / ""AT"" and the
+        names //No Trump// / //All Trump//)
       * formatting — seat / suit / contract /
         trump labels + the compact ""_bid_label""
       * parsing — ""_parse_bid_input"",
         ""_parse_card_input""
       * bidding_rules — ""_illegal_bid_reason""
         (the prompt hint reads
-        ""Auction.legal_actions"" directly)
+        ""Auction.legal_actions"" directly; the
+        table-limit branches read
+        ""bookable_suits"" / ""ladder_top"" rather
+        than restating the numbers)
       * state_helpers — ""_current_winner"",
         ""_trick_index"" (which of the eight
         tricks is on the table),
@@ -490,18 +667,23 @@ package "view/ package" as p_view {
       diamonds, the landing roster) key off
       ""Position"" members rather than seat
       strings.
-      The round-recap breakdown credits each
-      team: contract bonus (attacker base on
-      normal made, 160+base×mult on doubled
-      made, (160+base)×mult on failed defender)
-      + card points + last-trick bonus + belote
-      → ""round_scores[side]"". The card /
-      last-trick / belote rows
-      em-dash when the engine ignores them so
-      the addition matches ""round_score"".
-      Helpers ""_recap_breakdown"" /
+      The round-recap breakdown **projects**
+      ""round.round_score"" rather than being a
+      second implementation of the rules: the
+      Scoring sub-table is §7.2's two components
+      as the table marked them — the //announced//
+      one in the Contract row, the //made// one
+      beside the belote in Round points — each
+      reduced by the same ""marked_total"" the
+      scorer used — so the two rows plus the
+      belote add back up to the round score.
+      The Outcome sub-table stays factual: the
+      pile, the last trick and the belote each
+      side really took. A §9.6 knob therefore
+      reaches the panel the moment the scorer
+      honours it. Helpers ""_recap_breakdown"" /
       ""_format_recap_table"" /
-      ""_belote_side_in_round"" live in
+      ""_belote_counts_in_round"" live in
       ""screens/recap.py"".
       ----
       Tested per-module in
@@ -517,7 +699,9 @@ package "cli.py" as p_cli {
     class "main()" as Cli <<module>> #FFEFD9 {
         + main() : None
         --
-        - _build_game() : Game
+        - _build_parser() : ArgumentParser
+        - _parse_args(argv) : (DebugOptions, TableSetup)
+        - _build_game(autoplay, rules) : Game
         --
         Drives landing → game loop →
         end-game; routes 'n' / 'r' / 'q'.
@@ -532,6 +716,96 @@ package "cli.py" as p_cli {
       the AiPlayer default).
       TODO marker for a future seat
       picker on the landing screen.
+      ""--rules FILE"" / ""--preset NAME"" are a
+      mutually exclusive pair; with ""--no-live-score""
+      they resolve to the ""TableSetup"" the landing
+      screen opens on. A bad ruleset leaves through
+      ""parser.error"" — usage + message, exit 2.
+      What ""show~_landing"" hands back is what the
+      ""Game"" is built from; its ""aids"" are re-pointed
+      on the view, never threaded into the model.
+    end note
+}
+
+' =========================================================
+' ruleset.py — TOML ⇄ RuleConfig, engine-side
+' =========================================================
+package "ruleset.py" as p_ruleset {
+    class "ruleset.py" as Ruleset <<module>> #FFEFD9 {
+        SECTIONS : dict<str, tuple<str>>
+        AID~_SECTION : (str, tuple<str>)
+        SECTION~_HEADINGS : dict<str, str>
+        KNOB~_LABELS : dict<str, str>
+        .. setup document ..
+        parse~_setup(text) : TableSetup
+        dump~_setup(setup) : str
+        load~_setup(path) : TableSetup
+        save~_setup(path, setup) : None
+        setup~_path() : Path
+        resolve~_setup(*, preset, rules~_path, aids) : TableSetup
+        .. ruleset-only facade ..
+        parse~_ruleset(text) : RuleConfig
+        load~_ruleset(path) : RuleConfig
+        dump~_ruleset(config) : str
+        resolve~_rules(*, preset, rules~_path) : RuleConfig
+        .. catalogue operations ..
+        cycle~_knob(rules, field) : RuleConfig
+        knob~_value(rules, field) : str
+        non~_default~_knobs(rules) : tuple<(str, str)>
+        --
+        - _parse~_document(text) : (dict, dict)
+        - _coerce(section, key, value, types) : Any
+        - _format(value) : str
+        - _display(value) : str
+        - _section~_block(section, keys, source) : str
+    }
+
+    class TableSetup <<dataclass, frozen>> {
+        + rules : RuleConfig = RuleConfig()
+        + aids : TableAids = TableAids()
+        + origin : str = "classic"
+    }
+
+    class TableAids <<dataclass, frozen>> {
+        + live~_round~_score : bool = True
+    }
+
+    class RulesetError <<ValueError>>
+
+    Ruleset ..> RulesetError : <<raises>>
+    Ruleset ..> TableSetup : <<produces>>
+    TableSetup *-- TableAids
+
+    note bottom of Ruleset
+      **Loading lives in the engine** — core stays
+      I/O-free, so it defines what a ruleset //is//
+      and this module decides how one is //read//.
+      A **setup** document is the six §9 rule
+      sections plus an optional ""[table~_aids]"" —
+      the §9.7 interface aids, which are //not// rules
+      and so have no ""RuleConfig"" field. Optional on
+      the way in means the two formats are one: a
+      saved setup replays through ""--rules"", and a
+      hand-written six-section file still loads.
+      ""SECTIONS"" is the six-section §9 layout, one
+      entry per catalogue subsection; a test asserts
+      it covers every ""RuleConfig"" field exactly once.
+      ""KNOB~_LABELS"" derives each knob's heading from
+      it, and ""cycle~_knob"" / ""non~_default~_knobs""
+      are the two operations the on-screen editor
+      needs — so the editor, the file format and the
+      catalogue cannot drift apart.
+      **Unknown = error**, never a warning: an unknown
+      section or key, a wrong type or an unknown enum
+      token all raise ""RulesetError"", because a
+      typo'd knob that silently kept its default would
+      corrupt a logged experiment. A //missing// key is
+      fine — a file is a partial override on the
+      defaults. A well-formed but impossible table
+      propagates core's ""InvalidRuleConfigError"".
+      ""dump_ruleset"" is the exact inverse, so a
+      resolved ruleset can be archived beside a
+      simulation result or a scraped game.
     end note
 }
 
@@ -559,6 +833,13 @@ RuleBasedCardPlayStrategy ..> p_contractsuit : is_trump / trump_suits
 PlayerStateMixin ..> AiPlayer : <<reads live state>>
 AiPlayer o-- "1" BiddingStrategy : bidding
 AiPlayer o-- "1" CardPlayStrategy : cardplay
+BidDecision *-- "1" Rationale
+CardDecision *-- "1" Rationale
+Rationale o-- "0..*" RuleCitation
+BiddingStrategy ..> BidDecision  : returns
+CardPlayStrategy ..> CardDecision : returns
+Round --> BidDecision  : bid~_decisions
+Round --> CardDecision : card~_decisions
 p_levels ..> AiPlayer : <<builds>>
 
 ' Game composes / aggregates engine + core types
@@ -569,6 +850,13 @@ Game "1" o-- "0..1" Player : dealer
 Game "1" *-- "0..1" Round : current_round
 Game "1" o-- "0..1" Contract : current_contract
 
+' The table ruleset is fixed when the table sits down: Game holds it and
+' hands the same object to every Round, which runs its auction under it
+' and seeds it into the play state. The scorer reads it back off the
+' Round rather than being handed one, so no two phases of a round can
+' run under different rulesets.
+Game "1" o-- "1" RuleConfig : rules
+
 ' Round references Contract / Auction / PlayState — the play phase
 ' itself lives entirely on play_state, so no Tricks are held here.
 Round "1" o-- "0..1" Contract : contract
@@ -576,11 +864,14 @@ Round "1" o-- "0..1" Auction : auction
 Round "1" o-- "0..1" PlayState : play_state
 Round "1" o-- "1" Deck : deck
 Round "1" o-- "4" Player : players_order
+Round "1" o-- "1" RuleConfig : rules
 
 ' View + CLI wiring (the controller role today = cli.py loop + view hooks)
 Round ..> RichView : <<human input + hooks>>
 Cli ..> Game : <<owns game loop>>
 Cli ..> RichView : <<owns view + screens>>
+Cli ..> Ruleset : <<--rules / --preset>>
+Ruleset ..> RuleConfig : <<builds / validates>>
 RichView "1" *-- "0..N" RoundSummary : history
 RichView ..> p_view_screens : <<composes + prints>>
 RichView ..> p_view_helpers : <<uses>>

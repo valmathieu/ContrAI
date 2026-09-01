@@ -17,7 +17,11 @@ from contrai_core.bid import (
     DoubleBid,
     RedoubleBid,
     SlamLevel,
+    bookable_suits,
+    ladder_top,
 )
+
+from contrai_engine.view.theme import TRUMP_LABEL
 
 
 def _illegal_bid_reason(bid: Bid, auction: Auction) -> str:
@@ -29,6 +33,12 @@ def _illegal_bid_reason(bid: Bid, auction: Auction) -> str:
     only — the authoritative legality verdict is
     :meth:`Auction.is_legal`. Callers should only invoke this once the
     bid is already known to be illegal.
+
+    The two table limits (an unoffered trump choice, a value past that
+    mode's ladder top) read :func:`~contrai_core.bookable_suits` and
+    :func:`~contrai_core.ladder_top` directly rather than restating the
+    numbers, so this stays a mirror of the rules and not a second
+    implementation of them.
     """
     if isinstance(bid, DoubleBid):
         if auction.last_contract_bid is None:
@@ -45,6 +55,22 @@ def _illegal_bid_reason(bid: Bid, auction: Auction) -> str:
             "doubles your team's contract."
         )
     if isinstance(bid, ContractBid):
+        # The table's own limits come first, and for the same reason the
+        # auction checks them first: they hold whatever the bid history is,
+        # so explaining "you must outrank 100" to someone who named a trump
+        # this table does not play would be answering the wrong question.
+        if bid.suit not in bookable_suits(auction.rules):
+            return (
+                f"This table doesn't play {TRUMP_LABEL[bid.suit].lower()} — "
+                f"the trump choices are the four suits."
+            )
+        if isinstance(bid.value, int):
+            top = ladder_top(bid.suit, auction.rules)
+            if bid.value > top:
+                return (
+                    f"{TRUMP_LABEL[bid.suit]} tops out at {top}: past that "
+                    f"there aren't enough points on the table to take."
+                )
         last = auction.last_contract_bid
         if last is not None and isinstance(last.value, SlamLevel):
             return f"Nothing outranks a {last.value} bid — you can only pass."

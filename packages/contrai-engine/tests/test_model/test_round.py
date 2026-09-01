@@ -27,22 +27,46 @@ import pytest
 
 from contrai_core import Hand, Position
 from contrai_core.auction import Auction
-from contrai_core.bid import ContractBid, DoubleBid, PassBid
+from contrai_core.bid import ContractBid, DoubleBid, PassBid, SlamLevel
 from contrai_core.card import Card
 from contrai_core.contract import Contract
 from contrai_core.deck import Deck
 from contrai_core.play import PlayState
+from contrai_core.rule_config import AllTrumpBelote, RuleConfig
 from contrai_core.team import Team
+from contrai_core.team_side import TeamSide
 from contrai_core.exceptions import IllegalPlayError, PlayRuleViolation
-from contrai_core.types import Rank, Suit, TrumpVariant
+from contrai_core.types import CONTRACT_SUITS, Rank, Suit, TrumpVariant
 
-from contrai_engine.model.player import AiPlayer, HumanPlayer
+from contrai_engine.model.player import (
+    AiPlayer,
+    BidDecision,
+    CardDecision,
+    HumanPlayer,
+    Rationale,
+)
 from contrai_engine.model.round import Round
 
 
 # ---------------------------------------------------------------------------
 # Scenario builders. The shared ``players`` fixture lives in ``conftest.py``.
 # ---------------------------------------------------------------------------
+
+
+#: The rationale every stub below attaches. The decision *shape* is what
+#: ``Round`` unwraps; what a stub says about its reasoning is irrelevant to
+#: the lifecycle under test, so one shared value keeps the stubs readable.
+_STUB = Rationale("stub", "test double")
+
+
+def _card_choice(card):
+    """Wrap ``card`` as the :class:`CardDecision` ``Round`` now expects."""
+    return CardDecision(card, _STUB)
+
+
+def _bid_choice(bid):
+    """Wrap ``bid`` as the :class:`BidDecision` ``Round`` now expects."""
+    return BidDecision(bid, _STUB)
 
 
 class _StubDeck:
@@ -56,7 +80,7 @@ class _StubDeck:
         """Swallow the returned trick cards."""
 
 
-def _make_round(players_dict, hands, contract, deck=None):
+def _make_round(players_dict, hands, contract, deck=None, rules=None):
     """Build a ``Round`` wired to the supplied state.
 
     ``play_trick`` seeds the play state lazily from the hands, so the
@@ -71,6 +95,8 @@ def _make_round(players_dict, hands, contract, deck=None):
         deck: optional deck object; tests that run ``play_trick`` to
             completion pass a ``_StubDeck`` so the end-of-trick
             ``add_cards`` call has something to land on.
+        rules: optional table ruleset; ``None`` leaves the Round on its
+            own default (the §9 catalogue).
 
     Returns:
         A Round whose ``players_order`` is the four players in N/E/S/W
@@ -79,7 +105,9 @@ def _make_round(players_dict, hands, contract, deck=None):
     order = [players_dict[s] for s in ("N", "E", "S", "W")]
     for seat, cards in hands.items():
         players_dict[seat].hand = Hand(cards)
-    round_ = Round(order, dealer=players_dict["N"], deck=deck, round_number=1)
+    round_ = Round(
+        order, dealer=players_dict["N"], deck=deck, round_number=1, rules=rules
+    )
     round_.contract = contract
     return round_
 
@@ -104,10 +132,10 @@ class TestPlayTrickRejectsIllegalCard:
         )
         # Scripted choices: N leads its only heart, E tries the illegal trump.
         players["N"].choose_card = (
-            lambda observation, _card=n_card: _card
+            lambda observation, _card=n_card: _card_choice(_card)
         )
         players["E"].choose_card = (
-            lambda observation, _card=e_illegal: _card
+            lambda observation, _card=e_illegal: _card_choice(_card)
         )
 
         with pytest.raises(IllegalPlayError) as excinfo:
@@ -157,7 +185,7 @@ class TestPlayTrickHumanUsesView:
         # Bots play their single legal card straight through choose_card.
         for player in (east, south, west):
             player.choose_card = (  # type: ignore[method-assign]
-                lambda observation, _card=cards[player]: _card
+                lambda observation, _card=cards[player]: _card_choice(_card)
             )
 
         view_calls = []
@@ -206,7 +234,7 @@ class TestSyncHandsMirrorsPlayState:
         round_ = _make_round(players, hands, contract, deck=_StubDeck())
         for seat, card in played.items():
             players[seat].choose_card = (
-                lambda observation, _card=card: _card
+                lambda observation, _card=card: _card_choice(_card)
             )
 
         # Capture the Hand object identities before the trick runs.
@@ -247,13 +275,13 @@ class TestCardIdentityFlowsFromSeed:
 
         def n_choose(observation):
             captured["playable"] = observation.legal_cards
-            return observation.legal_cards[0]
+            return _card_choice(observation.legal_cards[0])
 
         players["N"].choose_card = n_choose
         for seat in ("E", "S", "W"):
             card = hands[seat][0]
             players[seat].choose_card = (
-                lambda observation, _card=card: _card
+                lambda observation, _card=card: _card_choice(_card)
             )
 
         # The exact Card objects the seed will draw from N's hand.
@@ -280,7 +308,7 @@ class TestAuctionRetention:
         for ai, choices in scripted.items():
             queue = list(choices)
             ai.choose_bid = lambda _auction, _p=ai, _q=queue: (
-                _q.pop(0) if _q else PassBid(_p)
+                _bid_choice(_q.pop(0) if _q else PassBid(_p))
             )
 
         # A capture view anchors the identity: the auction present when the
@@ -309,7 +337,7 @@ class TestPlayStateSeeding:
     def _script_first_playable(self, order):
         for player in order:
             player.choose_card = (
-                lambda observation: observation.legal_cards[0]
+                lambda observation: _card_choice(observation.legal_cards[0])
             )
 
     def test_play_all_tricks_validates_the_deal(self, players):
@@ -342,7 +370,7 @@ class TestPlayStateSeeding:
         )
         for seat, card in cards.items():
             players[seat].choose_card = (
-                lambda observation, _card=card: _card
+                lambda observation, _card=card: _card_choice(_card)
             )
 
         assert round_.play_state is None
@@ -367,7 +395,7 @@ class TestPlayThroughReachesTerminal:
         round_.contract = _contract(players["N"], 100, Suit.SPADES)
         for player in order:
             player.choose_card = (
-                lambda observation: observation.legal_cards[0]
+                lambda observation: _card_choice(observation.legal_cards[0])
             )
 
         round_.play_all_tricks()
@@ -376,6 +404,65 @@ class TestPlayThroughReachesTerminal:
         assert len(round_.play_state.completed_tricks) == 8
         for player in order:
             assert len(player.hand) == 0
+
+
+# ---------------------------------------------------------------------------
+# The table ruleset reaches the play state
+# ---------------------------------------------------------------------------
+
+
+class TestRulesThreading:
+    """The ``RuleConfig`` handed to a ``Round`` seeds every ``PlayState``
+    it creates — through the validated start and the lazy seed alike."""
+
+    def test_round_defaults_to_the_classic_ruleset(self, players):
+        order = [players[s] for s in ("N", "E", "S", "W")]
+        round_ = Round(order, dealer=players["N"], deck=None, round_number=1)
+        assert round_.rules == RuleConfig()
+
+    def test_play_all_tricks_seeds_play_state_with_the_rules(self, players):
+        rules = RuleConfig(target_score=1000)
+        order = [players[s] for s in ("N", "E", "S", "W")]
+        round_ = Round(
+            order, dealer=players["N"], deck=Deck(), round_number=1, rules=rules
+        )
+        round_.deal_cards()
+        round_.contract = _contract(players["N"], 100, Suit.SPADES)
+        for player in order:
+            player.choose_card = (
+                lambda observation: _card_choice(observation.legal_cards[0])
+            )
+
+        round_.play_all_tricks()
+
+        assert round_.play_state.rules is rules
+
+    def test_play_trick_lazy_seed_carries_the_rules(self, players):
+        rules = RuleConfig(target_score=1000)
+        contract = _contract(players["N"], 100, Suit.SPADES)
+        # One card per seat — the invalid-start deal the lazy seed exists
+        # for, so this exercises the bare-constructor path, not start().
+        cards = {
+            "N": Card(Suit.HEARTS, Rank.KING),
+            "E": Card(Suit.HEARTS, Rank.SEVEN),
+            "S": Card(Suit.HEARTS, Rank.EIGHT),
+            "W": Card(Suit.HEARTS, Rank.NINE),
+        }
+        round_ = _make_round(
+            players,
+            {seat: [card] for seat, card in cards.items()},
+            contract,
+            deck=_StubDeck(),
+            rules=rules,
+        )
+        for seat, card in cards.items():
+            players[seat].choose_card = (
+                lambda observation, _card=card: _card_choice(_card)
+            )
+
+        round_.play_trick()
+
+        assert round_.play_state.rules is rules
 
 
 # ---------------------------------------------------------------------------
@@ -416,7 +503,7 @@ class TestPlayTrickHandsObservation:
         def _record(seat):
             def choose(observation, _seat=seat):
                 seen[_seat] = observation
-                return observation.legal_cards[0]
+                return _card_choice(observation.legal_cards[0])
             return choose
 
         for seat in ("N", "E", "S", "W"):
@@ -462,7 +549,7 @@ class TestPlayTrickHandsObservation:
         seen: list = []
         for seat in ("N", "E", "S", "W"):
             players[seat].choose_card = (
-                lambda observation: (
+                lambda observation: _card_choice(
                     seen.append(observation) or observation.legal_cards[0]
                 )
             )
@@ -479,10 +566,30 @@ class TestPlayTrickHandsObservation:
 # ---------------------------------------------------------------------------
 
 
-class TestBeloteHolderDetection:
-    """``_detect_belote_holder`` finds the player holding K+Q of trump."""
+#: N pairs in ♠ and ♥, E pairs in ♣. Under the all-trump ``four`` regime
+#: that is 2 belotes for N-S and 1 for E-W; under ``single`` only the
+#: first pair announced in play marks, whichever team holds it.
+_TWO_SIDED_BELOTE_HANDS = {
+    "N": [
+        Card(Suit.SPADES, Rank.KING),
+        Card(Suit.SPADES, Rank.QUEEN),
+        Card(Suit.HEARTS, Rank.KING),
+        Card(Suit.HEARTS, Rank.QUEEN),
+    ],
+    "E": [
+        Card(Suit.CLUBS, Rank.KING),
+        Card(Suit.CLUBS, Rank.QUEEN),
+        Card(Suit.DIAMONDS, Rank.KING),
+    ],
+    "S": [Card(Suit.DIAMONDS, Rank.QUEEN)],
+    "W": [Card(Suit.SPADES, Rank.SEVEN)],
+}
 
-    def test_sets_belote_holder_when_pair_present(self, players):
+
+class TestBelotePairDetection:
+    """``_detect_belote_pairs`` snapshots every K + Q pair at deal time."""
+
+    def test_records_the_pair_when_present(self, players):
         contract = _contract(players["N"], 100, Suit.HEARTS)
         round_ = _make_round(
             players,
@@ -497,10 +604,10 @@ class TestBeloteHolderDetection:
             },
             contract,
         )
-        round_._detect_belote_holder()
-        assert round_.belote_holder is players["S"]
+        round_._detect_belote_pairs()
+        assert round_.belote_pairs == {players["S"]: (Suit.HEARTS,)}
 
-    def test_no_holder_when_pair_split(self, players):
+    def test_no_pair_when_split(self, players):
         contract = _contract(players["N"], 100, Suit.HEARTS)
         round_ = _make_round(
             players,
@@ -512,10 +619,30 @@ class TestBeloteHolderDetection:
             },
             contract,
         )
-        round_._detect_belote_holder()
-        assert round_.belote_holder is None
+        round_._detect_belote_pairs()
+        assert round_.belote_pairs == {}
 
-    def test_no_holder_at_no_trump(self, players):
+    def test_a_pair_outside_the_trump_suit_is_not_one(self, players):
+        # Only the trump suit can carry a belote at a suit contract, so
+        # the ♠ pair below is just two cards.
+        contract = _contract(players["N"], 100, Suit.HEARTS)
+        round_ = _make_round(
+            players,
+            {
+                "N": [],
+                "E": [],
+                "S": [
+                    Card(Suit.SPADES, Rank.KING),
+                    Card(Suit.SPADES, Rank.QUEEN),
+                ],
+                "W": [],
+            },
+            contract,
+        )
+        round_._detect_belote_pairs()
+        assert round_.belote_pairs == {}
+
+    def test_no_pairs_at_no_trump(self, players):
         contract = _contract(players["N"], 100, TrumpVariant.NO_TRUMP)
         round_ = _make_round(
             players,
@@ -532,8 +659,9 @@ class TestBeloteHolderDetection:
             },
             contract,
         )
-        round_._detect_belote_holder()
-        assert round_.belote_holder is None
+        round_._detect_belote_pairs()
+        assert round_.belote_pairs == {}
+        assert round_.belote_counts_by_side == {TeamSide.NS: 0, TeamSide.EW: 0}
 
 
 class TestBeloteTransition:
@@ -556,23 +684,33 @@ class TestBeloteTransition:
             },
             contract,
         )
-        round_.belote_holder = players["S"]
+        round_._detect_belote_pairs()
         return round_
 
     def test_first_play_returns_belote(self, players):
         round_ = self._setup(players)
         card = Card(Suit.HEARTS, Rank.KING)
         assert round_._is_belote_event(players["S"], card) is True
-        kind = round_._transition_belote_state(players["S"])
+        kind = round_._transition_belote_state(players["S"], card.suit)
         assert kind == "belote"
-        assert round_.belote_state == {players["S"]: "belote"}
+        assert round_.belote_state == {(players["S"], Suit.HEARTS): "belote"}
+        assert round_.belote_order == [(players["S"], Suit.HEARTS)]
 
     def test_second_play_returns_rebelote(self, players):
         round_ = self._setup(players)
-        round_._transition_belote_state(players["S"])  # first → belote
-        kind = round_._transition_belote_state(players["S"])
+        round_._transition_belote_state(players["S"], Suit.HEARTS)
+        kind = round_._transition_belote_state(players["S"], Suit.HEARTS)
         assert kind == "rebelote"
-        assert round_.belote_state == {players["S"]: "rebelote"}
+        assert round_.belote_state == {(players["S"], Suit.HEARTS): "rebelote"}
+        # The pair is announced once, however many cards of it are played.
+        assert round_.belote_order == [(players["S"], Suit.HEARTS)]
+
+    def test_a_third_play_of_the_same_pair_is_inert(self, players):
+        # Defensive: each card is unique, so this cannot happen in play.
+        round_ = self._setup(players)
+        round_._transition_belote_state(players["S"], Suit.HEARTS)
+        round_._transition_belote_state(players["S"], Suit.HEARTS)
+        assert round_._transition_belote_state(players["S"], Suit.HEARTS) is None
 
     def test_non_kq_trump_not_an_event(self, players):
         round_ = self._setup(players)
@@ -586,11 +724,256 @@ class TestBeloteTransition:
 
     def test_non_holder_not_an_event(self, players):
         round_ = self._setup(players)
-        # N plays K♥ — but N is not the belote holder.
+        # N plays K♥ — but N holds no pair.
         assert (
             round_._is_belote_event(players["N"], Card(Suit.HEARTS, Rank.KING))
             is False
         )
+
+
+class TestAllTrumpBelote:
+    """§6.6 — the three all-trump belote regimes, applied by the Round."""
+
+    def _all_trump_round(self, players, regime):
+        round_ = _make_round(
+            players,
+            _TWO_SIDED_BELOTE_HANDS,
+            contract=_contract(players["N"], 100, TrumpVariant.ALL_TRUMP),
+            rules=RuleConfig(
+                extended_trump_choices=True, all_trump_belote=regime
+            ),
+        )
+        round_._detect_belote_pairs()
+        return round_
+
+    def test_four_regime_detects_every_pair(self, players):
+        # N holds K+Q of spades and of hearts; E holds K+Q of clubs.
+        round_ = self._all_trump_round(players, AllTrumpBelote.FOUR)
+        assert round_.belote_pairs == {
+            players["N"]: (Suit.SPADES, Suit.HEARTS),
+            players["E"]: (Suit.CLUBS,),
+        }
+        assert round_.belote_counts_by_side == {TeamSide.NS: 2, TeamSide.EW: 1}
+
+    def test_none_regime_detects_nothing(self, players):
+        # A table playing `none` has no belote to announce at all — not
+        # one that is announced and then fails to score.
+        round_ = self._all_trump_round(players, AllTrumpBelote.NONE)
+        assert round_.belote_pairs == {}
+        assert round_.belote_counts_by_side == {TeamSide.NS: 0, TeamSide.EW: 0}
+        assert round_._is_belote_event(
+            players["N"], Card(Suit.SPADES, Rank.KING)
+        ) is False
+
+    def test_single_regime_scores_only_the_first_announced(self, players):
+        # Both sides hold a pair and both announce; E announces first, so
+        # E-W marks the 20 and N-S marks nothing (§6.6).
+        round_ = self._all_trump_round(players, AllTrumpBelote.SINGLE)
+        assert set(round_.belote_pairs) == {players["N"], players["E"]}
+        round_._transition_belote_state(players["E"], Suit.CLUBS)
+        round_._transition_belote_state(players["N"], Suit.SPADES)
+        assert round_.belote_order[0] == (players["E"], Suit.CLUBS)
+        assert round_.belote_counts_by_side == {TeamSide.NS: 0, TeamSide.EW: 1}
+
+    def test_single_regime_follows_announcement_order_not_seat_order(
+        self, players
+    ):
+        # The mirror image of the previous case: N announces first and
+        # marks, even though the pairs held are identical. Nothing about
+        # the seating decides it.
+        round_ = self._all_trump_round(players, AllTrumpBelote.SINGLE)
+        round_._transition_belote_state(players["N"], Suit.HEARTS)
+        round_._transition_belote_state(players["E"], Suit.CLUBS)
+        assert round_.belote_counts_by_side == {TeamSide.NS: 1, TeamSide.EW: 0}
+
+    def test_single_regime_still_announces_for_every_holder(self, players):
+        # The second holder announces — it is a narrative event — and
+        # scores nothing. Both pairs reach "rebelote" in belote_state.
+        round_ = self._all_trump_round(players, AllTrumpBelote.SINGLE)
+        for holder, suit in ((players["E"], Suit.CLUBS),
+                             (players["N"], Suit.SPADES)):
+            round_._transition_belote_state(holder, suit)
+            round_._transition_belote_state(holder, suit)
+        assert set(round_.belote_state.values()) == {"rebelote"}
+        assert len(round_.belote_state) == 2
+
+    def test_nothing_announced_yet_scores_nothing_under_single(self, players):
+        # `single` marks the first pair *announced in play*; before any
+        # card is played there is no such pair.
+        round_ = self._all_trump_round(players, AllTrumpBelote.SINGLE)
+        assert round_.belote_counts_by_side == {TeamSide.NS: 0, TeamSide.EW: 0}
+
+    def test_four_regime_scores_without_waiting_for_announcements(
+        self, players
+    ):
+        # Unlike `single`, `four` reads the pairs held, not the order they
+        # were announced in — so it is already correct at deal time.
+        round_ = self._all_trump_round(players, AllTrumpBelote.FOUR)
+        assert round_.belote_counts_by_side == {TeamSide.NS: 2, TeamSide.EW: 1}
+
+    def test_a_holders_king_in_a_suit_they_do_not_pair_is_not_an_event(
+        self, players
+    ):
+        # At all trump every K/Q is a trump K/Q, so the event predicate
+        # must key on the *pair*, not on trumpness. E holds the ♦K but not
+        # the ♦Q, so playing it announces nothing.
+        round_ = self._all_trump_round(players, AllTrumpBelote.FOUR)
+        assert round_._is_belote_event(
+            players["E"], Card(Suit.DIAMONDS, Rank.KING)
+        ) is False
+        assert round_._is_belote_event(
+            players["E"], Card(Suit.CLUBS, Rank.KING)
+        ) is True
+
+    def test_a_suit_contract_is_unaffected_by_the_regime(self, players):
+        for regime in AllTrumpBelote:
+            round_ = _make_round(
+                players,
+                _TWO_SIDED_BELOTE_HANDS,
+                contract=_contract(players["N"], 100, Suit.HEARTS),
+                rules=RuleConfig(all_trump_belote=regime),
+            )
+            round_._detect_belote_pairs()
+            # Only ♥ can carry a belote here, so N's ♥K + ♥Q is the one
+            # pair that exists and the regime knob never gets a say.
+            assert round_.belote_pairs == {players["N"]: (Suit.HEARTS,)}
+            assert round_.belote_counts_by_side == {
+                TeamSide.NS: 1, TeamSide.EW: 0
+            }
+
+
+class TestAnnouncedBelotes:
+    """``announced_belotes`` — the pairs announced *and* marking, in order.
+
+    The display counterpart of ``_scoring_belotes``: it answers what the
+    table has actually seen so far, where the scorer answers what will
+    be marked at the end. The two agree once every card is played.
+    """
+
+    def _all_trump_round(self, players, regime):
+        round_ = _make_round(
+            players,
+            _TWO_SIDED_BELOTE_HANDS,
+            contract=_contract(players["N"], 100, TrumpVariant.ALL_TRUMP),
+            rules=RuleConfig(
+                extended_trump_choices=True, all_trump_belote=regime
+            ),
+        )
+        round_._detect_belote_pairs()
+        return round_
+
+    def test_nothing_announced_yet_is_empty(self, players):
+        round_ = self._all_trump_round(players, AllTrumpBelote.FOUR)
+        assert round_.announced_belotes == ()
+
+    def test_four_regime_reports_every_announced_pair(self, players):
+        round_ = self._all_trump_round(players, AllTrumpBelote.FOUR)
+        round_._transition_belote_state(players["N"], Suit.SPADES)
+        round_._transition_belote_state(players["E"], Suit.CLUBS)
+        assert round_.announced_belotes == (
+            (players["N"], Suit.SPADES),
+            (players["E"], Suit.CLUBS),
+        )
+
+    def test_four_regime_hides_a_held_but_unannounced_pair(self, players):
+        # N holds ♠ and ♥ but has only announced ♠. The ♥ pair is still
+        # hidden information — ``_scoring_belotes`` counts it because the
+        # scorer may, but nothing the human sees is allowed to.
+        round_ = self._all_trump_round(players, AllTrumpBelote.FOUR)
+        round_._transition_belote_state(players["N"], Suit.SPADES)
+        assert (players["N"], Suit.HEARTS) in round_._scoring_belotes()
+        assert round_.announced_belotes == ((players["N"], Suit.SPADES),)
+
+    def test_it_follows_announcement_order_not_seat_order(self, players):
+        round_ = self._all_trump_round(players, AllTrumpBelote.FOUR)
+        round_._transition_belote_state(players["E"], Suit.CLUBS)
+        round_._transition_belote_state(players["N"], Suit.HEARTS)
+        assert round_.announced_belotes == (
+            (players["E"], Suit.CLUBS),
+            (players["N"], Suit.HEARTS),
+        )
+
+    def test_single_regime_reports_only_the_first_announced(self, players):
+        # Both sides announce; only E's pair marks, so only E's is shown.
+        round_ = self._all_trump_round(players, AllTrumpBelote.SINGLE)
+        round_._transition_belote_state(players["E"], Suit.CLUBS)
+        round_._transition_belote_state(players["N"], Suit.SPADES)
+        assert round_.announced_belotes == ((players["E"], Suit.CLUBS),)
+
+    def test_single_regime_is_unmoved_by_a_rebelote(self, players):
+        # The second card of the *same* pair advances belote_state but
+        # appends nothing, so the marking pair does not change.
+        round_ = self._all_trump_round(players, AllTrumpBelote.SINGLE)
+        round_._transition_belote_state(players["N"], Suit.SPADES)
+        round_._transition_belote_state(players["N"], Suit.SPADES)
+        assert round_.announced_belotes == ((players["N"], Suit.SPADES),)
+
+    def test_none_regime_reports_nothing(self, players):
+        round_ = self._all_trump_round(players, AllTrumpBelote.NONE)
+        assert round_.announced_belotes == ()
+
+    def test_a_suit_contract_reports_the_announced_pair(self, players):
+        round_ = _make_round(
+            players,
+            _TWO_SIDED_BELOTE_HANDS,
+            contract=_contract(players["N"], 100, Suit.HEARTS),
+        )
+        round_._detect_belote_pairs()
+        assert round_.announced_belotes == ()
+        round_._transition_belote_state(players["N"], Suit.HEARTS)
+        assert round_.announced_belotes == ((players["N"], Suit.HEARTS),)
+
+    def test_no_contract_reports_nothing(self, players):
+        round_ = _make_round(players, _TWO_SIDED_BELOTE_HANDS, contract=None)
+        assert round_.announced_belotes == ()
+
+
+class TestBeloteAnnouncementHook:
+    """``view.on_belote_announced`` is told which pair announced.
+
+    The contract's own glyph cannot say it: at all trump the contract
+    suit is ``ALL_TRUMP``, which renders as the string ``AT``, so four
+    different pairs would narrate identically.
+    """
+
+    class _RecordingView:
+        def __init__(self):
+            self.announcements = []
+
+        def on_belote_announced(self, player, kind, suit, round_):
+            self.announcements.append((player, kind, suit))
+
+    def test_the_pair_suit_reaches_the_view(self, players):
+        # All trump, so the contract's own suit is ALL_TRUMP and cannot
+        # name the pair. N holds K♣ + Q♣ and leads the King.
+        cards = {
+            "N": Card(Suit.CLUBS, Rank.KING),
+            "E": Card(Suit.CLUBS, Rank.SEVEN),
+            "S": Card(Suit.CLUBS, Rank.EIGHT),
+            "W": Card(Suit.CLUBS, Rank.NINE),
+        }
+        round_ = _make_round(
+            players,
+            {
+                "N": [cards["N"], Card(Suit.CLUBS, Rank.QUEEN)],
+                "E": [cards["E"]],
+                "S": [cards["S"]],
+                "W": [cards["W"]],
+            },
+            contract=_contract(players["N"], 100, TrumpVariant.ALL_TRUMP),
+            deck=_StubDeck(),
+            rules=RuleConfig(extended_trump_choices=True),
+        )
+        round_._detect_belote_pairs()
+        for seat in ("N", "E", "S", "W"):
+            players[seat].choose_card = (
+                lambda observation, _c=cards[seat]: _card_choice(_c)
+            )
+        view = self._RecordingView()
+        round_.play_trick(view=view)
+        assert view.announcements == [
+            (players["N"], "belote", Suit.CLUBS)
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -606,10 +989,52 @@ class TestBeloteTransition:
 # UX promise the player sees as "I am not asked to confirm Pass".
 
 
-def _empty_round(players_dict):
-    """A Round with no contract / no trick — enough for bidding helpers."""
+def _empty_round(players_dict, rules=None):
+    """A Round with no contract / no trick — enough for bidding helpers.
+
+    Args:
+        players_dict: mapping of seat letter → Player.
+        rules: optional table ruleset; ``None`` leaves the Round on its
+            own default (the §9 catalogue).
+    """
     order = [players_dict[s] for s in ("N", "E", "S", "W")]
-    return Round(order, dealer=players_dict["N"], deck=None, round_number=1)
+    return Round(
+        order, dealer=players_dict["N"], deck=None, round_number=1, rules=rules
+    )
+
+
+class TestAuctionRuleset:
+    """The auction runs under the round's table ruleset (§9.2)."""
+
+    def test_the_auction_runs_under_the_round_ruleset(self, players):
+        rules = RuleConfig(extended_trump_choices=True)
+        round_ = _empty_round(players, rules=rules)
+        round_.manage_bidding()
+        assert round_.auction.rules is rules
+
+    def test_the_default_auction_offers_no_variants(self, players):
+        # Asked of the *finished* auction so the assertion holds whatever
+        # the AI seats bid — the offered trump set is a table rule, not an
+        # auction-state one.
+        round_ = _empty_round(players)
+        round_.manage_bidding()
+        offered = {
+            b.suit
+            for b in Auction.empty(rules=round_.rules).legal_actions(players["N"])
+            if isinstance(b, ContractBid)
+        }
+        assert offered == set(Suit)
+
+    def test_an_extended_auction_offers_both_variants(self, players):
+        rules = RuleConfig(extended_trump_choices=True)
+        round_ = _empty_round(players, rules=rules)
+        round_.manage_bidding()
+        offered = {
+            b.suit
+            for b in Auction.empty(rules=round_.rules).legal_actions(players["N"])
+            if isinstance(b, ContractBid)
+        }
+        assert offered == set(CONTRACT_SUITS)
 
 
 class TestManageBiddingAutoPasses:
@@ -650,7 +1075,7 @@ class TestManageBiddingAutoPasses:
         for ai, choices in scripted.items():
             queue = list(choices)
             ai.choose_bid = lambda _auction, _p=ai, _q=queue: (
-                _q.pop(0) if _q else PassBid(_p)
+                _bid_choice(_q.pop(0) if _q else PassBid(_p))
             )
 
         # Stub view: records request_bid_action calls. Asserting it
@@ -700,7 +1125,7 @@ class TestContractFixedLogging:
         for ai, choices in scripted.items():
             queue = list(choices)
             ai.choose_bid = lambda _auction, _p=ai, _q=queue: (
-                _q.pop(0) if _q else PassBid(_p)
+                _bid_choice(_q.pop(0) if _q else PassBid(_p))
             )
 
         round_ = _empty_round(players)  # order N, E, S, W
@@ -721,7 +1146,7 @@ class TestContractFixedLogging:
         """An all-passed auction never fixes a contract, so the
         "contract fixed" line must never appear."""
         for ai in players.values():
-            ai.choose_bid = lambda _auction, _p=ai: PassBid(_p)
+            ai.choose_bid = lambda _auction, _p=ai: _bid_choice(PassBid(_p))
 
         round_ = _empty_round(players)
 
@@ -755,7 +1180,7 @@ class TestTrickCompletedLogging:
         round_ = _make_round(players, hands, contract, deck=_StubDeck())
         for seat, cards in hands.items():
             players[seat].choose_card = (
-                lambda observation, _card=cards[0]: _card
+                lambda observation, _card=cards[0]: _card_choice(_card)
             )
         return round_
 
@@ -796,3 +1221,58 @@ class TestTrickCompletedLogging:
             for record in caplog.records
         )
 
+
+
+class TestSoloSlamGivesTheLead:
+    """§6 / §9.5 — off by default; on, the declarer opens trick 1."""
+
+    def _round(self, players, contract_value, rules):
+        """A round dealt in N/E/S/W order whose contract belongs to E."""
+        order = [players[s] for s in ("N", "E", "S", "W")]
+        round_ = Round(
+            order, dealer=players["N"], deck=Deck(), round_number=1, rules=rules
+        )
+        round_.deal_cards()
+        round_.contract = _contract(players["E"], contract_value, Suit.SPADES)
+        return round_
+
+    def test_the_seat_after_the_dealer_leads_by_default(self, players):
+        round_ = self._round(players, SlamLevel.SOLO_SLAM, RuleConfig())
+        seating, _hands = round_._play_seating()
+        assert seating[0] is round_.players_order[0]
+
+    def test_the_declarer_leads_when_the_option_is_on(self, players):
+        rules = RuleConfig(solo_slam_gives_the_lead=True)
+        round_ = self._round(players, SlamLevel.SOLO_SLAM, rules)
+        seating, hands = round_._play_seating()
+        assert seating[0] is players["E"]
+        # A rotation, not a rebuild: the cyclic order is preserved, so
+        # play still runs in the table's direction.
+        assert list(seating) == [
+            players["E"], players["S"], players["W"], players["N"]
+        ]
+        # Hands stay parallel to seats.
+        assert hands[0] == tuple(players["E"].hand)
+
+    def test_a_plain_slam_does_not_take_the_lead(self, players):
+        rules = RuleConfig(solo_slam_gives_the_lead=True)
+        round_ = self._round(players, SlamLevel.SLAM, rules)
+        seating, _hands = round_._play_seating()
+        assert seating[0] is round_.players_order[0]
+
+    def test_a_numeric_contract_does_not_take_the_lead(self, players):
+        rules = RuleConfig(solo_slam_gives_the_lead=True)
+        round_ = self._round(players, 100, rules)
+        seating, _hands = round_._play_seating()
+        assert seating[0] is round_.players_order[0]
+
+    def test_play_all_tricks_seeds_the_state_on_the_declarer(self, players):
+        rules = RuleConfig(solo_slam_gives_the_lead=True)
+        round_ = self._round(players, SlamLevel.SOLO_SLAM, rules)
+        for player in round_.players_order:
+            player.choose_card = (
+                lambda observation: _card_choice(observation.legal_cards[0])
+            )
+        round_.play_all_tricks()
+        assert round_.play_state.is_terminal()
+        assert round_.play_state.plays[0].player is players["E"]

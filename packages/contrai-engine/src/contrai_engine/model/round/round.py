@@ -12,14 +12,18 @@ from contrai_core.auction import Auction
 from contrai_core.bid import Bid
 from contrai_core.contract import Contract
 from contrai_core.play import Play, PlayState
+from contrai_core.rule_config import AllTrumpBelote, RuleConfig
 from contrai_core.rules import rules_for
 from contrai_core.team_side import TeamSide
-from contrai_core.types import Rank
+from contrai_core.types import Rank, Suit, TrumpVariant
 
-from .scoring import UnannouncedSlam, score_round
+from ..player.rationale import BidDecision, CardDecision
+from .components import Mark
+from .scoring import RoundScore, UnannouncedSlam, score_round
 
 if TYPE_CHECKING:
     from ..player import Player
+    from contrai_core.card import Card
     from contrai_core.team import Team
     from contrai_core.deck import Deck
 
@@ -38,7 +42,14 @@ class Round:
     trick sequence management, and round score calculation.
     """
 
-    def __init__(self, players_order: List[Player], dealer: Player, deck: Deck, round_number: int):
+    def __init__(
+        self,
+        players_order: List[Player],
+        dealer: Player,
+        deck: Deck,
+        round_number: int,
+        rules: RuleConfig | None = None,
+    ):
         """
         Initialize a round with the given parameters.
 
@@ -47,11 +58,19 @@ class Round:
             dealer: The dealer for this round
             deck: The deck to use for dealing cards
             round_number: The current round number
+            rules: The table ruleset this round is played under. ``None``
+                (the default) means the §9 catalogue defaults.
         """
         self.players_order = players_order
         self.dealer = dealer
         self.deck = deck
         self.round_number = round_number
+        # The table ruleset, normally inherited from the Game. It is the
+        # round's single source for every table rule: the auction runs
+        # under it, it is seeded into the core play state, and the scorer
+        # reads it back off this attribute rather than being handed one —
+        # so no two phases of a round can run under different rulesets.
+        self.rules: RuleConfig = rules if rules is not None else RuleConfig()
 
         # Round state
         self.contract: Optional[Contract] = None
@@ -71,32 +90,75 @@ class Round:
         # about the play phase is read off it directly. AI seats instead
         # read the frozen ``PlayObservation`` projected from this state.
         self.play_state: PlayState | None = None
-        self.round_scores: Dict[TeamSide, int] = {}
-        # Single source of truth for the contract outcome, set by
-        # ``calculate_round_scores``. ``None`` until scored (or when the
-        # round was all-passed). The view reads this rather than
-        # re-deriving "made" from the scores — a failed declarer can
-        # still score a non-zero Belote bonus, so "round_score > 0" is
-        # not a reliable made/failed signal.
-        self.contract_made: Optional[bool] = None
-        # Unannounced-Slam marker, set by ``calculate_round_scores``.
-        # ``None`` when the round was not an unannounced Slam; otherwise
-        # the matching :class:`UnannouncedSlam` member — ``SLAM`` (the
-        # declaring *team* swept all 8 tricks) or ``GRAND_SLAM`` (the
-        # contracting *player personally* won them all). Only set for
-        # un-doubled numeric contracts — the path that swaps the
-        # 162-point pile for a flat 250 substitute. The view reads this to
-        # render the 250 and its explanatory tag.
-        self.unannounced_slam: Optional[UnannouncedSlam] = None
+        # The scored round, published atomically by
+        # ``calculate_round_scores`` (or by ``handle_failed_contract`` on
+        # an all-pass). ``None`` until the round is scored. The three
+        # attributes the view and the debug screen read are properties
+        # over it rather than copies, so they cannot drift from it.
+        self.round_score: Optional[RoundScore] = None
 
-        # Belote / rebelote announcement state. ``belote_holder`` is the
-        # unique player holding both the K and the Q of trump at deal time
-        # (None when no one has both, or when the contract is NO_TRUMP /
-        # passed). ``belote_state`` tracks which of the two cards they
-        # have already played: missing → not yet announced; "belote" →
-        # one played; "rebelote" → both played.
-        self.belote_holder: Optional[Player] = None
-        self.belote_state: Dict[Player, str] = {}
+        #: Every K + Q pair held at deal time, holder -> the suits they
+        #: pair in. At most one entry with one suit outside all trump —
+        #: a suit contract has a single trump suit and no trump has none.
+        #: Under the all-trump ``four`` regime up to four pairs live in
+        #: one deal and a seat can pair in two suits.
+        self.belote_pairs: Dict[Player, tuple[Suit, ...]] = {}
+        #: Announcement progress per pair: (holder, suit) -> "belote" |
+        #: "rebelote". Keyed by the pair, not the holder, because a seat
+        #: can be mid-announcement in two suits at once. Missing → not
+        #: yet announced; "belote" → one of the two played; "rebelote"
+        #: → both played.
+        self.belote_state: Dict[tuple[Player, Suit], str] = {}
+        #: The pairs in the order they were first announced. Under the
+        #: ``single`` regime the head of this list is the one that marks.
+        self.belote_order: List[tuple[Player, Suit]] = []
+
+        #: Every AI bid this round, in bidding order, with the rationale
+        #: that produced it. A human seat appends nothing — a person's
+        #: reasoning is not the engine's to record — so the debug strip
+        #: simply shows no rationale for that seat. A ``Round`` is built
+        #: fresh per round, so these need no clearing.
+        self.bid_decisions: List[BidDecision] = []
+        #: Every AI card play this round, in play order, with the
+        #: rationale that produced it. Same human-seat rule as above.
+        self.card_decisions: List[CardDecision] = []
+
+    @property
+    def round_scores(self) -> Dict[TeamSide, int]:
+        """Per-side round scores; empty until the round is scored.
+
+        Returns:
+            The scored round's per-side totals, or ``{}`` while
+            :attr:`round_score` is ``None``.
+        """
+        return self.round_score.scores if self.round_score else {}
+
+    @property
+    def contract_made(self) -> Optional[bool]:
+        """Whether the contract was made.
+
+        The canonical made/failed signal — the view reads this rather
+        than re-deriving "made" from the scores, since a failed declarer
+        can still mark a non-zero Belote bonus.
+
+        Returns:
+            ``None`` until the round is scored, and on an all-passed
+            round; otherwise the scorer's verdict.
+        """
+        return self.round_score.contract_made if self.round_score else None
+
+    @property
+    def unannounced_slam(self) -> Optional[UnannouncedSlam]:
+        """The unannounced-sweep tag for this round.
+
+        Returns:
+            ``SLAM`` (the declaring *team* swept all 8 tricks) or
+            ``GRAND_SLAM`` (the contracting *player personally* won them
+            all) on an un-doubled numeric contract; ``None`` otherwise,
+            including before the round is scored. The view reads it to
+            render the flat substitute and its explanatory tag.
+        """
+        return self.round_score.unannounced_slam if self.round_score else None
 
     def deal_cards(self):
         """
@@ -123,6 +185,11 @@ class Round:
            raises :class:`IllegalBidError` — there is no silent
            "force a Pass on illegal" fallback any more.
 
+        The auction runs under this round's :attr:`rules`, which is what
+        decides the trump choices on offer (the four suits, plus no trump
+        and all trump when ``extended_trump_choices`` is on) and where
+        each mode's numeric ladder stops.
+
         Args:
             view: Optional view that drives human input and pacing
                 hooks.
@@ -132,7 +199,7 @@ class Round:
             player passed.
         """
 
-        auction = Auction.empty()
+        auction = Auction.empty(rules=self.rules)
         player_iter = itertools.cycle(self.players_order)
 
         while not auction.is_terminal():
@@ -157,7 +224,7 @@ class Round:
         self.contract = auction.contract()
         if self.contract is not None:
             logger.debug("contract fixed: %s", self.contract)
-            self._detect_belote_holder()
+            self._detect_belote_pairs()
             # Bookmark the contract in the event log so the start of
             # play is clearly delimited.
             if view is not None and hasattr(view, 'on_contract_established'):
@@ -191,7 +258,13 @@ class Round:
 
         bid: Optional[Bid] = None
         if hasattr(player, 'choose_bid'):
-            bid = player.choose_bid(auction)
+            # An AI answers with a BidDecision — unwrap the bid and keep
+            # the trace on the round. A human's hook returns None, so
+            # nothing is recorded for that seat.
+            decision = player.choose_bid(auction)
+            if decision is not None:
+                self.bid_decisions.append(decision)
+                bid = decision.bid
         if (
             view is not None
             and getattr(player, 'is_human', False)
@@ -205,56 +278,156 @@ class Round:
             )
         return bid
 
+    def _belote_suits(self) -> tuple[Suit, ...]:
+        """The suits a belote can live in at this table, this round.
+
+        The rules object answers where a belote is *possible* — the trump
+        suit at a suit contract, nothing at no trump, every suit at all
+        trump. The ``none`` regime then removes all trump's belotes
+        entirely: a table playing it has no belote to announce, not one
+        that fails to score (contree-domain.md §6.6, §9.2).
+
+        Returns:
+            The suits to scan hands for a K + Q pair in. Always real card
+            suits, so the ``has_card`` calls in
+            :meth:`_detect_belote_pairs` — which build a
+            :class:`~contrai_core.Card` from what they are handed — never
+            see a suitless trump.
+        """
+
+        trump = self.contract.suit if self.contract else None
+        if (trump is TrumpVariant.ALL_TRUMP
+                and self.rules.all_trump_belote is AllTrumpBelote.NONE):
+            return ()
+        return rules_for(trump).belote_suits
+
+    def _detect_belote_pairs(self) -> None:
+        """Snapshot every K + Q pair held at deal time.
+
+        Belote/rebelote is a per-pair narrative event: the holder
+        announces ``Belote`` on the first of the two cards they play and
+        ``Rebelote`` on the second. Scanning every seat rather than
+        stopping at the first is what the all-trump ``four`` regime needs
+        — up to four pairs live in one deal, and one seat may hold two.
+        """
+
+        suits = self._belote_suits()
+        self.belote_pairs = {}
+        for player in self.players_order:
+            paired = tuple(
+                suit for suit in suits
+                if player.hand.has_card(suit, Rank.KING)
+                and player.hand.has_card(suit, Rank.QUEEN)
+            )
+            if paired:
+                self.belote_pairs[player] = paired
+
     def _is_belote_event(self, player: Player, card) -> bool:
-        """True if *player* playing *card* counts toward a belote announcement."""
-        if self.belote_holder is None or self.contract is None:
+        """True if ``player`` playing ``card`` announces a belote.
+
+        The predicate keys on the *pair*, not on trumpness: at all trump
+        every King and Queen is a trump King and Queen, so a trumpness
+        test would fire on a holder's unpaired King in a fourth suit.
+        """
+
+        if self.contract is None:
             return False
-        if player is not self.belote_holder:
-            return False
-        rules = rules_for(self.contract.suit)
-        return rules.is_trump(card.suit) and card.rank in (
-            Rank.KING,
-            Rank.QUEEN,
+        return (
+            card.suit in self.belote_pairs.get(player, ())
+            and card.rank in (Rank.KING, Rank.QUEEN)
         )
 
-    def _transition_belote_state(self, player: Player) -> Optional[str]:
-        """Advance the belote_state machine and return the new state name.
+    def _transition_belote_state(
+        self, player: Player, suit: Suit
+    ) -> Optional[str]:
+        """Advance one pair's announcement state and return its new name.
 
-        Returns ``"belote"`` if this is the first of the K+Q pair played,
-        ``"rebelote"`` if it's the second, or ``None`` if the player has
-        already fired both (defensive — shouldn't happen, since each card
-        is unique).
+        Returns ``"belote"`` on the first card of the pair, ``"rebelote"``
+        on the second, or ``None`` if both have already fired (defensive
+        — each card is unique). First announcements are appended to
+        :attr:`belote_order`, which is what the ``single`` regime reads.
+
+        Args:
+            player: The pair's holder.
+            suit: The suit the pair lives in.
+
+        Returns:
+            The announcement name to narrate, or ``None``.
         """
-        current = self.belote_state.get(player)
+
+        key = (player, suit)
+        current = self.belote_state.get(key)
         if current is None:
-            self.belote_state[player] = "belote"
+            self.belote_state[key] = "belote"
+            self.belote_order.append(key)
             return "belote"
         if current == "belote":
-            self.belote_state[player] = "rebelote"
+            self.belote_state[key] = "rebelote"
             return "rebelote"
         return None
 
-    def _detect_belote_holder(self) -> None:
-        """Snapshot which player (if any) holds the K + Q of trump.
+    def _scoring_belotes(self) -> tuple[tuple[Player, Suit], ...]:
+        """The held pairs that actually mark, under this table's regime.
 
-        Belote/rebelote is a per-round, per-holder narrative event:
-        whoever holds both cards announces ``Belote`` on the first they
-        play and ``Rebelote`` on the second. No-trump contracts have no
-        belote.
+        Outside all trump at most one pair exists and it always marks —
+        the regime knob is an all-trump rule (§6.6). Under all trump:
+        ``none`` is already empty (no pair was ever detected), ``four``
+        marks every pair, and ``single`` marks only the first one
+        announced in play, whichever team announced it.
+
+        Returns:
+            The ``(holder, suit)`` pairs worth 20 points each.
         """
-        trump = self.contract.suit if self.contract else None
-        # The rules object knows which suits can carry a belote — always
-        # real card suits, so ``has_card`` below (which builds a Card from
-        # what it is handed) never sees a suitless trump. Empty under a
-        # no-trump contract: no belote to hold.
-        for suit in rules_for(trump).belote_suits:
-            for player in self.players_order:
-                has_king = player.hand.has_card(suit, Rank.KING)
-                has_queen = player.hand.has_card(suit, Rank.QUEEN)
-                if has_king and has_queen:
-                    self.belote_holder = player
-                    return
-        self.belote_holder = None
+
+        held = tuple(
+            (player, suit)
+            for player, suits in self.belote_pairs.items()
+            for suit in suits
+        )
+        if (self.contract is None
+                or self.contract.suit is not TrumpVariant.ALL_TRUMP
+                or self.rules.all_trump_belote is AllTrumpBelote.FOUR):
+            return held
+        return tuple(self.belote_order[:1])
+
+    @property
+    def announced_belotes(self) -> tuple[tuple[Player, Suit], ...]:
+        """The pairs announced so far that mark, in announcement order.
+
+        The display counterpart of :meth:`_scoring_belotes`: that method
+        answers what will be *marked* at the end of the round, this one
+        what the table has actually *seen*. Both halves of the
+        intersection matter. Announced, because under the ``four`` regime
+        ``_scoring_belotes`` counts pairs a seat merely holds — surfacing
+        those would show the human a King + Queen no one has played yet.
+        Marking, because under ``single`` three of the four announcements
+        a deal can carry are worth nothing, and a badge drawn for them
+        says the table is paying four bonuses.
+
+        The two agree once the last card is played: every held pair is
+        announced within the eight tricks, so they differ only mid-round.
+
+        Returns:
+            ``(holder, suit)`` pairs, ordered by first announcement.
+        """
+
+        scoring = set(self._scoring_belotes())
+        return tuple(key for key in self.belote_order if key in scoring)
+
+    @property
+    def belote_counts_by_side(self) -> Dict[TeamSide, int]:
+        """How many belotes each side marks this round.
+
+        Returns:
+            Every :class:`~contrai_core.TeamSide` member as a key, so
+            callers index directly; a side marking none maps to ``0``.
+            The scorer multiplies each by 20.
+        """
+
+        counts = {side: 0 for side in TeamSide}
+        for player, _suit in self._scoring_belotes():
+            counts[player.position.team_side] += 1
+        return counts
 
     def _sync_hands(self) -> None:
         """Re-mirror the players' hands from the authoritative play state.
@@ -269,6 +442,42 @@ class Round:
         for player in self.players_order:
             player.hand.clear()
             player.hand.extend(self.play_state.hand_of(player))
+
+    def _play_seating(
+        self,
+    ) -> tuple[tuple[Player, ...], tuple[tuple[Card, ...], ...]]:
+        """The seating and hands to seed this round's play state with.
+
+        Normally the round's own :attr:`players_order` — the seat after
+        the dealer leads trick 1 whichever team took the contract (§6).
+        Under the table option *the Solo Slam gives the lead* the
+        declarer of a Solo Slam opens instead, which is applied by
+        **rotating** the order onto them rather than rebuilding it: the
+        play state steps forward through the tuple it is handed, so a
+        rotation moves the lead and leaves everything else alone —
+        play still runs in the table's direction, later tricks are still
+        led by their winners, and the next dealer is still the seat after
+        this one.
+
+        Returns:
+            The seats in play order and their hands, parallel tuples
+            ready for :meth:`~contrai_core.PlayState.start`.
+        """
+
+        seating = list(self.players_order)
+        if (
+            self.rules.solo_slam_gives_the_lead
+            and self.contract is not None
+            and self.contract.is_solo_slam()
+        ):
+            declarer = self.contract.player
+            if declarer in seating:
+                pivot = seating.index(declarer)
+                seating = seating[pivot:] + seating[:pivot]
+        return (
+            tuple(seating),
+            tuple(tuple(player.hand) for player in seating),
+        )
 
     def _trick_after_play(self) -> Sequence[Play]:
         """The trick on the table, read **after** a card has been applied.
@@ -312,10 +521,12 @@ class Round:
         # mirroring the Auction idiom — since a directly injected mid-round
         # hand need not hold the full 8 cards.
         if self.play_state is None:
+            seating, hands = self._play_seating()
             self.play_state = PlayState(
                 self.contract,
-                tuple(self.players_order),
-                tuple(tuple(player.hand) for player in self.players_order),
+                seating,
+                hands,
+                rules=self.rules,
             )
 
         # Four plays make a trick. The active player and the legal cards
@@ -346,12 +557,18 @@ class Round:
                 # authoritative play state — its own hand, legal cards, and
                 # the public trick history — attaching the retained
                 # auction's bids (empty until the auction is set).
-                card = player.choose_card(
+                # The answer is a CardDecision: unwrap the card and keep
+                # the trace on the round for the debug strip.
+                decision = player.choose_card(
                     self.play_state.observe(
                         player,
                         bids=self.auction.bids if self.auction else (),
                     )
                 )
+                card = None
+                if decision is not None:
+                    self.card_decisions.append(decision)
+                    card = decision.card
             else:
                 # Simple fallback: play first playable card
                 card = playable_cards[0] if playable_cards else None
@@ -372,14 +589,16 @@ class Round:
             if view is not None and hasattr(view, 'on_card_played'):
                 view.on_card_played(player, card, self._trick_after_play())
 
-            # Belote / rebelote announcement. Fires only when the holder
-            # plays one of the K/Q of trump. Each card fires at most once.
+            # Belote / rebelote announcement. Fires only when a seat
+            # plays a K or Q of a pair it holds — at all trump every K/Q
+            # is a trump K/Q, so trumpness alone is not the test. Each
+            # card fires at most once.
             if self._is_belote_event(player, card):
-                kind = self._transition_belote_state(player)
+                kind = self._transition_belote_state(player, card.suit)
                 if kind is not None and view is not None and hasattr(
                     view, 'on_belote_announced'
                 ):
-                    view.on_belote_announced(player, kind, self)
+                    view.on_belote_announced(player, kind, card.suit, self)
 
         # Who won is a pure rule of the trick given trump, and the play
         # state has already applied it — the winner of the trick just
@@ -427,10 +646,12 @@ class Round:
         # validated start (4 seats, 8 distinct cards each). The very Card
         # objects held in the players' hands flow into it, so the view can
         # keep matching playable cards by identity.
+        seating, hands = self._play_seating()
         self.play_state = PlayState.start(
             self.contract,
-            tuple(self.players_order),
-            tuple(tuple(player.hand) for player in self.players_order),
+            seating,
+            hands,
+            rules=self.rules,
         )
 
         # Play 8 tricks
@@ -443,20 +664,16 @@ class Round:
 
         Thin lifecycle wrapper around the pure :func:`scoring.score_round`
         transformation: it runs the scoring rules over the round's final
-        state and publishes the three result attributes the view reads —
-        :attr:`round_scores`, :attr:`contract_made` (the canonical
-        made/failed signal), and :attr:`unannounced_slam`. The scoring
-        shapes (numeric, unannounced Slam, doubled winner-takes-all,
-        Slam / Solo Slam) and the Belote rule all live in
-        :mod:`scoring`.
+        state and publishes the whole result atomically onto
+        :attr:`round_score`, which :attr:`round_scores`,
+        :attr:`contract_made` and :attr:`unannounced_slam` then read.
+        The §7.2 component model and the Belote rule live in
+        :mod:`scoring` and :mod:`components`.
 
         Returns:
             Dict: Round scores, keyed by team side
         """
-        result = score_round(self)
-        self.round_scores = result.scores
-        self.contract_made = result.contract_made
-        self.unannounced_slam = result.unannounced_slam
+        self.round_score = score_round(self)
         return self.round_scores
 
     def handle_failed_contract(self) -> Dict[TeamSide, int]:
@@ -471,7 +688,18 @@ class Round:
             self.deck.add_cards(player.hand)
             player.hand.clear()
 
-        # Return zero scores
+        # An all-pass publishes a *contractless* result: ``contract_made``
+        # stays ``None`` rather than becoming ``False``, or the recap and
+        # the debug screen would both read the redeal as a failed contract.
         sides = {player.position.team_side for player in self.players_order}
-        self.round_scores = {side: 0 for side in sides}
+        self.round_score = RoundScore(
+            scores={side: 0 for side in sides},
+            contract_made=None,
+            unannounced_slam=None,
+            marks={side: Mark(0, 0) for side in sides},
+            belote_points={side: 0 for side in sides},
+            card_points={side: 0 for side in sides},
+            last_trick_side=None,
+            multiplier=1,
+        )
         return self.round_scores

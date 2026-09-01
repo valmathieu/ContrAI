@@ -1,55 +1,53 @@
 ---
-title: contrai-engine — round scoring decision tree (scoring.score_round)
+title: contrai-engine — round scoring pipeline (scoring.score_round → components)
 ---
 flowchart TD
     Start(["score_round(round)"]) --> HasContract{"contract<br/>established?"}
 
-    HasContract -- "no (all passed)" --> Zero["every team → 0<br/>contract_made = None"]
+    HasContract -- "no (all passed)" --> Zero["every team → 0<br/>contract_made = None<br/>marks = Mark(0, 0)"]
     Zero --> End(["RoundScore"])
 
-    HasContract -- "yes" --> Points["card points per team (trump-aware)<br/>+10 last-trick bonus → last-trick team<br/>belote_team = holder of K+Q of trump"]
-    Points --> Family{"contract.is_slam_family()?"}
+    HasContract -- "yes" --> Points["card points per team (trump-aware)<br/>+10 last-trick bonus → last-trick team<br/>belote counts per team (0-4, by all-trump regime)"]
+    Points --> Judge{"contract.is_slam_family()?"}
 
-    %% ---------- Slam / Solo Slam path ----------
-    Family -- "Slam / Solo Slam" --> SlamMade{"contract team won all 8?<br/>(Solo Slam: bidder<br/>personally all 8)"}
-    SlamMade -- "yes → made" --> SlamWin["at_risk = substitute + base × M<br/>→ contract team<br/>(500/750/1250 Slam,<br/>1000/1500/2500 Solo Slam)"]
-    SlamMade -- "no → failed" --> SlamLose["at_risk = substitute + base × M<br/>→ defending side"]
-    SlamWin --> Belote
-    SlamLose --> Belote
+    %% ---------- Judging made / failed ----------
+    Judge -- "Slam / Solo Slam" --> SlamMade["made = contract team won all 8<br/>(Solo Slam: bidder personally all 8)<br/>— a trick predicate, points never consulted"]
+    Judge -- "numeric" --> Sweep{"M == 1 AND<br/>contract team won all 8?<br/>(unannounced sweep)"}
+    Sweep -- "yes" --> SweepTag["tag GRAND_SLAM (bidder all 8), else SLAM<br/>made = true — a sweep cannot fail"]
+    Sweep -- "no" --> NumMade["P_att ≥ C <b>AND</b> P_att &gt; P_def<br/>(the out-score test, iff <i>attack_must_outscore_defense</i>;<br/>a tie is the §7.5 dispute and fails)<br/>P = pile + own belote, the belote counted<br/>iff <i>belote_counts_toward_contract</i>"]
 
-    %% ---------- Numeric path (80–180) ----------
-    Family -- "numeric" --> Sweep{"M == 1 AND<br/>contract team won all 8?<br/>(unannounced Slam)"}
-    Sweep -- "yes" --> SweepTag["tag GRAND_SLAM (bidder all 8) → pile = 500<br/>else SLAM → pile = 250<br/>made = true"]
-    Sweep -- "no" --> NumMade
-    SweepTag --> Mult
+    %% ---------- Belote transfer on a failure ----------
+    SlamMade --> Transfer
+    SweepTag --> Transfer
+    NumMade --> Transfer
+    Transfer["failed <b>and</b> <i>belote_lost_when_contract_fails</i><br/>→ the declarer's belote moves to the defense<br/>(one-directional: a defender's is never taken)"]
 
-    NumMade["made = attacker_pts ≥ value<br/>(attacker_pts = card pts + own belote)"] --> Mult{"multiplier M?"}
+    %% ---------- The substitute ----------
+    Transfer --> Subst
+    Subst["substitute = Slam base (250 / 500) — always<br/>| un-doubled sweep 250 / 500, iff <i>unannounced_slam_substitute</i><br/>| None → count the pile for real"]
 
-    %% --- M == 1: share the pile ---
-    Mult -- "M == 1 (share)" --> ShareMade{"contract made?"}
-    ShareMade -- "made" --> ShareWin["contract → value + pile + belote<br/>(pile = 250/500 on unannounced Slam, else card pts)<br/>defenders → own card pts + belote"]
-    ShareMade -- "failed" --> ShareLose["defenders → 160 + value + belote<br/>declarer → belote only"]
-    ShareWin --> Belote
-    ShareLose --> Belote
+    %% ---------- The two §7.2 components ----------
+    Subst --> MadeComp
+    MadeComp["<b>made-points component</b><br/>made: substitute | 160 flat (M &gt; 1) | share the pile<br/>failed: 160 flat to the defense<br/>— a failed Slam keeps its substitute<br/>unless <i>failed_slam_marks_made_points</i> is off"]
+    MadeComp --> AnnComp
+    AnnComp["<b>announced-points component</b><br/>A = C, to the declarer when made<br/>and to the defense when failed<br/>— <i>any_failure_marks_160</i> flattens A to 160 on a failure,<br/>except where <i>failed_slam_marks_announced_points</i> keeps 250 / 500"]
 
-    %% --- M > 1: winner takes all ---
-    Mult -- "M > 1 (doubled)" --> DblMade{"contract made?"}
-    DblMade -- "made" --> DblWin["contract → 160 + value×M + belote<br/>defenders → belote only"]
-    DblMade -- "failed" --> DblLose["defenders → 160 + value×M + belote<br/>declarer → belote only"]
-    DblWin --> Belote
-    DblLose --> Belote
+    AnnComp --> Reduce["marked_total: apply §7.3 conventions<br/>and place the multiplier M<br/>default → made + announced × M"]
+    Reduce --> Belote
 
     %% ---------- Shared belote footer ----------
-    Belote["belote +20 preserved on every shape<br/>→ the K+Q holder's team (even the round's loser)"]
+    Belote["belote +20 per pair preserved on every shape<br/>→ each pair's holder team (even the round's loser)"]
     Belote --> End
 
     %% ---------- Engine-orange palette ----------
     classDef entry fill:#FFD9B3,stroke:#B26A28,stroke-width:2px,color:#5C3A14;
     classDef step fill:#FFEFD9,stroke:#B26A28,stroke-width:1px,color:#5C3A14;
     classDef decision fill:#FFF3E0,stroke:#E89A4F,stroke-width:2px,color:#5C3A14;
+    classDef component fill:#E1F0FF,stroke:#2F6FAF,stroke-width:2px,color:#123A61;
     classDef belote fill:#FFF8E1,stroke:#F9A825,stroke-width:2px,color:#5F4B00;
 
     class Start,End entry;
-    class HasContract,Family,SlamMade,Sweep,Mult,ShareMade,DblMade decision;
-    class Zero,Points,SlamWin,SlamLose,SweepTag,NumMade,ShareWin,ShareLose,DblWin,DblLose step;
+    class HasContract,Judge,Sweep decision;
+    class Zero,Points,SlamMade,SweepTag,NumMade,Transfer,Subst,Reduce step;
+    class MadeComp,AnnComp component;
     class Belote belote;

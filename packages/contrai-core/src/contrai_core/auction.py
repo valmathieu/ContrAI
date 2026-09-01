@@ -25,9 +25,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
-from .bid import Bid, ContractBid, DoubleBid, PassBid, RedoubleBid, SlamLevel
+from .bid import (
+    Bid,
+    ContractBid,
+    DoubleBid,
+    PassBid,
+    RedoubleBid,
+    SlamLevel,
+    bookable_suits,
+    bookable_values,
+    ladder_top,
+)
 from .contract import Contract
 from .exceptions import IllegalBidError
+from .rule_config import RuleConfig
 
 if TYPE_CHECKING:
     from .player import BasePlayer
@@ -51,19 +62,31 @@ class Auction:
         bids: The chronological tuple of bids made so far. Defaults to
             the empty tuple — an :class:`Auction` with no bids is a
             fresh, valid auction state at the start of a round.
+        rules: The table ruleset this auction runs under. Decides which
+            trump choices are bookable and where each mode's numeric
+            ladder stops; defaults to the §9 default set.
     """
 
     bids: tuple[Bid, ...] = field(default=())
+    rules: RuleConfig = field(default_factory=RuleConfig)
 
     # ------------------------------------------------------------------
     # Construction helpers
     # ------------------------------------------------------------------
 
     @classmethod
-    def empty(cls) -> Auction:
-        """Return a fresh auction with no bids yet."""
+    def empty(cls, rules: RuleConfig | None = None) -> Auction:
+        """Return a fresh auction with no bids yet.
 
-        return cls()
+        Args:
+            rules: The table ruleset; ``None`` means ``RuleConfig()``.
+
+        Returns:
+            An auction with an empty bid history, running under
+            ``rules``.
+        """
+
+        return cls(rules=rules if rules is not None else RuleConfig())
 
     # ------------------------------------------------------------------
     # Legality queries
@@ -111,17 +134,25 @@ class Auction:
 
         actions: list[Bid] = [PassBid(player)]
 
-        # Contract legality is suit-agnostic and monotonic in
-        # :attr:`ContractBid.VALID_VALUES` order: once a value clears,
-        # every later one does too. Probe until the first hit, then fan
-        # the rest over every suit. See ``TestLegalActionsMonotonicity``.
+        # Contract legality is monotonic in :attr:`ContractBid.VALID_VALUES`
+        # order: once a value clears the auction state, every later one
+        # does too. Probe until the first hit, then fan the rest over the
+        # trumps this table offers — skipping, per trump, the values above
+        # that mode's ladder top, which is why the suit set narrows as the
+        # value climbs. See ``TestLegalActionsMonotonicity``.
+        suits = bookable_suits(self.rules)
+        values = bookable_values(self.rules)
         found_legal = False
-        for value in ContractBid.VALID_VALUES:
+        for value in values:
             if not found_legal:
                 if not self._is_contract_value_legal(value):
                     continue
                 found_legal = True
-            for suit in ContractBid.VALID_SUITS:
+            for suit in suits:
+                if isinstance(value, int) and value > ladder_top(
+                    suit, self.rules
+                ):
+                    continue
                 actions.append(ContractBid(player, value, suit))
 
         double_candidate = DoubleBid(player)
@@ -154,7 +185,7 @@ class Auction:
 
         if not self.is_legal(bid):
             raise IllegalBidError(bid, self.bids)
-        return Auction(self.bids + (bid,))
+        return Auction(self.bids + (bid,), rules=self.rules)
 
     # ------------------------------------------------------------------
     # Termination
@@ -312,37 +343,57 @@ class Auction:
     # ------------------------------------------------------------------
 
     def _is_contract_legal(self, bid: ContractBid) -> bool:
-        """A new :class:`ContractBid` must strictly outrank the prior
-        numeric contract, and the auction must not be frozen by a
-        :class:`DoubleBid` or :class:`RedoubleBid`.
+        """A new :class:`ContractBid` must be one the table offers, at a
+        value on that mode's ladder, strictly outranking the prior numeric
+        contract, with the auction not frozen by a :class:`DoubleBid` or
+        :class:`RedoubleBid`.
 
-        A *double* freezes the auction at the current contract — no 
+        A *double* freezes the auction at the current contract — no
         more numeric bids are legal until the auction completes.
 
-        Contract legality is a function of the bid's *value* alone —
-        the suit never matters to precedence or to the freeze rule.
-        This method is a thin wrapper around
-        :meth:`_is_contract_value_legal`; suit-agnostic callers (notably
-        :meth:`legal_actions`) should use that helper directly to avoid
-        re-asking the same question for each suit.
+        Precedence and the freeze rule are functions of the bid's *value*
+        alone; the suit matters only to the two table limits checked here,
+        which no auction state can lift. :meth:`legal_actions` therefore
+        probes precedence once per value through
+        :meth:`_is_contract_value_legal` and applies the ladder cap
+        per suit itself, rather than re-asking this method six times.
         """
 
+        # The table's own limits come first: a trump choice it does not
+        # offer, or a value above that mode's ladder top, is illegal
+        # whatever the auction state (§5.2). Slam-family values are never
+        # ladder-capped — the ``isinstance`` guard is what keeps a
+        # SlamLevel out of an int comparison it has no ordering for.
+        if bid.suit not in bookable_suits(self.rules):
+            return False
+        # A table may withdraw the Solo Slam altogether (§9.4). Checked
+        # here, beside the trump-choice limit, because both are table
+        # rules no auction state can lift.
+        if bid.value not in bookable_values(self.rules):
+            return False
+        if isinstance(bid.value, int) and bid.value > ladder_top(
+            bid.suit, self.rules
+        ):
+            return False
         return self._is_contract_value_legal(bid.value)
 
     def _is_contract_value_legal(self, value: int | SlamLevel) -> bool:
         """Whether a contract at ``value`` would be legal regardless of suit.
 
         Factored out of :meth:`_is_contract_legal` so :meth:`legal_actions`
-        can enumerate suits without re-running an identical legality
-        probe six times per value. The split also documents the rule:
-        contract legality in contrée depends on value precedence and the
-        Double/Redouble freeze state, never on the suit announced.
+        can enumerate suits without re-running an identical probe six
+        times per value. The split also documents the rule: *precedence*
+        in contrée depends on the value and the Double/Redouble freeze
+        state, never on the suit bid. What the suit does decide — is this
+        trump choice offered, and does the value clear its ladder — is a
+        table rule, checked in :meth:`_is_contract_legal`.
 
         Args:
-            value: A numeric step (80, 90, …, 180) or a
-                :class:`SlamLevel` member. No validation is performed
-                here — ``ContractBid.__post_init__`` enforces the
-                domain of valid values.
+            value: A numeric step (80, 90, …, 240) or a
+                :class:`SlamLevel` member. Neither the value domain nor
+                the per-mode ladder cap is checked here —
+                ``ContractBid.__post_init__`` enforces the first and
+                :func:`~contrai_core.ladder_top` the second.
 
         Returns:
             ``True`` if a :class:`ContractBid` at ``value`` (with any
@@ -359,16 +410,39 @@ class Auction:
                 return False
         if last_contract_bid is None:
             return True
-        # Once a Slam or SoloSlam has been announced, no further contract
+        # Once a Slam or SoloSlam has been bid, no further contract
         # bid is legal. This is asymmetric for the Slam → SoloSlam
         # progression: Slam (500) blocks SoloSlam (1000) even though the
         # latter outranks it numerically, per the user-confirmed rule.
         if isinstance(last_contract_bid.value, SlamLevel):
             return False
-        # Slam and SoloSlam outrank every numeric contract (80–180).
+        # Slam and SoloSlam outrank every numeric contract (80–240).
         if isinstance(value, SlamLevel):
             return True
         return value > last_contract_bid.value
+
+    def _slam_double_allowed(self, contract_bid: ContractBid) -> bool:
+        """Whether this table lets ``contract_bid`` be doubled (§5.3, §9.4).
+
+        *Slam can be doubled* and *Solo Slam can be doubled* are two
+        independent switches, both on by default; turning one off
+        forbids the double — and with it the redouble, which only ever
+        stands on a live double — against that contract alone. A numeric
+        contract is never gated.
+
+        Args:
+            contract_bid: The contract bid a double would stand against.
+
+        Returns:
+            ``True`` unless the contract is a Slam-family bid whose
+            switch is off.
+        """
+
+        if contract_bid.value is SlamLevel.SLAM:
+            return self.rules.slam_can_be_doubled
+        if contract_bid.value is SlamLevel.SOLO_SLAM:
+            return self.rules.solo_slam_can_be_doubled
+        return True
 
     def _is_double_legal(self, bid: DoubleBid) -> bool:
         """A :class:`DoubleBid` requires a live :class:`ContractBid`
@@ -392,6 +466,8 @@ class Auction:
             elif isinstance(prev, (DoubleBid, RedoubleBid)):
                 return False
         if last_contract_bid is None:
+            return False
+        if not self._slam_double_allowed(last_contract_bid):
             return False
         if last_contract_bid.player.team is bid.player.team:
             return False

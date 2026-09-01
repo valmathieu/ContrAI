@@ -9,7 +9,7 @@ double/redouble branches, the past-180 Slam-only tail).
 
 from __future__ import annotations
 
-from contrai_core import Auction, Position, Suit
+from contrai_core import AllTrumpBelote, Auction, Position, RuleConfig, Suit
 from contrai_core.bid import ContractBid, DoubleBid, PassBid
 
 from contrai_engine.view.screens.bidding import (
@@ -145,6 +145,51 @@ class TestBiddingPromptText:
         assert "'pass'" in text
         assert "'double'" in text
         assert " H'" not in text
+
+    def test_the_default_table_advertises_no_variant(self, four_players):
+        *_, south, _west = four_players
+        text = _bidding_prompt_text(Auction.empty(), south).plain
+        assert "NT" not in text
+        assert "AT" not in text
+
+    def test_an_extended_table_advertises_both_variants(self, four_players):
+        # The hint is derived from Auction.legal_actions, so turning the
+        # trump-choice gate on is all it takes for the prompt to name them.
+        *_, south, _west = four_players
+        rules = RuleConfig(extended_trump_choices=True)
+        text = _bidding_prompt_text(Auction.empty(rules=rules), south).plain
+        assert "'80 NT'" in text
+        assert "'80 AT'" in text
+
+    def test_a_variant_past_its_ladder_top_drops_off_the_hint(
+        self, four_players
+    ):
+        # 170 stands, so the cheapest raise is 180: on the suit ladder and
+        # on all trump's (the default `single` regime tops at 180), but
+        # past no trump's 160 ceiling. The hint drops NT and keeps AT.
+        _north, east, south, _west = four_players
+        rules = RuleConfig(extended_trump_choices=True)
+        auction = Auction.empty(rules=rules).apply(
+            ContractBid(east, 170, Suit.HEARTS)
+        )
+        text = _bidding_prompt_text(auction, south).plain
+        assert "'180 H'" in text
+        assert "'180 AT'" in text
+        assert "NT'" not in text
+
+    def test_every_variant_drops_off_once_all_are_capped(self, four_players):
+        # At a `none` table both variants stop at 160, so a standing 170
+        # leaves only the suit example.
+        _north, east, south, _west = four_players
+        rules = RuleConfig(extended_trump_choices=True,
+                           all_trump_belote=AllTrumpBelote.NONE)
+        auction = Auction.empty(rules=rules).apply(
+            ContractBid(east, 170, Suit.HEARTS)
+        )
+        text = _bidding_prompt_text(auction, south).plain
+        assert "'180 H'" in text
+        assert "NT'" not in text
+        assert "AT'" not in text
 
 
 class TestBidRejectionText:

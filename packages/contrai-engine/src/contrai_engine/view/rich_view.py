@@ -15,9 +15,11 @@ by the end-game scoreboard are tracked here, not in ``Game``.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Sequence
 
 from contrai_core.bid import (
@@ -29,15 +31,24 @@ from contrai_core.bid import (
 )
 
 from contrai_core import (
+    PRESETS,
     Auction,
     BasePlayer,
     Card,
     Contract,
     Play,
+    Suit,
     TeamSide,
     rules_for,
 )
-from contrai_engine.options import DebugOptions
+from contrai_engine.options import DebugOptions, TableAids
+from contrai_engine.ruleset import (
+    SECTIONS,
+    TableSetup,
+    cycle_knob,
+    load_setup,
+    setup_path,
+)
 from contrai_engine.view.bidding_rules import _illegal_bid_reason
 from contrai_engine.view.formatting import (
     _format_card_compact,
@@ -62,6 +73,7 @@ from contrai_engine.view.screens.bidding import (
 )
 from contrai_engine.view.screens.debug import (
     _autoplay_pause_text,
+    _panel_ai_rationale,
     _panel_debug_hands,
 )
 from contrai_engine.view.screens.endgame import (
@@ -70,12 +82,19 @@ from contrai_engine.view.screens.endgame import (
     _panel_round_summary,
 )
 from contrai_engine.view.screens.landing import (
-    _landing_prompt_text,
     _landing_subtitle,
     _landing_suit_ribbon,
     _landing_title,
-    _panel_game_setup,
     _panel_players,
+)
+from contrai_engine.view.screens.setup import (
+    _file_prompt_text,
+    _knobs_prompt_text,
+    _panel_knobs,
+    _panel_preset_list,
+    _panel_table_setup,
+    _preset_prompt_text,
+    _setup_prompt_text,
 )
 from contrai_engine.view.screens.recap import (
     _contract_made,
@@ -155,7 +174,11 @@ class RichView:
 
     LOG_MAX = 5
 
-    def __init__(self, options: DebugOptions | None = None) -> None:
+    def __init__(
+        self,
+        options: DebugOptions | None = None,
+        aids: TableAids | None = None,
+    ) -> None:
         """Create an unattached view: fresh console, empty per-game state.
 
         Args:
@@ -165,8 +188,13 @@ class RichView:
                 runtime behavior exactly. No file/logging setup happens
                 here; that is the CLI's job, once, before the view is
                 constructed.
+            aids: The table's §9.7 interface aids, or ``None`` for the
+                catalogue's all-on defaults. Rebindable after
+                construction — the setup screen edits them and the CLI
+                re-points this attribute before the next deal.
         """
         self.options: DebugOptions = options or DebugOptions()
+        self.aids: TableAids = aids or TableAids()
         self.console: Console = Console()
         self.target_score: int = DEFAULT_TARGET
         self.history: list[RoundSummary] = []
@@ -400,15 +428,28 @@ class RichView:
         self._pause("CONTRAI_AI_CARD_DELAY", 0.9)
 
     def on_belote_announced(
-        self, player: BasePlayer, kind: str, round_: "Round"
+        self, player: BasePlayer, kind: str, suit: Suit, round_: "Round"
     ) -> None:
         """Belote / rebelote announcement: log + brief pause.
 
         The persistent ★ badge under the player's seat is rendered by
-        ``_render_diamond`` from ``round_.belote_state``, so this hook
-        only needs to record the moment and pace it visibly. The pause
-        uses the card delay so it fits the per-play rhythm."""
-        trump = round_.contract.suit if round_ and round_.contract else None
+        ``_render_diamond`` from ``round_.announced_belotes``, so this
+        hook only needs to record the moment and pace it visibly. The
+        pause uses the card delay so it fits the per-play rhythm.
+
+        The line names the *pair's* suit, not the contract's: at all
+        trump the contract suit is ``ALL_TRUMP``, whose glyph is the
+        string ``AT``, so all four pairs a deal can hold would otherwise
+        narrate identically. Under ``single`` the later announcements are
+        still logged — a seat really does say it at the table — they just
+        carry no badge, because they mark nothing.
+
+        Args:
+            player: The seat announcing.
+            kind: ``"belote"`` or ``"rebelote"``.
+            suit: The suit of the King + Queen pair being announced.
+            round_: The round in progress.
+        """
         line = Text()
         label = _position_short(player.position)
         color = _position_color(player.position)
@@ -418,12 +459,9 @@ class RichView:
             "Belote" if kind == "belote" else "Rebelote",
             style=f"bold {GOLD}",
         )
-        if trump is not None:
-            line.append(" (", style=DIM)
-            line.append(_suit_glyph(trump), style=_suit_color(trump))
-            line.append(").", style=DIM)
-        else:
-            line.append(".", style=DIM)
+        line.append(" (", style=DIM)
+        line.append(_suit_glyph(suit), style=_suit_color(suit))
+        line.append(").", style=DIM)
         self._log(line)
         self._pause("CONTRAI_AI_CARD_DELAY", 0.9)
 
@@ -434,6 +472,7 @@ class RichView:
         *,
         is_final: bool = False,
         is_tiebreaker: bool = False,
+        belote_gated: TeamSide | None = None,
     ) -> None:
         """Full-screen recap shown after each round; waits for Enter.
 
@@ -446,6 +485,10 @@ class RichView:
         scoreboard, not another deal. When ``is_tiebreaker`` is true
         (both teams level at/above the target) the panel carries a
         sudden-death notice and the prompt deals the tiebreaker round.
+        ``belote_gated`` names a side sitting past the target that the §8
+        belote gate is holding back; the panel says so, but the prompt is
+        left alone — unlike a tiebreaker, the next round here really is
+        just the next round.
         """
         self.console.clear()
         self.console.print(
@@ -454,6 +497,7 @@ class RichView:
                 running_scores,
                 self.target_score,
                 tiebreaker=is_tiebreaker,
+                belote_gated=belote_gated,
             )
         )
         if is_final:
@@ -505,7 +549,7 @@ class RichView:
     # CLI flow screens
     # ------------------------------------------------------------------
 
-    def _render_landing_splash(self, selected_target: int) -> None:
+    def _render_landing_splash(self, setup: TableSetup) -> None:
         """Print the landing screen's title, subtitle, and setup panels.
 
         Shared by both the interactive loop and the autoplay branch of
@@ -517,60 +561,236 @@ class RichView:
         self.console.print(_landing_subtitle())
         self.console.print(_landing_suit_ribbon())
         self.console.print()
-        self.console.print(_panel_game_setup(selected_target))
+        self.console.print(_panel_table_setup(setup))
         self.console.print(_panel_players(self.options.autoplay))
 
-    def show_landing(self, selected_target: int = DEFAULT_TARGET) -> int:
-        """Render the landing screen and return the chosen target score.
+    def _setup_input(self) -> str:
+        """Read one lowercased, stripped line from the setup prompts."""
+        return self.console.input(
+            Text("> ", style=f"bold {GREEN_FG}").markup
+        ).strip().lower()
+
+    def show_landing(self, selected: TableSetup | None = None) -> TableSetup:
+        """Render the landing screen and return the setup to deal under.
+
+        The dispatcher for the whole pre-game setup: ``[Enter]`` deals,
+        ``[p]`` opens the preset picker, ``[f]`` the file loader, ``[k]``
+        the per-knob editor, and ``[l]`` toggles the §9.7 live round
+        score. Each sub-screen
+        returns a setup, which becomes the one this screen re-renders —
+        so the summary panel always describes the table that pressing
+        Enter would actually seat.
 
         Under autoplay the screen renders once, pauses briefly, and
-        returns ``selected_target`` unchanged — there is no human to
-        type a choice, so the default/passed target stands.
+        returns ``selected`` unchanged: there is no human to type a
+        choice, so the setup the CLI resolved stands.
+
+        Args:
+            selected: The setup to open on, or ``None`` for the §9
+                catalogue defaults.
+
+        Returns:
+            The setup the next game is built from.
         """
+        setup = selected if selected is not None else TableSetup()
         if self.options.autoplay:
-            self._render_landing_splash(selected_target)
+            self._render_landing_splash(setup)
             self.console.print(_panel_prompt(
-                _autoplay_pause_text(
-                    _landing_prompt_text(selected_target).plain
-                ),
+                _autoplay_pause_text(_setup_prompt_text(setup).plain),
                 mandatory=False,
             ))
             self._pause("CONTRAI_AUTOPLAY_LANDING_PAUSE", 1.2)
-            return selected_target
+            return setup
+        # As in ``request_bid_action``, a rejection rides inside the next
+        # frame's Prompt panel: the loop's ``console.clear()`` would push a
+        # standalone print up into scrollback where nobody would see it.
+        notice: Optional[Text] = None
         while True:
-            self._render_landing_splash(selected_target)
+            self._render_landing_splash(setup)
             self.console.print(_panel_prompt(
-                _landing_prompt_text(selected_target),
-                mandatory=False,
+                _setup_prompt_text(setup), mandatory=False, notice=notice
             ))
+            notice = None
+            raw = self._setup_input()
+            if not raw:
+                return setup
+            if raw in ("p", "preset"):
+                setup = self._show_preset_picker(setup)
+            elif raw in ("f", "file"):
+                setup = self._show_file_loader(setup)
+            elif raw in ("k", "knobs"):
+                setup = self._show_knob_editor(setup)
+            elif raw in ("l", "live"):
+                # The aid is the one setting the model never sees, so it is
+                # flipped here rather than routed through ``cycle_knob``.
+                setup = dataclasses.replace(
+                    setup,
+                    aids=TableAids(
+                        live_round_score=not setup.aids.live_round_score
+                    ),
+                )
+            else:
+                notice = Text(
+                    "✗ [Enter] to deal, or [p] preset · [f] load file · "
+                    "[k] knobs · [l] live score.",
+                    style=RED,
+                )
+
+    def _show_preset_picker(self, current: TableSetup) -> TableSetup:
+        """Offer the named rulesets; return the pick, or ``current``.
+
+        The interface aids ride along unchanged: a preset names the 22
+        table *rules*, and §9.7's aids are not among them.
+
+        Args:
+            current: The setup in play, whose ``origin`` fills the radio.
+
+        Returns:
+            The chosen setup, or ``current`` when the player pressed
+            Enter without picking.
+        """
+        offers = {
+            name: TableSetup(rules=rules, aids=current.aids, origin=name)
+            for name, rules in sorted(PRESETS.items())
+        }
+        # The remembered setup is a whole setup, aids included, so it is
+        # added after the presets rather than folded into one of them.
+        remembered = self._remembered_setup()
+        if remembered is not None:
+            offers["last used"] = remembered
+        names = list(offers)
+        notice: Optional[Text] = None
+        while True:
+            self.console.clear()
+            self.console.print(_panel_preset_list(names, current.origin))
+            self.console.print(_panel_prompt(
+                _preset_prompt_text(names), mandatory=False, notice=notice
+            ))
+            notice = None
+            raw = self._setup_input()
+            if not raw:
+                return current
+            if raw.isdigit() and 1 <= int(raw) <= len(names):
+                return offers[names[int(raw) - 1]]
+            if raw in offers:
+                return offers[raw]
+            notice = Text(
+                f"✗ Pick 1–{len(names)}, or one of: {', '.join(names)}.",
+                style=RED,
+            )
+
+    def _remembered_setup(self) -> Optional[TableSetup]:
+        """The setup a previous run left the landing screen with, if any.
+
+        Only ever *offered*, never applied on its own: a bare
+        ``uv run contrai`` still opens on the §9 defaults, so a headless
+        or smoke run stays deterministic whatever happens to be cached in
+        the user's home directory.
+
+        Returns:
+            The remembered setup, relabelled ``"last used"``, or ``None``
+            when there is no file, it cannot be read, or it no longer
+            parses — a stale cache is a row that quietly does not appear,
+            never an error the player has to go and clear.
+        """
+        try:
+            return dataclasses.replace(
+                load_setup(setup_path()), origin="last used"
+            )
+        except (OSError, ValueError):
+            return None
+
+    def _show_knob_editor(self, current: TableSetup) -> TableSetup:
+        """Walk the §9 subsections, cycling any knob to its next value.
+
+        One numbered grid per catalogue subsection, ``[n]`` / ``[b]`` to
+        walk them, a number to cycle that knob. Cycling — rather than
+        typing a value — is what lets one key reach every setting a knob
+        takes, whether it is a bool, one of three enum members or a rung
+        of the target ladder.
+
+        The two configurations §9 calls impossible are refused by core
+        itself; the refusal is rendered inline and the ruleset the editor
+        holds is left exactly as it was.
+
+        Args:
+            current: The setup being edited.
+
+        Returns:
+            ``current`` with the edited ruleset. Its ``origin`` becomes
+            ``"custom"`` once the rules genuinely differ from the ones
+            the editor opened on — a table that has been changed is no
+            longer the preset or the file it started as — but a knob
+            turned and turned back leaves the origin alone.
+        """
+        sections = list(SECTIONS)
+        index = 0
+        rules = current.rules
+        notice: Optional[Text] = None
+        while True:
+            section = sections[index]
+            fields = SECTIONS[section]
+            self.console.clear()
+            self.console.print(_panel_knobs(rules, section))
+            self.console.print(_panel_prompt(
+                _knobs_prompt_text(len(fields)), mandatory=False, notice=notice
+            ))
+            notice = None
+            raw = self._setup_input()
+            if not raw:
+                origin = current.origin if rules == current.rules else "custom"
+                return dataclasses.replace(current, rules=rules, origin=origin)
+            if raw in ("n", "next"):
+                index = (index + 1) % len(sections)
+            elif raw in ("b", "back"):
+                index = (index - 1) % len(sections)
+            elif raw.isdigit() and 1 <= int(raw) <= len(fields):
+                try:
+                    rules = cycle_knob(rules, fields[int(raw) - 1])
+                except ValueError as exc:
+                    # Core's own refusal, shown verbatim: it names both
+                    # knobs and says why the pair cannot stand.
+                    notice = Text(f"✗ {exc}", style=RED)
+            else:
+                notice = Text(
+                    f"✗ Pick 1–{len(fields)}, [n] next section, [b] back, "
+                    "or [Enter] to finish.",
+                    style=RED,
+                )
+
+    def _show_file_loader(self, current: TableSetup) -> TableSetup:
+        """Load a setup from a TOML path typed at the prompt.
+
+        A bad path or a malformed document re-prompts with the loader's
+        own message instead of leaving the screen — mistyping a filename
+        must not cost the setup already assembled.
+
+        Args:
+            current: The setup in play, shown above the prompt and
+                returned unchanged if the player cancels.
+
+        Returns:
+            The loaded setup, or ``current``.
+        """
+        notice: Optional[Text] = None
+        while True:
+            self.console.clear()
+            self.console.print(_panel_table_setup(current))
+            self.console.print(_panel_prompt(
+                _file_prompt_text(), mandatory=False, notice=notice
+            ))
+            notice = None
+            # Terminals paste paths with quotes around them; a path is also
+            # the one setup input that is case-sensitive, so it is read raw.
             raw = self.console.input(
                 Text("> ", style=f"bold {GREEN_FG}").markup
-            ).strip()
+            ).strip().strip('"')
             if not raw:
-                return selected_target
+                return current
             try:
-                target = int(raw)
-            except ValueError:
-                self.console.print(
-                    Text(
-                        f"  ✗ Pick one of "
-                        f"{', '.join(str(v) for v, _, _ in TARGET_OPTIONS)}.",
-                        style=RED,
-                    )
-                )
-                self.console.input(Text("  Press Enter…", style=DIM).markup)
-                continue
-            if target not in {v for v, _, _ in TARGET_OPTIONS}:
-                self.console.print(
-                    Text(
-                        f"  ✗ {target} is not on the list. Pick one of "
-                        f"{', '.join(str(v) for v, _, _ in TARGET_OPTIONS)}.",
-                        style=RED,
-                    )
-                )
-                self.console.input(Text("  Press Enter…", style=DIM).markup)
-                continue
-            return target
+                return load_setup(Path(raw))
+            except (OSError, ValueError) as exc:
+                notice = Text(f"✗ {exc}", style=RED)
 
     def _render_end_game_screen(self, status: GameOverStatus) -> None:
         """Print the end-game banner and round-by-round summary table.
@@ -662,7 +882,9 @@ class RichView:
             else {side: 0 for side in TeamSide}
         )
         top_left = _panel_game_score(scores, self.target_score)
-        top_right = _panel_round(round_, phase, trick_index)
+        top_right = _panel_round(
+            round_, phase, trick_index, live_score=self.aids.live_round_score
+        )
         self.console.print(_two_column(top_left, top_right, left_width=24))
         # Middle row: last trick + current trick
         mid_left = _panel_last_trick(
@@ -686,6 +908,9 @@ class RichView:
                     seed=self.options.seed,
                 )
             )
+            # Why each AI seat played what it played. A human seat has no
+            # entry — Round records no rationale for one.
+            self.console.print(_panel_ai_rationale(round_))
         # Hand panel — always rendered when a human is seated, so the
         # slot stays put across AI bid frames, AI play frames, and the
         # trick-won pause. ``interactive`` is true only when the human

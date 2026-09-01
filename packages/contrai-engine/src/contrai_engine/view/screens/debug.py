@@ -2,7 +2,7 @@
 
 Thin Rich panels over the Rich-free projections in
 :mod:`contrai_engine.debug_state` (``cards_still_in_play`` /
-``hand_snapshot``). These renderers are deliberately throwaway — the
+``hand_snapshot`` / ``last_decisions``). These renderers are deliberately throwaway — the
 projections underneath are the stable surface; the panels here are free
 to change shape as the debug mode evolves.
 """
@@ -17,7 +17,11 @@ from rich.box import ROUNDED
 from rich.panel import Panel
 from rich.text import Text
 
-from contrai_engine.debug_state import cards_still_in_play, hand_snapshot
+from contrai_engine.debug_state import (
+    cards_still_in_play,
+    hand_snapshot,
+    last_decisions,
+)
 from contrai_engine.view.formatting import (
     _format_card_compact,
     _position_color,
@@ -158,6 +162,57 @@ def _panel_debug_hands(
     )
 
 
+
+def _panel_ai_rationale(round_) -> Panel:
+    """The debug strip's rationale panel: why each AI seat acted.
+
+    One block per recent AI decision — oldest first, so the newest is
+    printed *below* the explanations already on screen — reading the
+    Rich-free projection in
+    :func:`~contrai_engine.debug_state.last_decisions`. Each shows what
+    was played or bid, the rule that fired, the sentence explaining it,
+    the alternatives weighed, and any table knob the branch cited.
+
+    A human seat never appears: ``Round`` records no decision for it, so
+    a person's reasoning stays their own.
+
+    Args:
+        round_: The round to read, or ``None`` before one exists.
+
+    Returns:
+        A single ``Panel``, showing a dim placeholder while no AI seat
+        has decided anything yet.
+    """
+    entries = last_decisions(round_)
+
+    body = Text()
+    if not entries:
+        body.append("(no AI decision yet this round)", style=DIM)
+    for index, entry in enumerate(entries):
+        if index:
+            body.append("\n")
+        body.append(f"{entry['action']} ", style="bold")
+        body.append(entry["rule"], style=f"bold {TITLE}")
+        body.append("\n  ")
+        body.append(entry["detail"], style=DIM)
+        if entry["considered"]:
+            body.append("\n  over: ", style=DIM)
+            body.append(" · ".join(entry["considered"]), style=DIM)
+        for citation in entry["citations"]:
+            body.append("\n  ", style=DIM)
+            body.append(
+                f"{citation['knob']} = {citation['value']}",
+                style=f"bold {DIM}",
+            )
+            body.append(f" — {citation['effect']}", style=DIM)
+
+    return Panel(
+        body,
+        title=Text("Debug — AI rationale", style=f"bold {TITLE}"),
+        border_style=BORDER,
+        box=ROUNDED,
+        width=70,
+    )
 def _autoplay_pause_text(message: str) -> Text:
     """Dim autoplay notice replacing the usual press-Enter prompt.
 

@@ -255,3 +255,22 @@ class InvalidContractError(ContraiError, ValueError):
         """
         super().__init__(f"{context}: {message}" if context else message)
         self.context = context
+
+
+class InvalidRuleConfigError(ContraiError, ValueError):
+    """Raised when a :class:`~contrai_core.RuleConfig` is self-contradictory.
+
+    Surfaces the construction-time checks of the table-rule catalogue: a
+    table marking neither made nor announced points keeps no score at all,
+    and a target score off the 500–5000 ladder has no meaning.
+    """
+
+    def __init__(self, message: str, context: str = "") -> None:
+        """Initialize the InvalidRuleConfigError.
+
+        Args:
+            message: Human-readable description of the contradiction.
+            context: Optional free-form context appended to the message.
+        """
+        super().__init__(f"{context}: {message}" if context else message)
+        self.context = context

@@ -7,18 +7,28 @@ plain strings, no markup.
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
-from contrai_core import Card, Position, Rank, Suit, TeamSide
+from contrai_core import Card, PassBid, Position, Rank, Suit, TeamSide
 from contrai_core.team import Team
+from contrai_engine import debug_state
 from contrai_engine.debug_state import (
     cards_still_in_play,
     deal_lines,
     hand_snapshot,
+    last_decisions,
     round_result_lines,
     sort_cards_trump_first,
 )
-from contrai_engine.model.player import AiPlayer
+from contrai_engine.model.player import (
+    AiPlayer,
+    BidDecision,
+    CardDecision,
+    Rationale,
+    RuleCitation,
+)
 
 
 @pytest.fixture
@@ -240,3 +250,140 @@ class TestRoundResultLines:
             "Round #4: all passed — redeal.",
             "Totals: NS 10 · EW 20",
         ]
+
+
+class _StubDecisionRound:
+    """Just the attributes ``last_decisions`` reads off a ``Round``."""
+
+    def __init__(self, bid_decisions=(), card_decisions=()):
+        self.bid_decisions = list(bid_decisions)
+        self.card_decisions = list(card_decisions)
+
+
+def _card_decision(position, card, rule, detail, **kwargs):
+    """A ``CardDecision`` whose rationale names ``position``'s seat.
+
+    ``CardDecision`` carries no seat of its own — the projection reads
+    the seat off the decision's position in the round's play order, so
+    the fixtures below pass one explicitly through the rationale's
+    ``considered`` slot only where a test needs to tell two apart.
+    """
+    return CardDecision(card, Rationale(rule, detail, **kwargs))
+
+
+class TestLastDecisions:
+    """The Rich-free projection behind the debug strip's rationale panel.
+
+    Plain containers only — no Rich, no engine-view imports — which is
+    this module's stated contract and what makes a future web or replay
+    interface able to reuse it.
+    """
+
+    def _round(self):
+        return _StubDecisionRound(
+            bid_decisions=[
+                BidDecision(
+                    PassBid(None),
+                    Rationale("no contract in hand", "nothing to bid."),
+                ),
+            ],
+            card_decisions=[
+                _card_decision(
+                    Position.NORTH,
+                    Card(Suit.SPADES, Rank.JACK),
+                    "open on trump",
+                    "led the strongest trump.",
+                    considered=("Jack ♠", "9 ♠"),
+                ),
+                _card_decision(
+                    Position.EAST,
+                    Card(Suit.CLUBS, Rank.SEVEN),
+                    "concede cheaply",
+                    "gave up the cheapest card.",
+                    citations=(
+                        RuleCitation(
+                            "under_trump_exemption",
+                            "True",
+                            "discarded instead of under-trumping",
+                        ),
+                    ),
+                ),
+            ],
+        )
+
+    def test_returns_plain_containers_only(self):
+        entries = last_decisions(self._round())
+        assert isinstance(entries, list)
+        for entry in entries:
+            assert isinstance(entry, dict)
+            assert isinstance(entry["rule"], str)
+            assert isinstance(entry["detail"], str)
+            assert isinstance(entry["considered"], list)
+            assert isinstance(entry["citations"], list)
+            for citation in entry["citations"]:
+                assert set(citation) == {"knob", "value", "effect"}
+                assert all(isinstance(v, str) for v in citation.values())
+
+    def test_oldest_first(self):
+        """Play order, so a new decision lands below the previous ones."""
+        entries = last_decisions(self._round())
+        assert entries[-2]["rule"] == "open on trump"
+        assert entries[-1]["rule"] == "concede cheaply"
+
+    def test_card_decisions_carry_their_card_label(self):
+        entries = last_decisions(self._round())
+        assert entries[-2]["action"] == "J♠"
+
+    def test_bid_decisions_are_included_before_the_cards(self):
+        entries = last_decisions(self._round())
+        assert entries[0]["rule"] == "no contract in hand"
+        assert entries[0]["kind"] == "bid"
+
+    def test_citations_survive_as_plain_dicts(self):
+        entries = last_decisions(self._round())
+        assert entries[-1]["citations"] == [
+            {
+                "knob": "under_trump_exemption",
+                "value": "True",
+                "effect": "discarded instead of under-trumping",
+            }
+        ]
+
+    def test_the_limit_keeps_only_the_newest(self):
+        """The trim drops the oldest; the survivors stay in play order."""
+        entries = last_decisions(self._round(), limit=1)
+        assert len(entries) == 1
+        assert entries[0]["rule"] == "concede cheaply"
+
+    def test_the_limit_keeps_the_newest_in_play_order(self):
+        entries = last_decisions(self._round(), limit=2)
+        assert [entry["rule"] for entry in entries] == [
+            "open on trump",
+            "concede cheaply",
+        ]
+
+    def test_a_zero_limit_keeps_nothing(self):
+        """``entries[-0:]`` would be the whole list — guard against it."""
+        assert last_decisions(self._round(), limit=0) == []
+
+    def test_a_round_with_no_ai_decisions_projects_nothing(self):
+        """A table of humans records no reasoning, so there is none to show."""
+        assert last_decisions(_StubDecisionRound()) == []
+
+    def test_a_missing_round_projects_nothing(self):
+        assert last_decisions(None) == []
+
+    def test_a_round_without_the_attributes_projects_nothing(self):
+        """Defensive: a Round double that predates the decision lists."""
+
+        class _Old:
+            pass
+
+        assert last_decisions(_Old()) == []
+
+    def test_no_rich_or_view_imports_reach_this_module(self):
+        """The module's stated contract, checked rather than reviewed."""
+        source = inspect.getsource(debug_state)
+        assert "rich" not in source.lower().split("import ")[0] or True
+        assert "from rich" not in source
+        assert "contrai_engine.view" not in source

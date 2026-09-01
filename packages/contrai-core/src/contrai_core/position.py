@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from enum import Enum
 
+from .rule_config import TurnDirection
 from .team_side import TeamSide
 
 
@@ -54,14 +55,39 @@ class Position(Enum):
 
     @property
     def next(self) -> Position:
-        """The next seat anticlockwise — the turn-order successor.
+        """The next seat anticlockwise — the default turn-order successor.
 
-        Cycles through all four seats: applying ``.next`` four times in a
-        row returns to the seat it started from.
+        Shorthand for :meth:`next_in` at
+        :attr:`~contrai_core.TurnDirection.ANTICLOCKWISE`, the table
+        direction the §9.1 catalogue defaults to. Cycles through all four
+        seats: applying ``.next`` four times returns to the seat it
+        started from.
+        """
+
+        return self.next_in(TurnDirection.ANTICLOCKWISE)
+
+    def next_in(self, direction: TurnDirection) -> Position:
+        """The next seat along, walking the table in ``direction``.
+
+        Turn direction is a table option (§2, §9.1) governing dealing,
+        bidding order, the opening lead and dealer rotation together, so
+        it is *threaded* to this method rather than baked into the enum:
+        the definition order stays the anticlockwise seating and clockwise
+        is the same ordering walked backwards. :attr:`partner`,
+        :attr:`opponents` and :attr:`team_side` need no such parameter —
+        the partner is across the table and the opponents are the other
+        two seats whichever way play runs.
+
+        Args:
+            direction: The table's turn direction.
+
+        Returns:
+            The seat that acts after this one under ``direction``.
         """
 
         seats = list(Position)
-        return seats[(seats.index(self) + 1) % len(seats)]
+        step = 1 if direction is TurnDirection.ANTICLOCKWISE else -1
+        return seats[(seats.index(self) + step) % len(seats)]
 
     @property
     def partner(self) -> Position:

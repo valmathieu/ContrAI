@@ -299,51 +299,76 @@ class TestExplainConstraint:
 
 
 class TestBeloteByPosition:
-    """`_belote_by_position` — projects belote state onto seat keys.
+    """`_belote_by_position` — projects announced belotes onto seat keys.
 
     The trick diamond renders its ★ badge per *seat*, but the round tracks
-    belote per *player*. This is the one place that re-keys, so its three
-    empty-result paths are what the badge relies on to stay silent.
+    belote per ``(player, suit)`` *pair* — a seat can hold two under the
+    all-trump ``four`` regime. This is the one place that collapses that
+    down, and it reads ``Round.announced_belotes`` rather than the raw
+    ``belote_state``, so the regime's own answer about which pairs mark
+    is what reaches the screen. Its three empty-result paths are what the
+    badge relies on to stay silent.
     """
 
     class _StubRound:
-        """A round exposing only ``belote_state``, or not even that."""
+        """A round exposing only ``announced_belotes``, or not even that."""
 
-        def __init__(self, belote_state=None, *, has_attribute=True):
+        def __init__(self, announced=None, *, has_attribute=True):
             if has_attribute:
-                self.belote_state = belote_state
+                self.announced_belotes = announced
 
     def test_no_active_round_yields_an_empty_map(self):
         """Before the first deal there is no round to read."""
 
         assert _belote_by_position(None) == {}
 
-    def test_a_round_without_belote_state_yields_an_empty_map(self):
+    def test_a_round_without_the_attribute_yields_an_empty_map(self):
         """The attribute is read defensively, so its absence is not a crash."""
 
         assert _belote_by_position(self._StubRound(has_attribute=False)) == {}
 
-    def test_a_none_belote_state_yields_an_empty_map(self):
+    def test_a_none_value_yields_an_empty_map(self):
         assert _belote_by_position(self._StubRound(None)) == {}
 
-    def test_an_empty_belote_state_yields_an_empty_map(self):
-        """Nothing declared yet — the badge stays off."""
+    def test_an_empty_tuple_yields_an_empty_map(self):
+        """Nothing announced yet — the badge stays off."""
 
-        assert _belote_by_position(self._StubRound({})) == {}
+        assert _belote_by_position(self._StubRound(())) == {}
 
-    def test_a_populated_state_is_rekeyed_by_position(self, four_players):
+    def test_each_announced_pair_is_rekeyed_by_seat(self, four_players):
         north, _east, south, _west = four_players
-        round_ = self._StubRound({north: "belote", south: "rebelote"})
+        round_ = self._StubRound((
+            (north, Suit.HEARTS),
+            (south, Suit.CLUBS),
+        ))
 
         assert _belote_by_position(round_) == {
-            Position.NORTH: "belote",
-            Position.SOUTH: "rebelote",
+            Position.NORTH: (Suit.HEARTS,),
+            Position.SOUTH: (Suit.CLUBS,),
         }
 
-    def test_values_are_preserved_verbatim(self, four_players):
-        """The helper re-keys; it must not reinterpret the kind string."""
+    def test_two_pairs_in_one_seat_collect_under_that_seat(self, four_players):
+        """All trump can put two pairs in a hand; both suits reach the badge."""
 
-        _north, east, *_ = four_players
-        round_ = self._StubRound({east: "★ Belote"})
+        north, *_ = four_players
+        round_ = self._StubRound((
+            (north, Suit.HEARTS),
+            (north, Suit.SPADES),
+        ))
 
-        assert _belote_by_position(round_)[Position.EAST] == "★ Belote"
+        assert _belote_by_position(round_) == {
+            Position.NORTH: (Suit.HEARTS, Suit.SPADES),
+        }
+
+    def test_announcement_order_is_preserved_within_a_seat(self, four_players):
+        """The badge names the suits in the order the table heard them."""
+
+        north, *_ = four_players
+        round_ = self._StubRound((
+            (north, Suit.SPADES),
+            (north, Suit.HEARTS),
+        ))
+
+        assert _belote_by_position(round_)[Position.NORTH] == (
+            Suit.SPADES, Suit.HEARTS,
+        )

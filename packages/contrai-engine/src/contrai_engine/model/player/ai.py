@@ -8,10 +8,10 @@ them. The defaults are the expert rule-based strategies, so
 """
 
 from contrai_core.auction import Auction
-from contrai_core.bid import Bid
 from contrai_core.position import Position
 
 from .base import Player
+from .rationale import BidDecision, CardDecision
 from .rule_based import RuleBasedBiddingStrategy, RuleBasedCardPlayStrategy
 
 
@@ -46,10 +46,20 @@ class AiPlayer(Player):
         self.bidding = bidding(self)
         self.cardplay = cardplay(self)
 
-    def choose_bid(self, auction: Auction) -> Bid:
-        """Delegate to the injected bidding strategy."""
+    def choose_bid(self, auction: Auction) -> BidDecision:
+        """Delegate to the injected bidding strategy.
+
+        Returns:
+            The strategy's :class:`~.rationale.BidDecision` — the bid and
+            the rule that produced it — passed through untouched.
+        """
         return self.bidding.choose_bid(auction)
 
-    def choose_card(self, observation):
-        """Delegate to the injected card-play strategy."""
+    def choose_card(self, observation) -> CardDecision:
+        """Delegate to the injected card-play strategy.
+
+        Returns:
+            The strategy's :class:`~.rationale.CardDecision` — the card
+            and the rule that produced it — passed through untouched.
+        """
         return self.cardplay.choose_card(observation)

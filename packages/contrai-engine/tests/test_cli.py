@@ -23,12 +23,33 @@ import sys
 import pytest
 
 from contrai_core.position import Position
+from contrai_core.rule_config import PRESETS, RuleConfig
 from contrai_core.team_side import TeamSide
 from contrai_engine.cli import _apply_seed, _build_game, _parse_args, main
 from contrai_engine.model.game import GameOverStatus
 from contrai_engine.model.player import AiPlayer, HumanPlayer
-from contrai_engine.options import DebugOptions
-from contrai_engine.view.theme import DEFAULT_TARGET
+from contrai_engine.options import DebugOptions, TableAids
+from contrai_engine.ruleset import TableSetup, load_setup, save_setup, setup_path
+
+@pytest.fixture
+def contrai_home(tmp_path):
+    """The scratch directory the last-setup cache is redirected into."""
+
+    return tmp_path / "contrai-home"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_contrai_home(contrai_home, monkeypatch):
+    """Point the last-setup cache at a scratch directory.
+
+    main remembers the setup a player left the landing screen with, so
+    without this every test driving it would write into the real
+    ~/.contrai — and every test reading it back would see whatever the
+    developer running the suite last played.
+    """
+
+    monkeypatch.setenv("CONTRAI_HOME", str(contrai_home))
+
 
 @pytest.fixture(autouse=True)
 def _restore_random_state():
@@ -46,36 +67,126 @@ def _restore_random_state():
 
 
 class TestParseArgs:
-    """``_parse_args`` — argparse wiring for the three debug-mode flags."""
+    """``_parse_args`` — argparse wiring for the debug-mode and setup flags.
+
+    It returns a ``(DebugOptions, TableSetup)`` pair: the debug flags, and
+    the table setup ``--rules`` / ``--preset`` / ``--no-live-score``
+    resolved to — the ruleset the game is built under plus the interface
+    aids the view reads.
+    """
 
     def test_no_flags_returns_all_off_defaults(self):
-        """The back-compat anchor: an empty argv parses to ``DebugOptions()``."""
+        """The back-compat anchor: an empty argv parses to the defaults."""
 
-        assert _parse_args([]) == DebugOptions()
+        assert _parse_args([]) == (DebugOptions(), TableSetup())
 
     def test_debug_flag_alone(self):
-        assert _parse_args(["--debug"]) == DebugOptions(debug=True)
+        assert _parse_args(["--debug"]) == (DebugOptions(debug=True), TableSetup())
 
     def test_seed_flag_alone(self):
-        assert _parse_args(["--seed", "42"]) == DebugOptions(seed=42)
+        assert _parse_args(["--seed", "42"]) == (DebugOptions(seed=42), TableSetup())
 
     def test_autoplay_flag_alone(self):
-        assert _parse_args(["--autoplay"]) == DebugOptions(autoplay=True)
+        assert _parse_args(["--autoplay"]) == (
+            DebugOptions(autoplay=True), TableSetup(),
+        )
 
     def test_all_three_flags_combined(self):
         result = _parse_args(["--debug", "--seed", "7", "--autoplay"])
-        assert result == DebugOptions(debug=True, autoplay=True, seed=7)
+        assert result == (
+            DebugOptions(debug=True, autoplay=True, seed=7), TableSetup(),
+        )
 
     def test_seed_value_is_coerced_to_int(self):
-        result = _parse_args(["--seed", "123"])
-        assert result.seed == 123
-        assert isinstance(result.seed, int)
+        options, _ = _parse_args(["--seed", "123"])
+        assert options.seed == 123
+        assert isinstance(options.seed, int)
 
     def test_non_integer_seed_exits(self):
         """``argparse``'s ``type=int`` rejects a non-numeric ``--seed``."""
 
         with pytest.raises(SystemExit):
             _parse_args(["--seed", "not-a-number"])
+
+    def test_preset_classic_resolves_to_the_defaults(self):
+        assert _parse_args(["--preset", "classic"]) == (
+            DebugOptions(), TableSetup(origin="classic"),
+        )
+
+    def test_no_live_score_switches_the_aid_off(self):
+        """``--no-live-score`` is the §9.7 aid's only CLI surface."""
+
+        assert _parse_args(["--no-live-score"])[1].aids == TableAids(
+            live_round_score=False
+        )
+
+    def test_live_score_is_on_without_the_flag(self):
+        assert _parse_args([])[1].aids.live_round_score is True
+
+    def test_no_live_score_is_independent_of_the_ruleset_flags(self):
+        """The aid is a view setting, so it composes with any ruleset."""
+
+        options, setup = _parse_args(["--preset", "classic", "--no-live-score"])
+        assert (options, setup.rules) == (DebugOptions(), RuleConfig())
+        assert setup.aids == TableAids(live_round_score=False)
+
+    def test_rules_file_is_loaded(self, tmp_path):
+        path = tmp_path / "table.toml"
+        path.write_text("[general]\ntarget_score = 1000\n", encoding="utf-8")
+
+        setup = _parse_args(["--rules", str(path)])[1]
+        assert setup.rules == RuleConfig(target_score=1000)
+        assert setup.origin == "table.toml"
+
+    def test_rules_and_preset_are_mutually_exclusive(self, tmp_path):
+        """``argparse``'s own group rejects the pair before ``resolve_rules``."""
+
+        path = tmp_path / "table.toml"
+        path.write_text("", encoding="utf-8")
+
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_args(["--rules", str(path), "--preset", "classic"])
+        assert excinfo.value.code == 2
+
+    def test_unknown_preset_exits(self):
+        """``choices`` rejects an unknown preset name."""
+
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_args(["--preset", "house"])
+        assert excinfo.value.code == 2
+
+    def test_missing_rules_file_exits_with_usage_error(self, tmp_path, capsys):
+        """An unreadable file is a usage error, not a traceback."""
+
+        missing = tmp_path / "nope.toml"
+
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_args(["--rules", str(missing)])
+        assert excinfo.value.code == 2
+        assert "nope.toml" in capsys.readouterr().err
+
+    def test_unknown_key_in_rules_file_exits_with_usage_error(self, tmp_path, capsys):
+        path = tmp_path / "typo.toml"
+        path.write_text("[general]\ntarget_scor = 2000\n", encoding="utf-8")
+
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_args(["--rules", str(path)])
+        assert excinfo.value.code == 2
+        assert "unknown key" in capsys.readouterr().err
+
+    def test_invalid_config_in_rules_file_exits_with_usage_error(self, tmp_path, capsys):
+        """A well-formed file naming an impossible table is still a usage error."""
+
+        path = tmp_path / "impossible.toml"
+        path.write_text(
+            "[scoring]\nmark_made_points = false\nmark_announced_points = false\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_args(["--rules", str(path)])
+        assert excinfo.value.code == 2
+        assert "mark_made_points" in capsys.readouterr().err
 
 
 class TestApplySeed:
@@ -139,6 +250,13 @@ class TestBuildGame:
             # gates actually read: a truthy value at any seat would put
             # a blocking prompt back into an unattended run.
             assert player.is_human is False
+
+    def test_rules_are_handed_to_the_game(self):
+        rules = RuleConfig(target_score=1000)
+        assert _build_game(rules=rules).rules is rules
+
+    def test_default_rules_are_classic(self):
+        assert _build_game().rules == RuleConfig()
 
 
 class TestSeedDeterminism:
@@ -204,10 +322,12 @@ class _RecordingView:
         self,
         options: DebugOptions | None = None,
         *,
-        landing_targets: list[int] | None = None,
+        aids: TableAids | None = None,
+        landing_setups: list[TableSetup] | None = None,
         end_game_choices: list[str] | None = None,
     ) -> None:
         self.options = options
+        self.aids = aids
         self.console = _RecordingConsole()
         # One ordered log covering view *and* game calls alike (the fake
         # game appends through the view it is handed), so the per-round
@@ -218,13 +338,18 @@ class _RecordingView:
         self.round_completions: list[tuple[object, dict]] = []
         self.recaps: list[dict] = []
         self.end_game_statuses: list[GameOverStatus] = []
-        self._landing_targets = list(landing_targets or [DEFAULT_TARGET])
+        # ``None`` means "echo whatever you were handed" — the real
+        # screen's ``[Enter]``, i.e. deal the setup on display. A list
+        # scripts a player who edited something instead.
+        self._landing_setups = list(landing_setups) if landing_setups else None
         self._end_game_choices = list(end_game_choices or ["q"])
 
-    def show_landing(self, selected_target: object = _UNSET) -> int:
+    def show_landing(self, selected: object = _UNSET) -> TableSetup:
         self.events.append("show_landing")
-        self.landing_received.append(selected_target)
-        return self._landing_targets.pop(0)
+        self.landing_received.append(selected)
+        if self._landing_setups is None:
+            return selected if isinstance(selected, TableSetup) else TableSetup()
+        return self._landing_setups.pop(0)
 
     def attach(self, game: object, target_score: int) -> None:
         self.events.append("attach")
@@ -241,6 +366,7 @@ class _RecordingView:
         *,
         is_final: bool = False,
         is_tiebreaker: bool = False,
+        belote_gated: TeamSide | None = None,
     ) -> None:
         self.events.append("show_round_recap")
         self.recaps.append(
@@ -249,6 +375,7 @@ class _RecordingView:
                 "scores": running_scores,
                 "is_final": is_final,
                 "is_tiebreaker": is_tiebreaker,
+                "belote_gated": belote_gated,
             }
         )
 
@@ -274,6 +401,7 @@ class _FakeGame:
         *,
         rounds_to_play: int = 1,
         tied_after: tuple[int, ...] = (),
+        belote_gated_after: tuple[int, ...] = (),
         raises: BaseException | None = None,
     ) -> None:
         self.rounds_to_play = rounds_to_play
@@ -282,20 +410,30 @@ class _FakeGame:
         self.scores = {TeamSide.NS: 0, TeamSide.EW: 0}
         self.targets_checked: list[int] = []
         self._tied_after = set(tied_after)
+        self._belote_gated_after = set(belote_gated_after)
         self._raises = raises
 
-    def check_game_over(self, target_score: int) -> GameOverStatus:
-        self.targets_checked.append(target_score)
+    rules: RuleConfig = RuleConfig()
+    """The ruleset ``cli`` folds the landing pick onto; ``_make_game``
+    replaces it with whatever the real call was handed, mirroring the real
+    ``Game``, which owns its target from construction on."""
+
+    def check_game_over(self) -> GameOverStatus:
+        self.targets_checked.append(self.rules.target_score)
         over = self.rounds_played >= self.rounds_to_play
         # A tie at/above the target *is* sudden death, so the real
         # ``Game`` never reports it alongside ``game_over``. Mirror that
         # here rather than letting a test script an impossible verdict.
         tied = self.rounds_played in self._tied_after and not over
+        # Same invariant for the §8 belote gate: a side it holds back has
+        # not won, so the real ``Game`` never names one alongside a win.
+        gated = self.rounds_played in self._belote_gated_after and not over
         return GameOverStatus(
             game_over=over,
             winner=TeamSide.NS if over else None,
             tied_teams=[TeamSide.NS, TeamSide.EW] if tied else None,
             final_scores=dict(self.scores),
+            belote_gated=TeamSide.NS if gated else None,
         )
 
     def manage_round(self, view: _RecordingView) -> None:
@@ -338,6 +476,8 @@ class _Harness:
         self.view: _RecordingView | None = None
         self.build_calls: list[bool] = []
         """One entry per ``_build_game`` call: the ``autoplay`` it got."""
+        self.rules_seen: list[RuleConfig | None] = []
+        """One entry per ``_build_game`` call: the ``rules`` it got."""
 
 
 @pytest.fixture
@@ -352,24 +492,34 @@ def install_cli_doubles(monkeypatch):
     def _install(
         *,
         games: list[_FakeGame],
-        landing_targets: list[int] | None = None,
+        landing_setups: list[TableSetup] | None = None,
         end_game_choices: list[str] | None = None,
         argv: tuple[str, ...] = ("contrai",),
     ) -> _Harness:
         harness = _Harness()
         queue = list(games)
 
-        def _make_view(options: DebugOptions | None = None) -> _RecordingView:
+        def _make_view(
+            options: DebugOptions | None = None,
+            aids: TableAids | None = None,
+        ) -> _RecordingView:
             harness.view = _RecordingView(
                 options,
-                landing_targets=landing_targets,
+                aids=aids,
+                landing_setups=landing_setups,
                 end_game_choices=end_game_choices,
             )
             return harness.view
 
-        def _make_game(autoplay: bool = False) -> _FakeGame:
+        def _make_game(
+            autoplay: bool = False, rules: RuleConfig | None = None
+        ) -> _FakeGame:
             harness.build_calls.append(autoplay)
-            return queue.pop(0)
+            harness.rules_seen.append(rules)
+            game = queue.pop(0)
+            if rules is not None:
+                game.rules = rules
+            return game
 
         monkeypatch.setattr(sys, "argv", list(argv))
         monkeypatch.setattr("contrai_engine.cli.RichView", _make_view)
@@ -405,11 +555,11 @@ class TestMain:
     def test_rematch_builds_a_second_game_without_a_new_landing(
         self, install_cli_doubles
     ):
-        """``"r"`` reuses the chosen target: fresh game, no second landing."""
+        """``"r"`` reuses the chosen setup: fresh game, no second landing."""
 
         harness = install_cli_doubles(
             games=[_FakeGame(rounds_to_play=1), _FakeGame(rounds_to_play=1)],
-            landing_targets=[1000],
+            landing_setups=[TableSetup(rules=RuleConfig(target_score=1000))],
             end_game_choices=["r", "q"],
         )
 
@@ -418,65 +568,97 @@ class TestMain:
         assert harness.build_calls == [False, False]
         assert harness.view.events.count("show_landing") == 1
         assert harness.view.events.count("attach") == 2
-        # Both games run to the same target — that is what "rematch" means.
+        # Both games run under the same setup — that is what "rematch" means.
         assert [target for _, target in harness.view.attached] == [1000, 1000]
 
-    def test_new_game_reruns_the_landing_with_the_current_target(
+    def test_new_game_reruns_the_landing_with_the_current_setup(
         self, install_cli_doubles
     ):
-        """``"n"`` re-shows the landing, pre-selecting the target in play."""
+        """``"n"`` re-shows the landing, opening on the setup in play."""
 
+        first = TableSetup(rules=RuleConfig(target_score=1000))
+        second = TableSetup(rules=RuleConfig(target_score=2000))
         harness = install_cli_doubles(
             games=[_FakeGame(rounds_to_play=1), _FakeGame(rounds_to_play=1)],
-            landing_targets=[1000, 2000],
+            landing_setups=[first, second],
             end_game_choices=["n", "q"],
         )
 
         main()
 
-        # First call passes nothing (the screen's own default stands);
-        # the second pre-selects whatever the first call returned.
-        assert harness.view.landing_received == [_UNSET, 1000]
+        # First call opens on what the flags resolved to; the second opens
+        # on whatever the first call returned.
+        assert harness.view.landing_received == [TableSetup(), first]
         assert [target for _, target in harness.view.attached] == [1000, 2000]
 
-    def test_attach_receives_the_target_show_landing_returned(
+    def test_the_game_is_built_under_the_setup_the_landing_returned(
         self, install_cli_doubles
     ):
-        """The landing's return value is the target threaded into the view."""
+        """The screen's edit is what reaches the model — the whole point of
+        the setup screen, and the one thing no unit test above proves."""
 
         game = _FakeGame(rounds_to_play=1)
+        rules = RuleConfig(target_score=3000, extended_trump_choices=True)
         harness = install_cli_doubles(
             games=[game],
-            landing_targets=[3000],
+            landing_setups=[TableSetup(rules=rules, origin="custom")],
             end_game_choices=["q"],
         )
 
         main()
 
+        assert harness.rules_seen == [rules]
+        # ...and the target is the model's own number, not one the loop
+        # carries alongside the game: every ``check_game_over`` reads it
+        # off ``game.rules``.
         assert harness.view.attached == [(game, 3000)]
-        # ...and the same target reaches every ``check_game_over`` call.
         assert set(game.targets_checked) == {3000}
+
+    def test_the_aid_the_landing_returned_is_repointed_on_the_view(
+        self, install_cli_doubles
+    ):
+        """The aids never reach the model, so the CLI hands them to the
+        view directly once the screen is done with them."""
+
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            landing_setups=[
+                TableSetup(aids=TableAids(live_round_score=False))
+            ],
+            end_game_choices=["q"],
+        )
+
+        main()
+
+        assert harness.view.aids == TableAids(live_round_score=False)
 
     def test_recap_flags_are_derived_from_check_game_over(
         self, install_cli_doubles
     ):
-        """``is_final``/``is_tiebreaker`` track the status of each round."""
+        """The three recap flags track the status of each round."""
 
         harness = install_cli_doubles(
-            games=[_FakeGame(rounds_to_play=2, tied_after=(1,))],
+            games=[_FakeGame(rounds_to_play=3, tied_after=(1,),
+                             belote_gated_after=(2,))],
             end_game_choices=["q"],
         )
 
         main()
 
         recaps = harness.view.recaps
-        assert len(recaps) == 2
+        assert len(recaps) == 3
         # Round 1 left the teams level at/above target: sudden death.
         assert recaps[0]["is_final"] is False
         assert recaps[0]["is_tiebreaker"] is True
-        # Round 2 clinched it.
-        assert recaps[1]["is_final"] is True
+        assert recaps[0]["belote_gated"] is None
+        # Round 2 put N-S past the target on belote the gate holds back.
+        assert recaps[1]["is_final"] is False
         assert recaps[1]["is_tiebreaker"] is False
+        assert recaps[1]["belote_gated"] is TeamSide.NS
+        # Round 3 clinched it.
+        assert recaps[2]["is_final"] is True
+        assert recaps[2]["is_tiebreaker"] is False
+        assert recaps[2]["belote_gated"] is None
 
     def test_each_round_repeats_the_manage_complete_recap_sequence(
         self, install_cli_doubles
@@ -551,6 +733,56 @@ class TestMain:
         assert harness.build_calls == [True]
         assert harness.view.options == DebugOptions(autoplay=True)
 
+    def test_default_run_builds_the_game_under_the_classic_ruleset(
+        self, install_cli_doubles
+    ):
+        """No ruleset flag: the game is still built under an explicit config."""
+
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            end_game_choices=["q"],
+        )
+
+        main()
+
+        assert harness.rules_seen == [RuleConfig()]
+
+    def test_preset_flag_reaches_the_seating(self, install_cli_doubles):
+        """``--preset`` resolves once and reaches ``_build_game``."""
+
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            end_game_choices=["q"],
+            argv=("contrai", "--preset", "classic"),
+        )
+
+        main()
+
+        assert harness.rules_seen == [PRESETS["classic"]]
+
+    def test_no_live_score_reaches_the_view(self, install_cli_doubles):
+        """The aid is constructed into the view, not carried by the model."""
+
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            end_game_choices=["q"],
+            argv=("contrai", "--no-live-score"),
+        )
+
+        main()
+
+        assert harness.view.aids == TableAids(live_round_score=False)
+
+    def test_default_run_leaves_the_aid_on(self, install_cli_doubles):
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            end_game_choices=["q"],
+        )
+
+        main()
+
+        assert harness.view.aids == TableAids()
+
     @pytest.mark.parametrize(
         "error", [KeyboardInterrupt(), EOFError()], ids=["ctrl-c", "ctrl-d"]
     )
@@ -620,3 +852,106 @@ class TestMainStreamReconfigure:
         main()  # must not propagate
 
         assert _one_quiet_game.view.events[-1] == "show_end_game"
+
+
+class TestLastSetupPersistence:
+    """``main`` remembers the setup a player leaves the landing screen with.
+
+    ``CONTRAI_HOME`` points at a scratch directory for every test in this
+    file (the autouse ``_isolate_contrai_home`` fixture), so nothing here
+    touches the real ``~/.contrai``.
+    """
+
+    def test_a_run_writes_the_setup_it_dealt_under(
+        self, install_cli_doubles, contrai_home
+    ):
+        setup = TableSetup(
+            rules=RuleConfig(target_score=3000),
+            aids=TableAids(live_round_score=False),
+            origin="custom",
+        )
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            landing_setups=[setup],
+            end_game_choices=["q"],
+        )
+
+        main()
+
+        remembered = load_setup(contrai_home / "last-setup.toml")
+        assert remembered.rules == setup.rules
+        assert remembered.aids == setup.aids
+
+    def test_the_file_is_written_where_setup_path_says(
+        self, install_cli_doubles, contrai_home
+    ):
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)], end_game_choices=["q"]
+        )
+
+        main()
+
+        assert setup_path().is_file()
+        assert setup_path().parent == contrai_home
+
+    def test_a_new_game_remembers_the_second_pick_too(
+        self, install_cli_doubles, contrai_home
+    ):
+        """``[n]`` re-opens the screen, so what it returns is remembered."""
+        second = TableSetup(rules=RuleConfig(target_score=500))
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1), _FakeGame(rounds_to_play=1)],
+            landing_setups=[TableSetup(), second],
+            end_game_choices=["n", "q"],
+        )
+
+        main()
+
+        assert load_setup(setup_path()).rules == second.rules
+
+    def test_autoplay_writes_nothing(self, install_cli_doubles, contrai_home):
+        """An unattended run must not rewrite what a player chose."""
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            end_game_choices=["q"],
+            argv=("contrai", "--autoplay"),
+        )
+
+        main()
+
+        assert not setup_path().exists()
+
+    def test_an_unwritable_home_does_not_stop_the_game(
+        self, install_cli_doubles, monkeypatch
+    ):
+        """Persistence is a convenience; failing to save is not fatal."""
+
+        def _boom(*_args, **_kwargs):
+            raise OSError("read-only file system")
+
+        monkeypatch.setattr("contrai_engine.cli.save_setup", _boom)
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)], end_game_choices=["q"]
+        )
+
+        main()  # must not propagate
+
+        assert harness.view.events[-1] == "show_end_game"
+
+    def test_a_bare_start_is_still_the_catalogue_defaults(
+        self, install_cli_doubles, contrai_home
+    ):
+        """A remembered setup is offered, never applied: what the flags
+        resolve to is what the landing screen opens on."""
+        save_setup(
+            setup_path(),
+            TableSetup(rules=RuleConfig(target_score=500)),
+        )
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)], end_game_choices=["q"]
+        )
+
+        main()
+
+        assert harness.view.landing_received == [TableSetup()]
+        assert harness.rules_seen == [RuleConfig()]

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from contrai_core.deck import Deck
 from contrai_core.exceptions import InvalidPlayerCountError
 from contrai_core.position import Position
+from contrai_core.rule_config import RuleConfig
 from contrai_core.team import Team
 from contrai_core.team_side import TeamSide
 
@@ -47,12 +48,19 @@ class GameOverStatus:
             the sudden-death signal: the game continues with tiebreaker
             rounds until one team leads. ``None`` when no such tie exists.
         final_scores: Snapshot of every team's score at the moment of the check.
+        belote_gated: The leading side sitting at or above the target that
+            the §8 belote gate is holding back — the game continues, and
+            the recap says why. ``None`` whenever nobody is being held: a
+            win (the game is over, the signal would be noise), a tie
+            (sudden death is decided before the gate) and an ordinary
+            mid-game round all leave it clear.
     """
 
     game_over: bool
     winner: TeamSide | None
     tied_teams: list[TeamSide] | None
     final_scores: dict[TeamSide, int]
+    belote_gated: TeamSide | None = None
 
 class Game:
     """
@@ -70,8 +78,11 @@ class Game:
         current_round (Round): The current round object.
         round_number (int): The current round number.
         scores (dict[TeamSide, int]): The cumulative game score of each side.
+        rules (RuleConfig): The table ruleset every round of this game is
+            played under. Handed down to each :class:`Round`, and from
+            there to the core play state and the round scorer.
     """
-    def __init__(self, players):
+    def __init__(self, players, rules: RuleConfig | None = None):
         """
         Initialize a game with 4 players, one per seat.
         Teams are automatically created: North-South vs East-West.
@@ -99,6 +110,9 @@ class Game:
         Args:
             players (list[Player]): The 4 players, either all carrying a
                 distinct Position or none carrying one at all.
+            rules (RuleConfig | None): The table ruleset to play under.
+                ``None`` (the default) means the §9 catalogue defaults,
+                which reproduces today's behaviour exactly.
 
         Raises:
             InvalidPlayerCountError: If the number of players is not exactly 4.
@@ -166,6 +180,18 @@ class Game:
         self.current_round = None
         self.round_number = 0
         self.scores: dict[TeamSide, int] = {side: 0 for side in TeamSide}
+        # Belote a side has banked but that points from play have not
+        # confirmed yet, per side. Only used by ``check_game_over``: a
+        # table that does not let a side win on Belote points alone
+        # measures the target against the score *minus* this credit, and
+        # the credit is cleared only when the side marks points from play
+        # in some later round (contree-domain.md §8).
+        self.unconfirmed_belote: dict[TeamSide, int] = {
+            side: 0 for side in TeamSide
+        }
+        # The table ruleset is game-level state: it is fixed when the
+        # table sits down and every round inherits it unchanged.
+        self.rules: RuleConfig = rules if rules is not None else RuleConfig()
 
     def start_new_round(self):
         """
@@ -175,8 +201,11 @@ class Game:
         self.current_contract = None
         self.next_dealer()
 
-        # Shuffle if it's the first round and cut deck otherwise
-        if self.round_number == 0:
+        # The collected pile is cut, not reshuffled, between rounds — the
+        # canonical rule (§4). The very first deal of a game has no pile
+        # to cut, so it always shuffles; a table running
+        # ``reshuffle_every_round`` shuffles before every deal instead.
+        if self.round_number == 0 or self.rules.reshuffle_every_round:
             self.deck.shuffle()
         else:
             self.deck.cut()
@@ -188,7 +217,13 @@ class Game:
         self.round_number += 1
 
         # Create new Round object
-        self.current_round = Round(self.players_order, self.dealer, self.deck, self.round_number)
+        self.current_round = Round(
+            self.players_order,
+            self.dealer,
+            self.deck,
+            self.round_number,
+            rules=self.rules,
+        )
 
         # Deal cards
         self.current_round.deal_cards()
@@ -225,6 +260,7 @@ class Game:
         # If no contract (all passed), handle failed contract (redistributes cards).
         if not contract:
             self.current_round.handle_failed_contract()
+            self._track_unconfirmed_belote()
             self._log_round_result()
             # Notify the view that the round will be redealt. The hook is a
             # pure announcement — it carries no round payload.
@@ -238,11 +274,45 @@ class Game:
         # Calculate scores for the round - delegate to Round
         round_scores = self.current_round.calculate_round_scores()
 
+        self._track_unconfirmed_belote()
+
         # Update total scores
         for side, points in round_scores.items():
             self.scores[side] += points
 
         self._log_round_result()
+
+    def _track_unconfirmed_belote(self) -> None:
+        """Fold the just-scored round into ``unconfirmed_belote``.
+
+        Called on **both** exits of :meth:`manage_round` — the scored
+        round and the all-pass redeal. The credit is *unconfirmed*, not
+        last-seen: a side's belote stays discounted until that side marks
+        points from play in some later round, which is exactly what §8
+        means by the win waiting for play to confirm it.
+
+        The order matters. Clearing comes *before* this round's own belote
+        is added, so a round marking 5 points from play plus a 20 belote
+        confirms everything banked below it and leaves its own 20
+        unconfirmed — without that belote the side was still short.
+
+        A redeal needs no special case: it publishes an all-zero
+        ``RoundScore``, so it neither confirms nor owes anything and the
+        standing credit simply persists.
+        """
+
+        score = self.current_round.round_score
+        if score is None:
+            # Nothing was scored, so nothing was confirmed and nothing is
+            # owed: leave the standing credit exactly where it is.
+            return
+
+        for side in TeamSide:
+            belote = score.belote_points.get(side, 0)
+            play = score.scores.get(side, 0) - belote
+            if play > 0:
+                self.unconfirmed_belote[side] = 0
+            self.unconfirmed_belote[side] += belote
 
     def _log_round_result(self) -> None:
         """Log the just-finished round's outcome at DEBUG.
@@ -261,70 +331,147 @@ class Game:
                 ),
             )
 
-    def check_game_over(self, target_score: int = 1500) -> GameOverStatus:
-        """
-        Checks if a team strictly leads at the target score, ending the game.
+    def check_game_over(self) -> GameOverStatus:
+        """Check whether a team strictly leads at the table's target score.
+
+        The target is a table rule (§9.1), read off :attr:`rules` — there
+        is no way to ask this question against a different number, which
+        is what keeps the score panel, the recap and the game loop from
+        drifting apart.
 
         A tie at or above the target does not end the game: the teams are in
         sudden death and keep playing tiebreaker rounds until one of them
         leads. The tie is surfaced through ``tied_teams`` so callers (e.g.
         the view) can announce the tiebreaker.
 
-        Args:
-            target_score: Score required to win the game.
+        Past the tie, every side at or above the target is a contender:
+        the §8 belote gate (:meth:`_has_crossed`) can hold the leader back
+        while a lower side has genuinely crossed, so the sides are walked
+        highest-first and the win goes to the first one the gate accepts.
+        When it accepts none, the leader is named in ``belote_gated``:
+        without it the verdict would be byte-identical to an ordinary
+        mid-game round, and the player would watch a side sit past the
+        target while the game deals again with no explanation.
 
         Returns:
             GameOverStatus: Whether the game is over, the winner (always set
-                when over), any teams tied at/above the target, and a
-                snapshot of the final scores.
+                when over), any teams tied at/above the target, any side
+                the belote gate is holding back, and a snapshot of the
+                final scores.
         """
+        target_score = self.rules.target_score
         max_score = max(self.scores.values())
+        # Names the side the §8 gate is holding back, once the walk below
+        # has found every contender blocked. Every other path leaves it
+        # clear, so the recap only speaks up when it has something to say.
+        belote_gated: TeamSide | None = None
 
         if max_score >= target_score:
             # Find the side(s) sharing the top score.
             leading_teams = [side for side, score in self.scores.items()
                              if score == max_score]
 
-            if len(leading_teams) == 1:
+            if len(leading_teams) > 1:
+                # Sudden death: level at/above the target — play another
+                # round. The belote gate cannot break a tie, so it is
+                # not consulted here.
                 return GameOverStatus(
-                    game_over=True,
-                    winner=leading_teams[0],
-                    tied_teams=None,
+                    game_over=False,
+                    winner=None,
+                    tied_teams=leading_teams,
                     final_scores=self.scores.copy(),
                 )
 
-            # Sudden death: level at/above the target — play another round.
-            return GameOverStatus(
-                game_over=False,
-                winner=None,
-                tied_teams=leading_teams,
-                final_scores=self.scores.copy(),
+            # Walk every side sitting at or above the target, highest
+            # first, and award the win to the first one the belote gate
+            # accepts: a leader the gate holds back must not mask a lower
+            # side that crossed on points from play. Sides come off the
+            # scoreboard rather than being hardcoded as two, the way the
+            # scorer derives its defender sides from the seating.
+            contenders = sorted(
+                (side for side, score in self.scores.items()
+                 if score >= target_score),
+                key=lambda side: self.scores[side],
+                reverse=True,
             )
+            for side in contenders:
+                if self._has_crossed(side, target_score):
+                    return GameOverStatus(
+                        game_over=True,
+                        winner=side,
+                        tied_teams=None,
+                        final_scores=self.scores.copy(),
+                    )
+
+            # Nobody passed. Name the leader — the side the player can see
+            # sitting past the target while the game deals again.
+            belote_gated = contenders[0]
 
         return GameOverStatus(
             game_over=False,
             winner=None,
             tied_teams=None,
             final_scores=self.scores.copy(),
+            belote_gated=belote_gated,
         )
 
-    def next_dealer(self):
+    def _has_crossed(self, side: TeamSide, target_score: int) -> bool:
+        """Whether ``side`` has legitimately reached the target (§8).
+
+        A table that allows :attr:`~contrai_core.RuleConfig.win_on_belote_points_alone`
+        — the default — asks nothing more than the score. Switched off,
+        a side carried past the target by belote that play has not
+        confirmed has not won yet: the win waits until the side marks
+        points from play. That standing credit is
+        :attr:`unconfirmed_belote`, so a side blocked at the target stays
+        blocked for as many rounds as it takes — a round that marks it
+        nothing, an all-pass redeal, a second belote-only round.
+
+        Subtracting the raw belote from the cumulative score is exact
+        even under §7.4 rounding: belote is always a multiple of 20, and
+        ``round_mark`` steps by 10 or 5.
+
+        Args:
+            side: A side sitting at or above the target.
+            target_score: The game target.
+
+        Returns:
+            Whether the side's win stands.
         """
-        Sets the next dealer for the next round (player to the left of current dealer, anticlockwise).
+
+        if self.rules.win_on_belote_points_alone:
+            return self.scores[side] >= target_score
+        credit = self.unconfirmed_belote.get(side, 0)
+        return self.scores[side] - credit >= target_score
+
+    def next_dealer(self) -> None:
+        """Pass the deal to the next seat along, in the table's direction.
+
+        The first round's dealer is drawn at random; every later round
+        hands the deal to the dealer's successor under
+        ``rules.turn_direction`` — to the dealer's right when play runs
+        anticlockwise (contree-domain.md §2, §4).
         """
+
         if self.dealer is None:
             self.dealer = random.choice(self.players)
         else:
-            idx = self.players.index(self.dealer)
-            self.dealer = self.players[(idx + 1) % 4]
+            successor = self.dealer.position.next_in(self.rules.turn_direction)
+            self.dealer = self.players_by_position[successor]
 
-    def set_players_order(self):
+    def set_players_order(self) -> None:
+        """Order the seats for this round, starting after the dealer.
+
+        The player after the dealer in the table's direction speaks first
+        and leads trick 1 (§5.1, §6); the dealer therefore acts last and
+        is dealt to last. Walking :meth:`~contrai_core.Position.next_in`
+        rather than indexing the canonical seating is what keeps the one
+        direction setting governing the deal, the auction and the lead
+        together.
         """
-        Sets the players order starting with the player after the dealer (anticlockwise order).
-        """
-        # Reset players order and start with next player after dealer (anticlockwise order)
-        dealer_idx = self.players.index(self.dealer)
+
         self.players_order = []
-        for i in range(4):
-            player_idx = (dealer_idx + 1 + i) % 4
-            self.players_order.append(self.players[player_idx])
+        seat = self.dealer.position
+        for _ in range(4):
+            seat = seat.next_in(self.rules.turn_direction)
+            self.players_order.append(self.players_by_position[seat])

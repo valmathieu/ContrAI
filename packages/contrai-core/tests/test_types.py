@@ -74,21 +74,23 @@ class TestTrumpVariant:
         assert names == {"NO_TRUMP", "ALL_TRUMP"}
 
     def test_values_preserve_display_strings(self):
-        assert TrumpVariant.NO_TRUMP.value == "NoTrump"
-        assert TrumpVariant.ALL_TRUMP.value == "AllTrump"
+        # Spaced, not camel-cased: the value is what a spelled-out trump
+        # reads as in prose (rationale sentences, the debug log).
+        assert TrumpVariant.NO_TRUMP.value == "No Trump"
+        assert TrumpVariant.ALL_TRUMP.value == "All Trump"
 
     def test_str_is_the_display_name(self):
         # These flow through the same f-strings as the card suits, so they
         # need the same override.
-        assert str(TrumpVariant.NO_TRUMP) == "NoTrump"
-        assert f"100 {TrumpVariant.NO_TRUMP}" == "100 NoTrump"
+        assert str(TrumpVariant.NO_TRUMP) == "No Trump"
+        assert f"100 {TrumpVariant.NO_TRUMP}" == "100 No Trump"
 
     def test_is_not_a_suit(self):
         assert not isinstance(TrumpVariant.NO_TRUMP, Suit)
         assert TrumpVariant.NO_TRUMP not in tuple(Suit)
 
     def test_never_equals_a_bare_string(self):
-        assert TrumpVariant.NO_TRUMP != "NoTrump"
+        assert TrumpVariant.NO_TRUMP != "No Trump"
 
 
 class TestContractSuit:
@@ -165,12 +167,11 @@ class TestIsTrump:
         assert is_trump(card_suit, None) is False
 
     @pytest.mark.parametrize("card_suit", Suit)
-    def test_all_trump_raises(self, card_suit):
-        # Not implemented, and deliberately loud about it: the inline
-        # comparison this predicate replaced answered False here, which
-        # played an all-trump contract as if it were no-trump.
-        with pytest.raises(NotImplementedError, match="All-trump"):
-            is_trump(card_suit, TrumpVariant.ALL_TRUMP)
+    def test_every_suit_is_trump_at_all_trump(self, card_suit):
+        # The opposite answer to no-trump, and the reason this predicate
+        # exists: the inline ``card_suit == contract_suit`` it replaced
+        # answered False here, playing an all-trump round as a no-trump one.
+        assert is_trump(card_suit, TrumpVariant.ALL_TRUMP) is True
 
 
 class TestTrumpSuits:
@@ -184,9 +185,8 @@ class TestTrumpSuits:
     def test_none_yields_nothing(self):
         assert trump_suits(None) == ()
 
-    def test_all_trump_raises(self):
-        with pytest.raises(NotImplementedError, match="All-trump"):
-            trump_suits(TrumpVariant.ALL_TRUMP)
+    def test_all_trump_yields_every_suit(self):
+        assert trump_suits(TrumpVariant.ALL_TRUMP) == tuple(Suit)
 
     def test_always_returns_card_suits(self):
         # Callers key the fallen / void maps by the result, so it must never

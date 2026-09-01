@@ -25,6 +25,7 @@ import dataclasses
 import pytest
 
 from contrai_core import (
+    AllTrumpBelote,
     BasePlayer,
     Card,
     Contract,
@@ -33,6 +34,7 @@ from contrai_core import (
     PlayState,
     Position,
     Rank,
+    RuleConfig,
     Suit,
     Team,
     TrickRecord,
@@ -60,6 +62,7 @@ _EXPECTED_FIELDS = {
     "completed_tricks",
     "current_trick",
     "legal_cards",
+    "rules",
 }
 
 
@@ -98,7 +101,7 @@ def _play_first_trick(players_dict: dict[str, BasePlayer]) -> PlayState:
 
 
 class TestOwnHandOnly:
-    def test_field_set_is_exactly_the_seven_specified(self):
+    def test_field_set_is_exactly_the_eight_specified(self):
         assert set(PlayObservation.__dataclass_fields__) == _EXPECTED_FIELDS
 
     def test_observer_is_named_by_seat(self, players):
@@ -208,6 +211,50 @@ class TestBidsPassthrough:
             Position.EAST,
             Position.NORTH,
         ]
+
+
+# ---------------------------------------------------------------------------
+# rules passthrough
+# ---------------------------------------------------------------------------
+
+
+class TestRulesPassthrough:
+    """The table ruleset reaches every seat's view.
+
+    House rules are public information — the table agreed them before the
+    first deal — so passing them through widens nothing. It is what lets a
+    strategy reason about the regime it plays under instead of inferring
+    table policy from the shape of its legal set.
+    """
+
+    def test_every_seat_sees_the_states_own_ruleset(self, players):
+        contract, seating, hands, _ = _deal(players)
+        rules = RuleConfig(
+            all_trump_belote=AllTrumpBelote.FOUR, under_trump_exemption=False
+        )
+        state = PlayState.start(contract, seating, hands, rules=rules)
+
+        for seat in _ORDER:
+            # ``RuleConfig`` is frozen, so the projection may share it —
+            # identity is the strongest statement of "the same ruleset".
+            assert state.observe(players[seat]).rules is rules
+
+    def test_default_state_hands_out_the_catalogue_defaults(self, players):
+        contract, seating, hands, _ = _deal(players)
+        state = PlayState.start(contract, seating, hands)
+        assert state.observe(players["N"]).rules == RuleConfig()
+
+    def test_directly_built_observation_defaults_to_the_catalogue(self, players):
+        obs = PlayObservation(
+            position=Position.NORTH,
+            hand=(),
+            contract=None,
+            bids=(),
+            completed_tricks=(),
+            current_trick=(),
+            legal_cards=(),
+        )
+        assert obs.rules == RuleConfig()
 
 
 # ---------------------------------------------------------------------------

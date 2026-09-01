@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, NamedTuple, Optional
 
 from .bid import seal_bid
 from .exceptions import IllegalPlayError, PlayRuleViolation
+from .rule_config import RuleConfig
 from .rules import NoTrumpRules, TrumpRules, rules_for
 from .team_side import TeamSide
 from .trick import TrickRecord, current_winner
@@ -131,12 +132,19 @@ class PlayState:
         hands: Per-seat remaining cards, parallel to ``players``.
         plays: The flat chronological play history. Every four plays form
             one trick. Defaults to empty — a fresh play phase.
+        rules: The table ruleset this play phase runs under.
+            :meth:`legal_actions` reads ``under_trump_exemption`` off it
+            to decide the under-trump obligation; the remaining knobs are
+            carried for the round scorer and the engine. Part of value
+            equality, so two states played under different rulesets never
+            compare equal.
     """
 
     contract: Contract
     players: tuple[BasePlayer, ...]
     hands: tuple[tuple[Card, ...], ...]
     plays: tuple[Play, ...] = field(default=())
+    rules: RuleConfig = field(default_factory=RuleConfig)
 
     # ------------------------------------------------------------------
     # Construction helpers
@@ -148,6 +156,7 @@ class PlayState:
         contract: Contract,
         players: tuple[BasePlayer, ...],
         hands: tuple[tuple[Card, ...], ...],
+        rules: RuleConfig | None = None,
     ) -> "PlayState":
         """Seed a validated play phase from a fresh deal.
 
@@ -155,6 +164,9 @@ class PlayState:
             contract: The established contract supplying the trump suit.
             players: The four players in seating order.
             hands: Per-seat starting hands, parallel to ``players``.
+            rules: The table ruleset this play phase runs under. ``None``
+                (the default) means :class:`~contrai_core.RuleConfig`'s
+                own defaults — the §9 catalogue.
 
         Returns:
             A fresh :class:`PlayState` with no plays yet.
@@ -189,7 +201,13 @@ class PlayState:
                 "across the hands."
             )
 
-        return cls(contract=contract, players=players, hands=hands, plays=())
+        return cls(
+            contract=contract,
+            players=players,
+            hands=hands,
+            plays=(),
+            rules=rules if rules is not None else RuleConfig(),
+        )
 
     # ------------------------------------------------------------------
     # Derived trick views
@@ -352,10 +370,22 @@ class PlayState:
         2. When trump is led, over-trump the best trump on the table if you
            hold a higher one; otherwise any card of the led (trump) suit.
         3. Void in the led suit with your partner not currently master: you
-           must trump, over-trumping an opponent's ruff if able.
+           must trump, over-trumping an opponent's ruff if able. The
+           table's *under-trump exemption* (``rules.under_trump_exemption``,
+           on by default per §9.5) lifts the obligation in exactly one
+           sub-case — an opponent has cut and nothing in hand beats it —
+           where the seat may discard freely instead of throwing a losing
+           trump away. Switched off, the under-trump is compulsory. The
+           over-trump obligation is never lifted (§6.2).
         4. Partner-master exemption: if your partner is currently winning,
            discard freely.
         5. Otherwise discard freely.
+        6. At all trump every suit is trump, so obligations 1–2 and 5 are
+           the whole rulebook: follow and raise in the led suit if able,
+           discard freely when void — there is nothing to cut with
+           (contree-domain.md §6.4). The under-trump exemption is
+           therefore inert at all trump *and* at no trump: neither regime
+           can reach the branch it guards.
 
         The returned cards are the very objects held in ``player``'s hand
         tuple — filtered, never reconstructed — so callers matching cards by
@@ -391,7 +421,7 @@ class PlayState:
         if lead_suit_cards:
             if rules.is_trump(lead_suit):
                 higher = _higher_trumps_than_played(
-                    lead_suit_cards, trick, rules
+                    lead_suit_cards, trick, rules, lead_suit
                 )
                 return higher if higher else lead_suit_cards
             return lead_suit_cards
@@ -403,11 +433,14 @@ class PlayState:
         if current_master is not None and current_master.team == player.team:
             return tuple(hand)
 
-        # No trump suit at all (or the led suit is trump and we are void in
-        # it): nothing to trump with, free discard. The regime test is an
-        # ``isinstance`` check against the sealed no-trump leaf — an enum
-        # member is always truthy, so no bare ``if not trump_suit`` can
-        # distinguish a NO_TRUMP contract from a suit one.
+        # No trump suit at all, or the led suit is itself trump and we are
+        # void in it (which is every all-trump trick where the seat cannot
+        # follow): nothing to cut with, free discard — §6.4 for both
+        # variants. The no-trump test is an ``isinstance`` check against
+        # the sealed leaf: an enum member is always truthy, so no bare
+        # ``if not trump_suit`` can distinguish a NO_TRUMP contract from a
+        # suit one. ``AllTrumpRules`` is not that leaf and reaches this
+        # line through ``rules.is_trump(lead_suit)`` instead.
         if isinstance(rules, NoTrumpRules) or rules.is_trump(lead_suit):
             return tuple(hand)
 
@@ -424,6 +457,17 @@ class PlayState:
             )
             if higher_trumps:
                 return higher_trumps
+            # Table option — under-trump exemption (§6.2, §9.5), on by
+            # default. Void in the led suit, an opponent has cut, and
+            # nothing in hand beats it: the seat may discard freely
+            # rather than throw a losing trump away. "Freely" is the
+            # whole hand — playing the under-trump anyway stays legal.
+            # Switched off, the under-trump is compulsory. This branch is
+            # unreachable at no trump (nothing is trump, so nobody cut)
+            # and at all trump (a void seat already returned above), which
+            # is exactly the §6.4 inertness.
+            if self.rules.under_trump_exemption:
+                return tuple(hand)
             if trump_cards:
                 return trump_cards
             return tuple(hand)
@@ -449,7 +493,8 @@ class PlayState:
         Returns:
             A new :class:`PlayState` with the play appended and the card
             removed from the player's hand (the relative order of the
-            remaining cards is preserved). The receiver is unchanged.
+            remaining cards is preserved). Contract, players and rules
+            carry over unchanged. The receiver is unchanged.
 
         Raises:
             IllegalPlayError: Carrying the offending :class:`PlayRuleViolation`
@@ -492,6 +537,7 @@ class PlayState:
             players=self.players,
             hands=new_hands,
             plays=self.plays + (play,),
+            rules=self.rules,
         )
 
     # ------------------------------------------------------------------
@@ -503,10 +549,11 @@ class PlayState:
     ) -> "PlayState":
         """Fork this state onto replacement hands.
 
-        The public history — contract, players, plays — is preserved; only
-        the per-seat hands change. This is the determinization primitive a
-        search-based AI uses to sample worlds consistent with what it has
-        seen.
+        The public history — contract, players, plays **and rules** — is
+        preserved; only the per-seat hands change. This is the
+        determinization primitive a search-based AI uses to sample worlds
+        consistent with what it has seen: every sampled world must be
+        played under the same table ruleset as the real one.
 
         Args:
             hands: Replacement per-seat hands, parallel to ``players``.
@@ -545,6 +592,7 @@ class PlayState:
             players=self.players,
             hands=new_hands,
             plays=self.plays,
+            rules=self.rules,
         )
 
     # ------------------------------------------------------------------
@@ -571,6 +619,11 @@ class PlayState:
         survives the projection, so no other seat's hand is reachable
         through what is handed over — not directly, and not through
         ``player.team.players`` either.
+
+        The table ruleset rides along unchanged: it is public information
+        every seat agreed to before the deal, so it reveals nothing the
+        observer did not already know, and it is what a strategy needs to
+        reason about — and cite — the rules it is playing under.
 
         The observing player is still passed in live: the state needs the
         identity to look up the hand and the legal actions. Only what
@@ -602,6 +655,7 @@ class PlayState:
             ),
             current_trick=_seal_plays(self.current_trick),
             legal_cards=self.legal_actions(player),
+            rules=self.rules,
         )
 
     # ------------------------------------------------------------------
@@ -691,6 +745,14 @@ class PlayObservation:
             as :class:`ObservedPlay` records — also public.
         legal_cards: The observer's legal plays right now, a subset of
             ``hand``.
+        rules: The table ruleset the round is played under. The table
+            ruleset is **public information** — every player at the table
+            agreed it before the first deal — so carrying it does not
+            widen what this observation reveals. It is what lets a
+            strategy reason about the rules it is playing under (the
+            all-trump belote regime, the under-trump exemption) and cite
+            them in its rationale, instead of re-deriving table policy
+            from the legal set.
     """
 
     position: Position
@@ -700,6 +762,7 @@ class PlayObservation:
     completed_tricks: tuple[TrickRecord[ObservedPlay], ...]
     current_trick: tuple[ObservedPlay, ...]
     legal_cards: tuple[Card, ...]
+    rules: RuleConfig = field(default_factory=RuleConfig)
 
     @property
     def trick_number(self) -> int:
@@ -782,42 +845,46 @@ def _seal_plays(plays: tuple[Play, ...]) -> tuple[ObservedPlay, ...]:
 
 
 def _higher_trumps_than_played(
-    trumps_in_hand: tuple[Card, ...],
+    candidates: tuple[Card, ...],
     plays: tuple[Play, ...],
     rules: TrumpRules,
+    led_suit: Suit,
 ) -> tuple[Card, ...]:
-    """Return the held trumps that beat every trump already in ``plays``.
+    """Return the held cards that beat every card already competing.
 
-    Used by the over-trump rule when the led suit is itself trump. Returns
-    an empty tuple when no trump has been played yet (defensive; the rule
-    only calls this once trump is on the table) or when no held trump beats
-    the current best.
+    Used by the over-trump rule when the led suit is itself trump. Ranking
+    goes through :meth:`TrumpRules.trick_rank`, not ``rank_in_suit``,
+    because that is the only comparator that knows which cards *compete*:
+    at all trump every suit is trump, so a discard of another suit passes
+    an ``is_trump`` test yet can never take the trick, and ranking it on
+    the trump scale would raise the bar for no reason.
 
     Args:
-        trumps_in_hand: The candidate trumps from the player's hand.
+        candidates: The cards from the player's hand to filter — the held
+            cards of the led suit.
         plays: The plays of the current trick.
-        rules: The contract's trick rules, supplying trumpness and the
-            in-suit ranking. All cards compared here are trumps of the
-            same suit, which is exactly what ``rank_in_suit`` orders.
+        rules: The contract's trick rules.
+        led_suit: The suit of the trick's first card, which selects which
+            cards compete.
 
     Returns:
-        The subset of ``trumps_in_hand`` outranking the best trump played.
+        The subset of ``candidates`` outranking every competing card
+        played so far; empty when none does, or when nothing competes yet
+        (defensive — the rule only calls this with a card on the table).
     """
 
     best_so_far = None
     for _, card in plays:
-        if not rules.is_trump(card.suit):
-            continue
-        if best_so_far is None or rules.rank_in_suit(card) > rules.rank_in_suit(
-            best_so_far
-        ):
-            best_so_far = card
+        rank = rules.trick_rank(card, led_suit)
+        if rank is not None and (best_so_far is None or rank > best_so_far):
+            best_so_far = rank
     if best_so_far is None:
         return ()
     return tuple(
         card
-        for card in trumps_in_hand
-        if rules.rank_in_suit(card) > rules.rank_in_suit(best_so_far)
+        for card in candidates
+        if (rank := rules.trick_rank(card, led_suit)) is not None
+        and rank > best_so_far
     )
 
 

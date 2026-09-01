@@ -18,6 +18,8 @@ remains here is the data contract of each variant:
 import pytest
 
 from contrai_core import (
+    CONTRACT_SUITS,
+    AllTrumpBelote,
     BasePlayer,
     Bid,
     ContractBid,
@@ -26,10 +28,14 @@ from contrai_core import (
     PassBid,
     Position,
     RedoubleBid,
+    RuleConfig,
     SlamLevel,
     Suit,
     Team,
     TrumpVariant,
+    bookable_suits,
+    bookable_values,
+    ladder_top,
     seal_bid,
 )
 
@@ -109,6 +115,7 @@ class TestContractBidConstruction:
     @pytest.mark.parametrize(
         "value",
         [80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180,
+         190, 200, 210, 220, 230, 240,
          SlamLevel.SLAM, SlamLevel.SOLO_SLAM],
     )
     def test_valid_values(self, north, value):
@@ -118,22 +125,27 @@ class TestContractBidConstruction:
 
     @pytest.mark.parametrize("suit", ContractBid.VALID_SUITS)
     def test_valid_suits(self, north, suit):
-        # Parametrized over VALID_SUITS itself: the bookable trumps are the
-        # four card suits plus NO_TRUMP, and the list is what
-        # Auction.legal_actions iterates.
+        # Parametrized over VALID_SUITS itself: every contract trump is a
+        # well-formed bid, and which of the six a table offers is decided
+        # separately by ``bookable_suits``.
         bid = ContractBid(north, 80, suit)
         assert bid.suit == suit
 
-    def test_valid_suits_is_every_contract_suit_but_all_trump(self):
-        assert ContractBid.VALID_SUITS == [*Suit, TrumpVariant.NO_TRUMP]
-        assert TrumpVariant.ALL_TRUMP not in ContractBid.VALID_SUITS
+    def test_valid_suits_is_every_contract_suit(self):
+        # ContractBid answers "is this a well-formed bid at all". Which of
+        # the six a table actually offers is an auction rule, decided from
+        # the RuleConfig by ``bookable_suits``.
+        assert ContractBid.VALID_SUITS == list(CONTRACT_SUITS)
+        assert TrumpVariant.ALL_TRUMP in ContractBid.VALID_SUITS
 
     @pytest.mark.parametrize(
         "bad_value",
         # The old string sentinels "Slam" / "SoloSlam" are no longer
-        # valid — only the SlamLevel members are.
-        [70, 85, 190, 0, -10, "slam", "SLAM", "Capot", "solo", "Solo Slam",
-         "80", "Slam", "SoloSlam"],
+        # valid — only the SlamLevel members are. 190 is now a well-formed
+        # value (it is a step on the all-trump ladder), so 175 and 250
+        # stand in as the off-ladder and above-ceiling cases.
+        [70, 85, 175, 250, 0, -10, "slam", "SLAM", "Capot", "solo",
+         "Solo Slam", "80", "Slam", "SoloSlam"],
     )
     def test_invalid_value_raises(self, north, bad_value):
         with pytest.raises(InvalidContractError, match="Invalid contract value"):
@@ -143,16 +155,64 @@ class TestContractBidConstruction:
         with pytest.raises(InvalidContractError, match="Invalid trump suit"):
             ContractBid(north, 80, "Spades")  # raw string is not a Suit enum
 
-    def test_all_trump_is_rejected_with_its_own_message(self, north):
-        # Unimplemented rather than unknown, and the message says so — an
-        # all-trump round would reorder and re-score every card, so it is
-        # refused at the auction instead of played as something else.
-        with pytest.raises(InvalidContractError, match="All-trump"):
-            ContractBid(north, 80, TrumpVariant.ALL_TRUMP)
+    def test_all_trump_constructs(self, north):
+        # Well-formed, and at the top of its ladder. Whether the table
+        # offers it is Auction.is_legal's call, not this one's.
+        bid = ContractBid(north, 240, TrumpVariant.ALL_TRUMP)
+        assert bid.suit is TrumpVariant.ALL_TRUMP
 
     def test_player_is_stored(self, north):
         bid = ContractBid(north, 100, Suit.HEARTS)
         assert bid.player is north
+
+
+# ---------------------------------------------------------------------------
+# The two table-rule functions: which trumps are bookable, and how high
+# each mode's numeric ladder goes.
+# ---------------------------------------------------------------------------
+
+
+class TestBookableSuits:
+    def test_default_is_the_four_suits(self):
+        # The §9 default set plays the classic game: no variants offered.
+        assert bookable_suits(RuleConfig()) == tuple(Suit)
+
+    def test_extended_adds_both_variants(self):
+        assert bookable_suits(
+            RuleConfig(extended_trump_choices=True)
+        ) == CONTRACT_SUITS
+
+    def test_card_suits_come_first_under_both_settings(self):
+        # The enumeration order of Auction.legal_actions is stable across
+        # the knob: turning it on appends, it does not reshuffle.
+        extended = bookable_suits(RuleConfig(extended_trump_choices=True))
+        assert extended[:4] == bookable_suits(RuleConfig())
+
+
+class TestLadderTop:
+    @pytest.mark.parametrize("suit", list(Suit))
+    def test_suit_contracts_top_at_180(self, suit):
+        assert ladder_top(suit, RuleConfig()) == 180
+
+    def test_no_trump_tops_at_160(self):
+        # No Belote at no trump, so 162 on cards and the last-trick bonus
+        # is all there is: the last 10-point step below it is 160.
+        assert ladder_top(TrumpVariant.NO_TRUMP, RuleConfig()) == 160
+
+    @pytest.mark.parametrize("regime, top", [
+        (AllTrumpBelote.NONE, 160),
+        (AllTrumpBelote.SINGLE, 180),
+        (AllTrumpBelote.FOUR, 240),
+    ])
+    def test_all_trump_follows_the_belote_regime(self, regime, top):
+        rules = RuleConfig(extended_trump_choices=True, all_trump_belote=regime)
+        assert ladder_top(TrumpVariant.ALL_TRUMP, rules) == top
+
+    def test_the_belote_regime_does_not_move_the_other_modes(self):
+        rules = RuleConfig(extended_trump_choices=True,
+                           all_trump_belote=AllTrumpBelote.FOUR)
+        assert ladder_top(Suit.HEARTS, rules) == 180
+        assert ladder_top(TrumpVariant.NO_TRUMP, rules) == 160
 
 
 # ---------------------------------------------------------------------------
@@ -399,3 +459,25 @@ class TestSealBid:
 
     def test_sealed_pass_is_still_a_bid(self, north):
         assert isinstance(seal_bid(PassBid(north)), Bid)
+
+
+# ---------------------------------------------------------------------------
+# bookable_values — the value-side table rule
+# ---------------------------------------------------------------------------
+
+
+class TestBookableValues:
+    """``bookable_values`` is the value-side sibling of ``bookable_suits``."""
+
+    def test_every_step_and_both_slams_by_default(self):
+        assert bookable_values(RuleConfig()) == tuple(ContractBid.VALID_VALUES)
+
+    def test_solo_slam_is_withdrawn_when_the_table_forbids_it(self):
+        values = bookable_values(RuleConfig(solo_slam_available=False))
+        assert SlamLevel.SOLO_SLAM not in values
+        assert SlamLevel.SLAM in values
+        # Nothing else is touched — the numeric ladder is untouched by
+        # a bidding switch; ``ladder_top`` is what caps that.
+        assert [v for v in values if isinstance(v, int)] == [
+            v for v in ContractBid.VALID_VALUES if isinstance(v, int)
+        ]

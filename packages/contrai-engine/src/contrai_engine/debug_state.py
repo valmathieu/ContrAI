@@ -220,3 +220,92 @@ def round_result_lines(
         ]
     lines.append(f"Totals: {_totals(running_scores)}")
     return lines
+
+
+def last_decisions(round_, limit: int = 4) -> list[dict]:
+    """Plain-container projection of what the AI seats decided this round.
+
+    The debug strip's rationale panel reads this; so could a web view, a
+    replay browser, or a training harness logging why a policy acted.
+    Nothing Rich, nothing view-shaped: each entry is a ``dict`` of
+    strings and lists of strings, exactly like the rest of this module.
+
+    A **human seat contributes nothing**. ``HumanPlayer``'s hooks return
+    ``None``, so ``Round`` appends no decision for it — a person's
+    reasoning is not the engine's to record — and that seat simply has no
+    entry here.
+
+    Entries come out in **play order**: the bidding first, then the
+    cards, each in the order they happened. A reader following the strip
+    frame by frame sees a new decision appear *below* the ones already
+    there, the way a log grows, instead of the previous explanation
+    being pushed down by the newest one.
+
+    Args:
+        round_: The round whose ``card_decisions`` / ``bid_decisions``
+            to project. ``None``, or any object without those lists,
+            projects an empty list rather than raising: the debug strip
+            renders during frames where no round exists yet.
+        limit: How many entries to keep. It is the *newest* ``limit``
+            that survive the trim — only their order is chronological.
+
+    Returns:
+        Up to ``limit`` entries, bids before card plays and oldest first
+        within each, each holding:
+
+        - ``kind`` — ``"card"`` or ``"bid"``;
+        - ``action`` — the card label (``"J♠"``) or the bid's rendering;
+        - ``rule`` — the rule that fired;
+        - ``detail`` — one sentence on what that meant here;
+        - ``considered`` — the alternatives weighed, as strings;
+        - ``citations`` — the table knobs consulted, each a
+          ``{"knob", "value", "effect"}`` dict.
+    """
+
+    cards = list(getattr(round_, "card_decisions", ()) or ())
+    bids = list(getattr(round_, "bid_decisions", ()) or ())
+
+    # Bidding always precedes play within a round, so concatenating the
+    # two lists in their natural (append) order *is* chronological order.
+    entries: list[dict] = [
+        _decision_entry("bid", str(decision.bid), decision.rationale)
+        for decision in bids
+    ]
+    entries.extend(
+        _decision_entry("card", _card_label(decision.card), decision.rationale)
+        for decision in cards
+    )
+    if limit <= 0:
+        # ``entries[-0:]`` is the whole list, not an empty one — spell
+        # the empty case out rather than let the slice invert it.
+        return []
+    return entries[-limit:]
+
+
+def _decision_entry(kind: str, action: str, rationale) -> dict:
+    """Flatten one :class:`Rationale` into plain containers.
+
+    Args:
+        kind: ``"card"`` or ``"bid"``.
+        action: What was played or bid, already rendered.
+        rationale: The decision's rationale.
+
+    Returns:
+        The entry dict :func:`last_decisions` documents.
+    """
+
+    return {
+        "kind": kind,
+        "action": action,
+        "rule": rationale.rule,
+        "detail": rationale.detail,
+        "considered": list(rationale.considered),
+        "citations": [
+            {
+                "knob": citation.knob,
+                "value": citation.value,
+                "effect": citation.effect,
+            }
+            for citation in rationale.citations
+        ],
+    }

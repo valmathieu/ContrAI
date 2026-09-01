@@ -112,6 +112,9 @@ package "rules.py" as p_rules {
     class NoTrumpRules <<frozen dataclass>> {
     }
 
+    class AllTrumpRules <<frozen dataclass>> {
+    }
+
     class "rules.py" as p_rules_fn <<module>> {
         rules_for(contract_suit: ContractSuit?) : TrumpRules
     }
@@ -135,12 +138,94 @@ package "rules.py" as p_rules {
       over the leaves stays exhaustive.
       **Singletons**: ""rules_for"" hands out one shared
       instance per regime (""None"" and ""NO_TRUMP""
-      resolve to the //same// no-trump object) and
-      raises ""NotImplementedError"" for ""ALL_TRUMP""
-      — the all-trump firewall lives here.
+      resolve to the //same// no-trump object).
+      **Four scoring scales, two orderings**: all trump
+      ranks every suit on the trump ladder but scores on
+      its own compressed table (§3.3), so every regime's
+      deck is 152. At all trump only the //led suit//
+      competes — ""trick_rank"" answers ""None"" elsewhere,
+      which is what forbids cross-suit cutting (§6.4).
       Follow/trump //obligations// stay in
       ""PlayState.legal_actions""; rules objects supply
       predicates and comparators only.
+    end note
+}
+
+' =========================================================
+' Table-rule catalogue (rule_config.py)
+' =========================================================
+package "rule_config.py" as p_rule_config {
+    enum TurnDirection <<enum>> {
+        ANTICLOCKWISE = "anticlockwise"
+        CLOCKWISE     = "clockwise"
+    }
+    enum AllTrumpBelote <<enum>> {
+        NONE   = "none"
+        SINGLE = "single"
+        FOUR   = "four"
+    }
+    enum Rounding <<enum>> {
+        EXACT      = "exact"
+        NEAREST_10 = "nearest_10"
+        NEAREST_5  = "nearest_5"
+    }
+
+    class RuleConfig <<frozen dataclass>> {
+        .. §9.1 general ..
+        + target_score : int = 2000
+        + turn_direction : TurnDirection = ANTICLOCKWISE
+        .. §9.2 trump ..
+        + extended_trump_choices : bool = False
+        + all_trump_belote : AllTrumpBelote = SINGLE
+        .. §9.3 deal ..
+        + reshuffle_every_round : bool = False
+        .. §9.4 bidding ..
+        + solo_slam_available : bool = True
+        + slam_can_be_doubled : bool = True
+        + solo_slam_can_be_doubled : bool = True
+        .. §9.5 card play ..
+        + under_trump_exemption : bool = True
+        + solo_slam_gives_the_lead : bool = False
+        + belote_counts_toward_contract : bool = True
+        + belote_lost_when_contract_fails : bool = False
+        .. §9.6 scoring ..
+        + mark_made_points : bool = True
+        + mark_announced_points : bool = True
+        + only_announced_points_multiplied : bool = True
+        + any_failure_marks_160 : bool = False
+        + unannounced_slam_substitute : bool = True
+        + failed_slam_marks_made_points : bool = True
+        + failed_slam_marks_announced_points : bool = True
+        + attack_must_outscore_defense : bool = True
+        + rounding : Rounding = EXACT
+        + win_on_belote_points_alone : bool = True
+        --
+        + {static} classic() : RuleConfig
+    }
+
+    class "rule_config.py" as p_rule_config_fn <<module>> {
+        TARGET_SCORES : tuple<int>
+        PRESETS : Mapping<str, RuleConfig>
+    }
+
+    note bottom of RuleConfig
+      **The table-rule catalogue as one value.** One field
+      per //configurable// row of contree-domain.md §9,
+      named after the doc's own wording; ""RuleConfig()""
+      //is// the §9 default set. Frozen + slotted, so a
+      ruleset is a hashable value a log line or a scraped
+      game can name.
+      **Validation** (""~__post_init~__""): both marking
+      conventions off → ""InvalidRuleConfigError"" (a table
+      marking neither keeps no score); ""target_score""
+      off the 500–5000 ladder → same error. The two inert
+      combinations (failed-Slam announced points without
+      any-failure-160; all-trump belote without extended
+      trump choices) are documented, not rejected.
+      **Presets** are core constructors: ""classic()"" is
+      the defaults; ""PRESETS"" names them for the engine's
+      loader. **No knob is consulted yet** — behaviour
+      lands per knob in later steps.
     end note
 }
 
@@ -188,6 +273,7 @@ package "position.py / team_side.py" as p_position {
         + team_side : TeamSide              <<property>>
         + french_name : str                 <<property>>
         --
+        + next_in(direction: TurnDirection) : Position
         + is_teammate(other: Position) : bool
         + {static} from_french(name: str) : Position
         + __str__() : str
@@ -202,6 +288,12 @@ package "position.py / team_side.py" as p_position {
       ""opponents"" / ""team~_side"" all derive from
       that one ordering instead of each
       re-encoding seat arithmetic.
+      Turn direction is //threaded//, not baked in:
+      ""next~_in(direction)"" walks the same ordering
+      backwards for a clockwise table, and ""next"" is
+      its anticlockwise shorthand. ""partner"" /
+      ""opponents"" / ""team~_side"" need no direction —
+      the partner is across the table either way.
       ""is~_teammate"" is the //same side?//
       boolean, expressed on top of ""team~_side"";
       ""team~_side"" is the //which side?// value.
@@ -399,12 +491,12 @@ package "bid.py" as p_bid {
     }
 
     class ContractBid <<frozen dataclass>> {
-        + {static} VALID_VALUES = [80..180, SlamLevel.SLAM, SlamLevel.SOLO_SLAM]
-        + {static} VALID_SUITS = CONTRACT_SUITS - ALL_TRUMP
+        + {static} VALID_VALUES = [80..240, SlamLevel.SLAM, SlamLevel.SOLO_SLAM]
+        + {static} VALID_SUITS = CONTRACT_SUITS
         + value : int | SlamLevel
         + suit : ContractSuit
         --
-        + ~__post_init~__() : None <<rejects ALL_TRUMP by name>>
+        + ~__post_init~__() : None <<well-formedness only>>
         + get_numeric_value() : int <<SlamLevel → base_value>>
         + __gt__(other) : bool <<strict numeric ordering>>
         + __str__() : str
@@ -420,14 +512,17 @@ package "bid.py" as p_bid {
 
     class "bid.py" as p_bid_fn <<module>> {
         seal_bid(bid: Bid<BasePlayer>) : Bid<Position> <<reseats onto the bidder's seat>>
+        bookable_suits(rules: RuleConfig) : tuple<ContractSuit>
+        bookable_values(rules: RuleConfig) : tuple<int|SlamLevel>
+        ladder_top(contract_suit: ContractSuit, rules: RuleConfig) : int
     }
 
     note bottom of Bid
       Pure value carriers — no auction-state
       behaviour. ""player"" is excluded from
       ""~__eq~__"" and ""~__hash~__"" (matching
-      bid equality on //what was announced//,
-      not who announced it). All four
+      bid equality on //what was bid//,
+      not who bid it). All four
       variants are frozen, slotted dataclasses.
       ""SlamLevel"" owns the 250 / 500 base
       values as data, so nothing downstream
@@ -448,8 +543,9 @@ package "bid.py" as p_bid {
 package "auction.py" as p_auction {
     class Auction <<frozen dataclass>> {
         + bids : tuple<Bid> = ()
+        + rules : RuleConfig = RuleConfig()
         --
-        + {static} empty() : Auction
+        + {static} empty(rules=None) : Auction
         + is_legal(bid: Bid) : bool
         + legal_actions(player: BasePlayer) : tuple<Bid>
         + apply(bid: Bid) : Auction <<raises IllegalBidError>>
@@ -484,6 +580,22 @@ package "auction.py" as p_auction {
       interfaces, so the auction phase is
       ready to drop into a future
       imperfect-information state object.
+    end note
+
+    note top of Auction
+      **Two layers of validity.** ""ContractBid"" answers
+      //is this a well-formed bid at all// — a step on the
+      80–240 ladder naming one of the six contract trumps.
+      ""Auction"" answers //is it legal at this table, now//:
+      ""bookable_suits"" drops both variants unless
+      ""extended_trump_choices"" is on, and ""ladder_top""
+      caps each mode (suit 180, no trump 160, all trump
+      160/180/240 by belote regime). Slam-family bids are
+      never ladder-capped.
+      ""bookable~_values"" drops the Solo Slam when the
+      table withdraws it, and the two
+      ""slam~_can~_be~_doubled"" switches gate
+      ""Auction.~_is~_double~_legal"" per contract.
     end note
 }
 
@@ -651,8 +763,9 @@ package "play.py" as p_play {
         + players : tuple<BasePlayer>
         + hands : tuple<tuple<Card>>
         + plays : tuple<Play> = ()
+        + rules : RuleConfig = RuleConfig()
         --
-        + {static} start(contract, players, hands) : PlayState
+        + {static} start(contract, players, hands, rules=None) : PlayState
         + hand_of(player: BasePlayer) : tuple<Card>
         + legal_actions(player: BasePlayer) : tuple<Card>
         + apply(play: Play) : PlayState <<raises IllegalPlayError>>
@@ -677,6 +790,7 @@ package "play.py" as p_play {
         + completed_tricks : tuple<TrickRecord<ObservedPlay>>
         + current_trick : tuple<ObservedPlay>
         + legal_cards : tuple<Card>
+        + rules : RuleConfig = RuleConfig()
         --
         + trick_number : int            <<property>>
         + trump_suit : ContractSuit?    <<property>>
@@ -713,6 +827,13 @@ package "play.py" as p_play {
       replacement hands — the determinization
       primitive a future search-based AI would
       sample from; no search runs on it yet.
+      Carries the table ""RuleConfig"" through
+      ""apply"" / ""with~_hands"". ""legal~_actions"" reads
+      one knob off it: the //under-trump exemption//,
+      on by default — void in the led suit facing an
+      opponent's unbeatable cut, the seat may discard
+      instead of under-trumping. Inert at no trump and
+      at all trump, neither of which reaches that branch.
     end note
 
     note bottom of PlayObservation
@@ -732,6 +853,17 @@ package "play.py" as p_play {
       ""observe()"" still takes the live player: it
       needs the identity to look up the hand and
       the legal actions. Only the output is sealed.
+      ----
+      ""rules"" rides along without breaching that
+      seal: the table ruleset is //public
+      information// — every seat agreed it before
+      the first deal — so it reveals nothing the
+      observer did not already know. It is what
+      lets a strategy reason about the regime it
+      plays under (the all-trump belote rule, the
+      under-trump exemption) and //cite// it in a
+      rationale, instead of re-deriving table
+      policy from the shape of the legal set.
     end note
 }
 
@@ -789,6 +921,10 @@ package "exceptions.py" as p_exc {
         + context : str
     }
 
+    class InvalidRuleConfigError {
+        + context : str
+    }
+
     ' Every domain error dual-inherits (ContraiError, ValueError);
     ' ValueError stays in the MRO so an except-ValueError handler
     ' keeps catching the whole family.
@@ -807,6 +943,8 @@ package "exceptions.py" as p_exc {
     TrickStateError         --|> ValueError
     InvalidContractError    --|> ContraiError
     InvalidContractError    --|> ValueError
+    InvalidRuleConfigError  --|> ContraiError
+    InvalidRuleConfigError  --|> ValueError
     IllegalPlayError        --> PlayRuleViolation : reason
 }
 
@@ -817,9 +955,19 @@ package "exceptions.py" as p_exc {
 ' Inheritance — TrumpRules sealed hierarchy
 TrumpRules <|-- SingleSuitRules
 TrumpRules <|-- NoTrumpRules
+TrumpRules <|-- AllTrumpRules
 SingleSuitRules --> Suit : suit
 p_rules_fn ..> TrumpRules : <<resolves singleton>>
 TrumpRules ..> Card : points / rank_in_suit / trick_rank
+
+' The table-rule catalogue: three enums typed onto RuleConfig fields,
+' the presets registry naming ready-made configs.
+RuleConfig --> TurnDirection  : turn_direction
+RuleConfig --> AllTrumpBelote : all_trump_belote
+RuleConfig --> Rounding       : rounding
+RuleConfig ..> InvalidRuleConfigError : <<raises in post-init>>
+p_rule_config_fn ..> RuleConfig : <<PRESETS>>
+PlayState "1" o-- "1" RuleConfig : rules
 
 ' Inheritance — Bid hierarchy
 Bid <|-- PassBid
@@ -868,8 +1016,11 @@ ContractBid ..> SlamLevel : value (all-tricks bids)
 
 ' Auction composes a tuple of Bids and materialises a Contract
 Auction "1" *-- "0..N" Bid       : bids
+Auction "1" o-- "1" RuleConfig   : rules
 Auction ..> Contract             : <<materialises>>
 Auction ..> IllegalBidError      : <<raises on apply>>
+Auction ..> p_bid_fn             : <<gate + ladder cap>>
+p_bid_fn ..> RuleConfig          : <<reads the §9.2 knobs>>
 
 ' Contract references ContractBid + BasePlayer + Team
 Contract "1" o-- "1" ContractBid : contract_bid

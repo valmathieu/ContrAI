@@ -48,13 +48,13 @@ activate G
 == Setup — start_new_round() ==
 
 G -> G : current_contract = None
-G -> G : next_dealer()\n(random first time, else rotate +1)
-alt round_number == 0
+G -> G : next_dealer()\n(random first time, else the next seat\nin the table's turn direction)
+alt first round or reshuffle~_every~_round
     G -> D : shuffle()
 else subsequent rounds
     G -> D : cut()
 end
-G -> G : set_players_order()\n(starts after dealer, anticlockwise)
+G -> G : set_players_order()\n(starts after dealer, in the\ntable's turn direction)
 G -> G : round_number += 1
 G -> R : new Round(players_order, dealer,\n            deck, round_number)
 activate R
@@ -88,7 +88,7 @@ end note
 G -> R : manage_bidding(view)
 ref over R, P : **seq_bidding** — bid loop, validation, termination
 R -> R : self.auction = auction\n(retained for the play phase — attached to\n each AI's PlayObservation via play_state.observe)
-R -> R : _detect_belote_holder()\n(if a contract was made)
+R -> R : _detect_belote_pairs()\n(if a contract was made)
 R --> G : Contract | None
 G -> G : current_contract = contract
 
@@ -107,7 +107,15 @@ end
 == Trick-taking — 8 tricks ==
 
 G -> R : play_all_tricks(view)
-R -> R : play_state = PlayState.start(\n  contract, players_order,\n  tuple(tuple(player.hand) for player in players_order))
+R -> R : seating, hands = ~_play~_seating()
+note right of R
+  Normally players~_order as dealt. Under
+  solo~_slam~_gives~_the~_lead a Solo Slam
+  declarer is **rotated** to the front, which
+  moves only the first lead: direction, later
+  leads and dealer rotation are untouched.
+end note
+R -> R : play_state = PlayState.start(\n  contract, seating, hands)
 note right of R
   Validated seeding (contrai-core): exactly
   4 seats, 8 distinct cards each — the very
@@ -131,14 +139,18 @@ note right of R
   ""calculate_round_scores"" is a thin
   wrapper: it calls ""scoring.score_round""
   and publishes the returned ""RoundScore""
-  onto ""round_scores"" / ""contract_made"" /
-  ""unannounced_slam"". The branch detail
-  (numeric share-pile vs. unannounced-Slam
-  vs. doubled winner-takes-all vs. Slam /
-  Solo Slam, belote +20 on every shape) lives
-  in **flow_scoring.mmd**.
+  onto ""round_score"" — ""round_scores"" /
+  ""contract_made"" / ""unannounced_slam"" are
+  read-only properties over it.
+  ""score_round"" reads the round and judges
+  made/failed, then hands the numbers to
+  ""components.py"", which splits each side's
+  mark into its //made// and //announced//
+  components (§7.2) and reduces them under
+  the table's marking conventions. The whole
+  pipeline is drawn in **flow_scoring.mmd**.
 end note
-R -> R : round_scores, contract_made,\nunannounced_slam = RoundScore
+R -> R : round_score = RoundScore\n(marks, belote, piles, multiplier)
 R --> G : round_scores: dict<TeamSide, int>
 ' No deactivate here: Round outlives manage_round — cli.py keeps
 ' handing ``game.current_round`` to the between-round view hooks
@@ -159,7 +171,7 @@ note right of V
   ""history"" for the end-game
   scoreboard table.
 end note
-C -> V : show_round_recap(round_, scores,\n  is_final=status.game_over,\n  is_tiebreaker=status.tied_teams is not None)
+C -> V : show_round_recap(round_, scores,\n  is_final=status.game_over,\n  is_tiebreaker=status.tied_teams is not None,\n  belote_gated=status.belote_gated)
 activate V
 note right of V
   Full-screen recap panel:
@@ -174,6 +186,10 @@ note right of V
   level at/above the target) the panel
   announces sudden death and the
   prompt deals the tiebreaker round.
+  When ""belote_gated"" names a side,
+  the panel says it is past the target
+  on Belote alone and the game
+  continues; the prompt is unchanged.
 end note
 V --> C : (Enter pressed)
 deactivate V

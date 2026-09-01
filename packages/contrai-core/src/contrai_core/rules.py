@@ -5,9 +5,8 @@ which cards are trump, what each card scores, how cards rank inside a suit,
 who takes a trick, where a belote can live — is answered by a
 :class:`TrumpRules` object resolved from the contract's trump via
 :func:`rules_for`. Callers hold one rules object per decision site instead of
-re-deriving trumpness card by card, which is what makes each future contract
-regime (all-trump) a new leaf class plus its tables rather than a sweep over
-every call site.
+re-deriving trumpness card by card, which is what makes each contract regime
+a leaf class plus its tables rather than a sweep over every call site.
 
 Design invariants:
 
@@ -40,14 +39,20 @@ if TYPE_CHECKING:
     from .card import Card
 
 
-# The five per-card tables: two scoring pairs plus a third scoring scale,
-# and two orderings. Trump and plain disagree on both the scoring and the
-# ordering of 9 and Jack — which is exactly why the two scales must never
-# be compared number against number. No trump borrows the plain *ordering*
-# but scores on its own scale: with no 20-point Jack and no 14-point 9 to
-# carry the difference, the ace is rescaled from 11 to 19 so that a suit
-# is worth 38 and the deck 152, the same total as every other contract
-# mode (contree-domain.md §3.4, §3.5).
+# The six per-card tables: four scoring scales and two orderings. Trump and
+# plain disagree on both the scoring and the ordering of 9 and Jack — which
+# is exactly why the two scales must never be compared number against
+# number. The two suitless regimes each borrow one of the two *orderings*
+# and score on a scale of their own, both rescaled so that a suit is worth
+# 38 and the deck 152, the same total as every other contract mode
+# (contree-domain.md §3.5):
+#
+# - No trump takes the plain ordering. With no 20-point Jack and no
+#   14-point 9 to carry the difference, the ace is rescaled from 11 to 19
+#   (§3.4).
+# - All trump takes the trump ordering. Applying the trump *table* to all
+#   four suits would put 62 points in a suit and 248 in the deck, so the
+#   whole scale is compressed instead (§3.3).
 _PLAIN_POINTS = {
     Rank.SEVEN: 0,
     Rank.EIGHT: 0,
@@ -77,6 +82,16 @@ _NO_TRUMP_POINTS = {
     Rank.KING: 4,
     Rank.TEN: 10,
     Rank.ACE: 19,
+}
+_ALL_TRUMP_POINTS = {
+    Rank.SEVEN: 0,
+    Rank.EIGHT: 0,
+    Rank.NINE: 9,
+    Rank.JACK: 14,
+    Rank.QUEEN: 1,
+    Rank.KING: 3,
+    Rank.TEN: 5,
+    Rank.ACE: 6,
 }
 _PLAIN_ORDER = {
     Rank.SEVEN: 0,
@@ -161,10 +176,10 @@ class TrumpRules(ABC):
         Returns:
             The card's point value on this regime's own scale. A suit
             contract scores its trump suit from the trump table and the
-            other three from the plain one; no trump scores every suit
-            from a third table of its own. The three disagree, but each
-            regime's 32 cards come to the same 152 points
-            (contree-domain.md §3.5).
+            other three from the plain one; no trump and all trump each
+            score every suit from a table of their own. The four
+            disagree, but each regime's 32 cards come to the same 152
+            points (contree-domain.md §3.5).
         """
 
     @abstractmethod
@@ -211,8 +226,11 @@ class TrumpRules(ABC):
         """The suits in which holding King + Queen scores the Belote bonus.
 
         Returns:
-            The trump suit as a one-tuple under a suit contract; empty
-            when no suit is trump.
+            The trump suit as a one-tuple under a suit contract, empty
+            when no suit is trump, and all four suits at all trump. This
+            is where a belote *can* live; how many of the pairs held
+            actually score is a table rule the round applies on top
+            (contree-domain.md §6.6).
         """
 
     @abstractmethod
@@ -312,12 +330,59 @@ class NoTrumpRules(TrumpRules):
         return _PLAIN_LADDER[_PLAIN_LADDER.index(rank) + 1:]
 
 
+@dataclass(frozen=True, slots=True)
+class AllTrumpRules(TrumpRules):
+    """The regime where every suit is trump.
+
+    Every suit ranks on the trump ladder (``J 9 A 10 K Q 8 7``) and scores
+    on the compressed §3.3 scale, so a suit is worth 38 and the deck 152 —
+    the same total as a suit contract. What makes the regime distinct is
+    :meth:`trick_rank`: because *every* card is trump, "any trump beats any
+    led-suit card" would be vacuous, so only the led suit competes. Cards
+    of the other three suits cannot take the trick at all — there is no
+    cross-suit cutting (contree-domain.md §6.4).
+
+    That single answer is what carries the whole regime through
+    :meth:`contrai_core.PlayState.legal_actions` unchanged: with every suit
+    trump, holding the led suit puts the seat on the over-trump branch
+    (follow *and* raise), and being void puts it on the free-discard
+    branch — which is exactly §6.4.
+
+    :attr:`belote_suits` is all four suits: where a belote *can* live. How
+    many of them actually score — none, the first announced, or every
+    pair — is the table's ``all_trump_belote`` regime, applied by the round
+    that tracks the announcements.
+    """
+
+    def is_trump(self, suit: Suit) -> bool:
+        return True
+
+    def points(self, card: Card) -> int:
+        return _ALL_TRUMP_POINTS[card.rank]
+
+    def rank_in_suit(self, card: Card) -> int:
+        return _TRUMP_ORDER[card.rank]
+
+    def trick_rank(self, card: Card, led_suit: Suit) -> tuple[int, int] | None:
+        if card.suit is led_suit:
+            return (1, _TRUMP_ORDER[card.rank])
+        return None
+
+    @property
+    def belote_suits(self) -> tuple[Suit, ...]:
+        return tuple(Suit)
+
+    def higher_ranks(self, rank: Rank, suit: Suit) -> tuple[Rank, ...]:
+        return _TRUMP_LADDER[_TRUMP_LADDER.index(rank) + 1:]
+
+
 # One shared instance per regime — rules objects are stateless values, so a
 # single instance each serves every round and identity comparison works.
 _SINGLE_SUIT_RULES: dict[Suit, SingleSuitRules] = {
     suit: SingleSuitRules(suit) for suit in Suit
 }
 _NO_TRUMP_RULES = NoTrumpRules()
+_ALL_TRUMP_RULES = AllTrumpRules()
 
 
 def rules_for(contract_suit: ContractSuit | None) -> TrumpRules:
@@ -337,12 +402,6 @@ def rules_for(contract_suit: ContractSuit | None) -> TrumpRules:
         The shared rules instance for that regime.
 
     Raises:
-        NotImplementedError: If ``contract_suit`` is
-            ``TrumpVariant.ALL_TRUMP``. All-trump is not implemented;
-            raising here is what keeps it from quietly playing out as a
-            no-trump round. The auction does not offer it
-            (:attr:`contrai_core.ContractBid.VALID_SUITS`), so reaching
-            this means a caller built the contract by hand.
         KeyError: If ``contract_suit`` is not a :data:`ContractSuit`
             member.
     """
@@ -350,9 +409,5 @@ def rules_for(contract_suit: ContractSuit | None) -> TrumpRules:
     if contract_suit is None or contract_suit is TrumpVariant.NO_TRUMP:
         return _NO_TRUMP_RULES
     if contract_suit is TrumpVariant.ALL_TRUMP:
-        raise NotImplementedError(
-            "All-trump contracts are not implemented: every suit would be "
-            "trump, which changes card ordering, point values and the "
-            "follow obligations. Bid a suit or no-trump instead."
-        )
+        return _ALL_TRUMP_RULES
     return _SINGLE_SUIT_RULES[contract_suit]

@@ -17,6 +17,7 @@ from contrai_core import (
     Position,
     Suit,
     TeamSide,
+    rules_for,
 )
 from rich.align import Align
 from rich.box import ROUNDED
@@ -62,18 +63,34 @@ if TYPE_CHECKING:
 
 
 def _panel_round(
-    round_: Optional[Round], phase: str, trick_index: int = 1
+    round_: Optional[Round],
+    phase: str,
+    trick_index: int = 1,
+    live_score: bool = True,
 ) -> Panel:
     """Top-right Round info panel: contract, trump, and phase status.
 
-    During bidding the third line names the dealer; during play it
-    shows the current trick index and both teams' running card points.
-    The border and title turn gold once a contract (trump) is active.
+    During bidding the third line names the dealer; during play it shows
+    the current trick index and, when ``live_score`` is on, both teams'
+    running card points. The border and title turn gold once a contract
+    (trump) is active.
 
     ``trick_index`` is the 1-based index of the trick on the table,
     resolved once per frame by
     :func:`~contrai_engine.view.state_helpers._trick_index` — the panel
     does not see the trick itself, so it cannot derive it.
+
+    Args:
+        round_: The round being played, or ``None`` before one exists.
+        phase: ``"bidding"``, or a play phase.
+        trick_index: The 1-based index of the trick on the table.
+        live_score: The §9.7 interface aid. When ``False`` the running
+            card points are withheld, so the table counts its own pile
+            the way it would away from a screen. Inert during bidding,
+            which has no pile to report yet.
+
+    Returns:
+        The Round info ``Panel``.
     """
     body = Text()
     contract = round_.contract if round_ else None
@@ -101,20 +118,24 @@ def _panel_round(
     else:
         body.append("Trick:    ", style=DIM)
         body.append(f"{trick_index} of 8\n", style=FG)
-        # Round running points (cards collected by each team so far).
-        ns_pts, ew_pts = _round_running_points(round_)
-        body.append("Round pts: ", style=DIM)
-        body.append(
-            f"{_team_abbr(TeamSide.NS)} ",
-            style=f"bold {_team_color(TeamSide.NS)}",
-        )
-        body.append(str(ns_pts), style="bold")
-        body.append("  ·  ", style=DIM)
-        body.append(
-            f"{_team_abbr(TeamSide.EW)} ",
-            style=f"bold {_team_color(TeamSide.EW)}",
-        )
-        body.append(str(ew_pts), style="bold")
+        if live_score:
+            # Round running points (cards collected by each team so far).
+            # §9.7 lists this as a table option: some tables would rather
+            # count the pile themselves, so this row is switchable while
+            # the trick counter above it is not.
+            ns_pts, ew_pts = _round_running_points(round_)
+            body.append("Round pts: ", style=DIM)
+            body.append(
+                f"{_team_abbr(TeamSide.NS)} ",
+                style=f"bold {_team_color(TeamSide.NS)}",
+            )
+            body.append(str(ns_pts), style="bold")
+            body.append("  ·  ", style=DIM)
+            body.append(
+                f"{_team_abbr(TeamSide.EW)} ",
+                style=f"bold {_team_color(TeamSide.EW)}",
+            )
+            body.append(str(ew_pts), style="bold")
 
     border_color = YELLOW if trump_active else BORDER
     title_color = YELLOW if trump_active else TITLE
@@ -157,6 +178,39 @@ def _round_running_points(round_: Optional[Round]) -> tuple[int, int]:
     return points[TeamSide.NS], points[TeamSide.EW]
 
 
+def _diamond_panel_height(round_: Optional[Round]) -> int:
+    """Panel height fitting the trick diamond plus its belote badge rows.
+
+    The diamond is four lines — a leading blank, N, the shared W/E row,
+    S — and the panel adds a footer under it. ``8`` covers that plus
+    exactly *one* badge row, which is all a suit contract or the
+    all-trump ``single`` regime can ever produce. ``four`` can badge all
+    three rows, and every row past the first has to be paid for: a
+    ``Panel`` given a fixed ``height`` discards the overflow silently, so
+    the cost of guessing is the ``Won: …`` / ``→ …`` footer disappearing.
+
+    Both trick panels size themselves this way from the same round, so
+    they report the same height and stay flush side by side in the grid.
+
+    Args:
+        round_: The round being played, or ``None`` before one exists.
+
+    Returns:
+        The panel height, ``8`` through ``10``.
+    """
+    badges = _belote_by_position(round_)
+    rows = sum(
+        1
+        for row in (
+            (Position.NORTH,),
+            (Position.WEST, Position.EAST),
+            (Position.SOUTH,),
+        )
+        if any(badges.get(seat) for seat in row)
+    )
+    return 8 + max(0, rows - 1)
+
+
 def _panel_last_trick(
     round_: Optional[Round],
     last_completed_trick: Optional[tuple[Sequence[Play], BasePlayer]],
@@ -179,7 +233,7 @@ def _panel_last_trick(
             border_style=BORDER_DIM,
             box=ROUNDED,
             width=22,
-            height=8,
+            height=_diamond_panel_height(round_),
         )
     plays, winner = last_completed_trick
     trump = round_.contract.suit if round_ and round_.contract else None
@@ -191,6 +245,7 @@ def _panel_last_trick(
         dimmed=True,
         width=18,
         belote_by_position=_belote_by_position(round_),
+        narrow_badges=True,
     )
     body.append("\n")
     body.append("Won: ", style=DIM)
@@ -208,7 +263,7 @@ def _panel_last_trick(
         border_style=BORDER_DIM,
         box=ROUNDED,
         width=22,
-        height=8,
+        height=_diamond_panel_height(round_),
     )
 
 
@@ -240,7 +295,7 @@ def _panel_current_trick(
 
     if phase == "bidding":
         # Reuse the table slot for the auction: each seat shows the
-        # player's latest bid so the human can read announces off
+        # player's latest bid so the human can read bids off
         # the diamond the same way they read cards during play.
         body = _render_bidding_diamond(
             bidding_history or [],
@@ -258,6 +313,8 @@ def _panel_current_trick(
             body.append(f"→ {current_player.position} to bid", style=DIM)
         return Panel(
             body,
+            # Fixed: the auction diamond carries no belote badges — no
+            # card has been played, so nothing can have been announced.
             title=Text("Bidding", style=f"bold {TITLE}"),
             border_style=BORDER,
             box=ROUNDED,
@@ -274,7 +331,7 @@ def _panel_current_trick(
             border_style=BORDER,
             box=ROUNDED,
             width=46,
-            height=8,
+            height=_diamond_panel_height(round_),
         )
 
     trump = round_.contract.suit if round_ and round_.contract else None
@@ -308,7 +365,7 @@ def _panel_current_trick(
         border_style=BORDER,
         box=ROUNDED,
         width=46,
-        height=8,
+        height=_diamond_panel_height(round_),
     )
 
 
@@ -320,7 +377,8 @@ def _render_diamond(
     winner_position: Optional[Position],
     dimmed: bool,
     width: int,
-    belote_by_position: Optional[dict[Position, str]] = None,
+    belote_by_position: Optional[dict[Position, tuple[Suit, ...]]] = None,
+    narrow_badges: bool = False,
 ) -> Text:
     """Render the 4-player diamond: N top, E right, S bottom, W left.
 
@@ -330,22 +388,55 @@ def _render_diamond(
     here unchanged.
 
     ``belote_by_position`` maps a :class:`~contrai_core.Position` member
-    to either ``"belote"`` or ``"rebelote"`` for seats that have
-    announced. The badge persists for the rest of the round.
+    to the suits that seat has announced a *marking* belote in, in
+    announcement order. The badge persists for the rest of the round.
+
+    ``narrow_badges`` says the caller's panel cannot fit two full badges
+    side by side — the 18-cell ``Last trick`` diamond, where the W and E
+    badges share one row. It only licenses the compact spelling; whether
+    one is actually used is decided here, from the crowding.
     """
     belote_by_position = belote_by_position or {}
+    # A belote's suit is worth naming only where more than one of them can
+    # exist: at a suit contract the pair is in trump by definition, so the
+    # glyph would just repeat the Round panel's trump line. Asking the
+    # rules object rather than comparing against ALL_TRUMP keeps this
+    # honest if another regime ever gains belote suits.
+    _name_suits = len(rules_for(trump).belote_suits) > 1
+    # Two badges only ever share a row under the all-trump `four` regime;
+    # compacting is what keeps that row inside a narrow panel. A lone
+    # badge is always spelled in full — even the widest, "★ Belote ×2
+    # (♣♦)", measures 16 cells and fits the 18-cell diamond centred.
+    _compact = (
+        narrow_badges
+        and _name_suits
+        and sum(1 for suits in belote_by_position.values() if suits) > 1
+    )
 
     def _belote_badge(pos: Position) -> Optional[Text]:
-        # The seat badge always reads "★ Belote" once the holder
-        # has played either the K or the Q of trump. The belote /
-        # rebelote distinction is narrative-only and lives in the
-        # event log; under the seat we just signal "this player
-        # has the K+Q pair".
-        if belote_by_position.get(pos) is None:
+        # The badge signals "this seat has announced a belote that
+        # marks". The belote / rebelote distinction is narrative-only and
+        # lives in the event log, so the badge does not spell it; what it
+        # does spell, under all trump, is which pair — and how many.
+        suits = belote_by_position.get(pos)
+        if not suits:
             return None
+        gold = f"bold {GOLD}"
         t = Text()
-        t.append("★ ", style=f"bold {GOLD}")
-        t.append("Belote", style=f"bold {GOLD}")
+        # Four shapes: "★ Belote", "★ Belote ♣", "★ Belote ×2 (♣♦)" and
+        # their compact counterparts "★♣" / "★×2 ♣♦".
+        t.append("★" if _compact else "★ Belote", style=gold)
+        if not _name_suits:
+            return t
+        if len(suits) > 1:
+            t.append(f"×{len(suits)} " if _compact else f" ×{len(suits)} (",
+                     style=gold)
+        elif not _compact:
+            t.append(" ", style=gold)
+        for suit in suits:
+            t.append(_suit_glyph(suit), style=f"bold {_suit_color(suit)}")
+        if len(suits) > 1 and not _compact:
+            t.append(")", style=gold)
         return t
 
     plays_by_pos: dict[Position, tuple[BasePlayer, Card]] = {}

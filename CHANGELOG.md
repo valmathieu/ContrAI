@@ -8,6 +8,70 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-01
+
+Configurable-table release: the rules of the table become data — a `RuleConfig` of the 22 §9 knobs threaded from the auction through play to the score sheet. All trump joins no trump as a playable regime, a round mark decomposes into made and announced points, seven flow-and-play conventions become switchable, the landing screen edits and remembers the whole setup, and the expert AI bids, plays and doubles under whichever table it sits at — returning a rationale with every decision.
+
+### Added
+
+- (core) `RuleConfig` — frozen dataclass of the 22 table-rule knobs of §9 with its three enums, the `classic` preset and `InvalidRuleConfigError`. No knob changes behaviour yet. See [core docs](docs/core/index.md).
+- (core) `PlayState.rules` — the play state carries its `RuleConfig` (default `RuleConfig()`) through `start`, `apply` and `with_hands`; not consulted yet.
+- (engine) `Game` and `Round` accept a `RuleConfig` and thread it down to `PlayState`; `score_round` reads it off the round. The default reproduces today's behaviour exactly.
+- (engine) `contrai --rules FILE` / `--preset classic` — load the table ruleset from a TOML file or by name (mutually exclusive); unknown keys are rejected. See [engine docs](docs/engine/index.md).
+- (core) `AllTrumpRules` — all trump is a playable regime: every suit ranks as trump on the §3.3 scale, only the led suit competes. See [core docs](docs/core/index.md).
+- (core) `Auction` runs under a `RuleConfig`: `extended_trump_choices` gates no trump and all trump, and each mode caps at its §5.2 ladder top.
+- (engine) No trump and all trump are biddable at a table with `extended_trump_choices = true`; type `nt` / `at` at the prompt. See [engine docs](docs/engine/index.md).
+- (engine) All-trump rounds track every K + Q pair and mark 20 each, under the `none` / `single` / `four` regime. See [engine docs](docs/engine/index.md).
+- (engine) `mark_made_points`, `mark_announced_points` and `only_announced_points_multiplied` decide what a round marks. See [engine docs](docs/engine/index.md).
+- (engine) `any_failure_marks_160`, the two `failed_slam_marks_*` switches and `unannounced_slam_substitute` reshape what a failed or swept round marks.
+- (engine) `belote_counts_toward_contract` and `belote_lost_when_contract_fails` decide whether a belote makes the contract and who keeps it.
+- (engine) `rounding` — marks are written exact, to the nearest 10, or to the nearest 5; halves round up. Contract success stays exact.
+- (engine) `win_on_belote_points_alone` — switched off, Belote cannot carry a team past the target until points from play confirm it. See [engine docs](docs/engine/index.md).
+- (core) `Position.next_in(direction)` — the seat's successor either way round the table; `next` stays the anticlockwise shorthand.
+- (core) `bookable_values(rules)` and `Auction` gate the Slam family on `solo_slam_available`, `slam_can_be_doubled` and `solo_slam_can_be_doubled`. See [core docs](docs/core/index.md).
+- (core) `under_trump_exemption` — a void seat facing an unbeatable opponent cut may discard instead of under-trumping. See [core docs](docs/core/index.md).
+- (engine) `turn_direction` — dealer rotation, bidding order and the opening lead all run clockwise when the table asks. See [engine docs](docs/engine/index.md).
+- (engine) `reshuffle_every_round` — the deck is shuffled before every deal instead of merely cut.
+- (engine) The landing picker offers all seven §9.1 targets and the chosen value lands on the ruleset the game is built under.
+- (engine) `solo_slam_gives_the_lead` — the Solo Slam declarer opens trick 1; play then continues in the normal order.
+- (engine) `contrai --no-live-score` hides the in-game `Round pts:` row — the running score is now a switchable table aid.
+- (engine) A table *setup* — the six rule sections plus `[table_aids]` — reads and writes as one TOML document. See [engine docs](docs/engine/index.md).
+- (engine) The landing screen now picks the whole table setup: `[p]` preset, `[f]` load a file, `[l]` live score. See [engine docs](docs/engine/index.md).
+- (engine) `[k]` on the setup screen cycles any of the 22 §9 knobs, grouped by subsection; an impossible table is refused inline.
+- (engine) The setup a run leaves the landing screen with is remembered and offered back as `last used`. See [engine docs](docs/engine/index.md).
+- (core) `PlayObservation.rules` — the seat's view carries the table ruleset, which is public information. See [core docs](docs/core/index.md).
+- (engine) `contrai --debug` shows why each AI played what it played — rule, detail and the table knobs it cited, in play order. See [engine docs](docs/engine/index.md).
+- (engine) The expert AI's doubling consults the table's Slam switches and its failure convention. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
+- (engine) The expert AI bids no trump and all trump off a shared honours table, capped at each mode's ladder top. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
+- (engine) The round recap says when a side is past the target but held back by the Belote gate. See [engine docs](docs/engine/index.md).
+- (engine) `Round.announced_belotes` — the trick diamond badges only belotes that mark, naming their suit under all trump (`★ Belote ×2 (♣♦)`). See [engine docs](docs/engine/index.md).
+
+### Changed
+
+- (core) **BREAKING:** `ContractBid` accepts all six contract trumps and values to 240; which are bookable is now `Auction`'s call. Use `bookable_suits(rules)`, not `ContractBid.VALID_SUITS`.
+- (engine) **BREAKING:** `Round.belote_holder` is gone. Read `belote_pairs` (holder → suits) or `belote_counts_by_side`; `belote_state` is keyed by `(player, suit)`.
+- (engine) Round scoring is built from §7.2's made-points and announced-points components; `RoundScore` carries both per side. See [engine docs](docs/engine/index.md).
+- (engine) **BREAKING:** `Round.round_scores` / `contract_made` / `unannounced_slam` are read-only properties over the new `Round.round_score`. `scoring.unannounced_slam_substitute` is now `sweep_substitute`.
+- (engine) The round recap reads its breakdown off the scored round, so its Scoring rows are the two components and track the table ruleset. See [engine docs](docs/engine/index.md).
+- (engine) **BREAKING:** The attack must now out-score the defense to make its contract (§7.5 default); an exact tie fails it. Set `attack_must_outscore_defense = false` for the old behaviour.
+- (core) **BREAKING:** Under-trumping is no longer compulsory — §6.2's exemption is the §9 default. Set `under_trump_exemption = false` to restore it.
+- (engine) **BREAKING:** `Game.check_game_over()` takes no argument — it reads `rules.target_score`, whose default is now 2000, not 1500.
+- (engine) **BREAKING:** `RichView.show_landing(setup)` takes and returns a `TableSetup`, not a target score. The target is now a ruleset knob.
+- (engine) **BREAKING:** AI strategies return `BidDecision` / `CardDecision` carrying a `Rationale`, not a bare `Bid` / `Card`. Read `.bid` / `.card`. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
+
+### Fixed
+
+- (engine) The expert AI plays no trump and all trump correctly — it no longer treats spades as trump nor cashes an ace a Jack beats. See [rule-based AI docs](docs/ai-ladder/rule_based.md).
+- (engine) `_estimate_tricks` reads each mode's own ladder, so four aces no longer estimate a sweep at all trump.
+- (engine) The expert AI no longer doubles every Slam regardless of its hand — a Slam is judged on whether the defense expects a trick.
+- (engine) The expert AI no longer burns a trump when the under-trump exemption leaves it a plain card to discard.
+- (engine) The recap's Outcome table credits a belote to the side that *held* it, so a transfer to the defense no longer rewrites the play tally.
+- (core) The over-trump obligation ranks candidates with `trick_rank`, so an off-suit discard can no longer raise the bar at all trump.
+- (engine) A no-trump contract renders as `NT` / `No Trump` instead of `NoTrump No Trump`, and its bid cell no longer overflows the history column.
+- (core) `TrumpVariant` spells out `No Trump` / `All Trump`, so AI rationale and debug lines no longer read `NoTrump`.
+- (engine) The trick panels grow to fit their belote badges, so a second badge row no longer crops the `Won: …` / `→ …` footer.
+- (engine) **BREAKING:** `view.on_belote_announced(player, kind, suit, round_)` takes the announced pair's suit, so the log names it instead of all trump's `AT`.
+
 ## [0.3.0] - 2026-08-15
 
 Typed-and-sealed release: seats, sides and contract trumps become values rather than strings (`Position`, `TeamSide`, `Suit`/`TrumpVariant`), the trick rules sit behind a single `TrumpRules` seam, `PlayObservation` is fully sealed and the played-out round lives entirely on the core `PlayState`; the CLI gains `--debug`/`--seed`/`--autoplay`, and no-trump and Slam-family scoring are brought in line with the domain reference.
@@ -102,7 +166,8 @@ First playable release: a complete CLI Contrée engine backed by a shared domain
 - (analyzer) Streamlit opening-hand strength dashboard built on the suit-agnostic `SuitSlot` abstraction — hypergeometric distribution plots and a bidding truth-table.
 - (scraper) Playwright spectator-mode scraper v1 for `app.belote-rebelote.fr`: login, Online → Spectator → Contree → Tournament navigation, seat identification, and `#tour` round polling.
 
-[Unreleased]: https://github.com/valmathieu/ContrAI/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/valmathieu/ContrAI/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/valmathieu/ContrAI/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/valmathieu/ContrAI/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/valmathieu/ContrAI/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/valmathieu/ContrAI/releases/tag/v0.1.0

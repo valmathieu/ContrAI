@@ -147,6 +147,22 @@ class TestPanelGameOverBanner:
         assert _team_abbr(TeamSide.NS) in text
         assert _team_abbr(TeamSide.EW) in text
 
+    def test_the_banner_ignores_the_belote_gate_signal(self):
+        """``belote_gated`` is a between-rounds signal; a finished game
+        never carries one, and the banner would have nothing to do with
+        it if it did."""
+
+        status = GameOverStatus(
+            game_over=True,
+            winner=TeamSide.NS,
+            tied_teams=None,
+            final_scores={TeamSide.NS: 1620, TeamSide.EW: 1420},
+            belote_gated=TeamSide.EW,
+        )
+        text = _rendered(_panel_game_over_banner(status))
+        assert f"★   {_team_abbr(TeamSide.NS)}   WINS   ★" in text
+        assert "Belote" not in text
+
     def test_missing_scores_default_to_zero(self):
         """An empty ``final_scores`` must render zeroes, not raise."""
 

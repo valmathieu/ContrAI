@@ -126,11 +126,6 @@ class Trick:
         Returns:
             Player who is currently winning, or None if no card has been
             played yet.
-
-        Raises:
-            NotImplementedError: If ``trump_suit`` is
-                ``TrumpVariant.ALL_TRUMP``, propagated from
-                :func:`contrai_core.rules_for`.
         """
         return current_winner(self.plays, trump_suit)
 
@@ -166,11 +161,6 @@ def current_winner(
         Whoever is currently winning — the "who" value of the best play,
         whatever type the caller put there — or None if no card has been
         played yet.
-
-    Raises:
-        NotImplementedError: If ``trump_suit`` is
-            ``TrumpVariant.ALL_TRUMP``, propagated from
-            :func:`contrai_core.rules_for`.
     """
     best = _best_play(plays, trump_suit)
     return None if best is None else best[0]
@@ -196,11 +186,6 @@ def _best_play(
     Returns:
         The winning play — whatever record type the caller put in — or
         ``None`` if no card has been played yet.
-
-    Raises:
-        NotImplementedError: If ``trump_suit`` is
-            ``TrumpVariant.ALL_TRUMP``, propagated from
-            :func:`contrai_core.rules_for`.
     """
     if not plays:
         return None
@@ -294,11 +279,6 @@ class TrickRecord(tuple[RecordT, ...]):
             state contexts, an :class:`~contrai_core.ObservedPlay` in
             observations — never ``None``, since a completed trick always
             has four plays.
-
-        Raises:
-            NotImplementedError: If ``trump_suit`` is
-                ``TrumpVariant.ALL_TRUMP``, propagated from
-                :func:`contrai_core.rules_for`.
         """
 
         best = _best_play(self, trump_suit)

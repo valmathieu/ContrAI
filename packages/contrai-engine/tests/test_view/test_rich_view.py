@@ -21,15 +21,27 @@ from rich.text import Text
 from contrai_core import (
     Auction,
     Card,
+    PRESETS,
     Play,
     Position,
     Rank,
+    Rounding,
+    RuleConfig,
     Suit,
     TeamSide,
+    TrumpVariant,
+    TurnDirection,
 )
 from contrai_core.bid import ContractBid, DoubleBid, PassBid
 from contrai_engine.model.game import GameOverStatus
-from contrai_engine.options import DebugOptions
+from contrai_engine.options import DebugOptions, TableAids
+from contrai_engine.ruleset import (
+    SECTION_HEADINGS,
+    SECTIONS,
+    TableSetup,
+    save_setup,
+    setup_path,
+)
 from contrai_engine.view.rich_view import RichView
 from contrai_engine.view.screens.bidding import (
     _bidding_prompt_text,
@@ -521,7 +533,7 @@ class TestBeloteAnnouncement:
         view = self._make_view(monkeypatch)
         north, *_ = four_players
         round_ = self._StubRound(self._StubContract(Suit.HEARTS), {north: "belote"})
-        view.on_belote_announced(north, "belote", round_)
+        view.on_belote_announced(north, "belote", Suit.HEARTS, round_)
         line = view.event_log[-1].plain
         assert "Belote" in line
         assert "Rebelote" not in line
@@ -531,8 +543,26 @@ class TestBeloteAnnouncement:
         north, *_ = four_players
         round_ = self._StubRound(self._StubContract(Suit.HEARTS),
                                  {north: "rebelote"})
-        view.on_belote_announced(north, "rebelote", round_)
+        view.on_belote_announced(north, "rebelote", Suit.HEARTS, round_)
         assert "Rebelote" in view.event_log[-1].plain
+
+    def test_on_belote_announced_names_the_pairs_own_suit(
+        self, monkeypatch, four_players
+    ):
+        """All trump's contract glyph is the string "AT", not a suit.
+
+        Logging it left four different pairs narrating identically; the
+        pair's own suit is what tells them apart.
+        """
+        view = self._make_view(monkeypatch)
+        north, *_ = four_players
+        round_ = self._StubRound(
+            self._StubContract(TrumpVariant.ALL_TRUMP), {north: "belote"}
+        )
+        view.on_belote_announced(north, "belote", Suit.CLUBS, round_)
+        line = view.event_log[-1].plain
+        assert "♣" in line
+        assert "AT" not in line
 
     def test_on_belote_announced_sleeps(self, monkeypatch, four_players):
         """Announcement uses the AI card delay so it lands visibly."""
@@ -545,7 +575,7 @@ class TestBeloteAnnouncement:
         north, *_ = four_players
         view = RichView()
         round_ = self._StubRound(self._StubContract(Suit.HEARTS), {})
-        view.on_belote_announced(north, "belote", round_)
+        view.on_belote_announced(north, "belote", Suit.HEARTS, round_)
         assert sleep_calls == [0.01]
 
     def test_diamond_renders_belote_badge_for_announcer(
@@ -1198,7 +1228,7 @@ class TestAutoplayCtrlCPropagation:
         view = RichView(options=DebugOptions(autoplay=True))
 
         with pytest.raises(KeyboardInterrupt):
-            view.show_landing(1500)
+            view.show_landing(TableSetup())
 
 
 class TestAiDelayDebugZeroing:
@@ -1387,9 +1417,21 @@ class TestShowRoundRecapAutoplay:
 
 class TestShowLandingAutoplay:
     """``show_landing`` under autoplay: renders once, pauses, returns the
-    default/passed target -- there is no human to type a choice."""
+    setup it was handed -- there is no human to type a choice."""
 
-    def test_autoplay_returns_passed_target_without_input(
+    def test_autoplay_returns_the_passed_setup_without_input(
+        self, monkeypatch, _forbid_console_input
+    ):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(autoplay=True))
+        view.console.input = _forbid_console_input
+        setup = TableSetup(rules=RuleConfig(target_score=3000), origin="house")
+
+        assert view.show_landing(setup) is setup
+
+    def test_autoplay_returns_the_defaults_when_not_passed(
         self, monkeypatch, _forbid_console_input
     ):
         from contrai_engine.view import rich_view
@@ -1398,19 +1440,7 @@ class TestShowLandingAutoplay:
         view = RichView(options=DebugOptions(autoplay=True))
         view.console.input = _forbid_console_input
 
-        assert view.show_landing(2000) == 2000
-
-    def test_autoplay_returns_default_target_when_not_passed(
-        self, monkeypatch, _forbid_console_input
-    ):
-        from contrai_engine.view import rich_view
-        from contrai_engine.view.theme import DEFAULT_TARGET
-
-        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
-        view = RichView(options=DebugOptions(autoplay=True))
-        view.console.input = _forbid_console_input
-
-        assert view.show_landing() == DEFAULT_TARGET
+        assert view.show_landing() == TableSetup()
 
     def test_autoplay_pauses_using_landing_env_delay(
         self, monkeypatch, _forbid_console_input
@@ -1424,7 +1454,7 @@ class TestShowLandingAutoplay:
         view = RichView(options=DebugOptions(autoplay=True))
         view.console.input = _forbid_console_input
 
-        view.show_landing(1500)
+        view.show_landing(TableSetup())
 
         assert sleep_calls == [0.04]
 
@@ -1438,37 +1468,189 @@ class TestShowLandingAutoplay:
         view.console.input = _forbid_console_input
         captured = _capture_prints(view)
 
-        view.show_landing(1500)
+        view.show_landing(TableSetup())
 
         assert any("(autoplay)" in t for t in captured)
 
 
-class TestShowLandingInteractive:
-    """Non-autoplay path — a regression net on the splash-print refactor.
+def _drive_landing(view, raws):
+    """Feed ``raws`` to ``view.console.input`` and silence the printing."""
+    inputs = iter(raws)
+    view.console.clear = lambda *a, **k: None
+    view.console.print = lambda *a, **k: None
+    view.console.input = lambda *a, **k: next(inputs)
+    return view
 
-    ``show_landing`` had no dedicated coverage before this change; these
-    tests lock its pre-existing (untouched) behavior now that the splash
-    print is shared with the new autoplay branch.
-    """
 
-    def test_blank_input_returns_selected_target(self):
-        view = RichView()
-        view.console.input = lambda *a, **k: ""
+class TestShowLandingDispatcher:
+    """The landing screen is the setup dispatcher: it routes keys to the
+    sub-screens and returns whichever setup the player leaves it with."""
 
-        assert view.show_landing(2000) == 2000
+    def test_blank_input_deals_the_setup_unchanged(self):
+        setup = TableSetup(rules=RuleConfig(target_score=1000), origin="house")
+        view = _drive_landing(RichView(), [""])
 
-    def test_valid_numeric_input_returns_that_target(self):
-        view = RichView()
-        view.console.input = lambda *a, **k: "1000"
+        assert view.show_landing(setup) is setup
 
-        assert view.show_landing(2000) == 1000
+    def test_no_argument_opens_on_the_catalogue_defaults(self):
+        view = _drive_landing(RichView(), [""])
 
-    def test_invalid_then_valid_input_reprompts(self):
-        view = RichView()
-        inputs = iter(["notanumber", "", "1500"])
-        view.console.input = lambda *a, **k: next(inputs)
+        assert view.show_landing() == TableSetup()
 
-        assert view.show_landing(2000) == 1500
+    def test_l_toggles_the_live_round_score(self):
+        view = _drive_landing(RichView(), ["l", ""])
+
+        result = view.show_landing(TableSetup())
+
+        assert result.aids == TableAids(live_round_score=False)
+        # The aid is not a rule: switching it must not touch the ruleset.
+        assert result.rules == RuleConfig()
+
+    def test_l_twice_returns_to_where_it_started(self):
+        view = _drive_landing(RichView(), ["l", "l", ""])
+
+        assert view.show_landing(TableSetup()).aids == TableAids()
+
+    def test_p_routes_to_the_preset_picker(self, monkeypatch):
+        picked = TableSetup(rules=RuleConfig(target_score=500), origin="picked")
+        view = _drive_landing(RichView(), ["p", ""])
+        monkeypatch.setattr(
+            RichView, "_show_preset_picker", lambda self, current: picked
+        )
+
+        assert view.show_landing(TableSetup()) is picked
+
+    def test_f_routes_to_the_file_loader(self, monkeypatch):
+        loaded = TableSetup(origin="house.toml")
+        view = _drive_landing(RichView(), ["f", ""])
+        monkeypatch.setattr(
+            RichView, "_show_file_loader", lambda self, current: loaded
+        )
+
+        assert view.show_landing(TableSetup()) is loaded
+
+    def test_a_sub_screen_is_handed_the_setup_in_play(self, monkeypatch):
+        """Each sub-screen edits the live setup, not a fresh one."""
+        seen = []
+        setup = TableSetup(rules=RuleConfig(target_score=1000))
+        view = _drive_landing(RichView(), ["p", ""])
+
+        def _record(self, current):
+            seen.append(current)
+            return current
+
+        monkeypatch.setattr(RichView, "_show_preset_picker", _record)
+        view.show_landing(setup)
+
+        assert seen == [setup]
+
+    def test_an_unknown_key_reprompts_without_changing_anything(self):
+        setup = TableSetup()
+        view = _drive_landing(RichView(), ["z", ""])
+
+        assert view.show_landing(setup) is setup
+
+    def test_keys_are_case_insensitive_and_have_long_forms(self):
+        view = _drive_landing(RichView(), ["LIVE", ""])
+
+        assert view.show_landing(TableSetup()).aids == TableAids(
+            live_round_score=False
+        )
+
+
+class TestShowPresetPicker:
+    """The preset picker: a numbered radio over ``PRESETS``."""
+
+    def test_blank_input_keeps_the_current_setup(self):
+        setup = TableSetup(origin="house.toml")
+        view = _drive_landing(RichView(), [""])
+
+        assert view._show_preset_picker(setup) is setup
+
+    def test_a_number_selects_that_row(self):
+        view = _drive_landing(RichView(), ["1"])
+
+        result = view._show_preset_picker(TableSetup(origin="house.toml"))
+
+        assert result.rules == PRESETS["classic"]
+        assert result.origin == "classic"
+
+    def test_a_name_selects_that_preset(self):
+        view = _drive_landing(RichView(), ["classic"])
+
+        assert view._show_preset_picker(TableSetup(origin="x")).origin == "classic"
+
+    def test_the_aids_ride_along_unchanged(self):
+        """A preset names 22 rules; the §9.7 aids are not among them."""
+        aids = TableAids(live_round_score=False)
+        view = _drive_landing(RichView(), ["1"])
+
+        assert view._show_preset_picker(TableSetup(aids=aids)).aids == aids
+
+    def test_an_unknown_pick_reprompts(self):
+        view = _drive_landing(RichView(), ["99", "nope", "classic"])
+
+        assert view._show_preset_picker(TableSetup(origin="x")).origin == "classic"
+
+
+class TestShowFileLoader:
+    """The file loader: a path typed at the prompt."""
+
+    def test_blank_input_cancels(self):
+        setup = TableSetup(origin="house.toml")
+        view = _drive_landing(RichView(), [""])
+
+        assert view._show_file_loader(setup) is setup
+
+    def test_a_valid_path_is_loaded(self, tmp_path):
+        path = tmp_path / "house.toml"
+        path.write_text(
+            "[general]\ntarget_score = 1000\n"
+            "[table_aids]\nlive_round_score = false\n",
+            encoding="utf-8",
+        )
+        view = _drive_landing(RichView(), [str(path)])
+
+        result = view._show_file_loader(TableSetup())
+
+        assert result.rules == RuleConfig(target_score=1000)
+        assert result.aids == TableAids(live_round_score=False)
+        assert result.origin == "house.toml"
+
+    def test_a_quoted_path_is_accepted(self, tmp_path):
+        """Terminals paste paths with quotes; the loader strips them."""
+        path = tmp_path / "house.toml"
+        path.write_text("[general]\ntarget_score = 500\n", encoding="utf-8")
+        view = _drive_landing(RichView(), [f'"{path}"'])
+
+        assert view._show_file_loader(TableSetup()).rules.target_score == 500
+
+    def test_a_missing_file_reprompts_rather_than_leaving(self, tmp_path):
+        """Mistyping a filename must not cost the setup already assembled."""
+        setup = TableSetup(rules=RuleConfig(target_score=3000))
+        view = _drive_landing(RichView(), [str(tmp_path / "nope.toml"), ""])
+
+        assert view._show_file_loader(setup) is setup
+
+    def test_a_malformed_file_reprompts(self, tmp_path):
+        path = tmp_path / "broken.toml"
+        path.write_text("[general\n", encoding="utf-8")
+        setup = TableSetup()
+        view = _drive_landing(RichView(), [str(path), ""])
+
+        assert view._show_file_loader(setup) is setup
+
+    def test_an_impossible_table_reprompts(self, tmp_path):
+        """Core's own validation is a rejection notice, not a crash."""
+        path = tmp_path / "impossible.toml"
+        path.write_text(
+            "[scoring]\nmark_made_points = false\nmark_announced_points = false\n",
+            encoding="utf-8",
+        )
+        setup = TableSetup()
+        view = _drive_landing(RichView(), [str(path), ""])
+
+        assert view._show_file_loader(setup) is setup
 
 
 class TestShowEndGameAutoplay:
@@ -1653,3 +1835,321 @@ class TestDebugStrip:
         combined = "\n".join(self._render_bidding_frame(view))
 
         assert "Debug — all hands" not in combined
+
+
+class TestLiveRoundScoreAid:
+    """``RichView`` carries the §9.7 interface aid and hands it to the frame.
+
+    The Round panel is printed inside a ``Table.grid``, which has no
+    ``.plain`` to read back, so the aid's journey is asserted by spying on
+    ``_panel_round`` itself — the seam the frame actually crosses.
+    """
+
+    class _StubRound:
+        round_number = 1
+        contract = None
+        dealer = None
+
+    class _StubGame:
+        def __init__(self):
+            self.players = []
+            self.current_round = TestLiveRoundScoreAid._StubRound()
+            self.scores = {TeamSide.NS: 0, TeamSide.EW: 0}
+
+    def _spy_on_panel_round(self, monkeypatch) -> dict:
+        from contrai_engine.view import rich_view
+
+        seen: dict = {}
+
+        def _spy(round_, phase, trick_index=1, live_score=True):
+            seen["live_score"] = live_score
+            return Text("")
+
+        monkeypatch.setattr(rich_view, "_panel_round", _spy)
+        return seen
+
+    def _render(self, view) -> None:
+        view.console.clear = lambda *a, **k: None
+        view.console.print = lambda *a, **k: None
+        view._render_in_game(
+            phase="playing", prompt_question=Text(""), mandatory=False
+        )
+
+    def test_default_view_leaves_the_aid_on(self, monkeypatch):
+        seen = self._spy_on_panel_round(monkeypatch)
+        view = RichView()
+        view.attach(self._StubGame(), target_score=1500)
+
+        self._render(view)
+
+        assert view.aids == TableAids()
+        assert seen["live_score"] is True
+
+    def test_aid_off_reaches_the_round_panel(self, monkeypatch):
+        seen = self._spy_on_panel_round(monkeypatch)
+        view = RichView(aids=TableAids(live_round_score=False))
+        view.attach(self._StubGame(), target_score=1500)
+
+        self._render(view)
+
+        assert seen["live_score"] is False
+
+    def test_aids_can_be_swapped_after_construction(self, monkeypatch):
+        """The CLI re-points ``view.aids`` when the setup screen edits it."""
+        seen = self._spy_on_panel_round(monkeypatch)
+        view = RichView()
+        view.attach(self._StubGame(), target_score=1500)
+        view.aids = TableAids(live_round_score=False)
+
+        self._render(view)
+
+        assert seen["live_score"] is False
+
+
+class TestShowKnobEditor:
+    """The per-knob editor: a numbered grid per §9 subsection."""
+
+    def test_blank_input_leaves_the_setup_untouched(self):
+        setup = TableSetup(origin="house.toml")
+        view = _drive_landing(RichView(), [""])
+
+        assert view._show_knob_editor(setup) == setup
+
+    def test_a_number_cycles_that_knob(self):
+        # [general] is the first section: 1 is target_score, 2 is
+        # turn_direction.
+        view = _drive_landing(RichView(), ["2", ""])
+
+        result = view._show_knob_editor(TableSetup())
+
+        assert result.rules.turn_direction is TurnDirection.CLOCKWISE
+
+    def test_the_target_score_climbs_the_ladder(self):
+        view = _drive_landing(RichView(), ["1", ""])
+
+        result = view._show_knob_editor(TableSetup())
+
+        assert result.rules.target_score == 3000
+
+    def test_n_walks_to_the_next_section(self):
+        # [trump] is the second section: 1 is extended_trump_choices.
+        view = _drive_landing(RichView(), ["n", "1", ""])
+
+        result = view._show_knob_editor(TableSetup())
+
+        assert result.rules.extended_trump_choices is True
+
+    def test_b_walks_back_and_wraps_to_the_last_section(self):
+        # Stepping back from [general] lands on [scoring], whose 9th knob
+        # is `rounding`.
+        view = _drive_landing(RichView(), ["b", "9", ""])
+
+        result = view._show_knob_editor(TableSetup())
+
+        assert result.rules.rounding is Rounding.NEAREST_10
+
+    def test_editing_marks_the_setup_custom(self):
+        view = _drive_landing(RichView(), ["2", ""])
+
+        assert view._show_knob_editor(TableSetup(origin="classic")).origin == "custom"
+
+    def test_a_knob_turned_and_turned_back_keeps_the_origin(self):
+        """Two of the two turn directions is where it started."""
+        view = _drive_landing(RichView(), ["2", "2", ""])
+
+        result = view._show_knob_editor(TableSetup(origin="house.toml"))
+
+        assert result.rules == RuleConfig()
+        assert result.origin == "house.toml"
+
+    def test_the_aids_are_not_the_editors_business(self):
+        aids = TableAids(live_round_score=False)
+        view = _drive_landing(RichView(), ["2", ""])
+
+        assert view._show_knob_editor(TableSetup(aids=aids)).aids == aids
+
+    def test_an_impossible_toggle_leaves_the_ruleset_alone(self):
+        """[scoring] 1 is mark_made_points, 2 is mark_announced_points.
+        Turning both off is the one combination §9 forbids: the editor
+        must refuse it and keep the config it had."""
+        opened = TableSetup(rules=RuleConfig(mark_made_points=False))
+        # Walk back to [scoring], try to turn the second one off, finish.
+        view = _drive_landing(RichView(), ["b", "2", ""])
+
+        result = view._show_knob_editor(opened)
+
+        assert result.rules == opened.rules
+        assert result.origin == opened.origin
+
+    def test_an_impossible_toggle_is_reported_with_cores_own_message(self):
+        opened = TableSetup(rules=RuleConfig(mark_made_points=False))
+        printed = []
+        view = RichView()
+        inputs = iter(["b", "2", ""])
+        view.console.clear = lambda *a, **k: None
+        view.console.print = lambda *a, **k: printed.extend(
+            getattr(getattr(a_, "renderable", None), "plain", "") for a_ in a
+        )
+        view.console.input = lambda *a, **k: next(inputs)
+
+        view._show_knob_editor(opened)
+
+        assert any("mark_made_points" in text for text in printed)
+
+    def test_an_out_of_range_number_reprompts(self):
+        view = _drive_landing(RichView(), ["99", "2", ""])
+
+        result = view._show_knob_editor(TableSetup())
+
+        assert result.rules.turn_direction is TurnDirection.CLOCKWISE
+
+    def test_an_unknown_key_reprompts(self):
+        view = _drive_landing(RichView(), ["zz", ""])
+
+        assert view._show_knob_editor(TableSetup()) == TableSetup()
+
+    def test_k_routes_the_landing_screen_to_the_editor(self, monkeypatch):
+        edited = TableSetup(rules=RuleConfig(target_score=500), origin="custom")
+        view = _drive_landing(RichView(), ["k", ""])
+        monkeypatch.setattr(
+            RichView, "_show_knob_editor", lambda self, current: edited
+        )
+
+        assert view.show_landing(TableSetup()) is edited
+
+    def test_every_section_can_be_reached_by_walking_forward(self):
+        """``[n]`` wraps, so the walk visits all six and returns."""
+        seen = []
+        view = RichView()
+        inputs = iter(["n"] * len(SECTIONS) + [""])
+        view.console.clear = lambda *a, **k: None
+        view.console.print = lambda *a, **k: [
+            seen.append(getattr(getattr(t, "renderable", None), "plain", ""))
+            for t in a
+        ]
+        view.console.input = lambda *a, **k: next(inputs)
+
+        view._show_knob_editor(TableSetup())
+
+        headings = {h for h in SECTION_HEADINGS.values()}
+        rendered = " ".join(seen)
+        assert all(h in rendered for h in headings)
+
+
+@pytest.fixture(autouse=True)
+def contrai_home(tmp_path, monkeypatch):
+    """Point the last-setup cache at a scratch directory.
+
+    ``_remembered_setup`` reads the user's home by default, so without
+    this the preset picker's ``last used`` row would come and go with
+    whatever the developer running the suite last played. Autouse, so
+    every test in this file is isolated whether it asks or not.
+    """
+    home = tmp_path / "contrai-home"
+    monkeypatch.setenv("CONTRAI_HOME", str(home))
+    return home
+
+
+class TestRememberedSetup:
+    """The last-used setup: offered when it loads, invisible when it does not."""
+
+    def test_none_when_nothing_was_ever_saved(self, contrai_home):
+        assert RichView()._remembered_setup() is None
+
+    def test_a_saved_setup_comes_back_relabelled(self, contrai_home):
+        saved = TableSetup(
+            rules=RuleConfig(target_score=500),
+            aids=TableAids(live_round_score=False),
+            origin="house.toml",
+        )
+        save_setup(setup_path(), saved)
+
+        remembered = RichView()._remembered_setup()
+
+        assert remembered.rules == saved.rules
+        assert remembered.aids == saved.aids
+        # The label is what the picker lists it under, not where it came
+        # from three runs ago.
+        assert remembered.origin == "last used"
+
+    def test_a_corrupt_file_is_not_offered(self, contrai_home):
+        """A stale cache is a row that quietly does not appear."""
+        setup_path().parent.mkdir(parents=True, exist_ok=True)
+        setup_path().write_text("[general\n", encoding="utf-8")
+
+        assert RichView()._remembered_setup() is None
+
+    def test_a_file_naming_an_impossible_table_is_not_offered(self, contrai_home):
+        setup_path().parent.mkdir(parents=True, exist_ok=True)
+        setup_path().write_text(
+            "[scoring]\nmark_made_points = false\nmark_announced_points = false\n",
+            encoding="utf-8",
+        )
+
+        assert RichView()._remembered_setup() is None
+
+    def test_a_directory_where_the_file_should_be_is_not_offered(
+        self, contrai_home
+    ):
+        """An OSError that is not FileNotFoundError is swallowed too."""
+        setup_path().mkdir(parents=True, exist_ok=True)
+
+        assert RichView()._remembered_setup() is None
+
+
+class TestPresetPickerOffersTheRememberedSetup:
+    """``last used`` joins the radio when the cache loads."""
+
+    def test_not_listed_when_nothing_was_saved(self, contrai_home):
+        printed = []
+        view = RichView()
+        inputs = iter([""])
+        view.console.clear = lambda *a, **k: None
+        view.console.print = lambda *a, **k: printed.extend(
+            getattr(getattr(x, "renderable", None), "plain", "") for x in a
+        )
+        view.console.input = lambda *a, **k: next(inputs)
+
+        view._show_preset_picker(TableSetup())
+
+        assert not any("last used" in text for text in printed)
+
+    def test_listed_once_a_run_has_saved_one(self, contrai_home):
+        save_setup(setup_path(), TableSetup(rules=RuleConfig(target_score=500)))
+        printed = []
+        view = RichView()
+        inputs = iter([""])
+        view.console.clear = lambda *a, **k: None
+        view.console.print = lambda *a, **k: printed.extend(
+            getattr(getattr(x, "renderable", None), "plain", "") for x in a
+        )
+        view.console.input = lambda *a, **k: next(inputs)
+
+        view._show_preset_picker(TableSetup())
+
+        assert any("last used" in text for text in printed)
+
+    def test_it_can_be_picked_by_name(self, contrai_home):
+        saved = TableSetup(
+            rules=RuleConfig(target_score=500),
+            aids=TableAids(live_round_score=False),
+        )
+        save_setup(setup_path(), saved)
+        view = _drive_landing(RichView(), ["last used"])
+
+        result = view._show_preset_picker(TableSetup())
+
+        assert result.rules == saved.rules
+        # A remembered setup is a whole setup: its aids come back too,
+        # unlike a preset's, which only names rules.
+        assert result.aids == saved.aids
+
+    def test_it_can_be_picked_by_number(self, contrai_home):
+        save_setup(setup_path(), TableSetup(rules=RuleConfig(target_score=500)))
+        # classic is 1; the remembered row is appended after the presets.
+        view = _drive_landing(RichView(), ["2"])
+
+        result = view._show_preset_picker(TableSetup())
+
+        assert result.rules.target_score == 500
+        assert result.origin == "last used"

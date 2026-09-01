@@ -134,17 +134,31 @@ def _explain_constraint(
     return hint
 
 
-def _belote_by_position(round_) -> dict[Position, str]:
-    """Project ``round_.belote_state`` (player → kind) onto positions.
+def _belote_by_position(round_) -> dict[Position, tuple[Suit, ...]]:
+    """Group ``round_.announced_belotes`` by seat, keeping their suits.
 
-    Returns an empty dict when no round is active, the round has no
-    belote_state, or none has been triggered yet. Used to render the
-    persistent ★ Belote/Rebelote badge in the trick diamond.
+    The round tracks belote per ``(holder, suit)`` pair and the diamond
+    badges per seat, so the pairs of one seat collapse into that seat's
+    tuple of suits — under the all-trump ``four`` regime a seat can hold
+    two, and the badge names both. Announcement order is preserved, so
+    the badge lists the suits in the order the table heard them.
+
+    Reading :attr:`~contrai_engine.model.round.Round.announced_belotes`
+    rather than the raw ``belote_state`` is what keeps the regime's
+    verdict and the screen in agreement: a ``single`` table announces up
+    to four times and marks once, and only the marking pair is badged.
+
+    Returns an empty dict when no round is active, the round does not
+    expose the property, or nothing has been announced yet.
     """
     if round_ is None:
         return {}
-    state = getattr(round_, "belote_state", None) or {}
-    return {player.position: kind for player, kind in state.items()}
+    announced = getattr(round_, "announced_belotes", None) or ()
+    badges: dict[Position, tuple[Suit, ...]] = {}
+    for player, suit in announced:
+        seat = player.position
+        badges[seat] = badges.get(seat, ()) + (suit,)
+    return badges
 
 
 def _resolve_delay(env_var: str, default: float) -> float:
