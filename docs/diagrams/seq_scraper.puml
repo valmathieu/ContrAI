@@ -34,7 +34,7 @@ participant "session.py" as SE <<scraper>>
 participant "observer.py" as O <<scraper>>
 participant "async_playwright" as P <<scraper>>
 participant "Browser / page\n(Chromium)" as B
-participant "DOM\nspectator site" as D
+participant "DOM\n(target site)" as D
 participant "SQLite" as S <<future>> #DDDDDD
 
 U -> C : contrai-scrape
@@ -52,22 +52,22 @@ activate SE
 SE -> B : page.goto(TARGET_URL)
 B -> D : navigate
 SE -> SE : page.wait_for_timeout(5000)
-SE -> B : tutorial_btn.is_visible() ?\n(""gui.quick-start.launch.no"")
+SE -> B : tutorial prompt visible ?
 alt tutorial visible
-    SE -> B : click ""gui.quick-start.launch.no""
+    SE -> B : click "dismiss tutorial"
 end
 
-SE -> B : click ""button:has-text('Email')""
+SE -> B : click "sign in with e-mail"
 note right of SE
-  Fallback selector if the
-  primary ""has-text('Email')"" fails:
-  ""button[data-icon='email']""
+  A fallback selector covers
+  the icon-only variant of
+  the same button.
 end note
-SE -> B : fill ACCOUNT_EMAIL into\n""input[placeholder='Adresse électronique']""
-SE -> B : click ""gui.users.email-wizard.continue""
-SE -> B : wait_for_selector(""#verificationCode"")
-SE -> B : fill ""#verificationCode"" ← VERIFICATION_CODE
-SE -> B : click ""#validateBtn""
+SE -> B : fill ACCOUNT_EMAIL into the e-mail field
+SE -> B : click "continue"
+SE -> B : wait for the verification-code field
+SE -> B : fill VERIFICATION_CODE
+SE -> B : click "validate"
 B --> D : authenticate
 SE -> SE : page.wait_for_timeout(10000)
 deactivate SE
@@ -76,16 +76,16 @@ deactivate SE
 
 C -> SE : open_spectator_mode(page)
 activate SE
-SE -> B : click ""gui.actions.mode.online""
-SE -> B : click ""gui.actions.online.observe""
-SE -> B : click ""gui.versions.contree""
+SE -> B : click "online mode"
+SE -> B : click "observe"
+SE -> B : click "Contrée variant"
 deactivate SE
 
 == Phase 3 — Table discovery ==
 
 C -> SE : find_tournament_table(page)
 activate SE
-SE -> B : ""'.table-list-item'"".first.click()  (timeout 3s)
+SE -> B : click the first table row  (timeout 3s)
 note right of SE
   If auto-join times out,
   user has 5s to click a
@@ -94,11 +94,11 @@ end note
 
 loop up to MAX_TABLE_ATTEMPTS (20)
     SE -> SE : page.wait_for_timeout(2000)
-    SE -> B : ""#tournamentMatchInfo"".is_visible() ?
+    SE -> B : tournament marker visible ?
     alt tournament match found
         SE --> C : True
     else standard table
-        SE -> B : click ""gui.online.tables.other-table""
+        SE -> B : click "other table"
         SE -> SE : page.wait_for_timeout(3000)
     end
 end
@@ -110,8 +110,8 @@ C -> O : observe_game(page)
 activate O
 
 O -> B : get_players(page)
-loop seat ∈ {nord, sud, est, ouest}
-    O -> D : inner_text(""#{seat} div[data-role='badge']"")
+loop seat ∈ {N, S, E, W}
+    O -> D : read the seat's name badge
     D --> O : player name
 end
 
@@ -125,8 +125,8 @@ note right of O
 end note
 
 O -> B : last_known_round = get_current_round(page)
-B -> D : inner_text(""#tour label[data-i18n='gui.scores.tour']"")
-D --> O : "TOUR N" → regex \d+ → int
+B -> D : read the round-counter label
+D --> O : label text → regex \d+ → int
 
 loop forever (1s poll)
     O -> B : current_round = get_current_round(page)
