@@ -1,7 +1,7 @@
 [project]
 name = "contrai-scraper"
 version = "0.4.0"
-description = "Add your description here"
+description = "Playwright spectator-mode scraper for online Contrée games"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [

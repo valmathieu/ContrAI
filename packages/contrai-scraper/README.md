@@ -1,20 +1,24 @@
-# ContrAI Scraper 🕵️‍♂️
+# contrai-scraper
 
-This repository contains the **data collection** module for the [ContrAI](link-to-your-main-repo) project.
+Playwright spectator-mode scraper for online Contrée games — the data-collection member of the
+[ContrAI](../../README.md) workspace.
 
-It is a "passive" bot using **Playwright** to connect to a Belote Contrée gaming platform, observe ongoing games, and save the game state as raw data.
+It is a passive observer: it logs in with a dedicated account, opens a tournament table in
+spectator mode and records what happens there. It does not play and it does not validate
+moves — materializing observations into `contrai_core` types and checking them against the
+rules is the engine's job.
 
-## 🏗 Architecture
+## Site specifics stay out of the repository
 
-This project follows the **Data Decoupling** principle:
+The target URL, the account credentials and every selector the browser clicks are being moved
+into a local configuration file that is never committed; the remaining literals in `config.py`
+are the last ones and are replaced by that profile in the next scraper release. Code and docs
+describe *what* each step does, not *where* it clicks. Do not add the site's name, its DOM ids
+or screenshots of it to any tracked file.
 
-* **This bot is "dumb":** It does not know the rules of the game. It does not validate moves. It strictly takes "snapshots" of the game table.
-* **Output Format:** Locally stored raw JSON files.
-* **Processing:** Parsing, validation, and AI training are handled by the main `ContrAI-Core` repository.
+## Layout
 
-## 📦 Layout
-
-The scraping logic lives in the importable `contrai_scraper` package under `src/`:
+The importable package lives under `src/contrai_scraper/`:
 
 | Module | Role |
 | ------ | ---- |
@@ -23,31 +27,18 @@ The scraping logic lives in the importable `contrai_scraper` package under `src/
 | `observer` | Watches a seated table: `get_players`, `get_current_round`, `observe_game`. |
 | `cli` | `contrai-scrape` console script wiring the two phases together. |
 
-`run.py` at the package root is a parked login experiment against a different site (`belote.com`); it is kept for reference and is not part of the package.
+## Usage
 
-## ▶️ Usage
-
-From the workspace root, after `uv sync`:
+From the workspace root, after `uv sync` and `uv run playwright install chromium`:
 
 ```bash
 uv run contrai-scrape
 ```
 
-## 🛠 Prerequisites
+The browser runs headed with a small slow-motion delay so a run can be watched.
 
-* Python
-* Playwright
+## Status
 
-## 🚀 Installation
-
-Clone the repository:
-
-```bash
-git clone [https://github.com/your-username/contrai-scraper.git](https://github.com/your-username/contrai-scraper.git)
-cd contrai-scrapergit clone [https://github.com/your-username/contrai-scraper.git](https://github.com/your-username/contrai-scraper.git)
-cd contrai-scraper
-```
-
-
-
-
+v1 reaches a seated tournament table and polls the round counter. Bidding and card-play
+observation, persistence and multi-table orchestration are not wired yet — see the
+[scraper docs](../../docs/scraper/index.md).
