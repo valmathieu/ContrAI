@@ -6,6 +6,7 @@ requires-python = ">=3.14"
 members = [
     "contrai-analyzer",
     "contrai-core",
+    "contrai-data",
     "contrai-engine",
     "contrai-scraper",
     "contrai-workspace",
@@ -393,6 +394,28 @@ requires-dist = [
 provides-extras = ["test"]
 
 [[package]]
+name = "contrai-data"
+version = "0.4.0"
+source = { editable = "packages/contrai-data" }
+dependencies = [
+    { name = "contrai-core" },
+]
+
+[package.optional-dependencies]
+test = [
+    { name = "pytest" },
+    { name = "pytest-cov" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "contrai-core", editable = "packages/contrai-core" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.4" },
+    { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.0" },
+]
+provides-extras = ["test"]
+
+[[package]]
 name = "contrai-engine"
 version = "0.4.0"
 source = { editable = "packages/contrai-engine" }
@@ -442,6 +465,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "contrai-analyzer" },
     { name = "contrai-core", extra = ["test"] },
+    { name = "contrai-data", extra = ["test"] },
     { name = "contrai-engine", extra = ["test"] },
     { name = "contrai-scraper" },
 ]
@@ -459,6 +483,7 @@ docs = [
 requires-dist = [
     { name = "contrai-analyzer", editable = "packages/contrai-analyzer" },
     { name = "contrai-core", extras = ["test"], editable = "packages/contrai-core" },
+    { name = "contrai-data", extras = ["test"], editable = "packages/contrai-data" },
     { name = "contrai-engine", extras = ["test"], editable = "packages/contrai-engine" },
     { name = "contrai-scraper", editable = "packages/contrai-scraper" },
 ]
