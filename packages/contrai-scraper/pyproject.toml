@@ -1,7 +1,7 @@
 [project]
 name = "contrai-scraper"
 version = "0.4.0"
-description = "Add your description here"
+description = "Playwright spectator-mode scraper for online Contrée games"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
@@ -13,7 +13,6 @@ dependencies = [
 [project.scripts]
 contrai-scrape = "contrai_scraper.cli:main"
 
-# ``run.py`` is a parked login experiment sitting at the package root; pointing
-# setuptools at src/ keeps flat-layout discovery from trying to package it.
+# The importable package lives under src/; nothing at the package root ships.
 [tool.setuptools.packages.find]
 where = ["src"]
