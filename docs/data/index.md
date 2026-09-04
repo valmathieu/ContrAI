@@ -13,6 +13,7 @@ Source lives at `packages/contrai-data/src/contrai_data/`:
 | `events.py`     | One frozen dataclass per event (`Header`, `GameStarted`, `RoundDealt`, `BidMade`, `CardPlayed`, `BeloteHeld`, `RoundScored`, `GameEnded`), the five value objects (`Seat`, `ObservedFrom`, `Ruleset`, `SideMark`, `ContractTerms`), and the eight closed vocabularies |
 | `tokens.py`     | Domain value ⇄ ASCII token, both ways and strictly — seats, sides, cards, contract suits and values, whole bids, whole rulesets, and the UTC timestamp check |
 | `codec.py`      | `encode` / `decode` — one event ⇄ one JSON line — plus `FORMAT` and the major-version gate |
+| `store.py`      | The only module that touches the filesystem: `RecordWriter`, `read_events` / `ReadResult`, `records_root` / `games_dir` / `game_path`, `new_game_id` |
 
 Everything above is re-exported from `contrai_data/__init__.py` and is part of the public API.
 
@@ -171,6 +172,44 @@ The 32-distinct-cards check is the one worth singling out. A parser that repeats
 four hands that are the right *shape* — four seats, eight cards each — and wrong. Without this
 check the error surfaces three steps later in a legality check, where the symptom no longer names
 the cause.
+
+## Storage
+
+```
+$CONTRAI_HOME/records/          (or ~/.contrai/records)
+├── games/
+│   ├── engine-20260910T181815Z-a1b2c3.jsonl
+│   └── obs-56630b35.jsonl
+└── raw/                        (the scraper's verbatim wire frames)
+```
+
+The engine roots its records at `$CONTRAI_HOME/records`; the scraper uses its profile's output
+root. `records_root()`, `games_dir()`, `game_path()` and `new_game_id()` live in one module so the
+two producers cannot spell the layout differently.
+
+**One line, one flush.** `RecordWriter` appends a single encoded event and flushes it, so a
+producer that dies mid-game — a crashed scraper, an interrupted autoplay — leaves a file that is
+complete up to its last full line. `fsync` is deliberately *not* called: the failure being guarded
+against is a process ending, not a machine losing power, and a disk sync per card would make the
+writer the slowest thing in the play loop.
+
+**The reader is the other half of that bargain, and it is asymmetric on purpose.** A **final** line
+that is not JSON is exactly what a torn write looks like, so it is dropped and reported through
+`ReadResult.truncated`. A line that fails to parse **anywhere else** raises: only the last line can
+be a crash artefact, and swallowing a bad line from the middle would silently drop an event from a
+game. A final line that *is* well-formed JSON but carries an invalid token raises too — a crash
+cannot produce valid JSON with a bad token, so that is a producer bug, not a torn write.
+
+**Line endings are pinned to LF.** Records travel between the Windows development machine and the
+Debian box that runs the scraper. Python's default newline translation would write CRLF on Windows,
+and the stray CR would land inside the last token of every line for whichever machine did not write
+it.
+
+**Game ids.** `engine-<UTC stamp>-<6 hex>` for a self-played game — the random tail is what keeps
+two games started in the same second apart. An observed game takes the table's own opaque id
+(`obs-56630b35`), which is what lets a re-observed game be recognised rather than duplicated; it
+is an opaque handle, not personal data. Because both producers take the id from outside the
+process, `game_path` checks it is exactly one path segment before letting it become a file name.
 
 ## Nullability the observations forced
 
