@@ -11,6 +11,7 @@ Source lives at `packages/contrai-data/src/contrai_data/`:
 | --------------- | ----------------------------------------------------------------------------------------- |
 | `exceptions.py` | `RecordError` (base), `RecordFormatError`, `UnsupportedFormatError` — all of them both a `ContraiError` and a `ValueError` |
 | `events.py`     | One frozen dataclass per event (`Header`, `GameStarted`, `RoundDealt`, `BidMade`, `CardPlayed`, `BeloteHeld`, `RoundScored`, `GameEnded`), the five value objects (`Seat`, `ObservedFrom`, `Ruleset`, `SideMark`, `ContractTerms`), and the eight closed vocabularies |
+| `tokens.py`     | Domain value ⇄ ASCII token, both ways and strictly — seats, sides, cards, contract suits and values, whole bids, whole rulesets, and the UTC timestamp check |
 
 Everything above is re-exported from `contrai_data/__init__.py` and is part of the public API.
 
@@ -86,6 +87,41 @@ slightly differently.
 
 The cost is one hop on the way in and out. That hop is `tokens.py`, and it is the only place a
 domain value meets its ASCII spelling.
+
+## Tokens
+
+Deliberately narrow ASCII, so a record stays greppable and diffable and owes nothing to any wire's
+glyphs.
+
+| Thing            | Token                                                           |
+| ---------------- | --------------------------------------------------------------- |
+| Seat             | `N` `W` `S` `E` — the four initials, which happen to be distinct |
+| Side             | `NS` `EW`                                                        |
+| Card             | rank then suit: `7C`, `JH`, `AD`, and `10S` for the tens         |
+| Contract trump   | `S` `H` `D` `C`, plus `NT` (no trump) and `AT` (all trump)       |
+| Contract value   | the number itself — `80`…`240` — or the word `slam` / `solo_slam` |
+| Timestamp        | ISO-8601, UTC, verbatim                                          |
+
+**The tens are the reason `parse_card` splits from the right.** `10` is the only two-character
+rank, so a parser slicing at a fixed offset reads the suit off the wrong character for all four of
+them — and gets a *valid-looking* card back, not an error.
+
+**Parsing is strict.** An unrecognised token raises rather than resolving to a default. A record is
+read long after the run that wrote it, so a token quietly read as something else produces a
+plausible game that never happened, and no downstream check can tell.
+
+**The ruleset is the one asymmetric case.** An **unknown** knob is refused: it names a rule this
+build has no field for, and dropping it would replay the game under rules it was never played
+under — exactly the divergence the verifier cannot catch, since the verifier's whole method is to
+replay under the rules the record names. A **missing** knob takes its `RuleConfig` default: the
+record predates that knob, so its producer was by construction playing the default. Refusing a
+missing knob instead would retire the entire existing corpus every time a knob is added.
+
+**Timestamps are validated but returned verbatim.** The record is the archive; re-rendering an
+instant on the way in would let a round-trip change bytes the producer wrote. What *is* checked is
+the one thing that cannot be checked later — that the instant carries UTC. A naive or
+locally-offset timestamp silently mis-orders events the moment two machines contribute to one
+corpus.
 
 ## What an event validates
 
