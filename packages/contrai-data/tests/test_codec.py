@@ -380,3 +380,83 @@ class TestRefusals:
         payload = json.loads(encode(STARTED)) | {"ruleset": "classic"}
         with pytest.raises(RecordFormatError, match="ruleset"):
             decode(json.dumps(payload))
+
+    @pytest.mark.parametrize("drop", ["preset", "config"])
+    def test_a_ruleset_missing_half_of_itself_is_refused(self, drop):
+        payload = json.loads(encode(STARTED))
+        del payload["ruleset"][drop]
+        with pytest.raises(RecordFormatError, match="ruleset"):
+            decode(json.dumps(payload))
+
+    @pytest.mark.parametrize("drop", ["id", "name", "account", "kind", "level"])
+    def test_a_seat_missing_a_field_is_refused(self, drop):
+        payload = json.loads(encode(STARTED))
+        del payload["seats"]["N"][drop]
+        with pytest.raises(RecordFormatError, match="seat"):
+            decode(json.dumps(payload))
+
+    def test_a_required_string_that_is_not_a_string_is_refused(self):
+        payload = json.loads(encode(HEADER)) | {"generator": 4}
+        with pytest.raises(RecordFormatError, match="generator"):
+            decode(json.dumps(payload))
+
+    def test_an_enum_token_that_is_not_a_string_is_refused(self):
+        payload = json.loads(encode(DEALT)) | {"hands_derivation": 1}
+        with pytest.raises(RecordFormatError, match="hands_derivation"):
+            decode(json.dumps(payload))
+
+    def test_a_side_keyed_value_that_is_not_a_number_is_refused(self):
+        payload = json.loads(encode(SCORED))
+        payload["taken"]["NS"] = "162"
+        with pytest.raises(RecordFormatError, match="taken"):
+            decode(json.dumps(payload))
+
+    @pytest.mark.parametrize("drop", ["round", "phase", "totals"])
+    def test_an_observed_from_missing_a_field_is_refused(self, drop):
+        payload = json.loads(encode(OBSERVED_START))
+        del payload["observed_from"][drop]
+        with pytest.raises(RecordFormatError, match="observed_from"):
+            decode(json.dumps(payload))
+
+    def test_an_observed_from_round_that_is_not_an_int_is_refused(self):
+        payload = json.loads(encode(OBSERVED_START))
+        payload["observed_from"]["round"] = "2"
+        with pytest.raises(RecordFormatError, match="observed_from"):
+            decode(json.dumps(payload))
+
+    def test_belote_cards_that_are_not_a_list_is_refused(self):
+        payload = json.loads(encode(EVERY_EVENT[11])) | {"cards": "KSQS"}
+        with pytest.raises(RecordFormatError, match="cards"):
+            decode(json.dumps(payload))
+
+    @pytest.mark.parametrize("drop", ["value", "suit", "multiplier"])
+    def test_a_contract_missing_a_term_is_refused(self, drop):
+        payload = json.loads(encode(SCORED))
+        del payload["contract"][drop]
+        with pytest.raises(RecordFormatError, match="contract"):
+            decode(json.dumps(payload))
+
+    def test_a_contract_multiplier_that_is_not_an_int_is_refused(self):
+        payload = json.loads(encode(SCORED))
+        payload["contract"]["multiplier"] = "1"
+        with pytest.raises(RecordFormatError, match="multiplier"):
+            decode(json.dumps(payload))
+
+    @pytest.mark.parametrize("drop", ["made", "announced"])
+    def test_a_mark_missing_a_half_is_refused(self, drop):
+        payload = json.loads(encode(SCORED))
+        del payload["marked"]["NS"][drop]
+        with pytest.raises(RecordFormatError, match="marked"):
+            decode(json.dumps(payload))
+
+    @pytest.mark.parametrize("part", ["made", "announced"])
+    def test_a_mark_half_that_is_not_an_int_is_refused(self, part):
+        payload = json.loads(encode(SCORED))
+        payload["marked"]["NS"][part] = "162"
+        with pytest.raises(RecordFormatError, match=part):
+            decode(json.dumps(payload))
+
+    def test_an_announced_flag_that_is_not_a_bool_is_refused(self):
+        payload = json.loads(encode(EVERY_EVENT[11])) | {"announced": "yes"}
+        with pytest.raises(RecordFormatError, match="announced"):
+            decode(json.dumps(payload))
