@@ -182,7 +182,11 @@ class TestResolve:
 
 
 #: The seventh, optional section a full setup document carries.
-AIDS_TOML = "[table_aids]\nlive_round_score = true\n"
+AIDS_TOML = (
+    "[table_aids]\n"
+    "live_round_score = true\n"
+    "record           = false\n"
+)
 
 
 class TestAidSection:
@@ -235,6 +239,24 @@ class TestParseSetup:
 
     def test_origin_defaults_to_classic(self):
         assert parse_setup("").origin == "classic"
+
+    def test_setup_round_trips_both_aids(self):
+        setup = TableSetup(aids=TableAids(live_round_score=False, record=True))
+        assert parse_setup(dump_setup(setup)).aids == setup.aids
+
+    def test_record_defaults_off_when_the_section_omits_it(self):
+        text = (
+            dump_ruleset(RuleConfig())
+            + "\n[table_aids]\nlive_round_score = false\n"
+        )
+        assert parse_setup(text).aids == TableAids(
+            live_round_score=False, record=False
+        )
+
+    def test_unknown_aid_key_is_still_rejected(self):
+        text = dump_ruleset(RuleConfig()) + "\n[table_aids]\nrecrod = true\n"
+        with pytest.raises(RulesetError):
+            parse_setup(text)
 
 
 class TestDumpSetup:

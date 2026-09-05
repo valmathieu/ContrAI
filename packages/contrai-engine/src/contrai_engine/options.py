@@ -52,6 +52,10 @@ class TableAids:
     Attributes:
         live_round_score: Whether the in-game Round panel shows each
             side's running card points as the tricks are collected.
+        record: Whether the table writes each game it plays to a record
+            under ``$CONTRAI_HOME/records``. Off by default: a record is
+            a corpus entry, and nobody should start one by accident.
     """
 
     live_round_score: bool = True
+    record: bool = False

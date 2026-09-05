@@ -119,6 +119,14 @@ def _panel_table_setup(setup: TableSetup) -> Panel:
     body.append(f"{'Live round score':<{LABEL_WIDTH}}", style=DIM)
     live = setup.aids.live_round_score
     body.append("on" if live else "off", style=f"bold {GREEN_FG}" if live else DIM)
+    body.append("\n")
+
+    body.append(f"{'Records':<{LABEL_WIDTH}}", style=DIM)
+    record = setup.aids.record
+    body.append(
+        "on" if record else "off",
+        style=f"bold {GREEN_FG}" if record else DIM,
+    )
 
     return Panel(
         body,
@@ -240,12 +248,14 @@ def _knobs_prompt_text(count: int) -> Text:
 def _setup_prompt_text(setup: TableSetup) -> Text:
     """The landing dispatcher's key list.
 
-    ``[l]`` names the state it would move *to* rather than the setting it
-    acts on, so the line reads as an action and never as a claim about
-    what is currently on — the summary panel above already says that.
+    ``[l]`` and ``[r]`` name the state they would move *to* rather than
+    the setting they act on, so each line reads as an action and never as
+    a claim about what is currently on — the summary panel above already
+    says that.
 
     Args:
-        setup: The setup being edited, read for the live-score wording.
+        setup: The setup being edited, read for the live-score and
+            record wordings.
 
     Returns:
         The prompt ``Text``.
@@ -264,6 +274,9 @@ def _setup_prompt_text(setup: TableSetup) -> Text:
         " live score " + ("off" if setup.aids.live_round_score else "on"),
         style=FG,
     )
+    t.append("  ·  ", style=FG)
+    t.append("[r]", style=f"bold {FG}")
+    t.append(" record " + ("off" if setup.aids.record else "on"), style=FG)
     return t
 
 

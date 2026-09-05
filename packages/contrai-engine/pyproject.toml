@@ -5,6 +5,7 @@ description = "Add your description here"
 requires-python = ">=3.14"
 dependencies = [
   "contrai-core",
+  "contrai-data",
   "rich>=13",
   "pyfiglet>=1.0",
 ]
