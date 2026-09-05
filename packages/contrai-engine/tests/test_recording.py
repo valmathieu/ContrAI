@@ -9,6 +9,7 @@ would prove nothing about the hooks the model actually fires.
 from __future__ import annotations
 
 import random
+import sys
 from pathlib import Path
 
 import pytest
@@ -42,6 +43,7 @@ from contrai_data import (
     read_events,
 )
 
+from contrai_engine.cli import main
 from contrai_engine.model.game import Game
 from contrai_engine.model.player import AiPlayer, HumanPlayer
 from contrai_engine.options import TableAids
@@ -898,3 +900,65 @@ class TestEndToEnd:
             for winner in game.current_round.play_state.trick_winners
         ]
         assert list(projected.trick_winners) == live
+
+    def test_autoplay_with_record_writes_a_loadable_game(
+        self, tmp_path, monkeypatch
+    ):
+        """``contrai --autoplay --seed N --record DIR`` -> one projectable file.
+
+        The §5.6 gate: the real parser, the real ``RichView``, the real
+        ``Game`` and the wrapper all compose, and what lands on disk is a
+        record the projection folds back into rounds.
+        """
+        monkeypatch.setenv("CONTRAI_HOME", str(tmp_path / "home"))
+        for var in (
+            "CONTRAI_AUTOPLAY_PAUSE",
+            "CONTRAI_AUTOPLAY_RECAP_PAUSE",
+            "CONTRAI_AUTOPLAY_LANDING_PAUSE",
+            "CONTRAI_AUTOPLAY_ENDGAME_PAUSE",
+            "CONTRAI_AI_CARD_DELAY",
+            "CONTRAI_AI_BID_DELAY",
+        ):
+            monkeypatch.setenv(var, "0")
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "contrai",
+                "--autoplay",
+                "--seed",
+                "7",
+                "--record",
+                str(tmp_path / "rec"),
+            ],
+        )
+
+        main()
+
+        (path,) = (tmp_path / "rec" / "games").glob("*.jsonl")
+        record = load_game(path)
+        assert record.complete
+        assert record.ended.reason is EndReason.TARGET_REACHED
+        assert record.rounds and all(r.complete for r in record.rounds)
+        assert all(seat.kind is SeatKind.AI for seat in record.seats.values())
+
+    def test_a_run_with_no_flags_records_nothing(self, tmp_path, monkeypatch):
+        """The default is off: a plain run must leave the corpus alone."""
+        home = tmp_path / "home"
+        monkeypatch.setenv("CONTRAI_HOME", str(home))
+        for var in (
+            "CONTRAI_AUTOPLAY_PAUSE",
+            "CONTRAI_AUTOPLAY_RECAP_PAUSE",
+            "CONTRAI_AUTOPLAY_LANDING_PAUSE",
+            "CONTRAI_AUTOPLAY_ENDGAME_PAUSE",
+            "CONTRAI_AI_CARD_DELAY",
+            "CONTRAI_AI_BID_DELAY",
+        ):
+            monkeypatch.setenv(var, "0")
+        monkeypatch.setattr(
+            sys, "argv", ["contrai", "--autoplay", "--seed", "7"]
+        )
+
+        main()
+
+        assert not (home / "records").exists()
