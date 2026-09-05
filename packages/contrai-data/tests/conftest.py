@@ -7,6 +7,17 @@ the hand-written three-round game the codec and the projection are both
 exercised against — a made round, an all-pass round and a failed round,
 spelled out rather than generated so the expected projection can be read
 off the fixture by eye.
+
+This directory deliberately has **no** ``__init__.py``, unlike
+``contrai-core``'s and ``contrai-engine``'s test directories. ``pytest``
+registers each ``conftest.py`` as a plugin keyed by its module name, and
+inside a package that name is derived from the package — so a second
+``tests`` package carrying a ``conftest.py`` registers as ``tests.conftest``
+a second time and a whole-workspace ``uv run pytest`` aborts collection
+with "Plugin already registered under a different name". Core's ``tests``
+is a package *and* has a ``conftest.py``; engine's is a package with none.
+Leaving this one a plain directory is what lets all three suites be
+collected in one run.
 """
 
 from __future__ import annotations
