@@ -44,6 +44,20 @@ package "contrai-core\n(shared domain model)" as P_core {
 }
 
 ' =========================================================
+' contrai-data — teal
+' =========================================================
+package "contrai-data\n(game-record format)" as P_data {
+    class "GameEvent"    as D_event  #E0F5F2
+    class "RecordWriter" as D_writer #E0F5F2
+    class "GameRecord"   as D_game   #E0F5F2
+    class "RoundRecord"  as D_round  #E0F5F2
+
+    D_writer ..> D_event : writes one line per event
+    D_game *-- D_round
+    D_round ..> D_event : folded from
+}
+
+' =========================================================
 ' contrai-engine — orange
 ' =========================================================
 package "contrai-engine\n(MVC + game loop)" as P_engine {
@@ -131,8 +145,10 @@ note as N_analyzer_indep
 end note
 P_analyzer .. N_analyzer_indep
 
-' Scraper: planned consumer of core (future)
-P_scraper ..> P_core : <<future>>\nmaterialize observed\ngames into core types
+' Data sits between core and both of its consumers
+P_data ..> P_core : uses Card, Position, TeamSide,\nBid, RuleConfig, Auction,\nTrickRecord, ObservedContract
+P_engine ..> P_data : records, replays and\nverifies games
+P_scraper ..> P_data : writes observed games
 
 ' Web server: planned future component (not in repo yet)
 note as N_future
