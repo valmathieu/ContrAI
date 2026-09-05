@@ -16,6 +16,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (core) `RuleConfig.double_closes_auction` (§9.4, off by default) — a double closes the auction once the doubled side declines, a redouble at once. `tournament()` sets it. See [core docs](docs/core/index.md).
 - (core) `Deck.stacked(hands)` — build a deck that deals four chosen hands, the inverse of `deal`'s 3-2-3 layout. See [core docs](docs/core/index.md).
 - (engine) `contrai --record [DIR]` / `--no-record` and a `record` table knob — the game you just played is written as a `contrai-data` record. See [engine docs](docs/engine/index.md).
+- (engine) `Game(players, deal_source=…)` — the dealer and the deal become a seam; `ScriptedDealSource` takes both off a record. Default unchanged. See [engine docs](docs/engine/index.md).
 
 ### Changed
 
