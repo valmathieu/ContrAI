@@ -190,8 +190,8 @@ class TestLayout:
         assert games_dir(tmp_path) == tmp_path / "games"
 
     def test_a_game_path_is_its_id_dot_jsonl(self, tmp_path):
-        assert game_path(tmp_path, "obs-56630b35") == (
-            tmp_path / "games" / "obs-56630b35.jsonl"
+        assert game_path(tmp_path, "obs-0a1b2c3d") == (
+            tmp_path / "games" / "obs-0a1b2c3d.jsonl"
         )
 
     @pytest.mark.parametrize("game_id", ["", "a/b", "..", ".", "a\\b", "a.jsonl/../x"])
