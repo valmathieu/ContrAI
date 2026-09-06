@@ -23,6 +23,16 @@ from .exceptions import (
     SeatMismatchError,
 )
 from .player import RecordedPlayer, RoundScript
+from .verdict import (
+    GameVerdict,
+    Mismatch,
+    MismatchKind,
+    RoundVerdict,
+    Verdict,
+    verdict_path,
+    verdicts_dir,
+    write_verdict,
+)
 
 __all__ = [
     "DealSource",
@@ -35,4 +45,12 @@ __all__ = [
     "RoundExhaustedError",
     "ScriptExhaustedError",
     "SeatMismatchError",
+    "Verdict",
+    "MismatchKind",
+    "Mismatch",
+    "RoundVerdict",
+    "GameVerdict",
+    "verdicts_dir",
+    "verdict_path",
+    "write_verdict",
 ]
