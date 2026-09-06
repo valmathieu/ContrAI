@@ -1473,6 +1473,43 @@ class TestRunVerify:
 
 
 class TestMainDispatch:
+    def test_the_streams_are_utf8_before_verify_writes_anything(
+        self, monkeypatch
+    ):
+        # A card renders as ``K♠``, and ``verify`` prints one when it
+        # reports a belote mismatch — so the fix-up has to run *before*
+        # the subcommand dispatch, not inside the game path. On a cp1252
+        # console the alternative is not mojibake, it is
+        # UnicodeEncodeError.
+        out, err = _ReconfigurableStream(), _ReconfigurableStream()
+        monkeypatch.setattr(sys, "stdout", out)
+        monkeypatch.setattr(sys, "stderr", err)
+        monkeypatch.setattr(sys, "argv", ["contrai", "verify", "a.jsonl"])
+        seen: list[list[str | None]] = []
+
+        def _record_then_exit(args):
+            seen.append(list(out.encodings))
+            return 0
+
+        monkeypatch.setattr(cli_module, "_run_verify", _record_then_exit)
+
+        with pytest.raises(SystemExit):
+            main()
+
+        assert seen == [["utf-8"]]
+        assert err.encodings == ["utf-8"]
+
+    def test_a_stream_that_refuses_does_not_stop_the_run(self, monkeypatch):
+        monkeypatch.setattr(sys, "stdout", _RaisingStream())
+        monkeypatch.setattr(sys, "stderr", _PlainStream())
+        monkeypatch.setattr(sys, "argv", ["contrai", "verify", "a.jsonl"])
+        monkeypatch.setattr(cli_module, "_run_verify", lambda args: 0)
+
+        with pytest.raises(SystemExit) as excinfo:
+            main()
+
+        assert excinfo.value.code == 0
+
     def test_verify_exits_with_its_own_code(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["contrai", "verify", "a.jsonl"])
         monkeypatch.setattr(cli_module, "_run_verify", lambda args: 3)
