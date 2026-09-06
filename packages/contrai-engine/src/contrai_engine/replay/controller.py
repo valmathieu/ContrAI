@@ -142,6 +142,20 @@ class ReplayController:
             "on_round_complete", self.game.current_round, self.game.scores
         )
 
+    def clear_hands(self) -> None:
+        """Empty every seat's hand, so the next round deals into a clean table.
+
+        A round played to the end empties the hands itself; one that
+        stopped part-way — an illegal action, a script that ran out — did
+        not. ``Deck.deal`` *extends* a hand rather than replacing it, so
+        the next round would otherwise seat a player holding sixteen
+        cards, and every round after the first failure would look wrong
+        for a reason that has nothing to do with the record.
+        """
+
+        for player in self.players:
+            player.hand.clear()
+
     def _notify(self, hook: str, *args: Any) -> None:
         """Call ``hook`` on the view, if it has one.
 

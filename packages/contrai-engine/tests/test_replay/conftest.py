@@ -21,11 +21,31 @@ from pathlib import Path
 
 import pytest
 from contrai_core import Position, RuleConfig
-from contrai_data import GameRecord, load_game
+from contrai_data import (
+    BeloteHeld,
+    BidMade,
+    CardPlayed,
+    EndReason,
+    GameEnded,
+    GameEvent,
+    GameRecord,
+    GameStarted,
+    Header,
+    RecordSource,
+    RoundDealt,
+    RoundRecord,
+    Ruleset,
+    load_game,
+    project,
+)
 
 from contrai_engine.model.game import Game
 from contrai_engine.model.player import AiPlayer
 from contrai_engine.recording import RecordingView
+
+#: A fixed instant for every rebuilt event. Verification never reads a
+#: timestamp, and a constant one keeps a rebuilt record diffable.
+TS = "2026-09-11T00:00:00Z"
 
 
 class SilentView:
@@ -80,6 +100,118 @@ def play_and_record(
     view.close_record()
     (path,) = (Path(root) / "games").glob("*.jsonl")
     return load_game(path)
+
+
+def round_events(round_: RoundRecord) -> list[GameEvent]:
+    """Rebuild one projected round's events, in file order.
+
+    A projection is lossless for everything verification reads, so a
+    round can be turned back into events, mutated, and re-projected —
+    which is how a *suspect* record is built here: take a real, legal
+    game and break exactly one thing.
+
+    Args:
+        round_: A projected round.
+
+    Returns:
+        Its ``round_dealt``, bids, plays, belotes and score, in order.
+    """
+
+    events: list[GameEvent] = [
+        RoundDealt(
+            round=round_.number,
+            dealer=round_.dealer,
+            hands=round_.hands,
+            hands_derivation=round_.hands_derivation,
+            ts=TS,
+        )
+    ]
+    for seq, bid in enumerate(round_.auction, start=1):
+        events.append(
+            BidMade(
+                round=round_.number,
+                seq=seq,
+                position=bid.player,
+                bid=bid,
+                think_ms=None,
+                ts=TS,
+            )
+        )
+    for number, trick in enumerate(round_.tricks, start=1):
+        for play in trick:
+            events.append(
+                CardPlayed(
+                    round=round_.number,
+                    trick=number,
+                    position=play.position,
+                    card=play.card,
+                    derived=False,
+                    think_ms=None,
+                    ts=TS,
+                )
+            )
+    events.extend(round_.belotes)
+    if round_.score is not None:
+        events.append(round_.score)
+    return events
+
+
+def record_events(record: GameRecord) -> list[GameEvent]:
+    """Rebuild a whole record's events, in file order.
+
+    Args:
+        record: A projected record.
+
+    Returns:
+        Its header, ``game_started``, every round, and ``game_ended``.
+    """
+
+    events: list[GameEvent] = [
+        Header(
+            format=record.header.format,
+            source=RecordSource.ENGINE,
+            generator="test",
+            game_id=record.header.game_id,
+            created_at=TS,
+        ),
+        GameStarted(
+            ruleset=Ruleset(preset=record.preset, config=record.ruleset),
+            seats=record.seats,
+            observed_from=None,
+            ts=TS,
+        ),
+    ]
+    for round_ in record.rounds:
+        events.extend(round_events(round_))
+    events.append(
+        GameEnded(
+            totals=record.ended.totals if record.ended else None,
+            winner=record.ended.winner if record.ended else None,
+            reason=record.ended.reason if record.ended else EndReason.INTERRUPTED,
+            ts=TS,
+        )
+    )
+    return events
+
+
+def rebuilt(record: GameRecord, mutate=None) -> GameRecord:
+    """``record``, taken apart into events, optionally changed, put back.
+
+    Args:
+        record: The record to rebuild.
+        mutate: A callable taking the event list and returning the list
+            to project. ``None`` rebuilds unchanged, which is worth its
+            own assertion: a mutation test proves nothing if the rebuild
+            itself changes the record.
+
+    Returns:
+        The re-projected record.
+    """
+
+    events = record_events(record)
+    if mutate is not None:
+        events = mutate(events)
+    return project(events)
 
 
 @pytest.fixture

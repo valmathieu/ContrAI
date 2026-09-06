@@ -123,35 +123,42 @@ class TestRoundScriptOf:
 
 
 class TestBidAt:
+    """Bids are addressed per seat, by that seat's own count."""
+
     SCRIPT = RoundScript(
         number=2,
         bids=(
             ContractBid(Position.NORTH, 80, Suit.SPADES),
             PassBid(Position.WEST),
             DoubleBid(Position.SOUTH),
+            ContractBid(Position.NORTH, 90, Suit.HEARTS),
         ),
     )
 
-    def test_it_returns_the_bid_at_that_index(self):
-        assert self.SCRIPT.bid_at(1, Position.WEST) == PassBid(Position.WEST)
+    def test_it_counts_only_the_seat_s_own_bids(self):
+        # North's second bid is the 90, not the auction's second entry.
+        assert self.SCRIPT.bid_at(1, Position.NORTH).value == 90
+
+    def test_the_first_of_a_seat_s_bids_is_ordinal_zero(self):
+        assert self.SCRIPT.bid_at(0, Position.WEST) == PassBid(Position.WEST)
 
     def test_it_keeps_the_bid_seated_on_its_position(self):
         bid = self.SCRIPT.bid_at(0, Position.NORTH)
 
         assert bid.player is Position.NORTH
 
-    def test_a_seat_mismatch_is_refused(self):
-        with pytest.raises(SeatMismatchError) as excinfo:
-            self.SCRIPT.bid_at(1, Position.EAST)
-
-        assert "West" in str(excinfo.value)
-        assert "East" in str(excinfo.value)
-
-    def test_running_past_the_record_is_refused(self):
+    def test_a_seat_that_never_bid_is_exhausted_at_once(self):
         with pytest.raises(ScriptExhaustedError) as excinfo:
-            self.SCRIPT.bid_at(3, Position.EAST)
+            self.SCRIPT.bid_at(0, Position.EAST)
 
-        assert "bid 4" in str(excinfo.value)
+        assert "East" in str(excinfo.value)
+        assert "0 for that seat" in str(excinfo.value)
+
+    def test_running_past_a_seat_s_own_bids_is_refused(self):
+        with pytest.raises(ScriptExhaustedError) as excinfo:
+            self.SCRIPT.bid_at(2, Position.NORTH)
+
+        assert "bid 3 of its own" in str(excinfo.value)
         assert "Round 2" in str(excinfo.value)
 
 
@@ -197,7 +204,7 @@ class TestRecordedPlayer:
         # seat must take the ``choose_*`` path like any AI.
         assert RecordedPlayer("N", Position.NORTH).is_human is False
 
-    def test_choose_bid_reads_the_auction_s_length_as_the_address(self):
+    def test_choose_bid_counts_the_seat_s_own_bids_in_the_auction(self):
         script = RoundScript(
             number=1,
             bids=(
@@ -236,10 +243,12 @@ class TestRecordedPlayer:
         assert decision.rationale.rule == "recorded action"
         assert "North" in decision.rationale.detail
 
-    def test_choose_bid_skips_the_bids_the_engine_auto_applied(self):
-        # South is auto-passed at index 2 (it may only pass), then
-        # consulted again at index 4 once East's double gives it the
-        # redouble. A per-seat queue would hand it index 2's pass twice.
+    def test_a_bid_the_engine_auto_applied_still_advances_the_seat(self):
+        # South was auto-passed at index 2 (it could only pass), then is
+        # consulted at index 4 once East's double gives it the redouble.
+        # The auto-applied pass is in the auction, so South's ordinal is
+        # 1 and it gets its *second* recorded bid — a FIFO queue that the
+        # auto-pass never touched would hand back the pass again.
         script = RoundScript(
             number=1,
             bids=(
@@ -255,6 +264,36 @@ class TestRecordedPlayer:
         decision = player.choose_bid(Auction(bids=script.bids[:4]))
 
         assert decision.bid.value == 90
+
+    def test_a_forced_pass_the_record_omits_does_not_shift_a_seat(self):
+        # The observed shape: the site never transmits East's forced pass
+        # after West's double, so the record holds four bids where the
+        # replayed auction holds five. North's own count is what keeps
+        # the two in step — it is 1 either way, so North still gets its
+        # recorded pass rather than running off the end.
+        script = RoundScript(
+            number=1,
+            bids=(
+                ContractBid(Position.NORTH, 80, Suit.SPADES),
+                DoubleBid(Position.WEST),
+                PassBid(Position.SOUTH),
+                PassBid(Position.NORTH),
+            ),
+        )
+        player = self._seated(script, Position.NORTH)
+        replayed = Auction(
+            bids=(
+                script.bids[0],
+                script.bids[1],
+                script.bids[2],
+                PassBid(Position.EAST),  # forced, engine-inserted
+            )
+        )
+
+        decision = player.choose_bid(replayed)
+
+        assert isinstance(decision.bid, PassBid)
+        assert decision.bid.player is player
 
     def test_choose_card_counts_four_per_completed_trick(self):
         played = _trick(

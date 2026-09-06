@@ -19,6 +19,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (engine) `Game(players, deal_source=…)` — the dealer and the deal become a seam; `ScriptedDealSource` takes both off a record. Default unchanged. See [engine docs](docs/engine/index.md).
 - (engine) `ReplayController` — replays a record through the real engine, so every core rule fires as in a live game. See [engine docs](docs/engine/index.md).
 - (engine) Verify verdicts: `verified` / `partial` / `suspect` per round, five mismatch classes, written to `verdicts/<game_id>.json`. See [engine docs](docs/engine/index.md).
+- (engine) `verify_record(path)` — replays a record and reports illegal bids and plays, trick-winner, belote and score disagreements. See [engine docs](docs/engine/index.md).
 
 ### Changed
 

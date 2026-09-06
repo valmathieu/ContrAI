@@ -33,6 +33,12 @@ from .verdict import (
     verdicts_dir,
     write_verdict,
 )
+from .verify import (
+    VerifyingObserver,
+    default_out_root,
+    verify_game,
+    verify_record,
+)
 
 __all__ = [
     "DealSource",
@@ -53,4 +59,8 @@ __all__ = [
     "verdicts_dir",
     "verdict_path",
     "write_verdict",
+    "VerifyingObserver",
+    "verify_game",
+    "verify_record",
+    "default_out_root",
 ]
