@@ -37,6 +37,7 @@ what was found, and the next round starts from its own recorded deal.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -678,10 +679,14 @@ def _ruleset_notes(record: GameRecord) -> list[str]:
     known = PRESETS.get(record.preset)
     if known is None or known == record.ruleset:
         return []
+    # Field names come off the *known* preset, which is always a real
+    # ``RuleConfig``. Reading them off the record's own ruleset would
+    # trust the file to be a dataclass, which is not this layer's to
+    # assume — and a note is never worth raising over.
     drifted = sorted(
-        name
-        for name in type(record.ruleset).__dataclass_fields__
-        if getattr(known, name) != getattr(record.ruleset, name)
+        field.name
+        for field in dataclasses.fields(known)
+        if getattr(known, field.name) != getattr(record.ruleset, field.name, None)
     )
     return [
         f"the record names preset {record.preset!r}, whose ruleset now "
