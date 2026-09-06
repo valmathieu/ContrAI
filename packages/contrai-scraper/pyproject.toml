@@ -5,9 +5,15 @@ description = "Playwright spectator-mode scraper for online Contrée games"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "jupyter>=1.1.1",
-    "nest-asyncio>=1.6.0",
+    "contrai-core",
+    "contrai-data",
     "playwright>=1.57.0",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.4",
+  "pytest-cov>=6.0"
 ]
 
 [project.scripts]

@@ -29,6 +29,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 ### Removed
 
 - (scraper) `run.py`, the step-1 notebook and the two site screenshots under `docs/scraper/`.
+- (scraper) `jupyter` and `nest-asyncio` dependencies — neither was imported; `uv sync` installs less.
 
 ## [0.4.0] - 2026-09-01
 
