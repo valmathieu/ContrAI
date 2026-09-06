@@ -47,11 +47,24 @@ from contrai_scraper.profile import (
     load_profile,
 )
 from contrai_scraper.session import find_tournament_table, log_in, open_spectator_mode
+from contrai_scraper.wire import (
+    DEAL_VERB,
+    EventKey,
+    WireEvent,
+    WireStream,
+    dig,
+    duplicate_key,
+    order_events,
+    parse_key,
+    unwrap,
+)
 
 __all__ = [
     "ACCOUNT_EMAIL",
+    "DEAL_VERB",
     "AccountSection",
     "BrowserSection",
+    "EventKey",
     "OutputSection",
     "ParseError",
     "PrivacySection",
@@ -65,11 +78,15 @@ __all__ = [
     "TARGET_URL",
     "VERIFICATION_CODE",
     "WireError",
+    "WireEvent",
     "WireEvents",
     "WireSection",
+    "WireStream",
     "WireTokens",
     "compress_to_base64",
     "decompress_from_base64",
+    "dig",
+    "duplicate_key",
     "find_tournament_table",
     "get_current_round",
     "get_players",
@@ -78,5 +95,8 @@ __all__ = [
     "log_in",
     "observe_game",
     "open_spectator_mode",
+    "order_events",
+    "parse_key",
+    "unwrap",
     "wait_for_new_round",
 ]
