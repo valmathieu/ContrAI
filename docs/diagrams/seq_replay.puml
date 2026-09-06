@@ -1,0 +1,245 @@
+@startuml seq_replay
+title contrai-engine — replay and verify a record (verify_game / contrai verify)
+
+' --- Palette: engine orange for engine participants, core blue for core
+' types, data teal for the record the whole flow is driven from ---
+skinparam shadowing false
+skinparam sequence {
+    ArrowColor #B26A28
+    LifeLineBorderColor #E89A4F
+    LifeLineBackgroundColor #FFEFD9
+    ParticipantBorderColor #B26A28
+    ParticipantBackgroundColor #FFEFD9
+    ParticipantFontColor #5C3A14
+    ActorBorderColor #B26A28
+    ActorBackgroundColor #FFEFD9
+    ActorFontColor #5C3A14
+    GroupBorderColor #B26A28
+    GroupBackgroundColor #FFF3E0
+    GroupHeaderFontColor #5C3A14
+    BoxBorderColor #B26A28
+    BoxBackgroundColor #FFF3E0
+    DividerBorderColor #B26A28
+    DividerBackgroundColor #FFD9B3
+    DividerFontColor #5C3A14
+}
+skinparam note {
+    BackgroundColor #FFFDE7
+    BorderColor #F9A825
+    FontColor #5F4B00
+}
+
+participant "verify_game()\n(replay/verify.py)" as VG <<engine>>
+participant "GameRecord" as REC <<from contrai-data>> #E0F5F2
+participant "ReplayController" as C <<engine>>
+participant "VerifyingObserver" as O <<engine>>
+participant "Game" as G <<engine>>
+participant "ScriptedDealSource" as DS <<engine>>
+participant "Round" as R <<engine>>
+participant "RecordedPlayer\n(x4)" as P <<engine>>
+participant "Auction /\nPlayState" as CORE <<from contrai-core>> #E1F0FF
+
+[-> VG : verify_record(path)
+activate VG
+
+VG -> REC : load_game(path)
+activate REC
+REC --> VG : rounds, ruleset, seats
+deactivate REC
+
+VG -> O : new VerifyingObserver(record)
+activate O
+note right of O
+  Reads the record's ""preset"" against
+  ""PRESETS"" and keeps a **note** when the
+  two have drifted apart. Stale is not
+  wrong, so it never changes a verdict.
+end note
+
+VG -> C : new ReplayController(record, view=observer)
+activate C
+C -> C : rounds = [r for r in record.rounds\nif r.complete]
+C -> G : new Game(4 x RecordedPlayer,\n  rules=record.ruleset,\n  deal_source=ScriptedDealSource(rounds))
+activate G
+note right of G
+  Built **through** ""Game"" on purpose: coinche
+  legality compares ""Team"" by identity, and
+  only ""Game.~__init~__"" hands both partners
+  the same instance. A driver assembling
+  players by hand would see every double in
+  a corpus refused.
+end note
+
+== One pass per recorded round, in file order ==
+
+loop **for round_ in record.rounds**
+
+    alt **not round_.complete**
+        VG -> O : round_skipped(round_)
+        note right of O
+          Verdict ""partial"", and nothing is
+          replayed: an auction that never
+          closed cannot be driven to the end
+          by any set of actions.
+        end note
+    else **complete**
+        VG -> O : expect(round_)
+        note right of O
+          The pairing is **handed in**, never looked
+          up by number. ""Game.round~_number"" counts
+          the rounds //replayed//; a record's numbers
+          are its source's deal count. One skipped
+          round would put every later comparison
+          permanently off by one.
+        end note
+
+        VG -> C : replay_round(round_)
+        C -> P : player.script = RoundScript.of(round_)
+        C -> G : manage_round(view=observer)
+
+        G -> DS : next_dealer(game)
+        activate DS
+        DS --> G : the seat ""round~_dealt"" names
+        G -> G : set_players_order()
+        G -> DS : next_deck(game)
+        DS --> G : Deck.stacked(recorded hands,\n  in deal order)
+        deactivate DS
+        note right of DS
+          The dealer is asked for //first// because the
+          seating is what maps a record's per-seat
+          hands into deal order. No shuffle, no cut,
+          no draw: a replay consumes no randomness
+          at all, so a verdict is reproducible
+          without a seed.
+        end note
+
+        G -> R : manage_bidding(observer)
+        activate R
+
+        loop **while not auction.is_terminal()**
+            alt **len(legal_actions) == 1**
+                R -> CORE : apply(the one legal Pass)
+                note right of R
+                  **The seat is never consulted.**
+                  Auto-applied whenever it has exactly
+                  one legal action — which is why a bid
+                  is addressed per seat, by that seat's
+                  own count, rather than by position in
+                  the auction.
+                end note
+            else **a real choice**
+                R -> P : choose_bid(auction)
+                activate P
+                P -> P : ordinal = this seat's bids\n  already in the auction
+                P --> R : the recorded bid, re-seated\n  onto the live player
+                deactivate P
+                R -> CORE : Auction.apply(bid)
+                activate CORE
+                CORE --> R : the new auction
+                note right of CORE
+                  <b>Check 1 — ""illegal~_bid""</b>. Nothing here
+                  re-implements a bidding rule: the
+                  recorded bid is handed to the real
+                  ""Auction"" and //its// refusal is the
+                  finding.
+                end note
+                deactivate CORE
+            end
+        end
+        R --> G : contract (or None)
+
+        alt **contract is None**
+            G -> R : handle_failed_contract()
+            note right of G
+              The all-pass path, and the reason the
+              driver goes through ""manage~_round"":
+              this is what returns the cards to the
+              deck. A driver reaching past it would
+              leave eight cards in every hand and
+              the next deal would hand out sixteen.
+            end note
+        else **a contract stands**
+            G -> R : play_all_tricks(observer)
+            loop **8 tricks x 4 cards**
+                R -> P : choose_card(observation)
+                activate P
+                P -> P : index = cards already\n  played this round
+                P --> R : the recorded card\n  <<seat checked>>
+                deactivate P
+                R -> CORE : PlayState.apply(Play(player, card))
+                activate CORE
+                CORE --> R : the new play state
+                note right of CORE
+                  <b>Check 2 — ""illegal~_play""</b>: the real
+                  play state refuses a card the seat
+                  cannot legally play.
+                  <b>Check 3 — ""trick~_winner""</b>: if the
+                  record's next leader is not the seat
+                  core says won, the seat check above
+                  fires at the //first card of the next trick//.
+                  Comparing winners at the end would be
+                  too late — the replay has already
+                  diverged.
+                end note
+                deactivate CORE
+                opt **K + Q of trump played**
+                    R -> O : on_belote_announced(player, kind, suit, round)
+                end
+            end
+            G -> R : calculate_round_scores()
+            R -> R : score_round(round_)
+        end
+        deactivate R
+
+        C -> O : on_round_complete(round_, scores)
+        note right of O
+          <b>Check 4 — ""belote""</b>: every pair the record
+          //claims// must be in the dealt hands, and one
+          marked ""announced"" must have been announced
+          in the replay. A pair the engine derives that
+          the record never mentions is **not** a
+          mismatch — a table may simply not transmit
+          it, and if it moved the marks the score
+          check catches that.
+          <b>Check 5 — ""score""</b>: outcome, declarer,
+          contract terms, marks, card points, belote
+          and last trick, field by field. A sweep may
+          state its card points as the real pile //or//
+          as the 250 substitute (§4.2.1).
+        end note
+        O -> O : RoundVerdict.decide(...)
+    end
+
+    group **on IllegalBidError / IllegalPlayError / ReplayError**
+        VG -> O : round_failed(round_, exc)
+        VG -> C : clear_hands()
+        note right of C
+          The round's replay **ends here** — the state
+          has diverged, so every later check in it
+          would compare two different games. The
+          hands are emptied because ""Deck.deal""
+          //extends// a hand, so the next round would
+          otherwise seat a player holding sixteen
+          cards.
+        end note
+    end
+end
+
+deactivate G
+deactivate C
+
+VG -> O : finish()
+O --> VG : GameVerdict
+deactivate O
+note right of VG
+  A game takes the **worst** verdict among its
+  rounds — ""verified"" < ""partial"" < ""suspect"" —
+  so one bad round is never averaged away by
+  good ones.
+end note
+
+VG -> VG : write_verdict(root, verdict)\n  -> verdicts/<game_id>.json
+[<-- VG : GameVerdict\n(""contrai verify"" exits 1 on any suspect round)
+deactivate VG
+
+@enduml
