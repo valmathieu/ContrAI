@@ -38,10 +38,37 @@ from .bid import (
 )
 from .contract import Contract
 from .exceptions import IllegalBidError
+from .position import Position
 from .rule_config import RuleConfig
+from .team_side import TeamSide
 
 if TYPE_CHECKING:
     from .player import BasePlayer
+
+
+def _actor_side(actor: "BasePlayer | Position") -> Optional[TeamSide]:
+    """Which side of the table a bid's actor sits on.
+
+    A live auction names the :class:`~contrai_core.player.BasePlayer`
+    who bid; a record's auction names the bare :class:`Position`. Both
+    answer "which side" the same way — through the seat, whose
+    :attr:`~contrai_core.Position.team_side` is pure index parity — so
+    resolving through the seat rather than through
+    :class:`~contrai_core.Team` is what lets the same rule run on a
+    sealed auction and on a live one.
+
+    Args:
+        actor: A seated player, or a seat.
+
+    Returns:
+        The actor's side, or ``None`` when it has no seat to read — an
+        unseated ``BasePlayer``, which only a caller building an auction
+        by hand can produce. A rule asking this question treats ``None``
+        as "cannot tell" rather than raising.
+    """
+
+    seat = getattr(actor, "position", actor)
+    return seat.team_side if isinstance(seat, Position) else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,12 +221,15 @@ class Auction:
     def is_terminal(self) -> bool:
         """Return whether the auction has concluded.
 
-        The auction ends on either of:
+        The auction ends on any of:
 
         1. Four consecutive passes from the very first bid — the
            first-round all-pass wipe.
         2. Three consecutive passes after at least one non-pass bid.
            The winning contract is the last non-pass numeric bid.
+        3. Only when ``rules.double_closes_auction`` is on: the early
+           close after a double described in
+           :meth:`_closed_after_double`.
         """
 
         if not self.bids:
@@ -207,8 +237,60 @@ class Auction:
         # All-pass wipe — exactly four players, every bid a pass.
         if all(isinstance(b, PassBid) for b in self.bids):
             return len(self.bids) >= 4
+        if self._closed_after_double():
+            return True
         # Three passes after a non-pass.
         return self.consecutive_passes >= 3
+
+    def _closed_after_double(self) -> bool:
+        """Whether the ``double_closes_auction`` variant has ended this
+        auction (contree-domain.md §9.4).
+
+        Once a double stands, the only bids left are the doubled side's
+        redouble and passes, so tables running this variant do not wait
+        for the third consecutive pass: a redouble closes the auction at
+        once, and a plain double closes it as soon as **both** members of
+        the doubled side have declined to redouble.
+
+        On the engine's own path the double half never changes the
+        outcome — seats alternate sides, so after the doubler the cycle
+        runs opponent → partner → opponent and the doubled side's second
+        pass *is* the third consecutive pass. What it changes is a
+        **sealed** auction, where a source that never transmits the
+        doubling side's forced passes would otherwise leave a closed
+        auction looking unfinished. The redouble half does change the
+        engine: it drops the three forced passes that follow.
+
+        Returns:
+            ``False`` when the variant is off, when no double stands, or
+            when the history is too malformed to name a doubled side.
+        """
+
+        if not self.rules.double_closes_auction or not self.has_double:
+            return False
+        if self.has_redouble:
+            return True
+        # The doubled side is the side that *bid* the contract — the one
+        # holding the redouble. A stray double with no contract behind it
+        # names no side: a live auction refuses that bid, but a record's
+        # auction is built by construction, and a structural layer must
+        # not raise on rule-illegal input.
+        declaring = self.last_contract_bid
+        if declaring is None:
+            return False
+        doubled_side = _actor_side(declaring.player)
+        if doubled_side is None:
+            return False
+        declined: set[Position] = set()
+        for bid in reversed(self.bids):
+            if isinstance(bid, DoubleBid):
+                # The standing double: ``has_double`` guarantees no
+                # contract bid lies between it and the end, so every bid
+                # walked so far came after it.
+                break
+            if isinstance(bid, PassBid) and _actor_side(bid.player) is doubled_side:
+                declined.add(getattr(bid.player, "position", bid.player))
+        return len(declined) >= 2
 
     def contract(self) -> Optional[Contract]:
         """Return the :class:`Contract` produced by this auction.
