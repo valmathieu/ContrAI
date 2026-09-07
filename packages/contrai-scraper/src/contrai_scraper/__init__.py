@@ -47,6 +47,12 @@ from contrai_scraper.rawlog import (
     raw_path,
     read_raw_log,
 )
+from contrai_scraper.parse.deal import (
+    DEAL_PACKETS,
+    deal_hands,
+    final_trick,
+    resolve_dealer,
+)
 from contrai_scraper.parse.translate import Translator
 from contrai_scraper.profile import (
     AccountSection,
@@ -78,6 +84,7 @@ from contrai_scraper.wire import (
 
 __all__ = [
     "ACCOUNT_EMAIL",
+    "DEAL_PACKETS",
     "DEAL_VERB",
     "AccountSection",
     "BrowserSection",
@@ -110,9 +117,11 @@ __all__ = [
     "WireStream",
     "WireTokens",
     "compress_to_base64",
+    "deal_hands",
     "decompress_from_base64",
     "dig",
     "duplicate_key",
+    "final_trick",
     "find_tournament_table",
     "get_current_round",
     "get_players",
@@ -125,6 +134,7 @@ __all__ = [
     "order_events",
     "parse_key",
     "raw_dir",
+    "resolve_dealer",
     "raw_path",
     "read_raw_log",
     "unwrap",
