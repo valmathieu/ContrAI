@@ -26,7 +26,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from contrai_core import ContractSuit, Position, TeamSide
+from contrai_core import ContractSuit, Position, SlamLevel, TeamSide
 
 from ..exceptions import ParseError
 from .translate import Translator
@@ -51,7 +51,7 @@ class PlayerInfo:
 class RowContract:
     """The contract a score row was played under."""
 
-    value: int | None
+    value: int | SlamLevel | None
     suit: ContractSuit | None
     multiplier: int
 
@@ -218,6 +218,7 @@ def _score_row(
 
     tokens = translator.profile.wire.tokens
     suit_token = translator.field(row, "row_suit")
+    value_token = translator.field(row, "row_value")
     taken: dict[TeamSide, int] = {}
     belote: dict[TeamSide, int] = {}
     marked: dict[TeamSide, tuple[int, int]] = {}
@@ -233,7 +234,8 @@ def _score_row(
     return ScoreRow(
         made=translator.field(row, "row_status") == tokens.score_made,
         contract=RowContract(
-            value=translator.field(row, "row_value"),
+            value=None if value_token is None
+            else translator.contract_value(value_token),
             suit=None if suit_token is None else translator.contract_suit(suit_token),
             multiplier=translator.field(row, "row_multiplier") or 1,
         ),

@@ -59,6 +59,7 @@ from contrai_scraper.parse.live import (
     collect_rounds,
     play_events,
 )
+from contrai_scraper.parse.session import SessionResult, parse_session
 from contrai_scraper.parse.snapshot import (
     PlayerInfo,
     RowContract,
@@ -120,6 +121,7 @@ __all__ = [
     "RulesSection",
     "SENT",
     "ScoreRow",
+    "SessionResult",
     "ScraperError",
     "Selector",
     "SelectorSection",
@@ -153,6 +155,7 @@ __all__ = [
     "open_spectator_mode",
     "order_events",
     "parse_key",
+    "parse_session",
     "play_events",
     "raw_dir",
     "resolve_dealer",
