@@ -47,6 +47,7 @@ from contrai_scraper.rawlog import (
     raw_path,
     read_raw_log,
 )
+from contrai_scraper.parse.translate import Translator
 from contrai_scraper.profile import (
     AccountSection,
     BrowserSection,
@@ -99,6 +100,7 @@ __all__ = [
     "Selector",
     "SelectorSection",
     "SiteSection",
+    "Translator",
     "TARGET_URL",
     "VERIFICATION_CODE",
     "WireError",

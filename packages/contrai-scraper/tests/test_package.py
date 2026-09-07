@@ -28,6 +28,16 @@ class TestWiring:
         }
         assert public - exported == set()
 
+    def test_the_literal_seat_map_is_never_used(self):
+        # Position.from_french maps the four names one to one, which is the
+        # exact bug the mirrored seat map exists to avoid.
+        sources = pathlib.Path(contrai_scraper.__path__[0]).rglob("*.py")
+        offenders = [
+            path.name for path in sources
+            if "from_french" in path.read_text(encoding="utf-8")
+        ]
+        assert offenders == []
+
     def test_never_imports_the_engine(self):
         # The dependency edge is core <- data <- {engine, scraper}. CI runs
         # this suite with only the scraper's own dependencies installed, so an

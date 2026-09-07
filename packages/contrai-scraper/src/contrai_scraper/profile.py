@@ -41,10 +41,11 @@ _ROOT = "profile"
 # The three canonical vocabularies a profile's token maps translate *into*.
 # They are spelled here rather than taken from ``contrai_core`` because the
 # enum values are English words ("Jack", "Spades", "North") and a hand-written
-# profile wants the one-letter forms. Position deliberately does **not** go
-# through ``Position.from_french``: that maps names literally, and the observed
-# site's rotation runs the other way round the table, so a literal map is the
-# bug this whole indirection exists to prevent (P-A finding D1).
+# profile wants the one-letter forms. Seats deliberately do **not** go through
+# core's name-to-seat lookup: that maps the four names one to one, and the
+# observed site's rotation runs the other way round the table, so a literal
+# map is the bug this whole indirection exists to prevent (P-A finding D1).
+# The seat map's own check lives in the translator.
 _RANK_BY_NAME: Mapping[str, Rank] = {
     "7": Rank.SEVEN,
     "8": Rank.EIGHT,
