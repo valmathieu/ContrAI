@@ -83,6 +83,18 @@ class Translator:
         self._rotation = rotation
 
     @property
+    def profile(self) -> Profile:
+        """The profile this translator reads through.
+
+        Exposed because the stages above need the *rest* of the document —
+        the token constants, the round-state prefix — and threading both a
+        profile and a translator through every call would be two handles on
+        one thing.
+        """
+
+        return self._profile
+
+    @property
     def rotation(self) -> tuple[Position, ...]:
         """The four seats in the site's own order, which is what a deal walks."""
 
