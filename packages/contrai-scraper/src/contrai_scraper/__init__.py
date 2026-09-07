@@ -53,6 +53,12 @@ from contrai_scraper.parse.deal import (
     final_trick,
     resolve_dealer,
 )
+from contrai_scraper.parse.live import (
+    LiveRound,
+    bid_events,
+    collect_rounds,
+    play_events,
+)
 from contrai_scraper.parse.snapshot import (
     PlayerInfo,
     RowContract,
@@ -97,6 +103,7 @@ __all__ = [
     "BrowserSection",
     "EventKey",
     "FrameSource",
+    "LiveRound",
     "OutputSection",
     "ParseError",
     "PlayerInfo",
@@ -128,6 +135,8 @@ __all__ = [
     "WireStream",
     "WireTokens",
     "compress_to_base64",
+    "bid_events",
+    "collect_rounds",
     "deal_hands",
     "decompress_from_base64",
     "dig",
@@ -144,6 +153,7 @@ __all__ = [
     "open_spectator_mode",
     "order_events",
     "parse_key",
+    "play_events",
     "raw_dir",
     "resolve_dealer",
     "raw_path",
