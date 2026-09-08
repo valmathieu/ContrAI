@@ -34,7 +34,10 @@ code_submit = "#placeholder-code-submit"
 mode_online = "#placeholder-online"
 mode_observe = "#placeholder-observe"
 variant = "#placeholder-variant"
-table_row = ".placeholder-table-row"
+# Answered once per account, the first time it enters online mode; the dialog
+# blocks the spectator menu until it is.
+pledge_dialog = "#placeholder-pledge"
+pledge_accept = "#placeholder-pledge-ok"
 tournament_marker = "#placeholder-table-kind"
 tournament_marker_text = "placeholder"
 next_table = "#placeholder-next"
@@ -43,7 +46,10 @@ options_row = ".placeholder-option-row"
 options_id_attr = "data-placeholder"
 options_on_class = "placeholder-on"
 panel_close = "#placeholder-close"
-leave_table = "#placeholder-leave"
+# The score panel the boundary read falls back to when the wire cannot answer.
+scoreboard_button = "#placeholder-scoreboard"
+scoreboard_row = ".placeholder-score-row"
+scoreboard_cell = ".placeholder-score-cell"
 # Must carry a {seat} placeholder: it is filled with one of the seat tokens
 # named under [wire.tokens].seats.
 seat_element = "#placeholder-seat-{seat}"
@@ -64,6 +70,12 @@ play_verb = "placeholder-play"
 bid_verb_prefix = "placeholder-bid:"
 deal_key_arity = 4
 round_state_prefix = "placeholder."
+# How the client asks for table state without leaving: an action name, the
+# prefix its room id carries, and the parameter naming the last frame seen.
+# Without that parameter the request is acknowledged and ignored.
+resume_action = "placeholder-resume"
+resume_room_prefix = "placeholder-room-"
+resume_param = "placeholderLastEvent"
 
 # The three event names the parser reacts to.
 [wire.events]
@@ -157,11 +169,23 @@ preset = "tournament"
 placeholder_option_a = true
 placeholder_option_b = false
 
+# The per-table loop's own thresholds. These are policy, not site vocabulary.
+[recorder]
+# Skip a table whose game is already this many rounds old.
+hop_after_rows = 8
+# Give up on a table that has not played a card for this long.
+stale_after_s = 180
+# Seconds between health heartbeats.
+health_interval_s = 60
+# How long to wait for a join snapshot after being seated.
+snapshot_timeout_s = 30
+
 # Where records and raw logs are written. Both roots resolve relative to this
-# file, so a profile moves with its data.
+# file, so a profile moves with its data. Both roots name the same directory:
+# game_path appends games/ and raw_path appends raw/.
 [output]
 root = "./records"
-raw_root = "./raw"
+raw_root = "./records"
 raw_retention_days = 30
 
 # Inputs to the pseudonymisation step, which is not built yet. The salt may be
