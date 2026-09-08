@@ -448,17 +448,26 @@ name = "contrai-scraper"
 version = "0.4.0"
 source = { editable = "packages/contrai-scraper" }
 dependencies = [
-    { name = "jupyter" },
-    { name = "nest-asyncio" },
+    { name = "contrai-core" },
+    { name = "contrai-data" },
     { name = "playwright" },
+]
+
+[package.optional-dependencies]
+test = [
+    { name = "pytest" },
+    { name = "pytest-cov" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "jupyter", specifier = ">=1.1.1" },
-    { name = "nest-asyncio", specifier = ">=1.6.0" },
+    { name = "contrai-core", editable = "packages/contrai-core" },
+    { name = "contrai-data", editable = "packages/contrai-data" },
     { name = "playwright", specifier = ">=1.57.0" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.4" },
+    { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.0" },
 ]
+provides-extras = ["test"]
 
 [[package]]
 name = "contrai-workspace"
@@ -469,7 +478,7 @@ dependencies = [
     { name = "contrai-core", extra = ["test"] },
     { name = "contrai-data", extra = ["test"] },
     { name = "contrai-engine", extra = ["test"] },
-    { name = "contrai-scraper" },
+    { name = "contrai-scraper", extra = ["test"] },
 ]
 
 [package.dev-dependencies]
@@ -487,7 +496,7 @@ requires-dist = [
     { name = "contrai-core", extras = ["test"], editable = "packages/contrai-core" },
     { name = "contrai-data", extras = ["test"], editable = "packages/contrai-data" },
     { name = "contrai-engine", extras = ["test"], editable = "packages/contrai-engine" },
-    { name = "contrai-scraper", editable = "packages/contrai-scraper" },
+    { name = "contrai-scraper", extras = ["test"], editable = "packages/contrai-scraper" },
 ]
 
 [package.metadata.requires-dev]
