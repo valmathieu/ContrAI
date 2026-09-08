@@ -69,6 +69,7 @@ from contrai_data import (
 )
 
 from ..exceptions import ParseError
+from ..profile import Profile
 from ..wire import WireEvent
 from .deal import DECK_SIZE, deal_hands, final_trick, resolve_dealer
 from .live import LiveRound, bid_events, collect_rounds, play_events
@@ -99,7 +100,7 @@ class SessionResult:
 
 def parse_session(
     events: Iterable[WireEvent],
-    profile,
+    profile: Profile,
     *,
     game_id: str | None = None,
     generator: str = "contrai-scraper",
