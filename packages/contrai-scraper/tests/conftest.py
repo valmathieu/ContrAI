@@ -824,6 +824,30 @@ def synthesize():
 
 
 @pytest.fixture
+def session_frames(synthesize):
+    """A whole game as ``RawFrame``s, ready for a fake frame source.
+
+    Args:
+        (fixtures)
+
+    Returns:
+        A callable taking the same keyword arguments as ``synthesize_frames``
+        and returning ``RawFrame`` objects rather than ``(text, socket)``
+        pairs, which is what a ``FrameSource`` yields.
+    """
+
+    from contrai_scraper import RECEIVED, RawFrame
+
+    def build(events, **kwargs):
+        return [
+            RawFrame(socket=socket, direction=RECEIVED, at=index / 10, text=text)
+            for index, (text, socket) in enumerate(synthesize(events, **kwargs))
+        ]
+
+    return build
+
+
+@pytest.fixture
 def game_builders():
     """The record builders, for tests that need a game of their own shape.
 

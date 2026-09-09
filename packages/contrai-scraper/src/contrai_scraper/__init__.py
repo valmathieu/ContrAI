@@ -50,6 +50,12 @@ from contrai_scraper.observer import (
     observe_game,
     wait_for_new_round,
 )
+from contrai_scraper.recorder import (
+    SCOREBOARD_PANEL,
+    Recorder,
+    RecorderLimits,
+    SessionSummary,
+)
 from contrai_scraper.rawlog import (
     RawLine,
     RawLogWriter,
@@ -133,16 +139,20 @@ __all__ = [
     "ProfileError",
     "RecorderSection",
     "RECEIVED",
+    "SCOREBOARD_PANEL",
     "RawFrame",
     "RawLine",
     "RawLogFrameSource",
     "RawLogWriter",
+    "Recorder",
+    "RecorderLimits",
     "RowContract",
     "RulesSection",
     "SENT",
     "ScoreRow",
     "ScoreboardReading",
     "SessionResult",
+    "SessionSummary",
     "ScraperError",
     "Selector",
     "SelectorSection",
