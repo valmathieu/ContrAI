@@ -31,6 +31,7 @@ from contrai_scraper.frames import (
     RawFrame,
     RawLogFrameSource,
 )
+from contrai_scraper.health import Counters, HealthLog
 from contrai_scraper.lzstring import compress_to_base64, decompress_from_base64
 from contrai_scraper.observer import (
     get_current_round,
@@ -103,8 +104,10 @@ __all__ = [
     "DEAL_VERB",
     "AccountSection",
     "BrowserSection",
+    "Counters",
     "EventKey",
     "FrameSource",
+    "HealthLog",
     "LiveRound",
     "OutputSection",
     "ParseError",
