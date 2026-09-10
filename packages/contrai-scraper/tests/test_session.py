@@ -207,6 +207,20 @@ class TestEnding:
                  if "updateTable" not in text]
         assert _parse(profile, texts).events[-1].reason is EndReason.INTERRUPTED
 
+    def test_a_caller_can_state_how_the_game_ended(self, profile, synthesize,
+                                                   source_game):
+        # A watchdog giving up on a silent table is invisible to the wire, so
+        # nothing in the stream can say `abandoned` — only the recorder knows.
+        result = _parse(profile, synthesize(source_game),
+                        end_reason=EndReason.ABANDONED)
+        assert result.events[-1].reason is EndReason.ABANDONED
+
+    def test_a_stated_reason_beats_the_wires_own_flag(self, profile, synthesize,
+                                                      source_game):
+        result = _parse(profile, synthesize(source_game),
+                        end_reason=EndReason.INTERRUPTED)
+        assert result.events[-1].reason is EndReason.INTERRUPTED
+
 
 class TestRefusals:
     def test_a_session_with_no_snapshot_is_refused(self, profile, builders):

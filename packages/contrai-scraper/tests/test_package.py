@@ -2,6 +2,9 @@
 
 import pathlib
 import re
+from importlib import import_module
+
+import pytest
 
 import contrai_scraper
 
@@ -27,6 +30,13 @@ class TestWiring:
             and getattr(value, "__module__", "").startswith("contrai_scraper")
         }
         assert public - exported == set()
+
+    def test_the_v1_browser_flow_is_gone(self):
+        # config.py was the last tracked file naming the site, and it held a
+        # live credential pair. The profile owns both now.
+        for name in ("config", "session", "observer"):
+            with pytest.raises(ImportError):
+                import_module(f"contrai_scraper.{name}")
 
     def test_the_literal_seat_map_is_never_used(self):
         # Position.from_french maps the four names one to one, which is the
