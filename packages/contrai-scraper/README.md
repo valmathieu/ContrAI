@@ -12,11 +12,11 @@ moves — checking an observed game against the rules is the engine's job, throu
 
 The target URL, the account credentials, every selector the browser clicks and every token the
 wire speaks live in a local `profile.toml` that is never committed; `profile.example.toml` is
-the committed schema, placeholders only. The remaining literals in `config.py` are the last
-ones, and the profile-driven browser half replaces them in the next scraper release. Code and
-docs describe *what* each step does, not *where* it clicks — and the test suite runs against an
-invented vocabulary, so no tracked file has to spell the real one. Do not add the site's name,
-its DOM ids or screenshots of it to any tracked file.
+the committed schema, placeholders only. No tracked file names the site at all any more — not
+code, not a test, not an error message, which is why a failed step reports the profile *key* that
+did not resolve rather than the selector behind it. Code and docs describe *what* each step does,
+not *where* it clicks, and the test suite runs against an invented vocabulary. Do not add the
+site's name, its DOM ids or screenshots of it to any tracked file.
 
 ## Layout
 
@@ -31,26 +31,32 @@ The importable package lives under `src/contrai_scraper/`:
 | `wire` | Envelope, keepalive, de-duplication, composite key → `WireEvent`. |
 | `lzstring` | The LZ-String base64 codec the deal payload arrives in. |
 | `parse/` | `translate`, `deal`, `snapshot`, `live`, `session` — wire events → a record. |
-| `cli` | `contrai-scrape`: `run` (the v1 browser flow, still the default) and `parse`. |
-| `config`, `session`, `observer` | The v1 browser flow, kept until the replacement lands. |
+| `browser` | `Spectator` — the only module that touches a page: login, the walk, the hop, the two panels. |
+| `recorder` | `Recorder` — the table loop: seat, gate, watch, write, hop. Imports no Playwright. |
+| `health` | `HealthLog` and `Counters` — one JSON line per transition, on stderr. |
+| `cli` | `contrai-scrape`: `run` (the default), `check-profile` and `parse`. |
 
 ## Usage
 
 From the workspace root, after `uv sync` and `uv run playwright install chromium`:
 
 ```bash
-uv run contrai-scrape                                       # watch a table (the v1 flow)
-uv run contrai-scrape parse RAW... --profile profile.toml   # re-parse stored raw logs
+uv run contrai-scrape run --profile profile.toml --headless   # watch tables
+uv run contrai-scrape check-profile profile.toml              # validate before a shift
+uv run contrai-scrape parse RAW... --profile profile.toml     # re-parse stored raw logs
 ```
 
-The browser runs headed with a small slow-motion delay so a run can be watched. `parse` needs no
-browser at all: it replays a raw log through the same pipeline a live session uses and writes a
-`contrai-data` record per game, which `contrai verify` then checks.
+`run` takes `--max-games N` and `--minutes N`, and `--headless` / `--headed` override
+`[browser].headless` — headed with a slow-motion delay makes a run auditable, headless makes it
+unattended. `check-profile` walks the site once and prints one line per check, exiting 1 on any
+failure, so it can gate a shift before it starts. `parse` needs no browser at all: it replays a
+raw log through the same pipeline a live session uses and writes a `contrai-data` record per
+game, which `contrai verify` then checks.
 
 ## Status
 
-The wire half is done: profile, raw log, envelope, and the parser that turns a session into a
-record. The browser half — profile-driven navigation, the recorder loop, the health log — is
-next, and so is pseudonymisation; records currently carry raw ids, names and account fields,
-which makes them personal data and local-only. See the
+Both halves are in place: the profile, the raw log, the wire parser, the profile-driven browser
+walk, the table loop and the health log. What is left is multi-table orchestration, the raw-log
+retention sweep, and pseudonymisation — records currently carry raw ids, names and account
+fields, which makes them personal data and local-only. See the
 [scraper docs](../../docs/scraper/index.md).
