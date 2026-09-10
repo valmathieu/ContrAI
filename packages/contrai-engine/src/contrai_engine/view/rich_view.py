@@ -909,8 +909,10 @@ class RichView:
         # Debug strip: every seat's hand face up, plus the still-in-play
         # summary. ``round_`` is only ever truthy when ``self.game`` is
         # set (it is derived from it above), so ``self.game.players`` is
-        # safe here without a separate None check.
-        if self.options.debug and round_:
+        # safe here without a separate None check. A replay shows the
+        # strip for the same reason debug does: nothing is hidden from a
+        # viewer watching a game that has already been played.
+        if (self.options.debug or self.options.replay) and round_:
             self.console.print(
                 _panel_debug_hands(
                     self.game.players,
@@ -975,20 +977,31 @@ class RichView:
         Args:
             env_var: Environment variable name that overrides the delay.
             default: Delay in seconds to use when ``env_var`` is unset —
-                except under debug mode (:attr:`options`.debug), where
-                the default collapses to zero so an unattended debug
-                run races through with no artificial pacing. An
+                except under debug mode (:attr:`options`.debug) or
+                replay mode (:attr:`options`.replay), where the default
+                collapses to zero so an unattended debug run races
+                through with no artificial pacing and a replay steps at
+                the viewer's speed rather than the AI's. An
                 explicit ``env_var`` value still wins over that
                 zeroing, so pacing can be forced back on for observation.
         """
         time.sleep(
-            _resolve_delay(env_var, 0.0 if self.options.debug else default)
+            _resolve_delay(
+                env_var,
+                0.0
+                if self.options.debug or self.options.replay
+                else default,
+            )
         )
 
     def _wait_or_pause(
         self, prompt_style: str, env_var: str, default: float
     ) -> None:
         """Block for Enter, or take a timed autoplay pause instead.
+
+        Under replay this does neither: the replay's step prompt reads
+        the keystroke this method would discard, so waiting here would
+        swallow it.
 
         Under autoplay this delegates to :meth:`_pause`, so a Ctrl+C
         during the wait propagates uncaught (``time.sleep`` raises
@@ -1007,8 +1020,15 @@ class RichView:
             env_var: Environment variable that overrides the autoplay
                 pause duration.
             default: Autoplay pause duration in seconds when ``env_var``
-                is unset.
+                is unset. Ignored under replay, which neither sleeps nor
+                reads here.
         """
+        # A replay's pacing belongs to its step prompt, which reads the
+        # key this would discard (``console.input``'s return value is
+        # thrown away below). Returning leaves the frame on screen for
+        # the step prompt to draw under.
+        if self.options.replay:
+            return
         if self.options.autoplay:
             self._pause(env_var, default)
             return
