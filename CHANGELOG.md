@@ -24,6 +24,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) `load_profile` — the site's URL, credentials, selectors and wire vocabulary move into a local `profile.toml`; `profile.example.toml` ships the schema. See [scraper docs](docs/scraper/index.md).
 - (scraper) `contrai-scrape parse RAW... --profile P` — re-parse a raw wire log into a `contrai-data` record. See [scraper docs](docs/scraper/index.md).
 - (scraper) Profile gains the pledge, scoreboard and state-resume keys plus a `[recorder]` section of loop thresholds. See [scraper docs](docs/scraper/index.md).
+- (scraper) `HealthLog` — one JSON line per transition plus a counter heartbeat, on stderr. See [scraper docs](docs/scraper/index.md).
 
 ### Changed
 
