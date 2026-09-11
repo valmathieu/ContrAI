@@ -1,14 +1,19 @@
 # contrai-scraper
 
-Playwright spectator-mode scraper for online Coinche games (auth required).
+Playwright spectator-mode scraper for online Contrée games (auth required).
 
 **Stack:** Playwright async, Python 3.14, uv. Storage: SQLite (default, schema TBD).
+
+Site specifics — the target URL, the scraping account, every selector the browser clicks — are
+being moved out of the repository into a local configuration file that is never committed. Code
+and docs describe *what* each step does, not *where* it clicks; do not add the site's name, its
+DOM ids or screenshots of it to any tracked file.
 
 ## Layout
 
 | Module | Role |
 | ------ | ---- |
-| `contrai_scraper.config` | Target URL and scraping-account credentials. |
+| `contrai_scraper.config` | Target URL and scraping-account credentials (the last literals; replaced by the local profile in the next scraper release). |
 | `contrai_scraper.session` | Lobby navigation: `log_in` → `open_spectator_mode` → `find_tournament_table`. |
 | `contrai_scraper.observer` | Watches a seated table: `get_players`, `get_current_round`, `observe_game`. |
 | `contrai_scraper.cli` | `contrai-scrape` console script wiring the two phases together. |
@@ -17,11 +22,9 @@ Playwright spectator-mode scraper for online Coinche games (auth required).
 uv run contrai-scrape
 ```
 
-`run.py` sits outside the package: it is a parked login experiment against a different site (`belote.com`), kept for reference and not importable.
-
 ## Current flow (v1)
 
-login → Online → Spectator → Contree → Tournament → identify players via `#nord/#sud/#est/#ouest` → poll `#tour` for new rounds.
+login → online mode → spectator list → Contrée variant → tournament table → identify the four seats from their name badges → poll the round counter for new rounds.
 
 ```plantuml format="svg" source="seq_scraper.puml"
 ```
@@ -35,10 +38,3 @@ login → Online → Spectator → Contree → Tournament → identify players v
 - Game persistence (schema design)
 - Multi-table orchestration
 - Rate-limiting / ToS considerations
-
-## Screenshots
-
-Reference DOM captures of the target site live under `screenshots/`:
-
-- ![Lobby (final view)](screenshots/lobby_final.png)
-- ![Target table (spectator)](screenshots/success_target_table.png)
