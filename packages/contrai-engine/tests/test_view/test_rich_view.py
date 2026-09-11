@@ -55,6 +55,7 @@ from contrai_engine.view.screens.trick import (
     _panel_round,
     _render_diamond,
 )
+from contrai_engine.view.theme import GOLD
 
 
 # ======================================================================
@@ -1884,6 +1885,72 @@ class TestDebugStrip:
         combined = "\n".join(self._render_bidding_frame(view))
 
         assert "Debug — all hands" not in combined
+
+
+class TestReplayMode:
+    """``DebugOptions.replay`` buys face-up hands and zero pacing.
+
+    A replay is not a live game: it has no AI thinking to pace and no
+    waits of its own, because the step prompt that drives it owns the
+    keystroke ``_wait_or_pause`` would otherwise read and throw away.
+    """
+
+    def test_replay_collapses_a_pacing_default_to_zero(self, monkeypatch):
+        from contrai_engine.view import rich_view
+
+        slept: list[float] = []
+        monkeypatch.setattr(rich_view.time, "sleep", slept.append)
+        view = RichView(options=DebugOptions(replay=True))
+
+        view._pause("CONTRAI_AI_CARD_DELAY", 0.9)
+
+        assert slept == [0.0]
+
+    def test_an_explicit_env_value_still_wins_under_replay(self, monkeypatch):
+        from contrai_engine.view import rich_view
+
+        slept: list[float] = []
+        monkeypatch.setattr(rich_view.time, "sleep", slept.append)
+        monkeypatch.setenv("CONTRAI_AI_CARD_DELAY", "0.25")
+        view = RichView(options=DebugOptions(replay=True))
+
+        view._pause("CONTRAI_AI_CARD_DELAY", 0.9)
+
+        assert slept == [0.25]
+
+    def test_replay_neither_sleeps_nor_reads_at_a_wait(self, monkeypatch):
+        from contrai_engine.view import rich_view
+
+        slept: list[float] = []
+        monkeypatch.setattr(rich_view.time, "sleep", slept.append)
+        view = RichView(options=DebugOptions(replay=True))
+        view.console.input = lambda *a, **k: pytest.fail(
+            "the step prompt owns the keystroke, not _wait_or_pause"
+        )
+
+        view._wait_or_pause(GOLD, "CONTRAI_AUTOPLAY_PAUSE", 1.2)
+
+        assert slept == []
+
+    def test_replay_shows_every_hand_face_up(self, monkeypatch, four_players):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(replay=True))
+        view.attach(
+            TestDebugStrip._StubGame(list(four_players)), target_score=1500
+        )
+        captured = _capture_prints(view)
+
+        view._render_in_game(
+            phase="bidding",
+            current_player=None,
+            bidding_history=[],
+            prompt_question=Text(""),
+            mandatory=False,
+        )
+
+        assert any("Debug — all hands" in text for text in captured)
 
 
 class TestLiveRoundScoreAid:
