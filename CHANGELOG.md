@@ -3,10 +3,15 @@
 All notable changes to the ContrAI workspace are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer`,
+All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `contrai-analyzer`,
 `contrai-scraper`) are versioned in lockstep — a single version covers the whole workspace.
 
 ## [Unreleased]
+
+### Added
+
+- (data) New `contrai-data` package — one append-only JSONL record per game, one event per line, shared by the engine and the scraper. See [data docs](docs/data/index.md).
+- (data) `load_game` / `project` — a record folds back into rounds with its contract, tricks and winners re-derived from `contrai-core`. See [data docs](docs/data/index.md).
 
 ### Changed
 
