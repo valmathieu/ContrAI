@@ -28,7 +28,7 @@ Source at `packages/contrai-engine/src/contrai_engine/`:
   - `state_helpers.py` — small game-state readers (`_current_winner`, `_explain_constraint`, `_sort_hand_for_display`, `_belote_by_position` — which groups `Round.announced_belotes` by seat, so the regime decides what the badge shows — `_resolve_delay`)
   - `layout.py` — cross-screen layout (`_two_column`, the Prompt panel, the event-log panel, and the Game-score panel shown in every in-game frame's top-left)
   - `screens/` — one module per screen: `landing.py`, `setup.py`, `bidding.py`, `trick.py`, `recap.py`, `endgame.py`. Each exposes pure `(data) -> Panel/Text` builders; `RichView` composes and prints them. The landing screen is split in two on purpose — `landing.py` holds the fixed furniture (title, subtitle, suit ribbon, seat roster), `setup.py` the half that is *edited* (the table summary, the preset radio, the knob grid and their prompts)
-- `cli.py` — `contrai` console-script entry point: landing → game-loop → end-game; also parses the three debug-mode flags, the two mutually exclusive ruleset flags `--rules FILE` / `--preset NAME`, and the two mutually exclusive record flags `--record [DIR]` / `--no-record` (see [CLI](#cli))
+- `cli.py` — `contrai` console-script entry point, a subcommand CLI whose default is `play`: landing → game-loop → end-game; parses the three debug-mode flags, the two mutually exclusive ruleset flags `--rules FILE` / `--preset NAME`, and the two mutually exclusive record flags `--record [DIR]` / `--no-record`; also runs `verify PATH...` (see [CLI](#cli))
 - `replay/` — drive the real engine from a record rather than from players and the RNG:
   - `deal.py` — `ScriptedDealSource`, which answers the `DealSource` seam off a record: the dealer `round_dealt` names, and a deck `Deck.stacked` builds from the recorded hands. Re-exports `DealSource` / `RandomDealSource` so a replay imports all three from one place
   - `player.py` — `RecordedPlayer`, a real `Player` whose `choose_bid` / `choose_card` read the round's `RoundScript` instead of deciding, addressing each action by its position in the round rather than by a per-seat queue
@@ -153,6 +153,35 @@ The switch has three sources and they resolve **flag > knob > off**: an explicit
 Three hooks are deliberately **not** intercepted and simply fall through to the inner view: `on_all_pass_redeal`, `on_contract_established` and `on_trick_complete`. Each carries a fact the record format defines as *derived* — an all-pass is a `round_dealt` followed by four passes and the next `round_dealt`, the contract folds back out of the auction, and a trick winner comes from `TrickRecord.winner` — and a derived fact stored twice is a fact that can disagree with itself. The projection recomputes all three from `contrai-core` when the file is read back.
 
 Two seat conventions are worth knowing when reading engine records. **No display name ever reaches one**: an AI seat is `ai:<level>` with its `AI_LEVELS` key in `level` (`custom` for a hand-mixed strategy pair), a human seat is simply `human`, and `id` / `account` stay null — those belong to an observed table. And quitting mid-game is not silence: the `finally` in `main()` closes the open file with `game_ended(interrupted)` and the last running totals, so "why does this record stop?" is a question the record itself answers.
+
+**Verifying.** The other direction: `contrai verify` reads a record back and proves it describes a game that could actually have happened.
+
+```bash
+uv run contrai verify ./corpus/games/engine-20260911T120000Z-abc123.jsonl
+uv run contrai verify ./corpus                 # every record under it, games/ included
+uv run contrai verify ./corpus --json          # the verdicts as JSON on stdout
+uv run contrai verify ./corpus --no-write      # report only, write no verdict file
+```
+
+It exits `0` when every round is `verified` or `partial`, `1` when any round is `suspect` or a record cannot be read at all, and `2` on a usage error. Each record's verdict is written to `verdicts/<game_id>.json` beside its own `games/` directory, which `--out DIR` redirects and `--no-write` suppresses.
+
+`contrai` became a subcommand CLI to make room for it, and **no existing invocation changed**: `play` is the default, inserted by `_normalise_argv` whenever the first argument is not a known subcommand, so bare `contrai` and every flag it accepted before parse exactly as they did. Two consequences worth knowing: `contrai --help` shows `play`'s help (its epilog names the other subcommand), and `contrai some-game.jsonl` — which would otherwise be an unrecognised `play` argument — is caught and answered with "write: `contrai verify some-game.jsonl`".
+
+**The verifier replays; it does not re-check.** `replay/` drives the *real* engine from the record: four `RecordedPlayer` seats hand back the recorded actions, a `ScriptedDealSource` supplies the dealer and the deal, and `Game.manage_round` runs exactly as in a live game — so every core invariant fires once, in the place it always fires, and there is no second implementation of the rules to drift from the first. `VerifyingObserver` is the recorder's mirror: it intercepts the same view hooks and, instead of writing what it sees, compares it to what the record claims.
+
+| check | what it catches | source of truth |
+| --- | --- | --- |
+| `illegal_bid` | a bid the auction refuses | `Auction.apply` raises |
+| `illegal_play` | a card the play state refuses | `PlayState.apply` raises |
+| `trick_winner` | the record's next leader is not the seat core says won | the replay asks a seat out of turn |
+| `belote` | a pair the deal does not hold, or an announcement that never happened | the dealt hands, and the replay |
+| `score` | outcome, declarer, contract terms, marks, card points, belote, last trick | `score_round` vs `round_scored` |
+
+A round is `verified` when every applicable check ran and passed, `suspect` when one failed, and **`partial` when a check had nothing to run against** — overwhelmingly a round with no `round_scored` event, which is the *common* case in an observed game: a spectator sees the cards long before it sees a score sheet. That third verdict is why a corpus gate reads "no round is suspect" rather than "every round is verified". A game takes the worst verdict among its rounds.
+
+Three details that are easy to get wrong. An illegal action **ends that round's replay** — the state has diverged, so every later check in that round would be comparing two different games — and the next round starts from its own recorded deal into hands the driver cleared. The round being checked is **handed** to the observer rather than looked up by number, because `Game.round_number` counts rounds *replayed* while a record's numbers are its source's deal count: one incomplete round in the middle would otherwise put every later comparison permanently off by one, with nothing looking wrong. And a bid is addressed by **(seat, that seat's own bid count)**, never by position in the auction, because the engine writes forced passes an observed table never transmits — the doubling side after a double, the partner of a Slam bidder, all four seats after a redouble — so only each seat's own subsequence is shared between the two.
+
+A record naming a preset whose `RuleConfig` has since moved is reported as a **note**, not a verdict: it is stale, not wrong.
 
 **Trump choices.** No trump and all trump are off by default (`contree-domain.md` §9.2). Turn them on with a ruleset file:
 

@@ -17,8 +17,11 @@ Rich rendering or blocking input. The real wiring — that a genuine
 
 from __future__ import annotations
 
+import argparse
+import json
 import random
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -26,7 +29,17 @@ from contrai_core.position import Position
 from contrai_core.rule_config import PRESETS, RuleConfig
 from contrai_core.team_side import TeamSide
 from contrai_data import EndReason, GameEnded, read_events
-from contrai_engine.cli import _apply_seed, _build_game, _parse_args, main
+from contrai_engine import cli as cli_module
+from contrai_engine.cli import (
+    _apply_seed,
+    _build_game,
+    _normalise_argv,
+    _parse_args,
+    _parse_argv,
+    _record_paths,
+    _run_verify,
+    main,
+)
 from contrai_engine.model.game import GameOverStatus
 from contrai_engine.model.player import AiPlayer, HumanPlayer
 from contrai_engine.model.round.components import Mark
@@ -1188,3 +1201,295 @@ class TestRecorderWiring:
             if isinstance(event, GameEnded)
         ]
         assert [event.reason for event in ended] == [EndReason.TARGET_REACHED]
+
+
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
+
+
+class TestNormaliseArgv:
+    """``play`` is inserted when the arguments do not name a subcommand.
+
+    Which is the whole compatibility story: every invocation that worked
+    before subcommands existed is one with the word left out.
+    """
+
+    def test_nothing_becomes_play(self):
+        assert _normalise_argv([]) == ["play"]
+
+    def test_flags_become_play_flags(self):
+        assert _normalise_argv(["--autoplay", "--seed", "7"]) == [
+            "play",
+            "--autoplay",
+            "--seed",
+            "7",
+        ]
+
+    def test_a_named_subcommand_is_left_alone(self):
+        assert _normalise_argv(["verify", "a.jsonl"]) == ["verify", "a.jsonl"]
+
+    def test_play_written_out_is_left_alone(self):
+        assert _normalise_argv(["play", "--debug"]) == ["play", "--debug"]
+
+    def test_it_does_not_mutate_its_argument(self):
+        argv = ["--debug"]
+
+        _normalise_argv(argv)
+
+        assert argv == ["--debug"]
+
+
+class TestParseArgvResolvesSysArgv:
+    """``sys.argv`` is resolved *before* normalising, never after."""
+
+    def test_no_argv_reads_sys_argv_and_normalises_it(self, monkeypatch):
+        # ``main`` calls ``_parse_argv()`` with nothing. Normalising only
+        # an explicitly passed list would leave this path un-normalised,
+        # and ``contrai --autoplay`` would exit 2.
+        monkeypatch.setattr(sys, "argv", ["contrai", "--autoplay"])
+
+        args, _ = _parse_argv()
+
+        assert args.command == "play"
+        assert args.autoplay is True
+
+    def test_a_bare_invocation_still_names_the_play_command(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["contrai"])
+
+        args, _ = _parse_argv()
+
+        assert args.command == "play"
+        assert args.debug is False
+
+    def test_a_verify_invocation_is_recognised(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["contrai", "verify", "a.jsonl"])
+
+        args, _ = _parse_argv()
+
+        assert args.command == "verify"
+        assert args.paths == [Path("a.jsonl")]
+
+    def test_the_play_subparser_comes_back_for_error_reporting(self):
+        # A bad ``--rules`` must print ``usage: contrai play …`` rather
+        # than top-level usage, which names none of the flags typed.
+        _, play = _parse_argv([])
+
+        assert play.prog == "contrai play"
+
+
+class TestVerifyArguments:
+    def test_paths_are_required(self, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_argv(["verify"])
+
+        assert excinfo.value.code == 2
+
+    def test_several_paths_are_accepted(self):
+        args, _ = _parse_argv(["verify", "a.jsonl", "b.jsonl"])
+
+        assert args.paths == [Path("a.jsonl"), Path("b.jsonl")]
+
+    def test_json_and_out_default_off(self):
+        args, _ = _parse_argv(["verify", "a.jsonl"])
+
+        assert args.json is False
+        assert args.out is None
+        assert args.no_write is False
+
+    def test_out_takes_a_directory(self, tmp_path):
+        args, _ = _parse_argv(["verify", "a.jsonl", "--out", str(tmp_path)])
+
+        assert args.out == tmp_path
+
+    def test_a_bare_record_path_points_at_verify(self, capsys):
+        # Without the hint this normalises to ``play a.jsonl`` and
+        # argparse reports an unrecognised argument, which is true and
+        # useless.
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_argv(["some-game.jsonl"])
+
+        assert excinfo.value.code == 2
+        assert "contrai verify some-game.jsonl" in capsys.readouterr().err
+
+    def test_an_existing_file_points_at_verify_too(self, tmp_path, capsys):
+        record = tmp_path / "record"
+        record.write_text("", encoding="utf-8")
+
+        with pytest.raises(SystemExit):
+            _parse_argv([str(record)])
+
+        assert "contrai verify" in capsys.readouterr().err
+
+    def test_an_ordinary_bad_flag_is_untouched(self, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_argv(["--nope"])
+
+        assert excinfo.value.code == 2
+        assert "contrai verify" not in capsys.readouterr().err
+
+
+class TestRecordPaths:
+    def test_a_file_stands_for_itself(self, tmp_path):
+        record = tmp_path / "a.jsonl"
+        record.write_text("", encoding="utf-8")
+
+        assert _record_paths([record]) == [record]
+
+    def test_a_directory_stands_for_the_records_in_it(self, tmp_path):
+        first = tmp_path / "a.jsonl"
+        second = tmp_path / "b.jsonl"
+        for path in (first, second):
+            path.write_text("", encoding="utf-8")
+
+        assert _record_paths([tmp_path]) == [first, second]
+
+    def test_a_records_root_reaches_its_games_directory(self, tmp_path):
+        games = tmp_path / "games"
+        games.mkdir()
+        record = games / "a.jsonl"
+        record.write_text("", encoding="utf-8")
+
+        assert _record_paths([tmp_path]) == [record]
+
+    def test_the_same_record_named_twice_is_verified_once(self, tmp_path):
+        record = tmp_path / "a.jsonl"
+        record.write_text("", encoding="utf-8")
+
+        assert _record_paths([record, tmp_path]) == [record]
+
+    def test_a_missing_path_is_kept_so_the_error_names_it(self, tmp_path):
+        missing = tmp_path / "nope.jsonl"
+
+        assert _record_paths([missing]) == [missing]
+
+
+class TestRunVerify:
+    """``_run_verify`` — the report, the files it writes, the exit code."""
+
+    @staticmethod
+    def _args(paths, **overrides):
+        """The ``verify`` namespace, with every flag off unless overridden."""
+
+        fields = {"json": False, "out": None, "no_write": False}
+        fields.update(overrides)
+        return argparse.Namespace(paths=list(paths), **fields)
+
+    @pytest.fixture
+    def record_root(self, tmp_path):
+        """A records root holding one clean 4-AI game."""
+
+        from tests.test_replay.conftest import play_and_record
+
+        play_and_record(tmp_path, seed=1)
+        return tmp_path
+
+    def test_a_clean_record_exits_zero(self, record_root, capsys):
+        code = _run_verify(self._args([record_root]))
+
+        assert code == 0
+        assert "verified" in capsys.readouterr().out
+
+    def test_it_writes_the_verdict_beside_games(self, record_root):
+        _run_verify(self._args([record_root]))
+
+        assert list((record_root / "verdicts").glob("*.json"))
+
+    def test_no_write_writes_nothing(self, record_root):
+        _run_verify(self._args([record_root], no_write=True))
+
+        assert not (record_root / "verdicts").exists()
+
+    def test_out_redirects_the_verdict(self, record_root, tmp_path):
+        elsewhere = tmp_path / "elsewhere"
+
+        _run_verify(self._args([record_root], out=elsewhere))
+
+        assert list((elsewhere / "verdicts").glob("*.json"))
+        assert not (record_root / "verdicts").exists()
+
+    def test_json_prints_a_list_of_verdicts(self, record_root, capsys):
+        _run_verify(self._args([record_root], json=True, no_write=True))
+
+        payload = json.loads(capsys.readouterr().out)
+        assert len(payload) == 1
+        assert payload[0]["verdict"] == "verified"
+
+    def test_a_suspect_record_exits_one(self, record_root, capsys, monkeypatch):
+        from contrai_engine.replay.verdict import (
+            GameVerdict,
+            Mismatch,
+            MismatchKind,
+            RoundVerdict,
+        )
+
+        def _suspect(path, out=None):
+            return GameVerdict(
+                game_id="engine-test",
+                source="engine",
+                preset="classic",
+                rounds=(
+                    RoundVerdict.decide(
+                        1,
+                        mismatches=(
+                            Mismatch(
+                                kind=MismatchKind.SCORE,
+                                detail="the marked points differ",
+                                position="North",
+                                expected="10",
+                                observed="20",
+                            ),
+                        ),
+                    ),
+                ),
+            )
+
+        monkeypatch.setattr(cli_module, "verify_record", _suspect)
+
+        code = _run_verify(self._args([record_root], no_write=True))
+
+        out = capsys.readouterr().out
+        assert code == 1
+        assert "suspect" in out
+        assert "the marked points differ" in out
+        assert "engine: 10" in out and "record: 20" in out
+
+    def test_an_unreadable_record_exits_one_and_names_it(
+        self, tmp_path, capsys
+    ):
+        broken = tmp_path / "broken.jsonl"
+        broken.write_text("not json at all\n", encoding="utf-8")
+
+        code = _run_verify(self._args([broken]))
+
+        assert code == 1
+        assert "broken.jsonl" in capsys.readouterr().err
+
+    def test_no_records_found_exits_one(self, tmp_path, capsys):
+        code = _run_verify(self._args([tmp_path]))
+
+        assert code == 1
+        assert "no records found" in capsys.readouterr().err
+
+
+class TestMainDispatch:
+    def test_verify_exits_with_its_own_code(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["contrai", "verify", "a.jsonl"])
+        monkeypatch.setattr(cli_module, "_run_verify", lambda args: 3)
+
+        with pytest.raises(SystemExit) as excinfo:
+            main()
+
+        assert excinfo.value.code == 3
+
+    def test_verify_never_reaches_the_game_loop(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["contrai", "verify", "a.jsonl"])
+        monkeypatch.setattr(cli_module, "_run_verify", lambda args: 0)
+        monkeypatch.setattr(
+            cli_module,
+            "RichView",
+            lambda *a, **k: pytest.fail("verify must not build a view"),
+        )
+
+        with pytest.raises(SystemExit):
+            main()
