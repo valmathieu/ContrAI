@@ -17,9 +17,11 @@ import asyncio
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 from .profile import WireSection
+from .rawlog import FRAME, read_raw_log
 
 #: Direction labels. Received frames are the game; sent frames are the
 #: spectator's own chatter, kept because a raw log that drops half the
@@ -132,3 +134,57 @@ class PlaywrightFrameSource:
         if not self._closed:
             self._closed = True
             self._queue.put_nowait(_CLOSED)
+
+
+class RawLogFrameSource:
+    """Replays a raw log as the frames that wrote it.
+
+    Interchangeable with :class:`PlaywrightFrameSource`, and that is the whole
+    point: the pipeline downstream cannot tell a live session from a recorded
+    one, so a game that parsed wrongly in production can be re-run offline as
+    many times as the fix takes.
+    """
+
+    __slots__ = ("_frames", "_index", "_closed")
+
+    def __init__(self, path: Path | str) -> None:
+        """Read the log into memory.
+
+        A session's log is tens of megabytes at most, and holding it lets the
+        source be restarted and its length known — both of which a live
+        socket cannot offer and a replay may as well.
+
+        Args:
+            path: The log file.
+
+        Raises:
+            WireError: If the log is unreadable.
+        """
+
+        self._frames = tuple(
+            RawFrame(
+                socket=line.socket or 0,
+                direction=line.direction or RECEIVED,
+                at=line.at or 0.0,
+                text=line.text or "",
+            )
+            for line in read_raw_log(path)
+            if line.kind == FRAME
+        )
+        self._index = 0
+        self._closed = False
+
+    def __aiter__(self) -> AsyncIterator[RawFrame]:
+        return self
+
+    async def __anext__(self) -> RawFrame:
+        if self._closed or self._index >= len(self._frames):
+            raise StopAsyncIteration
+        frame = self._frames[self._index]
+        self._index += 1
+        return frame
+
+    async def aclose(self) -> None:
+        """Stop iteration. A replay holds no handles, so this only marks."""
+
+        self._closed = True

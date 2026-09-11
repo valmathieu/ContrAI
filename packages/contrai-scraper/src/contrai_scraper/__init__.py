@@ -29,6 +29,7 @@ from contrai_scraper.frames import (
     FrameSource,
     PlaywrightFrameSource,
     RawFrame,
+    RawLogFrameSource,
 )
 from contrai_scraper.lzstring import compress_to_base64, decompress_from_base64
 from contrai_scraper.observer import (
@@ -37,6 +38,14 @@ from contrai_scraper.observer import (
     is_game_scrapeable,
     observe_game,
     wait_for_new_round,
+)
+from contrai_scraper.rawlog import (
+    RawLine,
+    RawLogWriter,
+    new_session_id,
+    raw_dir,
+    raw_path,
+    read_raw_log,
 )
 from contrai_scraper.profile import (
     AccountSection,
@@ -81,6 +90,9 @@ __all__ = [
     "ProfileError",
     "RECEIVED",
     "RawFrame",
+    "RawLine",
+    "RawLogFrameSource",
+    "RawLogWriter",
     "RulesSection",
     "SENT",
     "ScraperError",
@@ -104,11 +116,15 @@ __all__ = [
     "get_players",
     "is_game_scrapeable",
     "load_profile",
+    "new_session_id",
     "log_in",
     "observe_game",
     "open_spectator_mode",
     "order_events",
     "parse_key",
+    "raw_dir",
+    "raw_path",
+    "read_raw_log",
     "unwrap",
     "wait_for_new_round",
 ]
