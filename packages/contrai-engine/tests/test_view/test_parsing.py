@@ -17,7 +17,11 @@ from contrai_core.bid import (
     SlamLevel,
 )
 from contrai_engine.model.player import AiPlayer
-from contrai_engine.view.parsing import _parse_bid_input, _parse_card_input
+from contrai_engine.view.parsing import (
+    _parse_bid_input,
+    _parse_card_input,
+    _parse_round_pick,
+)
 
 
 # ======================================================================
@@ -207,3 +211,33 @@ class TestParseCardInput:
 
     def test_whitespace_trimmed(self, hand):
         assert _parse_card_input(" 1 ", hand, hand) is hand[0]
+
+
+# ======================================================================
+# _parse_round_pick
+# ======================================================================
+
+
+class TestParseRoundPick:
+    """The replay picker's answer, checked against the steppable rounds."""
+
+    def test_a_steppable_number_is_accepted(self):
+        assert _parse_round_pick("8", [7, 8, 9]) == 8
+
+    def test_surrounding_space_is_ignored(self):
+        assert _parse_round_pick("  8 ", [7, 8, 9]) == 8
+
+    def test_a_round_that_is_not_steppable_is_refused(self):
+        assert _parse_round_pick("8", [7, 9]) is None
+
+    def test_a_non_number_is_refused(self):
+        assert _parse_round_pick("eight", [7, 8, 9]) is None
+
+    def test_an_empty_answer_is_refused(self):
+        assert _parse_round_pick("", [7, 8, 9]) is None
+
+    def test_a_negative_number_is_refused(self):
+        assert _parse_round_pick("-8", [7, 8, 9]) is None
+
+    def test_nothing_is_steppable_so_nothing_is_accepted(self):
+        assert _parse_round_pick("8", []) is None
