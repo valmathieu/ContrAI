@@ -23,6 +23,13 @@ from contrai_scraper.exceptions import (
     ScraperError,
     WireError,
 )
+from contrai_scraper.frames import (
+    RECEIVED,
+    SENT,
+    FrameSource,
+    PlaywrightFrameSource,
+    RawFrame,
+)
 from contrai_scraper.lzstring import compress_to_base64, decompress_from_base64
 from contrai_scraper.observer import (
     get_current_round,
@@ -65,12 +72,17 @@ __all__ = [
     "AccountSection",
     "BrowserSection",
     "EventKey",
+    "FrameSource",
     "OutputSection",
     "ParseError",
+    "PlaywrightFrameSource",
     "PrivacySection",
     "Profile",
     "ProfileError",
+    "RECEIVED",
+    "RawFrame",
     "RulesSection",
+    "SENT",
     "ScraperError",
     "Selector",
     "SelectorSection",
