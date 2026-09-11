@@ -170,19 +170,21 @@ this size.
 
 ## Tests
 
-`contrai-core`, `contrai-data` and `contrai-engine` use pytest. Tests are mandatory for:
+`contrai-core`, `contrai-data`, `contrai-engine` and `contrai-scraper` use
+pytest. Tests are mandatory for:
 
 - New Model-layer code in the engine (non-negotiable per project rules)
 - New types or invariants in `contrai-core`
 - New record events, tokens, codec branches or projection rules in `contrai-data`
+- New profile keys, wire-parsing branches or record-assembly rules in `contrai-scraper`
 - Bug fixes — write a test that fails before the fix and passes after; it's
   the cheapest insurance against regression
 
-`contrai-analyzer` and `contrai-scraper` don't currently have test suites.
-When they grow them, this section gets updated and they join the CI matrix.
+`contrai-analyzer` doesn't currently have a test suite. When it grows one, this
+section gets updated and it joins the CI matrix.
 
-CI runs pytest on `core`, `data` and `engine` on every PR. The merge button is
-blocked until tests pass.
+CI runs pytest on `core`, `data`, `engine` and `scraper` on every PR. The merge
+button is blocked until tests pass.
 
 Run locally before pushing:
 
@@ -190,6 +192,7 @@ Run locally before pushing:
 uv run --package contrai-core pytest
 uv run --package contrai-data pytest
 uv run --package contrai-engine pytest
+uv run --package contrai-scraper pytest
 ```
 
 To see which lines and branches a suite actually reaches, add `--cov`

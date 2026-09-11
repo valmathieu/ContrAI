@@ -164,3 +164,4 @@ Each row links to the canonical `.puml` source, the rendered `.png` preview, and
 | `seq_replay.puml`      | Sequence | Replay + verify a record | [source](seq_replay.puml)         | [png](seq_replay.png)                | [Engine — CLI](../engine/#cli)                             |
 | `seq_scraper.puml`     | Sequence | contrai-scraper      | [source](seq_scraper.puml)            | [png](seq_scraper.png)               | [Scraper overview](../scraper/#current-flow-v1)            |
 | `state_cli_screens.mmd`| State    | RichView screen flow | [source](state_cli_screens.mmd)       | [png](state_cli_screens.png)         | [Engine — CLI](../engine/#cli)                             |
+| `flow_wire.mmd`        | Flowchart| Scraper wire pipeline| [source](flow_wire.mmd)               | [png](flow_wire.png)                 | [Scraper — pipeline](../scraper/#pipeline)                 |
