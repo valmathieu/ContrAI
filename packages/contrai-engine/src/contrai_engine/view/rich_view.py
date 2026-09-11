@@ -649,7 +649,7 @@ class RichView:
     def _show_preset_picker(self, current: TableSetup) -> TableSetup:
         """Offer the named rulesets; return the pick, or ``current``.
 
-        The interface aids ride along unchanged: a preset names the 22
+        The interface aids ride along unchanged: a preset names the 23
         table *rules*, and §9.7's aids are not among them.
 
         Args:
