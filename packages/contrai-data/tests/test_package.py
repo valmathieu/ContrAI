@@ -7,8 +7,26 @@ import contrai_data
 
 
 class TestWiring:
-    def test_package_imports(self):
-        assert contrai_data.__all__ == []
+    def test_every_exported_name_resolves(self):
+        # ``__all__`` is the package's whole public surface — consumers import
+        # from ``contrai_data`` and never from its modules. A name listed here
+        # but not actually bound is an import error for somebody else.
+        assert contrai_data.__all__
+        for name in contrai_data.__all__:
+            assert hasattr(contrai_data, name), name
+
+    def test_the_public_surface_is_listed(self):
+        # The converse: a symbol re-exported but left off ``__all__`` is
+        # invisible to ``from contrai_data import *`` and to the API docs.
+        public = {
+            name
+            for name in vars(contrai_data)
+            if not name.startswith("_")
+            and getattr(
+                getattr(contrai_data, name), "__module__", ""
+            ).startswith("contrai_data")
+        }
+        assert public <= set(contrai_data.__all__)
 
     def test_depends_on_core_only(self):
         # The dependency edge is core <- data <- {engine, scraper}. Importing
