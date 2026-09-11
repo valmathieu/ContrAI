@@ -50,6 +50,13 @@ from .tokens import (
     parse_ruleset,
     parse_timestamp,
 )
+from .codec import (
+    FORMAT,
+    FORMAT_FAMILY,
+    FORMAT_MAJOR,
+    encode,
+    decode,
+)
 
 __all__: list[str] = [
     "RecordError",
@@ -92,4 +99,9 @@ __all__: list[str] = [
     "ruleset_payload",
     "parse_ruleset",
     "parse_timestamp",
+    "FORMAT",
+    "FORMAT_FAMILY",
+    "FORMAT_MAJOR",
+    "encode",
+    "decode",
 ]

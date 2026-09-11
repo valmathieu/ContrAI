@@ -12,6 +12,7 @@ Source lives at `packages/contrai-data/src/contrai_data/`:
 | `exceptions.py` | `RecordError` (base), `RecordFormatError`, `UnsupportedFormatError` — all of them both a `ContraiError` and a `ValueError` |
 | `events.py`     | One frozen dataclass per event (`Header`, `GameStarted`, `RoundDealt`, `BidMade`, `CardPlayed`, `BeloteHeld`, `RoundScored`, `GameEnded`), the five value objects (`Seat`, `ObservedFrom`, `Ruleset`, `SideMark`, `ContractTerms`), and the eight closed vocabularies |
 | `tokens.py`     | Domain value ⇄ ASCII token, both ways and strictly — seats, sides, cards, contract suits and values, whole bids, whole rulesets, and the UTC timestamp check |
+| `codec.py`      | `encode` / `decode` — one event ⇄ one JSON line — plus `FORMAT` and the major-version gate |
 
 Everything above is re-exported from `contrai_data/__init__.py` and is part of the public API.
 
@@ -122,6 +123,33 @@ instant on the way in would let a round-trip change bytes the producer wrote. Wh
 the one thing that cannot be checked later — that the instant carries UTC. A naive or
 locally-offset timestamp silently mis-orders events the moment two machines contribute to one
 corpus.
+
+## The line
+
+One event, one JSON object, one line. A `round_dealt` in full:
+
+```json
+{"event": "round_dealt", "round": 1, "dealer": "E", "hands": {"N": ["7S", "8S", "9S", "10S", "JS", "QS", "KS", "AS"], "W": ["7H", "8H", "9H", "10H", "JH", "QH", "KH", "AH"], "S": ["7D", "8D", "9D", "10D", "JD", "QD", "KD", "AD"], "E": ["7C", "8C", "9C", "10C", "JC", "QC", "KC", "AC"]}, "hands_derivation": "self_play", "ts": "2026-09-10T18:18:15Z"}
+```
+
+**The event name is the first key.** `head` on a record then says what each line is without
+scrolling sideways, which is the difference between a format you can inspect with ordinary tools
+and one that needs a viewer.
+
+**`ensure_ascii` is off.** A player named *Zoé* is stored as their name, not as `Zoé`. The file
+is UTF-8; escaping would only make it unreadable to a human and no safer to a parser.
+
+**Decoding is total.** Every field of a line is consumed, and every field an event needs must be
+present. A line carrying a field this build does not know is *refused*, not ignored — a producer
+writing fields we drop is a producer we are only half reading, and the half we dropped is exactly
+the half that would have told us the corpus had drifted. The same check in reverse catches a
+producer that stopped writing a field.
+
+**The major version is a gate, not a label.** A header naming `contrai-record/2` raises
+`UnsupportedFormatError` immediately; an unknown *family* raises the same. A malformed `format`
+field — no slash, a non-numeric major — raises `RecordFormatError` instead, because that is a
+corrupt line rather than a future format. Keeping the two apart is the whole point: a format change
+must not be readable as damage, and damage must not be readable as a format change.
 
 ## What an event validates
 
