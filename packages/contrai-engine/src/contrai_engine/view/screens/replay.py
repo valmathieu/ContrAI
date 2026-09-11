@@ -164,7 +164,10 @@ def _format_replay_contract(row: "ReplayRow") -> Text:
     # renders as "80"…"180".
     text.append(f" {contract.value} ", style=FG)
     text.append(_suit_glyph(contract.suit), style=_suit_color(contract.suit))
-    text.append(f" by {_position_short(contract.declarer)}", style=DIM)
+    # Parenthesised rather than spelled "by S": the column is 13 cells
+    # wide, and the four characters this saves are what let a three-digit
+    # contract sit on one line instead of wrapping.
+    text.append(f" ({_position_short(contract.declarer)})", style=DIM)
     if contract.redoubled_by is not None:
         text.append(" redoubled", style=f"bold {RED}")
     elif contract.doubled_by is not None:

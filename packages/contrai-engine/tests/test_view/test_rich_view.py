@@ -2363,6 +2363,43 @@ class TestShowReplayStep:
         assert cleared == []
 
 
+class TestReplayRecapPrompt:
+    """The recap's own prompt is left off under replay.
+
+    It would invite a keystroke the recap never reads, and there is no
+    next round to deal — the step prompt drawn underneath owns the key.
+    """
+
+    class _StubRound:
+        round_number = 1
+        contract = None
+        dealer = None
+        round_scores = {}
+        announced_belotes = ()
+        play_state = None
+
+    def _recap_texts(self, view):
+        captured = _capture_prints(view)
+        view.show_round_recap(self._StubRound(), {TeamSide.NS: 0, TeamSide.EW: 0})
+        return "\n".join(captured)
+
+    def test_a_live_recap_still_invites_enter(self, monkeypatch):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(autoplay=True))
+
+        assert "Press [Enter]" in self._recap_texts(view)
+
+    def test_a_replayed_recap_does_not(self, monkeypatch):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(replay=True))
+
+        assert "Press [Enter]" not in self._recap_texts(view)
+
+
 class TestShowReplayDeal:
     """The deal frame is the in-game frame, with the deal line as prompt."""
 
