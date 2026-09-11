@@ -194,7 +194,7 @@ the cause.
 $CONTRAI_HOME/records/          (or ~/.contrai/records)
 ├── games/
 │   ├── engine-20260910T181815Z-a1b2c3.jsonl
-│   └── obs-56630b35.jsonl
+│   └── obs-0a1b2c3d.jsonl
 └── raw/                        (the scraper's verbatim wire frames)
 ```
 
@@ -222,7 +222,7 @@ it.
 
 **Game ids.** `engine-<UTC stamp>-<6 hex>` for a self-played game — the random tail is what keeps
 two games started in the same second apart. An observed game takes the table's own opaque id
-(`obs-56630b35`), which is what lets a re-observed game be recognised rather than duplicated; it
+(`obs-0a1b2c3d`), which is what lets a re-observed game be recognised rather than duplicated; it
 is an opaque handle, not personal data. Because both producers take the id from outside the
 process, `game_path` checks it is exactly one path segment before letting it become a file name.
 

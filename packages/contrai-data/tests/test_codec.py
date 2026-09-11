@@ -74,8 +74,8 @@ OBSERVED_START = GameStarted(
     seats={
         position: Seat(
             id="881204",
-            name="Babilone",
-            account="231632",
+            name="Babette",
+            account="acct-1",
             kind=SeatKind.OBSERVED,
             level="1",
         )
