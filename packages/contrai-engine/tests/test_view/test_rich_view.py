@@ -2270,3 +2270,51 @@ class TestPresetPickerOffersTheRememberedSetup:
 
         assert result.rules.target_score == 500
         assert result.origin == "last used"
+
+
+class TestShowReplaySummary:
+    """The replay picker: a steppable round number, or ``[q]`` to leave."""
+
+    @staticmethod
+    def _rows():
+        from contrai_engine.replay.summary import ReplayRow
+
+        return [
+            ReplayRow(7, None, None, None, None, True),
+            ReplayRow(8, None, None, None, None, False),
+        ]
+
+    def test_a_steppable_pick_is_returned(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["7"]
+        )
+
+        assert view.show_replay_summary(self._rows(), "g") == 7
+
+    def test_q_leaves(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["q"]
+        )
+
+        assert view.show_replay_summary(self._rows(), "g") is None
+
+    def test_the_long_form_quit_leaves_too(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["quit"]
+        )
+
+        assert view.show_replay_summary(self._rows(), "g") is None
+
+    def test_an_unsteppable_pick_re_prompts(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["8", "7"]
+        )
+
+        assert view.show_replay_summary(self._rows(), "g") == 7
+
+    def test_a_blank_answer_re_prompts_rather_than_leaving(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["", "7"]
+        )
+
+        assert view.show_replay_summary(self._rows(), "g") == 7

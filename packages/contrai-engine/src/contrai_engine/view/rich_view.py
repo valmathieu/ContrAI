@@ -64,7 +64,11 @@ from contrai_engine.view.layout import (
     _panel_prompt,
     _two_column,
 )
-from contrai_engine.view.parsing import _parse_bid_input, _parse_card_input
+from contrai_engine.view.parsing import (
+    _parse_bid_input,
+    _parse_card_input,
+    _parse_round_pick,
+)
 from contrai_engine.view.screens.bidding import (
     _ai_bid_announcement,
     _bid_rejection_text,
@@ -100,6 +104,11 @@ from contrai_engine.view.screens.recap import (
     _contract_made,
     _panel_round_recap,
 )
+from contrai_engine.view.screens.replay import (
+    _panel_replay_summary,
+    _replay_summary_prompt_text,
+    _replay_summary_rejection_text,
+)
 from contrai_engine.view.screens.trick import (
     _ai_card_announcement,
     _card_prompt_text,
@@ -130,6 +139,7 @@ from rich.text import Text
 if TYPE_CHECKING:
     from contrai_engine.model.game import Game, GameOverStatus
     from contrai_engine.model.round import Round
+    from contrai_engine.replay.summary import ReplayRow
 
 # A dedicated logger name (rather than ``__name__``, which would be
 # "contrai_engine.view.rich_view") so the debug log file's narrative
@@ -853,6 +863,51 @@ class RichView:
                      style=RED)
             )
             self.console.input(Text("  Press Enter…", style=DIM).markup)
+
+    # ------------------------------------------------------------------
+    # Replay screens
+    # ------------------------------------------------------------------
+
+    def show_replay_summary(
+        self, rows: Sequence["ReplayRow"], game_id: str
+    ) -> Optional[int]:
+        """Show a recorded game's rounds and return the one to step.
+
+        Unlike :meth:`show_landing`, a blank answer is **not** the exit:
+        ``[q]`` is, and pressing Enter re-prompts. Closing a record by
+        reflex on a picker would be the wrong default.
+
+        Args:
+            rows: One row per recorded round, in file order.
+            game_id: The record's id, for the panel title.
+
+        Returns:
+            The record round number to replay, or ``None`` to leave.
+        """
+        steppable = [row.number for row in rows if row.steppable]
+        # As in ``show_landing``, a rejection rides inside the next
+        # frame's Prompt panel: the loop's ``console.clear()`` would push
+        # a standalone print up into scrollback where nobody would see it.
+        notice: Optional[Text] = None
+        while True:
+            self.console.clear()
+            self.console.print(_panel_replay_summary(rows, game_id))
+            self.console.print(
+                _panel_prompt(
+                    _replay_summary_prompt_text(rows),
+                    mandatory=False,
+                    notice=notice,
+                )
+            )
+            notice = None
+            raw = self._setup_input()
+            if raw in ("q", "quit"):
+                return None
+            pick = _parse_round_pick(raw, steppable)
+            if pick is None:
+                notice = _replay_summary_rejection_text(rows)
+                continue
+            return pick
 
     # ------------------------------------------------------------------
     # Top-level in-game render

@@ -9,7 +9,7 @@ Syntactic validation only — the auction and round rules own legality.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Sequence
 
 from contrai_core import BasePlayer, Card
 from contrai_core.bid import (
@@ -117,3 +117,30 @@ def _parse_card_input(
     if card not in playable:
         return None
     return card
+
+
+def _parse_round_pick(
+    raw: str, steppable: Sequence[int]
+) -> Optional[int]:
+    """Parse a round number off the replay picker. ``None`` on anything else.
+
+    The answer is checked against the rounds that can actually be
+    replayed rather than against the record's full list, so a round the
+    table shows but the driver refuses is rejected here instead of
+    failing halfway through a replay.
+
+    Args:
+        raw: What the viewer typed.
+        steppable: The record round numbers that can be replayed.
+
+    Returns:
+        The chosen round number, or ``None`` if the answer named none.
+    """
+
+    # ``str.isdigit()`` is false for ``"-8"``, so a negative answer needs
+    # no guard of its own.
+    text = raw.strip()
+    if not text.isdigit():
+        return None
+    number = int(text)
+    return number if number in steppable else None
