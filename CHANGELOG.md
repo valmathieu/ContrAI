@@ -8,6 +8,14 @@ All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer
 
 ## [Unreleased]
 
+### Changed
+
+- The target site's name and DOM vocabulary are retired from every tracked file, including the shipped v0.1.0 scraper bullet; site specifics belong to local configuration only.
+
+### Removed
+
+- (scraper) `run.py`, the step-1 notebook and the two site screenshots under `docs/scraper/`.
+
 ## [0.4.0] - 2026-09-01
 
 Configurable-table release: the rules of the table become data — a `RuleConfig` of the 22 §9 knobs threaded from the auction through play to the score sheet. All trump joins no trump as a playable regime, a round mark decomposes into made and announced points, seven flow-and-play conventions become switchable, the landing screen edits and remembers the whole setup, and the expert AI bids, plays and doubles under whichever table it sits at — returning a rationale with every decision.
@@ -164,7 +172,7 @@ First playable release: a complete CLI Contrée engine backed by a shared domain
 - (engine) Playable CLI game engine — `Player`/`HumanPlayer`/`AiPlayer` over `BasePlayer`, `Game`/`Round` orchestration, an `Auction`-driven bidding flow, the expert `AiPlayer` bidding table (80–160) and card-play strategy (trump coverage, over-trump-when-led, partner-master trump conservation), and round scoring with the Belote/Rebelote bonus.
 - (engine) Rich terminal UI — round/trick panels, bidding-history and event-log views, the hand panel, and a round recap split into a factual Outcome table and rolled-up Scoring.
 - (analyzer) Streamlit opening-hand strength dashboard built on the suit-agnostic `SuitSlot` abstraction — hypergeometric distribution plots and a bidding truth-table.
-- (scraper) Playwright spectator-mode scraper v1 for `app.belote-rebelote.fr`: login, Online → Spectator → Contree → Tournament navigation, seat identification, and `#tour` round polling.
+- (scraper) Playwright spectator-mode scraper v1 for the target site: login, Online → Spectator → Contree → Tournament navigation, seat identification, and round-counter polling.
 
 [Unreleased]: https://github.com/valmathieu/ContrAI/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/valmathieu/ContrAI/compare/v0.3.0...v0.4.0
