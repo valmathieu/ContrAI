@@ -20,6 +20,7 @@ from contrai_engine.model.player import AiPlayer
 from contrai_engine.view.parsing import (
     _parse_bid_input,
     _parse_card_input,
+    _parse_replay_key,
     _parse_round_pick,
 )
 
@@ -241,3 +242,38 @@ class TestParseRoundPick:
 
     def test_nothing_is_steppable_so_nothing_is_accepted(self):
         assert _parse_round_pick("8", []) is None
+
+
+# ======================================================================
+# _parse_replay_key
+# ======================================================================
+
+
+class TestParseReplayKey:
+    """The replay step keys, and the one the first stop cannot offer."""
+
+    def test_n_is_the_next_action(self):
+        assert _parse_replay_key("n", can_go_back=True) == "n"
+
+    def test_enter_is_the_next_action(self):
+        assert _parse_replay_key("", can_go_back=True) == "n"
+
+    def test_the_long_forms_are_accepted(self):
+        assert _parse_replay_key("next", can_go_back=True) == "n"
+        assert _parse_replay_key("trick", can_go_back=True) == "t"
+        assert _parse_replay_key("round", can_go_back=True) == "r"
+        assert _parse_replay_key("back", can_go_back=True) == "p"
+        assert _parse_replay_key("quit", can_go_back=True) == "q"
+
+    def test_case_and_space_are_ignored(self):
+        assert _parse_replay_key("  T ", can_go_back=True) == "t"
+
+    def test_back_is_refused_at_the_first_stop(self):
+        assert _parse_replay_key("p", can_go_back=False) is None
+
+    def test_the_other_keys_survive_the_first_stop(self):
+        for raw in ("n", "t", "r", "q"):
+            assert _parse_replay_key(raw, can_go_back=False) == raw
+
+    def test_an_unknown_key_is_refused(self):
+        assert _parse_replay_key("z", can_go_back=True) is None

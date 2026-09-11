@@ -9,7 +9,7 @@ Syntactic validation only — the auction and round rules own legality.
 
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Final, Optional, Sequence
 
 from contrai_core import BasePlayer, Card
 from contrai_core.bid import (
@@ -144,3 +144,44 @@ def _parse_round_pick(
         return None
     number = int(text)
     return number if number in steppable else None
+
+
+#: The replay step keys, each with the word that spells it out.
+#: ``[Enter]`` maps to the next action, the same way it means "go on"
+#: everywhere else in this interface.
+_REPLAY_KEYS: Final[dict[str, str]] = {
+    "": "n",
+    "n": "n",
+    "next": "n",
+    "t": "t",
+    "trick": "t",
+    "r": "r",
+    "round": "r",
+    "p": "p",
+    "back": "p",
+    "q": "q",
+    "quit": "q",
+}
+
+
+def _parse_replay_key(raw: str, *, can_go_back: bool) -> Optional[str]:
+    """Parse a replay step key. ``None`` on anything the screen cannot do.
+
+    ``p`` is refused at a round's first stop rather than silently doing
+    nothing: there is no earlier action, and a key that looks like it
+    worked is worse than one that says it did not.
+
+    Args:
+        raw: What the viewer typed.
+        can_go_back: Whether a previous stop exists to return to.
+
+    Returns:
+        One of ``"n"``, ``"t"``, ``"r"``, ``"p"``, ``"q"``, or ``None``.
+    """
+
+    key = _REPLAY_KEYS.get(raw.strip().lower())
+    if key is None:
+        return None
+    if key == "p" and not can_go_back:
+        return None
+    return key

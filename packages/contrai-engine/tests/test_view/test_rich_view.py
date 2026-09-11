@@ -2318,3 +2318,66 @@ class TestShowReplaySummary:
         )
 
         assert view.show_replay_summary(self._rows(), "g") == 7
+
+
+class TestShowReplayStep:
+    """The step prompt: one key, read under the frame it is stepping."""
+
+    def test_it_returns_the_key_typed(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["t"]
+        )
+
+        assert view.show_replay_step(can_go_back=True) == "t"
+
+    def test_enter_means_the_next_action(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), [""]
+        )
+
+        assert view.show_replay_step(can_go_back=True) == "n"
+
+    def test_an_unknown_key_re_prompts(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["z", "q"]
+        )
+
+        assert view.show_replay_step(can_go_back=True) == "q"
+
+    def test_back_re_prompts_at_the_first_stop(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["p", "n"]
+        )
+
+        assert view.show_replay_step(can_go_back=False) == "n"
+
+    def test_it_does_not_clear_the_frame_it_prompts_under(self):
+        view = RichView(options=DebugOptions(replay=True))
+        cleared: list[int] = []
+        view.console.clear = lambda *a, **k: cleared.append(1)
+        view.console.print = lambda *a, **k: None
+        view.console.input = lambda *a, **k: "n"
+
+        view.show_replay_step(can_go_back=True)
+
+        assert cleared == []
+
+
+class TestShowReplayDeal:
+    """The deal frame is the in-game frame, with the deal line as prompt."""
+
+    def test_it_renders_the_face_up_frame(self, monkeypatch, four_players):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(replay=True))
+        view.attach(
+            TestDebugStrip._StubGame(list(four_players)), target_score=1500
+        )
+        captured = _capture_prints(view)
+
+        view.show_replay_deal(view.game.current_round)
+
+        combined = "\n".join(captured)
+        assert "Debug — all hands" in combined
+        assert "Hands face up" in combined

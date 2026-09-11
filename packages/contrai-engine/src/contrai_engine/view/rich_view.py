@@ -67,6 +67,7 @@ from contrai_engine.view.layout import (
 from contrai_engine.view.parsing import (
     _parse_bid_input,
     _parse_card_input,
+    _parse_replay_key,
     _parse_round_pick,
 )
 from contrai_engine.view.screens.bidding import (
@@ -106,6 +107,9 @@ from contrai_engine.view.screens.recap import (
 )
 from contrai_engine.view.screens.replay import (
     _panel_replay_summary,
+    _replay_deal_text,
+    _replay_step_prompt_text,
+    _replay_step_rejection_text,
     _replay_summary_prompt_text,
     _replay_summary_rejection_text,
 )
@@ -908,6 +912,49 @@ class RichView:
                 notice = _replay_summary_rejection_text(rows)
                 continue
             return pick
+
+    def show_replay_deal(self, round_: "Round") -> None:
+        """Render a replayed round's opening frame: hands face up, no bids yet.
+
+        Args:
+            round_: The round just dealt.
+        """
+        self._render_in_game(
+            phase="bidding",
+            bidding_history=[],
+            prompt_question=_replay_deal_text(round_),
+        )
+
+    def show_replay_step(self, *, can_go_back: bool) -> str:
+        """Draw the step prompt under the current frame and read one key.
+
+        The console is deliberately not cleared: the frame above is the
+        action being stepped, and a rejected key re-prompts beneath it
+        rather than riding into the next frame's Prompt panel — there is
+        no next frame until the viewer asks for one.
+
+        Args:
+            can_go_back: Whether a previous stop exists, which decides
+                whether ``[p]`` is offered.
+
+        Returns:
+            One of ``"n"``, ``"t"``, ``"r"``, ``"p"``, ``"q"``.
+        """
+        while True:
+            self.console.print(
+                _panel_prompt(
+                    _replay_step_prompt_text(can_go_back=can_go_back),
+                    mandatory=False,
+                )
+            )
+            key = _parse_replay_key(
+                self._setup_input(), can_go_back=can_go_back
+            )
+            if key is not None:
+                return key
+            self.console.print(
+                _replay_step_rejection_text(can_go_back=can_go_back)
+            )
 
     # ------------------------------------------------------------------
     # Top-level in-game render
