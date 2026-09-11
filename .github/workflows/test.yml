@@ -27,6 +27,7 @@ jobs:
       matrix:
         package:
           - contrai-core
+          - contrai-data
           - contrai-engine
 
     steps:
