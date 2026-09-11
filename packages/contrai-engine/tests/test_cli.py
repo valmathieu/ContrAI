@@ -25,10 +25,14 @@ import pytest
 from contrai_core.position import Position
 from contrai_core.rule_config import PRESETS, RuleConfig
 from contrai_core.team_side import TeamSide
+from contrai_data import EndReason, GameEnded, read_events
 from contrai_engine.cli import _apply_seed, _build_game, _parse_args, main
 from contrai_engine.model.game import GameOverStatus
 from contrai_engine.model.player import AiPlayer, HumanPlayer
+from contrai_engine.model.round.components import Mark
+from contrai_engine.model.round.scoring import RoundScore
 from contrai_engine.options import DebugOptions, TableAids
+from contrai_engine.recording import RecordingView, RecordRequest
 from contrai_engine.ruleset import TableSetup, load_setup, save_setup, setup_path
 
 @pytest.fixture
@@ -78,27 +82,32 @@ class TestParseArgs:
     def test_no_flags_returns_all_off_defaults(self):
         """The back-compat anchor: an empty argv parses to the defaults."""
 
-        assert _parse_args([]) == (DebugOptions(), TableSetup())
+        assert _parse_args([]) == (DebugOptions(), TableSetup(), RecordRequest())
 
     def test_debug_flag_alone(self):
-        assert _parse_args(["--debug"]) == (DebugOptions(debug=True), TableSetup())
+        assert _parse_args(["--debug"]) == (
+            DebugOptions(debug=True), TableSetup(), RecordRequest(),
+        )
 
     def test_seed_flag_alone(self):
-        assert _parse_args(["--seed", "42"]) == (DebugOptions(seed=42), TableSetup())
+        assert _parse_args(["--seed", "42"]) == (
+            DebugOptions(seed=42), TableSetup(), RecordRequest(),
+        )
 
     def test_autoplay_flag_alone(self):
         assert _parse_args(["--autoplay"]) == (
-            DebugOptions(autoplay=True), TableSetup(),
+            DebugOptions(autoplay=True), TableSetup(), RecordRequest(),
         )
 
     def test_all_three_flags_combined(self):
         result = _parse_args(["--debug", "--seed", "7", "--autoplay"])
         assert result == (
             DebugOptions(debug=True, autoplay=True, seed=7), TableSetup(),
+            RecordRequest(),
         )
 
     def test_seed_value_is_coerced_to_int(self):
-        options, _ = _parse_args(["--seed", "123"])
+        options, _, _ = _parse_args(["--seed", "123"])
         assert options.seed == 123
         assert isinstance(options.seed, int)
 
@@ -110,7 +119,7 @@ class TestParseArgs:
 
     def test_preset_classic_resolves_to_the_defaults(self):
         assert _parse_args(["--preset", "classic"]) == (
-            DebugOptions(), TableSetup(origin="classic"),
+            DebugOptions(), TableSetup(origin="classic"), RecordRequest(),
         )
 
     def test_no_live_score_switches_the_aid_off(self):
@@ -126,7 +135,9 @@ class TestParseArgs:
     def test_no_live_score_is_independent_of_the_ruleset_flags(self):
         """The aid is a view setting, so it composes with any ruleset."""
 
-        options, setup = _parse_args(["--preset", "classic", "--no-live-score"])
+        options, setup, _ = _parse_args(
+            ["--preset", "classic", "--no-live-score"]
+        )
         assert (options, setup.rules) == (DebugOptions(), RuleConfig())
         assert setup.aids == TableAids(live_round_score=False)
 
@@ -385,6 +396,34 @@ class _RecordingView:
         return self._end_game_choices.pop(0)
 
 
+class _FakeRound:
+    """Scripted stand-in for ``Round``: a number and an all-pass score.
+
+    ``main`` only ever passes the round through to the view, but a
+    :class:`RecordingView` wrapped around that view reads a score line
+    off it — so the double carries the contractless one an all-pass
+    publishes, which is the simplest score a record will accept.
+    """
+
+    contract = None
+
+    def __init__(self, number: int) -> None:
+        self.round_number = number
+        self.round_score = RoundScore(
+            scores={side: 0 for side in TeamSide},
+            contract_made=None,
+            unannounced_slam=None,
+            marks={side: Mark(0, 0) for side in TeamSide},
+            belote_points={side: 0 for side in TeamSide},
+            card_points={side: 0 for side in TeamSide},
+            last_trick_side=None,
+            multiplier=1,
+        )
+
+    def __repr__(self) -> str:
+        return f"round-{self.round_number}"
+
+
 class _FakeGame:
     """Scripted stand-in for ``Game``: play N rounds, then be over.
 
@@ -406,12 +445,20 @@ class _FakeGame:
     ) -> None:
         self.rounds_to_play = rounds_to_play
         self.rounds_played = 0
-        self.current_round = "round-0"
+        self.current_round: object = _FakeRound(0)
         self.scores = {TeamSide.NS: 0, TeamSide.EW: 0}
         self.targets_checked: list[int] = []
+        # One entry per ``manage_round``: the object ``main`` actually
+        # drove. Whether that is the view or a wrapper around it is the
+        # whole question the recorder-wiring tests ask.
+        self.views_seen: list[object] = []
         self._tied_after = set(tied_after)
         self._belote_gated_after = set(belote_gated_after)
         self._raises = raises
+
+    #: Four real seats: ``RecordingView.attach`` reads a position and a
+    #: strategy pair off each one, and a record's seating is exactly that.
+    players = [AiPlayer(seat.value, position=seat) for seat in Position]
 
     rules: RuleConfig = RuleConfig()
     """The ruleset ``cli`` folds the landing pick onto; ``_make_game``
@@ -438,8 +485,9 @@ class _FakeGame:
 
     def manage_round(self, view: _RecordingView) -> None:
         view.events.append("manage_round")
+        self.views_seen.append(view)
         self.rounds_played += 1
-        self.current_round = f"round-{self.rounds_played}"
+        self.current_round = _FakeRound(self.rounds_played)
         if self._raises is not None:
             raise self._raises
 
@@ -684,10 +732,9 @@ class TestMain:
             "show_end_game",
         ]
         # Each recap sees the round that just finished, not a stale one.
-        assert [recap["round"] for recap in harness.view.recaps] == [
-            "round-1",
-            "round-2",
-        ]
+        assert [
+            recap["round"].round_number for recap in harness.view.recaps
+        ] == [1, 2]
 
     def test_round_completion_receives_the_running_scores(
         self, install_cli_doubles
@@ -700,7 +747,7 @@ class TestMain:
         main()
 
         round_, scores = harness.view.round_completions[0]
-        assert round_ == "round-1"
+        assert round_.round_number == 1
         assert scores is game.scores
 
     def test_end_game_receives_the_final_status(self, install_cli_doubles):
@@ -955,3 +1002,189 @@ class TestLastSetupPersistence:
 
         assert harness.view.landing_received == [TableSetup()]
         assert harness.rules_seen == [RuleConfig()]
+
+
+class TestRecordFlags:
+    """``--record`` / ``--no-record`` — the third thing ``_parse_args`` returns."""
+
+    def test_absent_by_default(self):
+        _, _, record = _parse_args([])
+        assert record == RecordRequest()
+        assert record.resolve(TableAids()) is None
+
+    def test_bare_flag_means_the_default_root(self, contrai_home):
+        _, _, record = _parse_args(["--record"])
+        assert record.resolve(TableAids()) == contrai_home / "records"
+
+    def test_flag_with_a_directory(self, tmp_path):
+        _, _, record = _parse_args(["--record", str(tmp_path)])
+        assert record.resolve(TableAids()) == tmp_path
+
+    def test_no_record_beats_the_knob(self):
+        _, _, record = _parse_args(["--no-record"])
+        assert record.resolve(TableAids(record=True)) is None
+
+    def test_the_knob_decides_when_no_flag_is_given(self, contrai_home):
+        _, _, record = _parse_args([])
+        assert record.resolve(TableAids(record=True)) == contrai_home / "records"
+
+    def test_the_two_flags_are_mutually_exclusive(self):
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_args(["--record", "--no-record"])
+        assert excinfo.value.code == 2
+
+    def test_the_flag_composes_with_the_ruleset_flags(self, tmp_path):
+        options, setup, record = _parse_args(
+            ["--preset", "classic", "--record", str(tmp_path)]
+        )
+        assert (options, setup.rules) == (DebugOptions(), RuleConfig())
+        assert record.resolve(TableAids()) == tmp_path
+
+
+def _games_under(root):
+    """Every record file under a records root, newest name last."""
+    return sorted((root / "games").glob("*.jsonl"))
+
+
+class TestRecorderWiring:
+    """``main`` holds the wrapper, so the CLI's own hooks are recorded too."""
+
+    def test_main_does_not_wrap_the_view_by_default(self, install_cli_doubles):
+        game = _FakeGame(rounds_to_play=1)
+        harness = install_cli_doubles(games=[game], end_game_choices=["q"])
+
+        main()
+
+        assert game.views_seen == [harness.view]
+
+    def test_main_wraps_the_view_when_recording(
+        self, install_cli_doubles, tmp_path
+    ):
+        game = _FakeGame(rounds_to_play=1)
+        harness = install_cli_doubles(
+            games=[game],
+            end_game_choices=["q"],
+            argv=("contrai", "--record", str(tmp_path)),
+        )
+
+        main()
+
+        (driver,) = game.views_seen
+        assert isinstance(driver, RecordingView)
+        assert driver._record_inner is harness.view
+        # The real view still saw every hook the CLI issues.
+        assert harness.view.events == [
+            "show_landing",
+            "attach",
+            "manage_round",
+            "on_round_complete",
+            "show_round_recap",
+            "show_end_game",
+        ]
+        assert len(_games_under(tmp_path)) == 1
+
+    def test_the_landing_screen_is_not_recorded(
+        self, install_cli_doubles, tmp_path
+    ):
+        """``show_landing`` goes to the real view: it is not part of a game."""
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            end_game_choices=["q"],
+            argv=("contrai", "--record", str(tmp_path)),
+        )
+
+        main()
+
+        assert harness.view.events[0] == "show_landing"
+        assert harness.view.landing_received == [TableSetup()]
+
+    def test_no_record_writes_nothing(self, install_cli_doubles, contrai_home):
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            landing_setups=[TableSetup(aids=TableAids(record=True))],
+            end_game_choices=["q"],
+            argv=("contrai", "--no-record"),
+        )
+
+        main()
+
+        assert not (contrai_home / "records").exists()
+
+    def test_the_knob_alone_switches_recording_on(
+        self, install_cli_doubles, contrai_home
+    ):
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            landing_setups=[TableSetup(aids=TableAids(record=True))],
+            end_game_choices=["q"],
+        )
+
+        main()
+
+        assert len(_games_under(contrai_home / "records")) == 1
+
+    def test_the_recorder_is_rebuilt_after_a_new_game(
+        self, install_cli_doubles, contrai_home
+    ):
+        """Toggling the knob on the landing screen takes the next deal."""
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1), _FakeGame(rounds_to_play=1)],
+            landing_setups=[
+                TableSetup(),
+                TableSetup(aids=TableAids(record=True)),
+            ],
+            end_game_choices=["n", "q"],
+        )
+
+        main()
+
+        # The first game did not record; the second did.
+        assert len(_games_under(contrai_home / "records")) == 1
+
+    def test_a_rematch_opens_a_second_record(
+        self, install_cli_doubles, tmp_path
+    ):
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1), _FakeGame(rounds_to_play=1)],
+            end_game_choices=["r", "q"],
+            argv=("contrai", "--record", str(tmp_path)),
+        )
+
+        main()
+
+        assert len(_games_under(tmp_path)) == 2
+
+    def test_an_interrupt_closes_the_record(self, install_cli_doubles, tmp_path):
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1, raises=KeyboardInterrupt())],
+            argv=("contrai", "--record", str(tmp_path)),
+        )
+
+        main()  # must not propagate
+
+        (path,) = _games_under(tmp_path)
+        ended = [
+            event
+            for event in read_events(path).events
+            if isinstance(event, GameEnded)
+        ]
+        assert [event.reason for event in ended] == [EndReason.INTERRUPTED]
+
+    def test_quitting_leaves_no_second_game_ended(
+        self, install_cli_doubles, tmp_path
+    ):
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            end_game_choices=["q"],
+            argv=("contrai", "--record", str(tmp_path)),
+        )
+
+        main()
+
+        (path,) = _games_under(tmp_path)
+        ended = [
+            event
+            for event in read_events(path).events
+            if isinstance(event, GameEnded)
+        ]
+        assert [event.reason for event in ended] == [EndReason.TARGET_REACHED]

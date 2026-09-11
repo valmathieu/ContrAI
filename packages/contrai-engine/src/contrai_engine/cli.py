@@ -27,6 +27,15 @@ is built from. The model then owns every rule it names —
 ``Game.check_game_over()`` reads the target off ``game.rules`` and the
 loop carries nothing alongside the game — while the interface aids stay
 on the view, re-pointed each time the screen returns.
+
+Recording (``--record`` / ``--no-record``, and the ``record`` table knob)
+is resolved the same way, into a
+:class:`~contrai_engine.recording.RecordRequest` the loop re-reads after
+every landing screen. When it names a root, ``main`` drives a
+:class:`~contrai_engine.recording.RecordingView` wrapped around the real
+view rather than the view itself — which is why the two hooks the CLI
+issues (``on_round_complete``, ``show_end_game``) end up in the record
+alongside the ones the model fires, with no call site changed.
 """
 
 from __future__ import annotations
@@ -44,6 +53,12 @@ from contrai_engine.log_setup import configure_logging
 from contrai_engine.model.game import Game
 from contrai_engine.model.player import AiPlayer, HumanPlayer
 from contrai_engine.options import DebugOptions, TableAids
+from contrai_engine.recording import (
+    UNSET,
+    RecordingView,
+    RecordRequest,
+    finish_recording,
+)
 from contrai_engine.ruleset import TableSetup, resolve_setup, save_setup, setup_path
 from contrai_engine.view.rich_view import RichView
 
@@ -110,13 +125,31 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="play under a named built-in ruleset",
     )
+    # Recording is off unless asked for, and asked for two ways that cannot
+    # both be meant, so argparse refuses the pair itself.
+    record = parser.add_mutually_exclusive_group()
+    record.add_argument(
+        "--record",
+        nargs="?",
+        const=None,
+        default=UNSET,
+        type=Path,
+        metavar="DIR",
+        help="write this game to a record under DIR (default: "
+        "$CONTRAI_HOME/records)",
+    )
+    record.add_argument(
+        "--no-record",
+        action="store_true",
+        help="do not record, whatever the table's record knob says",
+    )
     return parser
 
 
 def _parse_args(
     argv: list[str] | None = None,
-) -> tuple[DebugOptions, TableSetup]:
-    """Parse the CLI's flags into a :class:`DebugOptions` and a ``TableSetup``.
+) -> tuple[DebugOptions, TableSetup, RecordRequest]:
+    """Parse the CLI's flags into the three values the run is driven from.
 
     Args:
         argv: Argument strings to parse, excluding the program name.
@@ -124,11 +157,13 @@ def _parse_args(
             ``argparse``'s own default.
 
     Returns:
-        The parsed debug flags and the resolved table setup — the ruleset
-        the game is built under plus the interface aids the view reads. No
-        seed generation happens here — that is :func:`_apply_seed`'s job —
-        so ``seed`` is ``None`` unless ``--seed`` was passed explicitly,
-        and the setup is ``TableSetup()`` unless a flag named another.
+        The parsed debug flags, the resolved table setup — the ruleset
+        the game is built under plus the interface aids the view reads —
+        and what the record flags asked for. No seed generation happens
+        here — that is :func:`_apply_seed`'s job — so ``seed`` is ``None``
+        unless ``--seed`` was passed explicitly, the setup is
+        ``TableSetup()`` unless a flag named another, and the record
+        request is empty unless ``--record`` / ``--no-record`` was given.
 
     Raises:
         SystemExit: If ``argv`` fails to parse (e.g. a non-integer
@@ -151,7 +186,9 @@ def _parse_args(
         # file. ``parser.error`` prints usage + the message to stderr and
         # exits 2 — the same shape as any other bad flag.
         parser.error(str(exc))
-    return options, setup
+    return options, setup, RecordRequest(
+        directory=args.record, disabled=args.no_record
+    )
 
 
 def _apply_seed(options: DebugOptions) -> DebugOptions:
@@ -228,9 +265,33 @@ def _remember(setup: TableSetup, options: DebugOptions) -> None:
         logger.debug("could not remember the table setup", exc_info=True)
 
 
+def _attach_recorder(
+    view: RichView, record: RecordRequest, setup: TableSetup
+) -> RichView | RecordingView:
+    """Wrap ``view`` in a :class:`RecordingView` when this run records.
+
+    Re-evaluated after every landing screen rather than once at startup:
+    the record knob lives on the table setup, so toggling it with ``[r]``
+    takes effect on the next deal instead of the next run.
+
+    Args:
+        view: The real view, always the one the wrapper decorates — never
+            a wrapper from a previous game.
+        record: What the CLI flags asked for.
+        setup: The setup the next game will be dealt under.
+
+    Returns:
+        A :class:`RecordingView` around ``view``, or ``view`` itself.
+    """
+    root = record.resolve(setup.aids)
+    if root is None:
+        return view
+    return RecordingView(view, root, preset=setup.origin)
+
+
 def main() -> None:
     """Entry point registered as the ``contrai`` console script."""
-    options, setup = _parse_args()
+    options, setup, record = _parse_args()
     options = _apply_seed(options)
     configure_logging(options)
 
@@ -250,13 +311,17 @@ def main() -> None:
     setup = view.show_landing(setup)
     view.aids = setup.aids
     _remember(setup, options)
+    # The recorder decorates the view, and ``main`` holds the wrapper: the
+    # two hooks the CLI issues itself — ``on_round_complete`` and
+    # ``show_end_game`` — are recorded for the same reason the model's are.
+    driver = _attach_recorder(view, record, setup)
     try:
         while True:
             game = _build_game(autoplay=options.autoplay, rules=setup.rules)
-            view.attach(game, target_score=game.rules.target_score)
+            driver.attach(game, target_score=game.rules.target_score)
             while not game.check_game_over().game_over:
-                game.manage_round(view=view)
-                view.on_round_complete(game.current_round, game.scores)
+                game.manage_round(view=driver)
+                driver.on_round_complete(game.current_round, game.scores)
                 # Show a between-round recap (contract, made/failed,
                 # round points, running totals). Always shown, including
                 # before the end-game banner so the player can read the
@@ -265,23 +330,33 @@ def main() -> None:
                 # sudden-death (tie at/above target) cases, and the panel
                 # names any side the §8 belote gate is holding back.
                 status = game.check_game_over()
-                view.show_round_recap(
+                driver.show_round_recap(
                     game.current_round,
                     game.scores,
                     is_final=status.game_over,
                     is_tiebreaker=status.tied_teams is not None,
                     belote_gated=status.belote_gated,
                 )
-            choice = view.show_end_game(game.check_game_over())
+            choice = driver.show_end_game(game.check_game_over())
             if choice == "q":
                 break
             if choice == "n":
+                finish_recording(driver)
+                # The landing screen goes to the real view, not the
+                # driver: it is not part of a game and has no place in a
+                # record.
                 setup = view.show_landing(setup)
                 view.aids = setup.aids
                 _remember(setup, options)
+                driver = _attach_recorder(view, record, setup)
             # 'r' → rematch: same setup, fresh game in the next loop tick.
     except (KeyboardInterrupt, EOFError):
         view.console.print("\nGoodbye.")
+    finally:
+        # A game abandoned mid-round still has a file open. Closing it
+        # with ``interrupted`` is what keeps "why does this record stop?"
+        # a question the record itself answers.
+        finish_recording(driver)
 
 
 if __name__ == "__main__":
