@@ -17,7 +17,17 @@ the document knows the *strings*.
 """
 
 from contrai_scraper.config import ACCOUNT_EMAIL, TARGET_URL, VERIFICATION_CODE
+from contrai_scraper.browser import (
+    INIT_SCRIPT,
+    SEND_SCRIPT,
+    STEP_TIMEOUT_MS,
+    OptionsReading,
+    ScoreboardReading,
+    Spectator,
+    open_spectator,
+)
 from contrai_scraper.exceptions import (
+    BrowserError,
     ParseError,
     ProfileError,
     ScraperError,
@@ -100,15 +110,20 @@ from contrai_scraper.wire import (
 
 __all__ = [
     "ACCOUNT_EMAIL",
+    "INIT_SCRIPT",
+    "SEND_SCRIPT",
+    "STEP_TIMEOUT_MS",
     "DEAL_PACKETS",
     "DEAL_VERB",
     "AccountSection",
+    "BrowserError",
     "BrowserSection",
     "Counters",
     "EventKey",
     "FrameSource",
     "HealthLog",
     "LiveRound",
+    "OptionsReading",
     "OutputSection",
     "ParseError",
     "PlayerInfo",
@@ -126,12 +141,14 @@ __all__ = [
     "RulesSection",
     "SENT",
     "ScoreRow",
+    "ScoreboardReading",
     "SessionResult",
     "ScraperError",
     "Selector",
     "SelectorSection",
     "SiteSection",
     "Snapshot",
+    "Spectator",
     "Translator",
     "TARGET_URL",
     "VERIFICATION_CODE",
@@ -155,6 +172,7 @@ __all__ = [
     "is_game_scrapeable",
     "load_profile",
     "new_session_id",
+    "open_spectator",
     "log_in",
     "observe_game",
     "open_spectator_mode",

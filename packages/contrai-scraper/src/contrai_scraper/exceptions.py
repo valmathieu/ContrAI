@@ -15,6 +15,10 @@ class ProfileError(ScraperError, ValueError):
     """The profile is missing, malformed, or names something unknown."""
 
 
+class BrowserError(ScraperError, RuntimeError):
+    """A step of the browser walk did not complete."""
+
+
 class WireError(ScraperError, ValueError):
     """A frame could not be unwrapped, or its key could not be read."""
 
