@@ -46,15 +46,11 @@ from contrai_engine.model.round import Round
 def _stack_deck(hands: dict[str, list[Card]]) -> Deck:
     """Build a ``Deck`` whose ``deal()`` reproduces exactly ``hands``.
 
-    ``Deck.deal`` hands out cards in a fixed 3-2-3 pattern per seat, each
-    seat's three batches read from three *disjoint* slices of
-    ``deck.cards`` (see ``Deck.deal``): for seat index ``i`` (0=N, 1=E,
-    2=S, 3=W, matching the N/E/S/W seating order the tests below use)
-    the batches are ``cards[i*3:i*3+3]``, ``cards[i*2+12:i*2+14]``, and
-    ``cards[i*3+20:i*3+23]``. This helper inverts that layout: given the
-    8-card hand each seat should end up holding (in the desired final
-    order), it writes each hand's cards into the matching three slots so
-    ``deck.deal([N, E, S, W])`` reconstructs those exact hands.
+    The inversion itself is ``Deck.stacked``, which takes its four hands
+    in **deal order**. All this adds is the seat-letter mapping these
+    scenarios are written in: index 0=N, 1=E, 2=S, 3=W, matching the
+    N/E/S/W order the tests below deal in, so ``deck.deal([N, E, S, W])``
+    reconstructs those exact hands.
 
     Args:
         hands: Mapping of seat letter ("N"/"E"/"S"/"W") to the 8-card
@@ -62,28 +58,12 @@ def _stack_deck(hands: dict[str, list[Card]]) -> Deck:
             hand should hold them.
 
     Returns:
-        A fresh ``Deck`` stacked for the inverse deal. ``deal()`` still
-        performs its own 32-card / 4-player validation, so a malformed
-        ``hands`` mapping fails there if it slips past the assertions
-        below.
+        A fresh ``Deck`` stacked for the inverse deal. ``Deck.stacked``
+        performs the 4-hand / 8-card / 32-distinct validation itself, so
+        a malformed ``hands`` mapping fails there.
     """
 
-    seats = ("N", "E", "S", "W")
-    deck_cards: list[Card | None] = [None] * 32
-    for i, seat in enumerate(seats):
-        hand = hands[seat]
-        assert len(hand) == 8, f"seat {seat} needs exactly 8 cards, got {len(hand)}"
-        batch1, batch2, batch3 = hand[0:3], hand[3:5], hand[5:8]
-        deck_cards[i * 3 : i * 3 + 3] = batch1
-        deck_cards[i * 2 + 12 : i * 2 + 14] = batch2
-        deck_cards[i * 3 + 20 : i * 3 + 23] = batch3
-
-    assert all(card is not None for card in deck_cards), "every slot must be filled"
-    assert len(set(deck_cards)) == 32, "a stacked deck must hold 32 distinct cards"
-
-    deck = Deck()
-    deck.cards = deck_cards
-    return deck
+    return Deck.stacked([hands[seat] for seat in ("N", "E", "S", "W")])
 
 
 # ---------------------------------------------------------------------------

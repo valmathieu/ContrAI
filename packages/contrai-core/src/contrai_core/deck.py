@@ -1,6 +1,7 @@
 """Deck class for managing a deck of cards in the contrée game."""
 
 import random
+from collections.abc import Sequence
 
 from .card import Card
 from .exceptions import InvalidCardCountError, InvalidPlayerCountError
@@ -9,6 +10,62 @@ from .types import Rank, Suit
 class Deck:
     def __init__(self):
         self.cards = [Card(suit, rank) for suit in Suit for rank in Rank]
+
+    @classmethod
+    def stacked(cls, hands: Sequence[Sequence[Card]]) -> "Deck":
+        """Build a deck whose :meth:`deal` reproduces exactly ``hands``.
+
+        The inverse of :meth:`deal`'s fixed 3-2-3 layout. ``deal`` reads
+        each seat's three batches from three *disjoint* slices of
+        ``cards``: for the seat at index ``i`` they are
+        ``cards[i*3:i*3+3]``, ``cards[i*2+12:i*2+14]`` and
+        ``cards[i*3+20:i*3+23]``. Writing each hand back into those three
+        slots is therefore the whole inversion — no shuffle to neutralise,
+        no order to guess.
+
+        The hands are in **deal order**, the same order :meth:`deal` takes
+        its players in: the seat after the dealer first, the dealer last.
+        A caller holding hands keyed by seat re-orders them itself, which
+        is what keeps this method free of any seating rule.
+
+        Replaying a recorded game is what this is for — the deal comes
+        from the file rather than from the RNG — and a test wanting a
+        chosen deal uses it for the same reason.
+
+        Args:
+            hands: The four 8-card hands, in deal order.
+
+        Returns:
+            A fresh deck stacked for that deal.
+
+        Raises:
+            InvalidPlayerCountError: If there are not exactly 4 hands.
+            InvalidCardCountError: If a hand does not hold exactly 8
+                cards, or if the four hands do not hold 32 *distinct*
+                cards between them.
+        """
+
+        if len(hands) != 4:
+            raise InvalidPlayerCountError(4, len(hands), "Stacking a deck")
+        cards: list[Card] = [None] * 32  # type: ignore[list-item]
+        for index, hand in enumerate(hands):
+            if len(hand) != 8:
+                raise InvalidCardCountError(
+                    8, len(hand), f"Stacking a deck (hand {index})"
+                )
+            cards[index * 3 : index * 3 + 3] = hand[0:3]
+            cards[index * 2 + 12 : index * 2 + 14] = hand[3:5]
+            cards[index * 3 + 20 : index * 3 + 23] = hand[5:8]
+        # A repeated card would leave ``deal`` handing the same card to
+        # two seats, which every downstream invariant then trips over far
+        # from the cause. Catch it here, where the cause is visible.
+        distinct = len(set(cards))
+        if distinct != 32:
+            raise InvalidCardCountError(32, distinct, "Stacking a deck")
+
+        deck = cls()
+        deck.cards = cards
+        return deck
 
     def __repr__(self):
         """

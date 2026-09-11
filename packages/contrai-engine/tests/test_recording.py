@@ -105,11 +105,9 @@ class _Deaf:
 def _stack_deck(hands: dict[str, list[Card]]) -> Deck:
     """Build a ``Deck`` whose ``deal()`` reproduces exactly ``hands``.
 
-    The same inversion ``test_round_lifecycle`` uses: for seat index
-    ``i`` (0=N, 1=E, 2=S, 3=W) ``Deck.deal`` reads the three batches
-    ``cards[i*3:i*3+3]``, ``cards[i*2+12:i*2+14]`` and
-    ``cards[i*3+20:i*3+23]``, so writing each hand into those slots makes
-    the deal deterministic.
+    The same seat-letter wrapper ``test_round_lifecycle`` uses over
+    ``Deck.stacked``: index 0=N, 1=E, 2=S, 3=W is the deal order these
+    scenarios are written in.
 
     Args:
         hands: Seat letter to the eight cards that seat must be dealt.
@@ -117,18 +115,7 @@ def _stack_deck(hands: dict[str, list[Card]]) -> Deck:
     Returns:
         A deck stacked for that deal.
     """
-    seats = ("N", "E", "S", "W")
-    deck_cards: list[Card | None] = [None] * 32
-    for i, seat in enumerate(seats):
-        hand = hands[seat]
-        assert len(hand) == 8
-        deck_cards[i * 3 : i * 3 + 3] = hand[0:3]
-        deck_cards[i * 2 + 12 : i * 2 + 14] = hand[3:5]
-        deck_cards[i * 3 + 20 : i * 3 + 23] = hand[5:8]
-    assert len(set(deck_cards)) == 32
-    deck = Deck()
-    deck.cards = deck_cards
-    return deck
+    return Deck.stacked([hands[seat] for seat in ("N", "E", "S", "W")])
 
 
 def _stacked_game(hands: dict[str, list[Card]], rules: RuleConfig | None = None) -> Game:

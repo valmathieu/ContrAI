@@ -12,7 +12,7 @@ Source lives at `packages/contrai-core/src/contrai_core/`:
 | `position.py`   | `Position` (the four seats; owns all seat arithmetic, including the direction-aware `next_in(direction)`) |
 | `team_side.py`  | `TeamSide` (the two sides of the table — team *identity*)                               |
 | `card.py`       | `Card`                                                                                  |
-| `deck.py`       | `Deck`                                                                                  |
+| `deck.py`       | `Deck`, `Deck.stacked` (the inverse of `deal`'s 3-2-3 layout)                            |
 | `hand.py`       | `Hand` (append/extend/remove/clear/`in`/iterate/`len`, no indexing; its query helpers delegate to `card_queries`) |
 | `card_queries.py` | `count_suit` / `cards_of_suit` / `has_suit` / `has_card` over any `Iterable[Card]` — the one implementation `Hand` and the play path's frozen tuples both read through |
 | `rules.py`      | `TrumpRules` (sealed ABC), `SingleSuitRules`, `NoTrumpRules`, `AllTrumpRules`, the six card tables, and `rules_for(contract_suit)` — the per-contract trick-rules seam |
