@@ -23,6 +23,7 @@ from contrai_scraper.exceptions import (
     ScraperError,
     WireError,
 )
+from contrai_scraper.lzstring import compress_to_base64, decompress_from_base64
 from contrai_scraper.observer import (
     get_current_round,
     get_players,
@@ -67,6 +68,8 @@ __all__ = [
     "WireEvents",
     "WireSection",
     "WireTokens",
+    "compress_to_base64",
+    "decompress_from_base64",
     "find_tournament_table",
     "get_current_round",
     "get_players",
