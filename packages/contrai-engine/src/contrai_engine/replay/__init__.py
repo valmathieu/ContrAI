@@ -23,6 +23,7 @@ from .exceptions import (
     SeatMismatchError,
 )
 from .player import RecordedPlayer, RoundScript
+from .stepping import ReplayInterrupt, StepMode, SteppingView
 from .verdict import (
     GameVerdict,
     Mismatch,
@@ -51,6 +52,9 @@ __all__ = [
     "RoundExhaustedError",
     "ScriptExhaustedError",
     "SeatMismatchError",
+    "ReplayInterrupt",
+    "StepMode",
+    "SteppingView",
     "Verdict",
     "MismatchKind",
     "Mismatch",
