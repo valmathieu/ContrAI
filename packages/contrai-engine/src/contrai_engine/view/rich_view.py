@@ -623,16 +623,26 @@ class RichView:
             elif raw in ("l", "live"):
                 # The aid is the one setting the model never sees, so it is
                 # flipped here rather than routed through ``cycle_knob``.
+                # ``replace`` rather than a fresh ``TableAids``: rebuilding
+                # the object would reset every other aid to its default.
                 setup = dataclasses.replace(
                     setup,
-                    aids=TableAids(
-                        live_round_score=not setup.aids.live_round_score
+                    aids=dataclasses.replace(
+                        setup.aids,
+                        live_round_score=not setup.aids.live_round_score,
+                    ),
+                )
+            elif raw in ("r", "record"):
+                setup = dataclasses.replace(
+                    setup,
+                    aids=dataclasses.replace(
+                        setup.aids, record=not setup.aids.record
                     ),
                 )
             else:
                 notice = Text(
                     "✗ [Enter] to deal, or [p] preset · [f] load file · "
-                    "[k] knobs · [l] live score.",
+                    "[k] knobs · [l] live score · [r] record.",
                     style=RED,
                 )
 

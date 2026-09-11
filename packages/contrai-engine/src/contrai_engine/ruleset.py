@@ -62,7 +62,9 @@ SECTIONS: dict[str, tuple[str, ...]] = {
 #: :data:`SECTIONS` on purpose — an aid changes what the screen shows,
 #: never what the cards do, so it is not a rule and has no ``RuleConfig``
 #: field to land on.
-AID_SECTION: tuple[str, tuple[str, ...]] = ("table_aids", ("live_round_score",))
+AID_SECTION: tuple[str, tuple[str, ...]] = (
+    "table_aids", ("live_round_score", "record")
+)
 
 #: TOML section → the §9 subsection heading it renders under on screen.
 SECTION_HEADINGS: dict[str, str] = {

@@ -1511,6 +1511,41 @@ class TestShowLandingDispatcher:
 
         assert view.show_landing(TableSetup()).aids == TableAids()
 
+    def test_r_toggles_recording(self):
+        view = _drive_landing(RichView(), ["r", ""])
+
+        result = view.show_landing(TableSetup())
+
+        assert result.aids.record is True
+        assert result.rules == RuleConfig()
+
+    def test_r_twice_returns_to_where_it_started(self):
+        view = _drive_landing(RichView(), ["r", "r", ""])
+
+        assert view.show_landing(TableSetup()).aids == TableAids()
+
+    def test_l_no_longer_clears_the_record_knob(self):
+        """Rebuilding the aids instead of replacing one would reset it."""
+        view = _drive_landing(RichView(), ["l", ""])
+
+        result = view.show_landing(TableSetup(aids=TableAids(record=True)))
+
+        assert result.aids == TableAids(live_round_score=False, record=True)
+
+    def test_r_no_longer_clears_the_live_score_knob(self):
+        view = _drive_landing(RichView(), ["r", ""])
+
+        result = view.show_landing(
+            TableSetup(aids=TableAids(live_round_score=False))
+        )
+
+        assert result.aids == TableAids(live_round_score=False, record=True)
+
+    def test_record_has_a_long_form_too(self):
+        view = _drive_landing(RichView(), ["RECORD", ""])
+
+        assert view.show_landing(TableSetup()).aids.record is True
+
     def test_p_routes_to_the_preset_picker(self, monkeypatch):
         picked = TableSetup(rules=RuleConfig(target_score=500), origin="picked")
         view = _drive_landing(RichView(), ["p", ""])
@@ -1549,6 +1584,20 @@ class TestShowLandingDispatcher:
         view = _drive_landing(RichView(), ["z", ""])
 
         assert view.show_landing(setup) is setup
+
+    def test_the_key_error_line_lists_record(self):
+        printed = []
+        view = RichView()
+        inputs = iter(["z", ""])
+        view.console.clear = lambda *a, **k: None
+        view.console.print = lambda *a, **k: printed.extend(
+            getattr(getattr(x, "renderable", None), "plain", "") for x in a
+        )
+        view.console.input = lambda *a, **k: next(inputs)
+
+        view.show_landing(TableSetup())
+
+        assert any("[r] record" in text for text in printed)
 
     def test_keys_are_case_insensitive_and_have_long_forms(self):
         view = _drive_landing(RichView(), ["LIVE", ""])
