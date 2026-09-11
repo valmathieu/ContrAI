@@ -14,6 +14,7 @@ ReplayController, verify_record, …`` without knowing the module layout.
 """
 
 from ..model.deal import DealSource, RandomDealSource
+from .controller import ReplayController
 from .deal import ScriptedDealSource
 from .exceptions import (
     ReplayError,
@@ -21,11 +22,15 @@ from .exceptions import (
     ScriptExhaustedError,
     SeatMismatchError,
 )
+from .player import RecordedPlayer, RoundScript
 
 __all__ = [
     "DealSource",
     "RandomDealSource",
     "ScriptedDealSource",
+    "RecordedPlayer",
+    "RoundScript",
+    "ReplayController",
     "ReplayError",
     "RoundExhaustedError",
     "ScriptExhaustedError",
