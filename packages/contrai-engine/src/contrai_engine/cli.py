@@ -595,6 +595,29 @@ def _run_verify(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def _force_utf8_streams() -> None:
+    """Switch stdout and stderr to UTF-8, where the streams allow it.
+
+    Both subcommands need this, which is why it runs before the dispatch
+    rather than inside the game path. A card renders with its suit glyph
+    (``K♠``), so cp1252 — still the default code page on a legacy Windows
+    console — raises ``UnicodeEncodeError`` on encode rather than
+    degrading: a game would crash on its first trick, and ``verify``
+    would crash reporting a belote mismatch, which names the two cards.
+
+    A stream that cannot be reconfigured is left alone: some are already
+    UTF-8, some are pipes, and none of that is worth failing a run over.
+    """
+
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8")
+            except Exception:
+                pass
+
+
 def main() -> None:
     """Entry point registered as the ``contrai`` console script.
 
@@ -604,24 +627,13 @@ def main() -> None:
     Raises:
         SystemExit: With the ``verify`` exit code, or on a usage error.
     """
+    _force_utf8_streams()
     args, play = _parse_argv()
     if args.command == "verify":
         raise SystemExit(_run_verify(args))
     options, setup, record = _play_setup(args, play)
     options = _apply_seed(options)
     configure_logging(options)
-
-    # Force UTF-8 stdout/stderr so suit glyphs (♠♥♦♣) render under
-    # cmd.exe and other code-page-1252 contexts. Modern Windows
-    # Terminal handles UTF-8 natively but the legacy console path
-    # crashes on encode without this.
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is not None:
-            try:
-                reconfigure(encoding="utf-8")
-            except Exception:
-                pass
 
     view = RichView(options=options, aids=setup.aids)
     setup = view.show_landing(setup)
