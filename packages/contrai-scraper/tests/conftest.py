@@ -12,9 +12,12 @@ root ``pyproject.toml`` runs pytest with ``--import-mode=importlib`` and
 ``from conftest import ...`` is not reliable under it.
 """
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from contrai_scraper import compress_to_base64
 
 
 @pytest.fixture
@@ -214,3 +217,129 @@ def profile(profile_path: Path):
     from contrai_scraper import load_profile
 
     return load_profile(profile_path)
+
+
+# ---------------------------------------------------------------------------
+# Payload builders — shared by the snapshot, live and session suites
+# ---------------------------------------------------------------------------
+#
+# One set of shapes, used by every test that needs a frame. Three modules each
+# inventing their own is the fastest route to a suite that passes per module
+# and fails end to end, so a shape that is missing here is added here.
+#
+# Every key below comes from the ``[wire.fields]`` block of the fixture
+# profile above. Change one and you change both — which is the point: the
+# builders are a second reader of the same document, so a path that no longer
+# resolves shows up as a failing test rather than as a silently empty field.
+
+
+def envelope(kind: str, event: str, data, *, frame_id: str = "1", metadata=None) -> str:
+    """Builds a frame the way the invented vocabulary spells it."""
+
+    inner = {"event": event, "data": data}
+    if metadata is not None:
+        inner["metadata"] = metadata
+    return json.dumps({"id": frame_id, "event": kind, "data": json.dumps(inner)})
+
+
+def snapshot_payload(*, table_id="t1", round_index=2, rows=(), totals=(40, 60)) -> dict:
+    """A join snapshot in the invented vocabulary.
+
+    The round block is keyed by ``round_state_prefix`` + the game id, which is
+    why the reader finds it by prefix and never by name.
+    """
+
+    return {
+        "table": {
+            "id": table_id,
+            "cup": True,
+            "seats": [
+                {"id": "p1", "spot": "top"}, {"id": "p2", "spot": "right"},
+                {"id": "p3", "spot": "bottom"}, {"id": "p4", "spot": "left"},
+            ],
+        },
+        "state": {
+            "people": {
+                "top":    {"id": "p1", "label": "One",   "acct": "1001",
+                           "grade": "7", "sort": "human", "side": {"team": "X"}},
+                "right":  {"id": "p2", "label": "Two",   "acct": "1002",
+                           "grade": None, "sort": "human", "side": {"team": "Y"}},
+                "bottom": {"id": "p3", "label": "Three", "acct": "1003",
+                           "grade": "3", "sort": "human", "side": {"team": "X"}},
+                "left":   {"id": "p4", "label": "Four",  "acct": "1004",
+                           "grade": "5", "sort": "human", "side": {"team": "Y"}},
+            },
+            "round.g1": {
+                "n": round_index,
+                "giver": "top",
+                "suit": "wood",
+                "score": {"rows": list(rows),
+                          "by_team": {"X": totals[0], "Y": totals[1]}},
+            },
+        },
+    }
+
+
+def score_row(*, made=True, value=80, suit="wood", multiplier=1,
+              taken=(90, 72), belote=(0, 0), marked=((80, 0), (0, 0))) -> dict:
+    """One row of the per-round breakdown, keyed by team letter."""
+
+    return {
+        "deal": {"status": "ok" if made else "down", "level": value,
+                 "suit": suit, "coeff": multiplier},
+        "X": {"done": {"points": taken[0], "belotes": belote[0]},
+              "marks": {"points": marked[0][0], "bid": marked[0][1]}},
+        "Y": {"done": {"points": taken[1], "belotes": belote[1]},
+              "marks": {"points": marked[1][0], "bid": marked[1][1]}},
+    }
+
+
+def deal_frame(game="g1", round_=1, cards=()) -> str:
+    """The four-field key whose payload is the compressed pre-deal order."""
+
+    blob = compress_to_base64(json.dumps({"beforeDeal": list(cards)}))
+    return envelope("payload", f"{game},{round_},0,0", blob)
+
+
+def bid_frame(game="g1", round_=1, seq=1, actor="p1", payload=None, at=None) -> str:
+    """A bid. ``payload=None`` is a pass (``pass_is_null``)."""
+
+    return envelope("payload", f"{game},{round_},0,{seq},bid:{seq},{actor}", payload,
+                    frame_id=f"b{round_}-{seq}",
+                    metadata={"at": at} if at else None)
+
+
+def play_frame(game="g1", round_=1, trick=1, index=0, actor="p1",
+               card="2w", think=None, at=None) -> str:
+    """A card play. The fourth key field is the index within the trick."""
+
+    metadata = {}
+    if think is not None:
+        metadata["ms"] = {"v": think, "m": 8000}
+    if at is not None:
+        metadata["at"] = at
+    return envelope("payload", f"{game},{round_},{trick},{index},card,{actor}", card,
+                    frame_id=f"p{round_}-{trick}-{index}",
+                    metadata=metadata or None)
+
+
+@pytest.fixture
+def builders():
+    """The payload builders, as one namespace.
+
+    Exposed as a fixture rather than imported: pytest runs under
+    ``--import-mode=importlib`` (root ``pyproject.toml``), so a test module
+    importing its own ``conftest`` by name is not a safe move.
+
+    Returns:
+        A namespace carrying every builder above.
+    """
+
+    return SimpleNamespace(
+        envelope=envelope,
+        snapshot_payload=snapshot_payload,
+        score_row=score_row,
+        deal_frame=deal_frame,
+        bid_frame=bid_frame,
+        play_frame=play_frame,
+    )

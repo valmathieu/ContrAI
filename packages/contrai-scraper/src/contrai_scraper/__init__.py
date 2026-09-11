@@ -53,6 +53,13 @@ from contrai_scraper.parse.deal import (
     final_trick,
     resolve_dealer,
 )
+from contrai_scraper.parse.snapshot import (
+    PlayerInfo,
+    RowContract,
+    ScoreRow,
+    Snapshot,
+    read_snapshot,
+)
 from contrai_scraper.parse.translate import Translator
 from contrai_scraper.profile import (
     AccountSection,
@@ -92,6 +99,7 @@ __all__ = [
     "FrameSource",
     "OutputSection",
     "ParseError",
+    "PlayerInfo",
     "PlaywrightFrameSource",
     "PrivacySection",
     "Profile",
@@ -101,12 +109,15 @@ __all__ = [
     "RawLine",
     "RawLogFrameSource",
     "RawLogWriter",
+    "RowContract",
     "RulesSection",
     "SENT",
+    "ScoreRow",
     "ScraperError",
     "Selector",
     "SelectorSection",
     "SiteSection",
+    "Snapshot",
     "Translator",
     "TARGET_URL",
     "VERIFICATION_CODE",
@@ -137,6 +148,7 @@ __all__ = [
     "resolve_dealer",
     "raw_path",
     "read_raw_log",
+    "read_snapshot",
     "unwrap",
     "wait_for_new_round",
 ]
