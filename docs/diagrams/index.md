@@ -162,6 +162,6 @@ Each row links to the canonical `.puml` source, the rendered `.png` preview, and
 | `seq_trick.puml`       | Sequence | Single trick zoom    | [source](seq_trick.puml)              | [png](seq_trick.png)                 | [Engine — single trick zoom](../engine/#round-lifecycle)   |
 | `flow_scoring.mmd`     | Flowchart| Round scoring tree   | [source](flow_scoring.mmd)            | [png](flow_scoring.png)              | [Engine — scoring](../engine/#scoring)                     |
 | `seq_replay.puml`      | Sequence | Replay + verify a record | [source](seq_replay.puml)         | [png](seq_replay.png)                | [Engine — CLI](../engine/#cli)                             |
-| `seq_scraper.puml`     | Sequence | contrai-scraper      | [source](seq_scraper.puml)            | [png](seq_scraper.png)               | [Scraper overview](../scraper/#current-flow-v1)            |
+| `seq_scraper.puml`     | Sequence | contrai-scraper      | [source](seq_scraper.puml)            | [png](seq_scraper.png)               | [Scraper — the table loop](../scraper/#the-table-loop)            |
 | `state_cli_screens.mmd`| State    | RichView screen flow | [source](state_cli_screens.mmd)       | [png](state_cli_screens.png)         | [Engine — CLI](../engine/#cli)                             |
 | `flow_wire.mmd`        | Flowchart| Scraper wire pipeline| [source](flow_wire.mmd)               | [png](flow_wire.png)                 | [Scraper — pipeline](../scraper/#pipeline)                 |
