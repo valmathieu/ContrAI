@@ -183,6 +183,9 @@ Three details that are easy to get wrong. An illegal action **ends that round's 
 
 A record naming a preset whose `RuleConfig` has since moved is reported as a **note**, not a verdict: it is stale, not wrong.
 
+```plantuml format="svg" source="seq_replay.puml"
+```
+
 **Trump choices.** No trump and all trump are off by default (`contree-domain.md` §9.2). Turn them on with a ruleset file:
 
 ```toml

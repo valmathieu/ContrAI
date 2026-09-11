@@ -58,8 +58,11 @@ re-render until neither side does):
 
 ```bash
 PLANTUML_LIMIT_SIZE=16384 plantuml -tpng docs/diagrams/class_core.puml    # 11807 x 3739
-PLANTUML_LIMIT_SIZE=8192  plantuml -tpng docs/diagrams/class_engine.puml  #  7586 x 4972
+PLANTUML_LIMIT_SIZE=16384 plantuml -tpng docs/diagrams/class_engine.puml  #  9523 x 4751
 ```
+
+`class_engine.puml` outgrew 8192 when the `replay/` package landed — a reminder
+that the limit is a property of the diagram on the day, not a constant to copy.
 
 Only the raster export is affected; the MkDocs site renders SVG and is not
 subject to the limit.
@@ -158,5 +161,6 @@ Each row links to the canonical `.puml` source, the rendered `.png` preview, and
 | `seq_bidding.puml`     | Sequence | Bidding cycle zoom   | [source](seq_bidding.puml)            | [png](seq_bidding.png)               | [Engine — bidding cycle zoom](../engine/#round-lifecycle)  |
 | `seq_trick.puml`       | Sequence | Single trick zoom    | [source](seq_trick.puml)              | [png](seq_trick.png)                 | [Engine — single trick zoom](../engine/#round-lifecycle)   |
 | `flow_scoring.mmd`     | Flowchart| Round scoring tree   | [source](flow_scoring.mmd)            | [png](flow_scoring.png)              | [Engine — scoring](../engine/#scoring)                     |
+| `seq_replay.puml`      | Sequence | Replay + verify a record | [source](seq_replay.puml)         | [png](seq_replay.png)                | [Engine — CLI](../engine/#cli)                             |
 | `seq_scraper.puml`     | Sequence | contrai-scraper      | [source](seq_scraper.puml)            | [png](seq_scraper.png)               | [Scraper overview](../scraper/#current-flow-v1)            |
 | `state_cli_screens.mmd`| State    | RichView screen flow | [source](state_cli_screens.mmd)       | [png](state_cli_screens.png)         | [Engine — CLI](../engine/#cli)                             |
