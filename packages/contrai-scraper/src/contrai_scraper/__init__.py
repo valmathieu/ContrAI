@@ -1,4 +1,4 @@
-"""Playwright spectator-mode scraper for ``app.belote-rebelote.fr``.
+"""Playwright spectator-mode scraper for online Contrée tournament tables.
 
 The package is split along the two phases of a scraping run:
 
