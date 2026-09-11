@@ -827,3 +827,49 @@ def game_builders():
         seat_of_handle=SEAT_OF_HANDLE,
         ts=TS,
     )
+
+
+@pytest.fixture
+def raw_log_path(tmp_path, source_game):
+    """The fixture game, written out as a raw log the CLI can re-parse.
+
+    Written through the real :class:`RawLogWriter`, so the log the CLI reads
+    is the log a session would have left — mirrored socket, keepalives and
+    all.
+
+    Returns:
+        The log file.
+    """
+
+    from contrai_scraper import RawFrame, RawLogWriter, raw_path
+
+    path = raw_path(tmp_path / "corpus", "session-1")
+    with RawLogWriter(path) as log:
+        for index, (text, socket) in enumerate(synthesize_frames(source_game)):
+            log.write_frame(
+                RawFrame(socket=socket, direction="recv", at=index / 10, text=text)
+            )
+    return path
+
+
+@pytest.fixture
+def partial_raw_log_path(tmp_path, source_game):
+    """The same game with its first deal missing, so a round must be skipped.
+
+    Returns:
+        The log file.
+    """
+
+    from contrai_scraper import RawFrame, RawLogWriter, raw_path
+
+    path = raw_path(tmp_path / "partial", "session-2")
+    with RawLogWriter(path) as log:
+        kept = [
+            pair for pair in synthesize_frames(source_game)
+            if ",1,0,0" not in pair[0]
+        ]
+        for index, (text, socket) in enumerate(kept):
+            log.write_frame(
+                RawFrame(socket=socket, direction="recv", at=index / 10, text=text)
+            )
+    return path
