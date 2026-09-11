@@ -27,6 +27,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) `HealthLog` — one JSON line per transition plus a counter heartbeat, on stderr. See [scraper docs](docs/scraper/index.md).
 - (scraper) `parse_session(end_reason=…)` — a caller states how a game ended when the wire cannot, e.g. a watchdog's `abandoned`.
 - (scraper) `Spectator` — the profile-driven browser walk: login, the first-use pledge, the options and scoreboard panels, the table hop. See [scraper docs](docs/scraper/index.md).
+- (scraper) `Recorder` — seats at a tournament table, gates it, watches a whole game and writes one record per game. See [scraper docs](docs/scraper/index.md).
 
 ### Changed
 
