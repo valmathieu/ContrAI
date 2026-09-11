@@ -57,6 +57,15 @@ from .codec import (
     encode,
     decode,
 )
+from .store import (
+    ReadResult,
+    RecordWriter,
+    read_events,
+    records_root,
+    games_dir,
+    game_path,
+    new_game_id,
+)
 
 __all__: list[str] = [
     "RecordError",
@@ -104,4 +113,11 @@ __all__: list[str] = [
     "FORMAT_MAJOR",
     "encode",
     "decode",
+    "ReadResult",
+    "RecordWriter",
+    "read_events",
+    "records_root",
+    "games_dir",
+    "game_path",
+    "new_game_id",
 ]
