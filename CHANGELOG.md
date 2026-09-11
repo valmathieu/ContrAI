@@ -21,6 +21,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (engine) Verify verdicts: `verified` / `partial` / `suspect` per round, five mismatch classes, written to `verdicts/<game_id>.json`. See [engine docs](docs/engine/index.md).
 - (engine) `verify_record(path)` — replays a record and reports illegal bids and plays, trick-winner, belote and score disagreements. See [engine docs](docs/engine/index.md).
 - (engine) `contrai verify PATH... [--json] [--out DIR] [--no-write]` — per-round verdict table, exit 1 on a suspect round. `contrai` gains subcommands; `play` is the default, so every existing invocation is unchanged. See [engine docs](docs/engine/index.md).
+- (scraper) `load_profile` — the site's URL, credentials, selectors and wire vocabulary move into a local `profile.toml`; `profile.example.toml` ships the schema. See [scraper docs](docs/scraper/index.md).
 
 ### Changed
 

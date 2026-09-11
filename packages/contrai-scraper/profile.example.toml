@@ -1,0 +1,170 @@
+# Copy to profile.toml (git-ignored) and fill in. Every value here is a
+# placeholder: this file is committed, and the target site is named nowhere in
+# the repository. Secrets may be written as "env:NAME" to read NAME from the
+# environment instead.
+
+# Where the site lives, and which language it answers in. The locale decides
+# which wording the word-shaped tokens below are written in.
+[site]
+url = "https://example.invalid/lobby"
+locale = "xx"
+
+# The spectator account. Both values may be indirected through the
+# environment; the verification code almost always should be.
+[account]
+email = "watcher@example.invalid"
+verification_code = "env:CONTRAI_SCRAPER_CODE"
+
+# How Playwright is driven. A headed, slowed-down browser makes a run
+# auditable; a headless one makes it unattended.
+[browser]
+headless = false
+slow_mo_ms = 500
+screenshot_on_error = true
+
+# One entry per UI step. A value may be a single selector or a list of
+# candidates, tried in order — the same step is not always spelled the same
+# way on every page.
+[selectors]
+dismiss_tutorial = "#placeholder-tutorial"
+login_email = "#placeholder-email"
+login_continue = ["#placeholder-continue", "#placeholder-continue-icon"]
+code_input = "#placeholder-code"
+code_submit = "#placeholder-code-submit"
+mode_online = "#placeholder-online"
+mode_observe = "#placeholder-observe"
+variant = "#placeholder-variant"
+table_row = ".placeholder-table-row"
+tournament_marker = "#placeholder-table-kind"
+tournament_marker_text = "placeholder"
+next_table = "#placeholder-next"
+options_button = "#placeholder-options"
+options_row = ".placeholder-option-row"
+options_id_attr = "data-placeholder"
+options_on_class = "placeholder-on"
+panel_close = "#placeholder-close"
+leave_table = "#placeholder-leave"
+# Must carry a {seat} placeholder: it is filled with one of the seat tokens
+# named under [wire.tokens].seats.
+seat_element = "#placeholder-seat-{seat}"
+player_panel = ".placeholder-player-panel"
+player_id_title = ".placeholder-player-panel .placeholder-title"
+player_id_prefix = "placeholder "
+
+# How a socket frame is recognised, unwrapped and keyed. `deal_key_arity` is
+# how many parts a composite key has when it addresses a deal rather than a
+# play; `round_state_prefix` is what a per-round state container's key starts
+# with, since it is keyed by game id.
+[wire]
+socket_url_pattern = "^wss://example\\.invalid/sock/\\d+$"
+game_envelope_kind = "placeholder-kind"
+keepalive_frame = "placeholder-keepalive"
+key_fields = ["game", "round", "trick", "position", "verb", "player"]
+play_verb = "placeholder-play"
+bid_verb_prefix = "placeholder-bid:"
+deal_key_arity = 4
+round_state_prefix = "placeholder."
+
+# The three event names the parser reacts to.
+[wire.events]
+join_snapshot = "placeholderJoin"
+table_update = "placeholderUpdate"
+counters = "placeholderCounters"
+
+# Dotted paths, each resolved relative to the payload it is looked up in: the
+# table/state names walk from a snapshot's root, the player names from one
+# player block, the row names from one score row, and think_ms / received_ms
+# from an event's metadata block. The set of *names* is fixed and spans both
+# halves of the scraper, so this table is written once. An unknown name is
+# refused; a missing one is refused.
+[wire.fields]
+table = "placeholder"
+table_id = "placeholder.id"
+is_tournament = "placeholder.kind"
+seats = "placeholder.seats"
+seat_id = "id"
+seat_placement = "spot"
+state = "placeholder"
+players = "placeholder.people"
+player_id = "id"
+player_name = "label"
+player_account = "account"
+player_level = "level"
+player_kind = "kind"
+team = "side.team"
+round_index = "n"
+dealer = "dealer"
+trump = "suit"
+deck_order = "beforeDeal"
+hands = "hands"
+tricks = "tricks"
+auction = "bids"
+scores = "score.rows"
+totals = "score.byTeam"
+row_status = "deal.status"
+row_value = "deal.value"
+row_suit = "deal.suit"
+row_multiplier = "deal.coefficient"
+side_taken = "done.points"
+side_belote = "done.belotes"
+side_marked_made = "marks.points"
+side_marked_announced = "marks.bid"
+bid_owner = "who"
+bid_suit = "colour"
+bid_value = "value"
+doubler = "doubled"
+redoubler = "redoubled"
+think_ms = "ms.value"
+turn_limit_ms = "ms.max"
+received_ms = "at"
+game_id = "game"
+ended = "over"
+left = "gone"
+spectators = "watchers"
+observable_tables = "tables"
+
+# The site's vocabulary, mapped onto core values. Keys are the site's tokens;
+# values are the canonical one-letter names — ranks 7 8 9 10 J Q K A, suits
+# S H D C, seats N W S E.
+#
+# The seat map is the one entry worth checking twice. It is a *placement* map,
+# not a translation: write the core seat each on-screen position actually
+# holds. Walking seat_rotation through it must reproduce core's own cycle
+# (N W S E), and a table whose rotation runs the other way round makes the two
+# side seats cross over. The translator refuses a map that does not.
+[wire.tokens]
+seats = { placeholder_a = "N", placeholder_b = "W", placeholder_c = "S", placeholder_d = "E" }
+seat_rotation = ["placeholder_a", "placeholder_b", "placeholder_c", "placeholder_d"]
+ranks = { p7 = "7", p8 = "8", p9 = "9", p10 = "10", pJ = "J", pQ = "Q", pK = "K", pA = "A" }
+suits = { pS = "S", pH = "H", pD = "D", pC = "C" }
+# The same four suits as the site spells them in prose rather than as glyphs.
+suit_words = { placeholder_spades = "S", placeholder_hearts = "H", placeholder_diamonds = "D", placeholder_clubs = "C" }
+team_letters = ["A", "B"]
+bid_slam = "PLACEHOLDER_SLAM"
+bid_solo_slam = "PLACEHOLDER_SOLO_SLAM"
+# Whether a pass is sent as a null rather than as a token of its own.
+pass_is_null = true
+score_made = "placeholder-made"
+
+# The core preset the observed tables play under.
+[rules]
+preset = "tournament"
+
+# One line per table option the site exposes, keyed by its own option id, with
+# whether the observed tables have it switched on. The browser half refuses a
+# table whose options disagree with this block.
+[rules.options]
+placeholder_option_a = true
+placeholder_option_b = false
+
+# Where records and raw logs are written. Both roots resolve relative to this
+# file, so a profile moves with its data.
+[output]
+root = "./records"
+raw_root = "./raw"
+raw_retention_days = 30
+
+# Inputs to the pseudonymisation step, which is not built yet. The salt may be
+# omitted entirely, or indirected through the environment.
+[privacy]
+pseudonym_salt = "env:CONTRAI_SCRAPER_SALT"
