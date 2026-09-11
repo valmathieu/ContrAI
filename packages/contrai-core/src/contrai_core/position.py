@@ -156,11 +156,10 @@ class Position(Enum):
 
     @property
     def french_name(self) -> str:
-        """The lowercase French seat name used by the scraper's DOM ids.
+        """The lowercase French seat name — ``nord`` / ``ouest`` / ``sud`` / ``est``.
 
-        ``app.belote-rebelote.fr`` identifies seats via the element ids
-        ``#nord`` / ``#ouest`` / ``#sud`` / ``#est``; this is this
-        position's entry in that vocabulary.
+        Online tables label their seats in French; this is this position's
+        entry in that vocabulary, the one the scraper maps to and from.
         """
 
         return _TO_FRENCH[self]
@@ -170,11 +169,11 @@ class Position(Enum):
         """Parse a French seat name into a :class:`Position`.
 
         The strict counterpart to :attr:`french_name`, for the scraper
-        turning a DOM id back into a seat.
+        turning a seat label back into a seat.
 
         Args:
             name: One of ``"nord"``, ``"ouest"``, ``"sud"``, ``"est"``
-                (lowercase, matching the scraper's DOM ids exactly).
+                (lowercase, exactly).
 
         Returns:
             The matching :class:`Position` member.
@@ -193,8 +192,8 @@ class Position(Enum):
             ) from None
 
 
-# Position -> French seat name, keyed to the DOM ids that
-# app.belote-rebelote.fr polls (#nord/#ouest/#sud/#est). This lookup table
+# Position -> French seat name, the vocabulary online tables use for their
+# seats and the scraper maps to and from. This lookup table
 # lives at module level, after the class body, rather than as a dict-valued
 # class attribute: Enum treats every class-body assignment as a candidate
 # member, so a dict literal there would itself become a (nonsensical) fifth

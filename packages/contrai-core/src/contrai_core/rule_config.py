@@ -166,8 +166,9 @@ class RuleConfig:
         return cls()
 
 
-#: Named rulesets the engine's ``--preset`` flag can select. ``belote-rebelote``
-#: (site parity for the scraper) is deferred until its values are observed.
+#: Named rulesets the engine's ``--preset`` flag can select. A second preset —
+#: the rule set the observed online tables play — is pinned by the scraper's
+#: observation work rather than assumed here.
 PRESETS: Mapping[str, RuleConfig] = MappingProxyType(
     {"classic": RuleConfig.classic()}
 )

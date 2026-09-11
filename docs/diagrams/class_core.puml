@@ -302,8 +302,8 @@ package "position.py / team_side.py" as p_position {
       equal to a bare seat string, so a stray
       string comparison can never silently pass.
       ""french_name"" / ""from_french"" map to
-      the scraper's DOM ids (nord / ouest /
-      sud / est) via the module-level
+      the French seat labels online tables
+      use (nord / ouest / sud / est) via the module-level
       ""~_TO~_FRENCH"" / ""~_FROM~_FRENCH""
       tables — kept outside the class body
       because Enum would turn a class-level
