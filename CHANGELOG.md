@@ -37,6 +37,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 ### Removed
 
+- **BREAKING:** (scraper) The v1 browser flow — `config` / `session` / `observer` and their eleven exports. Use `Spectator` and `Recorder` with a profile.
 - (scraper) Profile keys `selectors.table_row` and `selectors.leave_table` — the server seats you, and the exit control is unrecoverable.
 - (scraper) `run.py`, the step-1 notebook and the two site screenshots under `docs/scraper/`.
 - (scraper) `jupyter` and `nest-asyncio` dependencies — neither was imported; `uv sync` installs less.
