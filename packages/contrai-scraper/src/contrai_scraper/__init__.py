@@ -1,23 +1,38 @@
 """Playwright spectator-mode scraper for online Contrée tournament tables.
 
-The package is split along the two phases of a scraping run:
+The package is a pipeline with a browser at one end and a record at the other:
 
-* :mod:`contrai_scraper.session` drives the browser from the lobby to a seated
-  spectator view of a tournament table (login, mode selection, table hunting).
-* :mod:`contrai_scraper.observer` watches a table already under observation,
-  identifying the four players and polling for round changes.
+* :mod:`contrai_scraper.profile` reads the local, git-ignored ``profile.toml``
+  that every string in the run comes from.
+* :mod:`contrai_scraper.browser` is the only module that touches a page:
+  login, the menu walk, the table hop and the two panels.
+* :mod:`contrai_scraper.frames` and :mod:`contrai_scraper.wire` turn socket
+  frames into a de-duplicated stream of game events, live or replayed.
+* :mod:`contrai_scraper.parse` assembles those events into a ``contrai-data``
+  record.
+* :mod:`contrai_scraper.recorder` is the loop that drives all of it, one table
+  at a time, with :mod:`contrai_scraper.rawlog` keeping the evidence and
+  :mod:`contrai_scraper.health` saying what it is doing.
 
-:mod:`contrai_scraper.cli` wires the two together into the ``contrai-scrape``
-console script.
+:mod:`contrai_scraper.cli` wires them into the ``contrai-scrape`` console
+script.
 
 Everything the site is called — its URL, its selectors, its wire vocabulary —
-lives in a local, git-ignored ``profile.toml``, read by
-:func:`contrai_scraper.profile.load_profile`. The code knows the *structure*;
-the document knows the *strings*.
+lives in the profile. The code knows the *structure*; the document knows the
+*strings*.
 """
 
-from contrai_scraper.config import ACCOUNT_EMAIL, TARGET_URL, VERIFICATION_CODE
+from contrai_scraper.browser import (
+    INIT_SCRIPT,
+    SEND_SCRIPT,
+    STEP_TIMEOUT_MS,
+    OptionsReading,
+    ScoreboardReading,
+    Spectator,
+    open_spectator,
+)
 from contrai_scraper.exceptions import (
+    BrowserError,
     ParseError,
     ProfileError,
     ScraperError,
@@ -31,13 +46,13 @@ from contrai_scraper.frames import (
     RawFrame,
     RawLogFrameSource,
 )
+from contrai_scraper.health import Counters, HealthLog
 from contrai_scraper.lzstring import compress_to_base64, decompress_from_base64
-from contrai_scraper.observer import (
-    get_current_round,
-    get_players,
-    is_game_scrapeable,
-    observe_game,
-    wait_for_new_round,
+from contrai_scraper.recorder import (
+    SCOREBOARD_PANEL,
+    Recorder,
+    RecorderLimits,
+    SessionSummary,
 )
 from contrai_scraper.rawlog import (
     RawLine,
@@ -74,6 +89,7 @@ from contrai_scraper.profile import (
     OutputSection,
     PrivacySection,
     Profile,
+    RecorderSection,
     RulesSection,
     Selector,
     SelectorSection,
@@ -83,7 +99,6 @@ from contrai_scraper.profile import (
     WireTokens,
     load_profile,
 )
-from contrai_scraper.session import find_tournament_table, log_in, open_spectator_mode
 from contrai_scraper.wire import (
     DEAL_VERB,
     EventKey,
@@ -97,14 +112,20 @@ from contrai_scraper.wire import (
 )
 
 __all__ = [
-    "ACCOUNT_EMAIL",
+    "INIT_SCRIPT",
+    "SEND_SCRIPT",
+    "STEP_TIMEOUT_MS",
     "DEAL_PACKETS",
     "DEAL_VERB",
     "AccountSection",
+    "BrowserError",
     "BrowserSection",
+    "Counters",
     "EventKey",
     "FrameSource",
+    "HealthLog",
     "LiveRound",
+    "OptionsReading",
     "OutputSection",
     "ParseError",
     "PlayerInfo",
@@ -112,24 +133,29 @@ __all__ = [
     "PrivacySection",
     "Profile",
     "ProfileError",
+    "RecorderSection",
     "RECEIVED",
+    "SCOREBOARD_PANEL",
     "RawFrame",
     "RawLine",
     "RawLogFrameSource",
     "RawLogWriter",
+    "Recorder",
+    "RecorderLimits",
     "RowContract",
     "RulesSection",
     "SENT",
     "ScoreRow",
+    "ScoreboardReading",
     "SessionResult",
+    "SessionSummary",
     "ScraperError",
     "Selector",
     "SelectorSection",
     "SiteSection",
     "Snapshot",
+    "Spectator",
     "Translator",
-    "TARGET_URL",
-    "VERIFICATION_CODE",
     "WireError",
     "WireEvent",
     "WireEvents",
@@ -144,15 +170,9 @@ __all__ = [
     "dig",
     "duplicate_key",
     "final_trick",
-    "find_tournament_table",
-    "get_current_round",
-    "get_players",
-    "is_game_scrapeable",
     "load_profile",
     "new_session_id",
-    "log_in",
-    "observe_game",
-    "open_spectator_mode",
+    "open_spectator",
     "order_events",
     "parse_key",
     "parse_session",
@@ -163,5 +183,4 @@ __all__ = [
     "read_raw_log",
     "read_snapshot",
     "unwrap",
-    "wait_for_new_round",
 ]

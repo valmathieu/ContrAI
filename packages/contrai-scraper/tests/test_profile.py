@@ -187,6 +187,59 @@ class TestSelectors:
         with pytest.raises(ProfileError, match="seat"):
             load_profile(path)
 
+    def test_the_pledge_selectors_are_read(self, profile):
+        assert (profile.selectors.pledge_dialog, profile.selectors.pledge_accept) == (
+            "#pledge",
+            "#pledge-ok",
+        )
+
+    def test_the_scoreboard_selectors_are_read(self, profile):
+        assert profile.selectors.scoreboard_row == ".score-row"
+
+    def test_the_retired_selectors_are_refused(self, tmp_path, profile_text):
+        # A profile still naming the v1 table list or the exit control is out
+        # of date in a way that matters: the server seats you, and the exit
+        # control is unrecoverable. Refusing is how the operator finds out.
+        path = tmp_path / "fixture-profile.toml"
+        path.write_text(
+            profile_text.replace("variant = ", 'table_row = ".t"\nvariant = '),
+            encoding="utf-8",
+        )
+        with pytest.raises(ProfileError, match="table_row"):
+            load_profile(path)
+
+
+class TestWire:
+    def test_the_resume_vocabulary_is_read(self, profile):
+        assert (
+            profile.wire.resume_action,
+            profile.wire.resume_room_prefix,
+            profile.wire.resume_param,
+        ) == ("resume", "room-", "lastSeen")
+
+
+class TestRecorder:
+    def test_the_thresholds_are_read(self, profile):
+        assert (
+            profile.recorder.hop_after_rows,
+            profile.recorder.stale_after_s,
+            profile.recorder.health_interval_s,
+            profile.recorder.snapshot_timeout_s,
+        ) == (8, 180, 60, 30)
+
+    def test_a_missing_threshold_is_refused(self, tmp_path, profile_text):
+        path = tmp_path / "fixture-profile.toml"
+        path.write_text(
+            profile_text.replace("stale_after_s = 180\n", ""), encoding="utf-8"
+        )
+        with pytest.raises(ProfileError, match="stale_after_s"):
+            load_profile(path)
+
+    def test_both_roots_name_one_directory(self, profile):
+        # game_path appends games/ and raw_path appends raw/, so two roots
+        # that differ put a session's log and its record in unrelated trees.
+        assert profile.output.raw_root == profile.output.root
+
 
 class TestTheCommittedExample:
     def test_it_loads(self, monkeypatch):

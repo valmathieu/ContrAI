@@ -23,6 +23,13 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (engine) `contrai verify PATH... [--json] [--out DIR] [--no-write]` — per-round verdict table, exit 1 on a suspect round. `contrai` gains subcommands; `play` is the default, so every existing invocation is unchanged. See [engine docs](docs/engine/index.md).
 - (scraper) `load_profile` — the site's URL, credentials, selectors and wire vocabulary move into a local `profile.toml`; `profile.example.toml` ships the schema. See [scraper docs](docs/scraper/index.md).
 - (scraper) `contrai-scrape parse RAW... --profile P` — re-parse a raw wire log into a `contrai-data` record. See [scraper docs](docs/scraper/index.md).
+- (scraper) Profile gains the pledge, scoreboard and state-resume keys plus a `[recorder]` section of loop thresholds. See [scraper docs](docs/scraper/index.md).
+- (scraper) `HealthLog` — one JSON line per transition plus a counter heartbeat, on stderr. See [scraper docs](docs/scraper/index.md).
+- (scraper) `parse_session(end_reason=…)` — a caller states how a game ended when the wire cannot, e.g. a watchdog's `abandoned`.
+- (scraper) `Spectator` — the profile-driven browser walk: login, the first-use pledge, the options and scoreboard panels, the table hop. See [scraper docs](docs/scraper/index.md).
+- (scraper) `Recorder` — seats at a tournament table, gates it, watches a whole game and writes one record per game. See [scraper docs](docs/scraper/index.md).
+- (scraper) `contrai-scrape run --profile P [--headless] [--max-games N] [--minutes N]` — watch tables unattended, one record per game. See [scraper docs](docs/scraper/index.md).
+- (scraper) `contrai-scrape check-profile P` — validate a profile against the live site before a shift starts.
 
 ### Changed
 
@@ -30,6 +37,8 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 ### Removed
 
+- **BREAKING:** (scraper) The v1 browser flow — `config` / `session` / `observer` and their eleven exports. Use `Spectator` and `Recorder` with a profile.
+- (scraper) Profile keys `selectors.table_row` and `selectors.leave_table` — the server seats you, and the exit control is unrecoverable.
 - (scraper) `run.py`, the step-1 notebook and the two site screenshots under `docs/scraper/`.
 - (scraper) `jupyter` and `nest-asyncio` dependencies — neither was imported; `uv sync` installs less.
 

@@ -160,7 +160,8 @@ class SelectorSection:
     mode_online: Selector
     mode_observe: Selector
     variant: Selector
-    table_row: Selector
+    pledge_dialog: Selector
+    pledge_accept: Selector
     tournament_marker: Selector
     tournament_marker_text: str
     next_table: Selector
@@ -169,7 +170,9 @@ class SelectorSection:
     options_id_attr: str
     options_on_class: str
     panel_close: Selector
-    leave_table: Selector
+    scoreboard_button: Selector
+    scoreboard_row: Selector
+    scoreboard_cell: Selector
     seat_element: str
     """Carries a ``{seat}`` placeholder, filled with a seat token."""
 
@@ -233,6 +236,9 @@ class WireSection:
     bid_verb_prefix: str
     deal_key_arity: int
     round_state_prefix: str
+    resume_action: str
+    resume_room_prefix: str
+    resume_param: str
     events: WireEvents
     fields: Mapping[str, str]
     tokens: WireTokens
@@ -244,6 +250,16 @@ class RulesSection:
 
     preset: str
     options: Mapping[str, bool]
+
+
+@dataclass(frozen=True, slots=True)
+class RecorderSection:
+    """Thresholds the per-table loop runs under."""
+
+    hop_after_rows: int
+    stale_after_s: int
+    health_interval_s: int
+    snapshot_timeout_s: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,6 +288,7 @@ class Profile:
     selectors: SelectorSection
     wire: WireSection
     rules: RulesSection
+    recorder: RecorderSection
     output: OutputSection
     privacy: PrivacySection
 
@@ -548,7 +565,8 @@ def _selectors(table: _Table) -> SelectorSection:
         mode_online=table.selector("mode_online"),
         mode_observe=table.selector("mode_observe"),
         variant=table.selector("variant"),
-        table_row=table.selector("table_row"),
+        pledge_dialog=table.selector("pledge_dialog"),
+        pledge_accept=table.selector("pledge_accept"),
         tournament_marker=table.selector("tournament_marker"),
         tournament_marker_text=table.string("tournament_marker_text"),
         next_table=table.selector("next_table"),
@@ -557,7 +575,9 @@ def _selectors(table: _Table) -> SelectorSection:
         options_id_attr=table.string("options_id_attr"),
         options_on_class=table.string("options_on_class"),
         panel_close=table.selector("panel_close"),
-        leave_table=table.selector("leave_table"),
+        scoreboard_button=table.selector("scoreboard_button"),
+        scoreboard_row=table.selector("scoreboard_row"),
+        scoreboard_cell=table.selector("scoreboard_cell"),
         seat_element=seat_element,
         player_panel=table.selector("player_panel"),
         player_id_title=table.selector("player_id_title"),
@@ -612,6 +632,9 @@ def _wire(table: _Table) -> WireSection:
         bid_verb_prefix=table.string("bid_verb_prefix"),
         deal_key_arity=table.integer("deal_key_arity"),
         round_state_prefix=table.string("round_state_prefix"),
+        resume_action=table.string("resume_action"),
+        resume_room_prefix=table.string("resume_room_prefix"),
+        resume_param=table.string("resume_param"),
         events=events,
         fields=fields,
         tokens=tokens,
@@ -631,6 +654,19 @@ def _rules(table: _Table) -> RulesSection:
         )
     options_table = table.section("options")
     section = RulesSection(preset=preset, options=options_table.booleans())
+    table.done()
+    return section
+
+
+def _recorder(table: _Table) -> RecorderSection:
+    """Read ``[recorder]``."""
+
+    section = RecorderSection(
+        hop_after_rows=table.integer("hop_after_rows"),
+        stale_after_s=table.integer("stale_after_s"),
+        health_interval_s=table.integer("health_interval_s"),
+        snapshot_timeout_s=table.integer("snapshot_timeout_s"),
+    )
     table.done()
     return section
 
@@ -695,6 +731,7 @@ def load_profile(path: Path | str) -> Profile:
         selectors=_selectors(root.section("selectors")),
         wire=_wire(root.section("wire")),
         rules=_rules(root.section("rules")),
+        recorder=_recorder(root.section("recorder")),
         output=_output(root.section("output"), path.parent),
         privacy=_privacy(root.section("privacy")),
     )

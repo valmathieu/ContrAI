@@ -1,7 +1,7 @@
 @startuml seq_scraper
-title contrai-scraper — spectator observation flow (cli.scrape, current state)
+title contrai-scraper — the table loop (cli.run → Recorder.run)
 
-' --- Palette: scraper purple, with grey "future" components ---
+' --- Palette: scraper purple, with contrai-data teal for the record end ---
 skinparam shadowing false
 skinparam sequence {
     ArrowColor #5E4495
@@ -28,136 +28,132 @@ skinparam note {
     FontColor #5F4B00
 }
 
-actor "User" as U
-participant "cli.py" as C <<scraper>>
-participant "session.py" as SE <<scraper>>
-participant "observer.py" as O <<scraper>>
-participant "async_playwright" as P <<scraper>>
-participant "Browser / page\n(Chromium)" as B
-participant "DOM\n(target site)" as D
-participant "SQLite" as S <<future>> #DDDDDD
+actor "Operator" as U
 
-U -> C : contrai-scrape
+box "browser half" #F3E5F5
+    participant "cli.py" as C <<scraper>>
+    participant "Spectator\n(browser.py)" as SP <<scraper>>
+    participant "page\n(Chromium)" as PG
+end box
+
+box "wire half" #EDE7F6
+    participant "socket" as SK
+    participant "PlaywrightFrameSource\n+ WireStream" as FS <<scraper>>
+    participant "Recorder\n(recorder.py)" as R <<scraper>>
+    participant "RawLogWriter" as RL <<scraper>>
+end box
+
+box "record half" #E0F5F2
+    participant "parse_session" as PS <<scraper>> #EDE7F6
+    participant "RecordWriter" as RW <<from contrai-data>> #E0F5F2
+end box
+
+' The two flags are escaped: a paired ""--"" in Creole prose is strikethrough.
+U -> C : contrai-scrape run ~--profile P ~--headless
 activate C
 
-C -> P : async_playwright().start()
-C -> P : chromium.launch(headless=False, slow_mo=500)
-P -> B : <<creates>> page
-
-== Phase 1 — Login flow ==
-
-C -> SE : log_in(page)
-activate SE
-
-SE -> B : page.goto(TARGET_URL)
-B -> D : navigate
-SE -> SE : page.wait_for_timeout(5000)
-SE -> B : tutorial prompt visible ?
-alt tutorial visible
-    SE -> B : click "dismiss tutorial"
-end
-
-SE -> B : click "sign in with e-mail"
-note right of SE
-  A fallback selector covers
-  the icon-only variant of
-  the same button.
+C -> SP : open_spectator(profile)
+note right of C
+  The frame source is attached
+  //before// navigation: the first
+  socket opens during the walk,
+  and the join snapshot rides it.
 end note
-SE -> B : fill ACCOUNT_EMAIL into the e-mail field
-SE -> B : click "continue"
-SE -> B : wait for the verification-code field
-SE -> B : fill VERIFICATION_CODE
-SE -> B : click "validate"
-B --> D : authenticate
-SE -> SE : page.wait_for_timeout(10000)
-deactivate SE
+SP -> PG : add_init_script(INIT_SCRIPT)
+SP -> PG : goto(""[site].url""), log_in()
+SP -> PG : enter_variant()
+note right of SP
+  There is no table list.
+  The server chooses where
+  the spectator sits.
+end note
+PG -> SK : <<opens>> two connections
 
-== Phase 2 — Mode navigation ==
+C -> R : Recorder(...).run()
+activate R
 
-C -> SE : open_spectator_mode(page)
-activate SE
-SE -> B : click "online mode"
-SE -> B : click "observe"
-SE -> B : click "Contrée variant"
-deactivate SE
+== 1. Seat ==
 
-== Phase 3 — Table discovery ==
-
-C -> SE : find_tournament_table(page)
-activate SE
-SE -> B : click the first table row  (timeout 3s)
-note right of SE
-  If auto-join times out,
-  user has 5s to click a
-  table manually.
+R -> R : reset the buffer and the ""WireStream""
+SK -> FS : frames
+FS -> R : join snapshot (within ""snapshot_timeout_s"")
+R -> RL : write_frame(frame)
+note right of R
+  A snapshot already used to judge
+  a table is remembered, so the
+  mirrored copy cannot seat the
+  table that was just left.
 end note
 
-loop up to MAX_TABLE_ATTEMPTS (20)
-    SE -> SE : page.wait_for_timeout(2000)
-    SE -> B : tournament marker visible ?
-    alt tournament match found
-        SE --> C : True
-    else standard table
-        SE -> B : click "other table"
-        SE -> SE : page.wait_for_timeout(3000)
-    end
-end
-deactivate SE
+== 2 to 5. The gates ==
 
-== Phase 4 — Observation ==
-
-C -> O : observe_game(page)
-activate O
-
-O -> B : get_players(page)
-loop seat ∈ {N, S, E, W}
-    O -> D : read the seat's name badge
-    D --> O : player name
-end
-
-O -> O : is_game_scrapeable(players)
-note right of O
-  **<<future>>** — currently
-  returns **True** always.
-  Will check a DB whether
-  these players are already
-  being scraped.
-end note
-
-O -> B : last_known_round = get_current_round(page)
-B -> D : read the round-counter label
-D --> O : label text → regex \d+ → int
-
-loop forever (1s poll)
-    O -> B : current_round = get_current_round(page)
-    alt round changed (and ≠ UNKNOWN_ROUND)
-        O -> O : print "🎬 ROUND N STARTED - RECORDING"
-
-        ' --- FUTURE LOGIC block inside observer.observe_game ---
-        group <<future>> FUTURE LOGIC — observer.observe_game
-            O -->> B : observe_bidding(page)
-            O -->> B : observe_gameplay(page)
-            O -->> S : persist round / bids / plays
+alt not a tournament, or already ""hop_after_rows"" rounds old
+    R -> SP : next_table()
+    SP -> PG : click the table control
+else the wire says yes
+    R -> SP : read_options(profile.rules.options)
+    SP -> PG : read the options panel
+    PG --> SP : one row per option
+    SP --> R : OptionsReading
+    alt the table plays another ruleset
+        R -> SP : next_table()
+    else
+        R -> SP : read_scoreboard()
+        SP -> PG : open, read, close the score panel
+        SP --> R : ScoreboardReading
+        R -> RL : write_panel("scoreboard", text)
+        alt the panel's //us// is not the south seat's side
+            R -> SP : next_table()
+            note right of R
+              A record with the two sides swapped
+              is well formed and wrong about who
+              won every round.
+            end note
+        else accepted
+            R -> R : buffer = [the snapshot], tables_seated += 1
         end
-
-        O -> O : last_known_round = current_round
     end
-    O -> O : page.wait_for_timeout(1000)
 end
-deactivate O
 
-== Shutdown ==
+== 6. Watch ==
 
-' The observation loop never returns today, so this branch is only
-' reached when no tournament table was found in Phase 3.
-C -> B : browser.close()
-deactivate C
+loop until the game ends, the table goes quiet, or the limits stop it
+    SK -> FS : frame
+    FS -> R : WireEvent (mirrored copies dropped)
+    R -> RL : write_frame(frame)
+    R -> R : buffer.append(event); last_event_id = event.frame_id
 
-note over C, S
-  **What is NOT wired up yet**
-  • ""observe_bidding(page)"" and ""observe_gameplay(page)"" — commented placeholders
-  • Any persistence path — no SQLite (or other) writes
-  • DB-based de-duplication of already-scraped players
+    alt a deal opens a new round
+        R -> SP : request_state(table_id, last_event_id)
+        SP -> PG : evaluate(SEND_SCRIPT, envelope)
+        PG -> SK : resume frame carrying the last event id
+        SK --> FS : a fresh join snapshot
+        note right of R
+          The answer arrives on the socket
+          and lands in the same buffer the
+          parser already walks.
+        end note
+    end
+end
+
+== 7. Write, then hop ==
+
+R -> SP : one final request_state, and wait for its snapshot
+R -> PS : parse_session(order_events(buffer), profile, end_reason)
+activate PS
+PS --> R : SessionResult(events, notes, skipped_rounds)
+deactivate PS
+R -> RW : write every event
+RW -> RW : ""<root>/games/<game_id>.jsonl""
+R -> SP : next_table()
+note over R, RW
+  The watchdog states ""abandoned"" and an interrupt states
+  ""interrupted"": neither is visible to the wire, and the
+  flags left on it would describe a different ending.
 end note
+
+deactivate R
+C --> U : games recorded, tables seated, tables rejected
+deactivate C
 
 @enduml

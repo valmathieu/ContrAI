@@ -23,13 +23,20 @@ the same reason.
 | `contrai_scraper.wire` | Envelope, keepalive, de-duplication, composite key → `WireEvent`. |
 | `contrai_scraper.lzstring` | The LZ-String base64 codec the deal payload arrives in. |
 | `contrai_scraper.parse` | `translate`, `deal`, `snapshot`, `live`, `session` — wire events → a record. |
-| `contrai_scraper.cli` | `contrai-scrape`: `run` (the v1 browser flow, still the default) and `parse`. |
-| `contrai_scraper.config` / `.session` / `.observer` | The v1 browser flow, kept until the profile-driven replacement lands. |
+| `contrai_scraper.browser` | `Spectator` — the only module that touches a page. Login, the walk, the hop, the two panels. |
+| `contrai_scraper.recorder` | `Recorder` — the table loop: seat, gate, watch, write, hop. Imports no Playwright. |
+| `contrai_scraper.health` | `HealthLog` and `Counters` — one JSON line per transition, on stderr. |
+| `contrai_scraper.cli` | `contrai-scrape`: `run` (the default), `check-profile` and `parse`. |
 
 ```bash
-uv run contrai-scrape                                          # watch a table (v1 flow)
+uv run contrai-scrape run --profile profile.toml --headless    # watch tables
+uv run contrai-scrape check-profile profile.toml               # validate before a shift
 uv run contrai-scrape parse RAW... --profile profile.toml      # re-parse stored logs
 ```
+
+`run` takes `--max-games N` and `--minutes N`, and `--headless` / `--headed` override
+`[browser].headless`. A bare `contrai-scrape` is still `contrai-scrape run`, but `run` needs a
+profile, so it now fails with usage rather than launching anything.
 
 ## Pipeline
 
@@ -80,31 +87,59 @@ silently wrong data.
 | `[wire.fields]` | Dotted paths, one per logical field the parser reads. The set of names is fixed. |
 | `[wire.tokens]` | The site's vocabulary mapped onto core values — cards, seats, team labels, bid values. |
 | `[rules]` | The core preset, plus the table options the browser half checks. |
-| `[output]` | Where records and raw logs go; both roots resolve relative to the profile. |
+| `[recorder]` | The loop's own thresholds — hop, watchdog, heartbeat, seat timeout. Policy, not site vocabulary. |
+| `[output]` | Where records and raw logs go; both roots resolve relative to the profile, and both name the same directory. |
 | `[privacy]` | Inputs to the pseudonymisation step, which is not built yet. |
 
 Two exceptions are worth knowing. `ProfileError` means the document is wrong — edit it.
 `ParseError` means the wire said something the document does not describe — investigate the
 site. They have different fixes, which is why they are different types.
 
-## Current flow (v1)
+## The table loop
 
-login → online mode → spectator list → Contrée variant → tournament table → identify the four seats from their name badges → poll the round counter for new rounds.
+login → online mode → the variant → wherever the server seats us → gate the table → watch one
+game → write the record → ask for another table.
 
 ```plantuml format="svg" source="seq_scraper.puml"
 ```
 
-This is the DOM-polling flow the `run` subcommand still drives. It is replaced by the
-profile-driven browser half in the next scraper step, which drives the pipeline above instead of
-reading the page.
+Three measured facts shape that loop, and each of them removes something an obvious design would
+have had:
+
+- **There is no table list.** The server decides where a spectator sits, so nothing browses;
+  "another table" is a request, not a choice. The walk ends at the variant.
+- **The exit control is unrecoverable.** It leaves *spectating* rather than the table, and the
+  documented route back in is what breaks afterwards. So the only hop is the table control, and
+  `Spectator` has no leave operation at all: a session that cannot reseat rebuilds its browser
+  context.
+- **The boundary score read is a wire read.** The client can ask for table state without leaving,
+  and the answer arrives on the socket as a fresh join snapshot — 0.21 s against 2.58 s for the
+  rendered panel, with no replay cost. The panel is the fallback, and it is evidence for the raw
+  log rather than a score the parser can use.
+
+The states, in order: reset the buffer and the stream, wait for a join snapshot, refuse a table
+that is not a tournament or is already `hop_after_rows` rounds old, refuse one whose options
+disagree with `[rules.options]`, check that the panel's *us* is the south seat's side, then watch.
+A deal opening a new round triggers the boundary read; the table's own game-over flag closes the
+record; an observer-left flag alone does not, because it says the spectator stopped watching and
+not that the game finished. A table that plays nothing for `stale_after_s` is written as
+`abandoned`, and an interrupted process writes what it saw as `interrupted` — neither is visible
+to the wire, which is why `parse_session` takes an `end_reason` the caller can state.
+
+The buffer is what keeps one parser from becoming two. A seated table's events are collected
+and handed to the same batch parser `contrai-scrape parse` uses, so "a round is complete at
+twenty-eight plays" and "skip the round in progress at seating" exist once. It is reset at every
+seat: table discovery joins each candidate and emits one snapshot per visit, and keeping the first
+would seat four players from a table we left.
+
+`HealthLog` writes one JSON object per line to stderr — a transition per line plus a counter
+heartbeat — so a shift is `journalctl`-readable without a parser being written for it.
 
 ## Pending
 
-- The browser half: profile-driven navigation, the tournament and options gates, the per-seat
-  panel read.
-- The recorder loop — a live session writing its raw log and its records as it watches.
-- The health log: socket counts, de-duplication ratio, watchdog.
-- Multi-table orchestration.
+- Multi-table orchestration: several browser contexts, a shared registry of tables already
+  watched.
 - Pseudonymisation: records currently carry raw ids, names and account fields — personal data,
   local only.
+- Raw-log retention: `[output].raw_retention_days` is read and nothing sweeps yet.
 - Rate-limiting / ToS considerations.

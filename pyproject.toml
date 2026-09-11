@@ -68,13 +68,6 @@ omit = [
     "*/contrai_engine/view/__init__.py",
     "*/contrai_engine/view/screens/__init__.py",
     "*/contrai_scraper/__init__.py",
-    # The v1 browser flow, kept only so ``contrai-scrape`` still runs while
-    # the profile-driven replacement is built; deleted in the next scraper
-    # step. Measuring three modules that are on their way out would hide
-    # whether the new pipeline is covered, which is the number that matters.
-    "*/contrai_scraper/config.py",
-    "*/contrai_scraper/session.py",
-    "*/contrai_scraper/observer.py",
 ]
 
 [tool.coverage.report]

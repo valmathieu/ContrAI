@@ -107,7 +107,8 @@ code_submit = "#submit"
 mode_online = "#online"
 mode_observe = "#observe"
 variant = "#variant"
-table_row = ".table-row"
+pledge_dialog = "#pledge"
+pledge_accept = "#pledge-ok"
 tournament_marker = "#table-kind"
 tournament_marker_text = "cup"
 next_table = "#next"
@@ -116,7 +117,9 @@ options_row = ".option-row"
 options_id_attr = "data-option"
 options_on_class = "on"
 panel_close = "#close"
-leave_table = "#leave"
+scoreboard_button = "#scoreboard"
+scoreboard_row = ".score-row"
+scoreboard_cell = ".score-cell"
 seat_element = "#seat-{seat}"
 player_panel = ".player-panel"
 player_id_title = ".player-panel .title"
@@ -131,6 +134,9 @@ play_verb = "card"
 bid_verb_prefix = "bid:"
 deal_key_arity = 4
 round_state_prefix = "round."
+resume_action = "resume"
+resume_room_prefix = "room-"
+resume_param = "lastSeen"
 
 [wire.events]
 join_snapshot = "joinTable"
@@ -209,9 +215,17 @@ preset = "tournament"
 opt_alpha = true
 opt_beta = false
 
+[recorder]
+hop_after_rows = 8
+stale_after_s = 180
+health_interval_s = 60
+snapshot_timeout_s = 30
+
 [output]
+# Both roots name the same directory: game_path appends games/ and raw_path
+# appends raw/.
 root = "./out"
-raw_root = "./out/raw"
+raw_root = "./out"
 raw_retention_days = 30
 
 [privacy]
@@ -807,6 +821,30 @@ def synthesize():
     """
 
     return synthesize_frames
+
+
+@pytest.fixture
+def session_frames(synthesize):
+    """A whole game as ``RawFrame``s, ready for a fake frame source.
+
+    Args:
+        (fixtures)
+
+    Returns:
+        A callable taking the same keyword arguments as ``synthesize_frames``
+        and returning ``RawFrame`` objects rather than ``(text, socket)``
+        pairs, which is what a ``FrameSource`` yields.
+    """
+
+    from contrai_scraper import RECEIVED, RawFrame
+
+    def build(events, **kwargs):
+        return [
+            RawFrame(socket=socket, direction=RECEIVED, at=index / 10, text=text)
+            for index, (text, socket) in enumerate(synthesize(events, **kwargs))
+        ]
+
+    return build
 
 
 @pytest.fixture
