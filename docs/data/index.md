@@ -14,6 +14,7 @@ Source lives at `packages/contrai-data/src/contrai_data/`:
 | `tokens.py`     | Domain value ⇄ ASCII token, both ways and strictly — seats, sides, cards, contract suits and values, whole bids, whole rulesets, and the UTC timestamp check |
 | `codec.py`      | `encode` / `decode` — one event ⇄ one JSON line — plus `FORMAT` and the major-version gate |
 | `store.py`      | The only module that touches the filesystem: `RecordWriter`, `read_events` / `ReadResult`, `records_root` / `games_dir` / `game_path`, `new_game_id` |
+| `projection.py` | `GameRecord` / `RoundRecord`, and the `project` / `load_game` fold that re-derives the contract, the tricks and their winners |
 
 Everything above is re-exported from `contrai_data/__init__.py` and is part of the public API.
 
@@ -210,6 +211,65 @@ two games started in the same second apart. An observed game takes the table's o
 (`obs-56630b35`), which is what lets a re-observed game be recognised rather than duplicated; it
 is an opaque handle, not personal data. Because both producers take the id from outside the
 process, `game_path` checks it is exactly one path segment before letting it become a file name.
+
+## The projection
+
+`load_game(path)` reads a file and folds it; `project(events)` folds a stream already in memory.
+Both return a `GameRecord` — the header, the table's preset and `RuleConfig`, the four seats, where
+a mid-game join landed, the rounds, the closing event, and two flags (`truncated`, `complete`).
+Each `RoundRecord` carries the deal, the auction, the contract, the completed tricks and their
+`derived` flags, any trailing partial trick, the belotes, the score line, the outcome, and
+`complete`; `trump_suit` and `trick_winners` are computed on read.
+
+**Four things are re-derived rather than stored**, each through the core type that already owns the
+rule:
+
+| Fact | Re-derived through |
+| --- | --- |
+| The established contract | `Auction.last_contract_bid` / `double_player` / `redouble_player` |
+| The completed tricks | `TrickRecord`, cut where the `trick` field changes |
+| Who won each trick | `TrickRecord.winner(trump)` — the same call the live play path makes |
+| Whether a round was passed out | the auction: terminal, with no contract bid |
+
+Because the winner rule is core's, a replayed record and a played game cannot disagree about who
+took a trick.
+
+**Two ordering rules, and they are not the same rule.**
+
+*Rounds keep file order.* Round numbers are the source's deal count — monotonic, but not
+necessarily starting at one and not necessarily contiguous, because a spectator joining mid-game
+skips the round it walked in on. Nothing does arithmetic on a round number.
+
+*Events attach to a round by number.* The observed state snapshot describes the last **completed**
+round, so a score read while round N+1 is being played carries round N and lands in the file *after*
+round N+1's deal. Attaching by "the round currently being built" would file it under the wrong
+round — and nothing in the file would look wrong.
+
+**`contract` is an `ObservedContract`, not a `Contract`.** Core's `Contract` reads
+`contract_bid.player.team`, so building one needs a live `BasePlayer` with a `Team` behind it. A
+record's auction holds bids seated on bare `Position` values, so a `Contract` is unbuildable from a
+record without inventing four players — and those players would carry reachable (empty) hands,
+exactly the leak `ObservedPlay` exists to prevent. `ObservedContract` carries the identical terms
+and is already what `PlayObservation` hands a strategy.
+
+**`complete` is about structure, not about scoring.** A round is complete when its auction closed
+and either it was passed out with no cards played, or all eight tricks were played out. A *score is
+not part of it* — a round with no score source is still a complete round (D3). A game is complete
+when it ends, was not truncated, and every round is complete. Correspondingly, `outcome` is `None`
+for a contracted round with no score line: made-or-failed is a scoring question and scoring lives
+in the engine, so the projection says "unknown" rather than guessing. `ALL_PASS` is the one outcome
+it can derive on its own.
+
+**Structure, never legality.** Whether a card could lawfully be played is `PlayState`'s question;
+whether a whole observed round obeys the rules is the verifier's. This layer only asks whether the
+events fold into rounds at all. In particular it never calls `Auction.is_legal` — a seatless
+auction has no teams to compare, so it could not decide who was entitled to call *coinche*, and a
+double that really happened at the table must not be refused here (D4).
+
+The seat-visible projection (`RoundRecord.visible_to(seat)`) is deliberately deferred to the
+supervised-learning step. Because events already hold whole hands keyed by seat, hiding what a seat
+cannot see is a *filter* over this structure rather than a transform of it — which is why it costs
+nothing to postpone.
 
 ## Nullability the observations forced
 

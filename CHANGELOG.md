@@ -11,6 +11,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 ### Added
 
 - (data) New `contrai-data` package — one append-only JSONL record per game, one event per line, shared by the engine and the scraper. See [data docs](docs/data/index.md).
+- (data) `load_game` / `project` — a record folds back into rounds with its contract, tricks and winners re-derived from `contrai-core`. See [data docs](docs/data/index.md).
 
 ### Changed
 

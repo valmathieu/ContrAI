@@ -66,6 +66,12 @@ from .store import (
     game_path,
     new_game_id,
 )
+from .projection import (
+    RoundRecord,
+    GameRecord,
+    project,
+    load_game,
+)
 
 __all__: list[str] = [
     "RecordError",
@@ -120,4 +126,8 @@ __all__: list[str] = [
     "games_dir",
     "game_path",
     "new_game_id",
+    "RoundRecord",
+    "GameRecord",
+    "project",
+    "load_game",
 ]
