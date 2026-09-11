@@ -17,7 +17,7 @@ The repository is a [uv workspace](https://docs.astral.sh/uv/concepts/projects/w
 ```plantuml format="svg" source="class_workspace.puml"
 ```
 
-Headline types per package plus cross-package dependency direction. The engine `<<extends>>` core's `BasePlayer`; the scraper's dashed `<<future>>` arrow to core marks the planned materialization of observed games into `Card` / `Bid` / `Trick` / … instances; the analyzer has no arrow into core by design. The dashed note attached to the engine flags the planned multiplayer web server, which isn't in this repo yet. See [Diagrams](diagrams/) for the colour convention.
+Headline types per package plus cross-package dependency direction. Five packages on three levels: `contrai-core` at the bottom, `contrai-data` on top of it, and the engine and the scraper on top of *that* — the `core ← data ← {engine, scraper}` edge. The engine also `<<extends>>` core's `BasePlayer` directly. The scraper now reaches core only *through* `contrai-data`: it writes observed games in the record format rather than materializing core types itself, which is what lets the verifier read what the scraper wrote without either package depending on the other. The analyzer has no arrow into core by design. The dashed note attached to the engine flags the planned multiplayer web server, which isn't in this repo yet. See [Diagrams](diagrams/) for the colour convention.
 
 ## Shared types
 

@@ -16,6 +16,7 @@ Colour encodes **which package owns the element**, reused consistently across ev
 | Package              | Header fill | Body fill   | Border    |
 |----------------------|-------------|-------------|-----------|
 | `contrai-core`       | `#7AAEE3`   | `#E1F0FF`   | `#3D6FA5` |
+| `contrai-data`       | `#5FBFB5`   | `#E0F5F2`   | `#2E7D74` |
 | `contrai-engine`     | `#E89A4F`   | `#FFEFD9`   | `#B26A28` |
 | `contrai-analyzer`   | `#7AC178`   | `#E8F5E9`   | `#3F8C3D` |
 | `contrai-scraper`    | `#9B7FCC`   | `#EDE7F6`   | `#5E4495` |
@@ -146,6 +147,7 @@ Each row links to the canonical `.puml` source, the rendered `.png` preview, and
 | Diagram                | Kind     | Scope                | Source                                | PNG preview                          | Embedded on                                                |
 |------------------------|----------|----------------------|---------------------------------------|--------------------------------------|------------------------------------------------------------|
 | `class_core.puml`      | Class    | contrai-core         | [source](class_core.puml)             | [png](class_core.png)                | [Core overview](../core/#class-structure)                  |
+| `class_data.puml`      | Class    | contrai-data         | [source](class_data.puml)             | [png](class_data.png)                | [Data overview](../data/#class-structure)                  |
 | `class_engine.puml`    | Class    | contrai-engine + MVC | [source](class_engine.puml)           | [png](class_engine.png)              | [Engine overview](../engine/#class-structure)              |
 | `class_analyzer.puml`  | Class    | contrai-analyzer     | [source](class_analyzer.puml)         | [png](class_analyzer.png)            | [Analyzer overview](../analyzer/#class-structure)          |
 | `class_workspace.puml` | Class    | Workspace overview   | [source](class_workspace.puml)        | [png](class_workspace.png)           | [Architecture](../architecture/#package-map)               |

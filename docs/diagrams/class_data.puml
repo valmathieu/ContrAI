@@ -1,0 +1,364 @@
+@startuml class_data
+title contrai-data — game-record format (current state)
+
+skinparam shadowing false
+skinparam class {
+    BackgroundColor #E0F5F2
+    BorderColor #2E7D74
+    HeaderBackgroundColor #5FBFB5
+    FontColor #14403C
+    AttributeFontColor #14403C
+    StereotypeFontColor #1F5F58
+}
+skinparam packageStyle rectangle
+skinparam packageFontColor #14403C
+skinparam packageBorderColor #2E7D74
+skinparam note {
+    BackgroundColor #FFFDE7
+    BorderColor #F9A825
+    FontColor #5F4B00
+}
+skinparam ArrowColor #2E7D74
+skinparam ArrowFontColor #14403C
+
+' =========================================================
+' Boundary types owned by contrai-core — declared explicitly
+' so they keep core's blue instead of this diagram's teal.
+' =========================================================
+class Card             <<from contrai-core>> #E1F0FF
+class Position         <<from contrai-core>> #E1F0FF
+class TeamSide         <<from contrai-core>> #E1F0FF
+class Bid              <<from contrai-core>> #E1F0FF
+class RuleConfig       <<from contrai-core>> #E1F0FF
+class Auction          <<from contrai-core>> #E1F0FF
+class ObservedContract <<from contrai-core>> #E1F0FF
+class ObservedPlay     <<from contrai-core>> #E1F0FF
+class TrickRecord      <<from contrai-core>> #E1F0FF
+class ContraiError     <<from contrai-core>> #E1F0FF
+
+' =========================================================
+' exceptions.py
+' =========================================================
+package "exceptions.py" as p_exc {
+    class RecordError <<base>> {
+    }
+    class RecordFormatError {
+    }
+    class UnsupportedFormatError {
+    }
+}
+
+RecordError --|> ContraiError
+RecordFormatError --|> RecordError
+UnsupportedFormatError --|> RecordError
+
+' =========================================================
+' events.py
+' =========================================================
+package "events.py" as p_events {
+
+    class Header <<frozen dataclass>> {
+        + format : str
+        + source : RecordSource
+        + generator : str
+        + game_id : str
+        + created_at : str
+    }
+
+    class GameStarted <<frozen dataclass>> {
+        + ruleset : Ruleset
+        + seats : dict<Position, Seat>
+        + observed_from : ObservedFrom?
+        + ts : str
+    }
+
+    class RoundDealt <<frozen dataclass>> {
+        + round : int
+        + dealer : Position
+        + hands : dict<Position, tuple<Card>>
+        + hands_derivation : HandsDerivation
+        + ts : str
+    }
+
+    class BidMade <<frozen dataclass>> {
+        + round : int
+        + seq : int
+        + position : Position
+        + bid : Bid<Position>
+        + think_ms : int?
+        + ts : str
+    }
+
+    class CardPlayed <<frozen dataclass>> {
+        + round : int
+        + trick : int
+        + position : Position
+        + card : Card
+        + derived : bool
+        + think_ms : int?
+        + ts : str
+    }
+
+    class BeloteHeld <<frozen dataclass>> {
+        + round : int
+        + position : Position
+        + cards : tuple<Card>
+        + announced : bool?
+        + ts : str
+    }
+
+    class RoundScored <<frozen dataclass>> {
+        + round : int
+        + outcome : RoundOutcome
+        + declarer : Position?
+        + contract : ContractTerms?
+        + taken : dict<TeamSide, int>
+        + belote : dict<TeamSide, int>
+        + announcements : dict<TeamSide, int>
+        + carried_over : dict<TeamSide, int>
+        + marked : dict<TeamSide, SideMark>
+        + totals : dict<TeamSide, int>?
+        + last_trick : TeamSide?
+        + slam : SlamOutcome
+        + source : ScoreSource
+        + ts : str
+    }
+
+    class GameEnded <<frozen dataclass>> {
+        + totals : dict<TeamSide, int>?
+        + winner : TeamSide?
+        + reason : EndReason
+        + ts : str?
+    }
+
+    class Seat <<frozen dataclass>> {
+        + id : str?
+        + name : str
+        + account : str?
+        + kind : SeatKind
+        + level : str?
+    }
+
+    class ObservedFrom <<frozen dataclass>> {
+        + round : int
+        + phase : JoinPhase
+        + totals : dict<TeamSide, int>
+    }
+
+    class Ruleset <<frozen dataclass>> {
+        + preset : str
+        + config : RuleConfig
+    }
+
+    class SideMark <<frozen dataclass>> {
+        + made : int
+        + announced : int
+    }
+
+    class ContractTerms <<frozen dataclass>> {
+        + value : int | SlamLevel
+        + suit : ContractSuit
+        + multiplier : int
+    }
+
+    class "the eight vocabularies" as p_enums <<enums>> {
+        RecordSource : engine | observed
+        SeatKind : human | ai | observed
+        JoinPhase : bidding | play
+        HandsDerivation : self_play | observed | dealt_from_deck
+        RoundOutcome : made | failed | all_pass | disputed
+        SlamOutcome : none | slam | solo_slam | unannounced
+        ScoreSource : engine | snapshot | panel
+        EndReason : target_reached | abandoned | observer_left | interrupted
+    }
+
+    class "GameEvent" as p_union <<union>> {
+        Header | GameStarted | RoundDealt | BidMade
+        | CardPlayed | BeloteHeld | RoundScored | GameEnded
+    }
+}
+
+GameStarted *-- "4" Seat
+GameStarted --> Ruleset
+GameStarted --> ObservedFrom
+Ruleset --> RuleConfig
+RoundScored *-- "2" SideMark
+RoundScored --> ContractTerms
+RoundDealt --> Card
+BidMade --> Bid
+CardPlayed --> Card
+
+' =========================================================
+' tokens.py
+' =========================================================
+package "tokens.py" as p_tokens {
+    class "tokens.py" as m_tokens <<module>> {
+        + position_token(position) : str
+        + parse_position(token) : Position
+        + side_token(side) : str
+        + parse_side(token) : TeamSide
+        + card_token(card) : str
+        + parse_card(token) : Card
+        + contract_suit_token(suit) : str
+        + parse_contract_suit(token) : ContractSuit
+        + contract_value_token(value) : int | str
+        + parse_contract_value(token) : int | SlamLevel
+        + bid_payload(bid) : dict<str, object>
+        + parse_bid(payload, position) : Bid<Position>
+        + ruleset_payload(rules) : dict<str, object>
+        + parse_ruleset(payload) : RuleConfig
+        + parse_timestamp(value) : str
+    }
+}
+
+' =========================================================
+' codec.py
+' =========================================================
+package "codec.py" as p_codec {
+    class "codec.py" as m_codec <<module>> {
+        + {static} FORMAT_FAMILY : str
+        + {static} FORMAT_MAJOR : int
+        + {static} FORMAT : str
+        --
+        + encode(event) : str
+        + decode(line) : GameEvent
+        - _check_format(value) : str
+    }
+    class "_Reader" as m_reader {
+        - _left : dict<str, object>
+        - _event : str
+        --
+        + take(key) : object
+        + done()
+    }
+}
+
+m_codec ..> m_reader : <<total decoding>>
+
+' =========================================================
+' store.py
+' =========================================================
+package "store.py" as p_store {
+    class RecordWriter {
+        - _path : Path
+        - _handle : IO<str>?
+        --
+        + path : Path <<property>>
+        + closed : bool <<property>>
+        + write(event)
+        + close()
+        + __enter__() : RecordWriter
+        + __exit__(*exc_info)
+    }
+    class ReadResult <<frozen dataclass>> {
+        + events : tuple<GameEvent>
+        + truncated : bool
+    }
+    class "store.py" as m_store <<module>> {
+        + read_events(path) : ReadResult
+        + records_root() : Path
+        + games_dir(root) : Path
+        + game_path(root, game_id) : Path
+        + new_game_id(prefix, *, now, entropy) : str
+    }
+}
+
+m_store ..> ReadResult : <<builds>>
+
+' =========================================================
+' projection.py
+' =========================================================
+package "projection.py" as p_proj {
+    class RoundRecord <<frozen dataclass>> {
+        + number : int
+        + dealer : Position
+        + hands : dict<Position, tuple<Card>>
+        + hands_derivation : HandsDerivation
+        + auction : tuple<Bid<Position>>
+        + contract : ObservedContract?
+        + tricks : tuple<TrickRecord<ObservedPlay>>
+        + derived_tricks : tuple<bool>
+        + current_trick : tuple<ObservedPlay>
+        + belotes : tuple<BeloteHeld>
+        + score : RoundScored?
+        + outcome : RoundOutcome?
+        + complete : bool
+        --
+        + trump_suit : ContractSuit? <<property>>
+        + trick_winners : tuple<Position> <<property>>
+    }
+    class GameRecord <<frozen dataclass>> {
+        + header : Header
+        + preset : str
+        + ruleset : RuleConfig
+        + seats : dict<Position, Seat>
+        + observed_from : ObservedFrom?
+        + rounds : tuple<RoundRecord>
+        + ended : GameEnded?
+        + truncated : bool
+        + complete : bool
+    }
+    class "projection.py" as m_proj <<module>> {
+        + project(events, *, truncated) : GameRecord
+        + load_game(path) : GameRecord
+        - _contract_of(auction) : ObservedContract?
+        - _group_tricks(number, plays)
+    }
+    class "_RoundBuilder" as m_builder {
+        + dealt : RoundDealt
+        + bids : list<BidMade>
+        + plays : list<CardPlayed>
+        + belotes : list<BeloteHeld>
+        + score : RoundScored?
+        --
+        + add(event)
+        + build(rules) : RoundRecord
+    }
+}
+
+GameRecord *-- "0..N" RoundRecord
+RoundRecord --> ObservedContract
+RoundRecord --> TrickRecord
+TrickRecord --> ObservedPlay
+ObservedPlay --> Position
+ObservedPlay --> Card
+m_proj ..> m_builder : <<accumulates a round>>
+m_proj ..> Auction : <<derives the contract>>
+m_proj ..> TrickRecord : <<derives the winners>>
+
+' =========================================================
+' Layering
+' =========================================================
+m_codec ..> m_tokens : <<spells every value>>
+m_codec ..> p_union : <<encodes / decodes>>
+m_store ..> m_codec : <<one line per event>>
+RecordWriter ..> m_codec : <<encode>>
+m_proj ..> m_store : <<read_events>>
+
+note as N_layering
+  **Four layers, each testable without the one below.**
+  ""events.py"" holds domain values — a seat is a ""Position"",
+  a card is a ""Card"", a bid is a core ""Bid"". It never sees a token.
+  ""tokens.py"" owns the ASCII spelling, and only it does.
+  ""codec.py"" owns the JSON line, and only it does.
+  ""store.py"" owns the file — and it is the //only// module
+  in the package that touches the filesystem.
+
+  Nothing here derives anything twice: the contract, the
+  tricks and their winners are recomputed by ""projection.py""
+  through core's own ""Auction"" and ""TrickRecord"".
+end note
+p_events .. N_layering
+
+note as N_edge
+  **The dependency edge**
+  ""core <- data <- {engine, scraper}""
+
+  ""contrai-data"" imports ""contrai_core"" and nothing else at
+  runtime — no third-party wheel, not even for JSON. A corpus
+  outlives the code that wrote it, so a reader must never need
+  somebody else's parser to open a five-year-old game.
+end note
+p_tokens .. N_edge
+
+@enduml

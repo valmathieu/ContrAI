@@ -18,6 +18,20 @@ Source lives at `packages/contrai-data/src/contrai_data/`:
 
 Everything above is re-exported from `contrai_data/__init__.py` and is part of the public API.
 
+## Class structure
+
+```plantuml format="svg" source="class_data.puml"
+```
+
+The diagram encodes the layering. Read it left to right and the arrows only ever point *down* the
+stack: `store.py` depends on `codec.py`, which depends on `tokens.py`, which is the only module that
+ever meets an ASCII token — `events.py` sits at the bottom holding nothing but domain values, and
+has no arrow into any of them. The blue boxes are `contrai-core`'s, and every one of them is a
+*boundary*: `Card`, `Position`, `TeamSide`, `Bid` and `RuleConfig` are what the events are made of,
+while `Auction`, `TrickRecord`, `ObservedPlay` and `ObservedContract` are what the projection derives
+*through*. There is no arrow out of this package to anything but core. See
+[Diagrams](../diagrams/) for the colour convention.
+
 ## Why a fifth package
 
 The format has two producers and several consumers, and none of them may depend on each other.
