@@ -355,7 +355,9 @@ class RichView:
         rules = rules_for(trump)
         trick_points = sum(rules.points(play.card) for play in plays)
         self._log(self._format_trick_won_log(winner, trick_points))
-        prompt_question = _trick_won_prompt_text(winner)
+        prompt_question = _trick_won_prompt_text(
+            winner, wait=not self.options.replay
+        )
         if self.options.autoplay:
             prompt_question = _autoplay_pause_text(prompt_question.plain)
         # State 3: full trick shown, winner highlighted, Press Enter.
@@ -514,21 +516,26 @@ class RichView:
                 belote_gated=belote_gated,
             )
         )
-        if is_final:
-            prompt_text = Text(
-                "Press [Enter] to see the final score…", style=FG
-            )
-        elif is_tiebreaker:
-            prompt_text = Text(
-                "Press [Enter] to deal the tiebreaker round…", style=FG
-            )
-        else:
-            prompt_text = Text(
-                "Press [Enter] to deal the next round…", style=FG
-            )
-        if self.options.autoplay:
-            prompt_text = _autoplay_pause_text(prompt_text.plain)
-        self.console.print(_panel_prompt(prompt_text, mandatory=False))
+        # Under replay the recap's own prompt is left off: it would
+        # invite a keystroke this method never reads (``_wait_or_pause``
+        # returns at once), and there is no next round to deal — the
+        # replay's step prompt, drawn underneath, owns the key.
+        if not self.options.replay:
+            if is_final:
+                prompt_text = Text(
+                    "Press [Enter] to see the final score…", style=FG
+                )
+            elif is_tiebreaker:
+                prompt_text = Text(
+                    "Press [Enter] to deal the tiebreaker round…", style=FG
+                )
+            else:
+                prompt_text = Text(
+                    "Press [Enter] to deal the next round…", style=FG
+                )
+            if self.options.autoplay:
+                prompt_text = _autoplay_pause_text(prompt_text.plain)
+            self.console.print(_panel_prompt(prompt_text, mandatory=False))
         self._wait_or_pause(GOLD, "CONTRAI_AUTOPLAY_RECAP_PAUSE", 2.5)
 
     def on_round_complete(self, round_: "Round", running_scores: dict) -> None:
