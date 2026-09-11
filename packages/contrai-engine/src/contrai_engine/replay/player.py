@@ -4,21 +4,33 @@
 — the engine cannot tell it from an AI — whose two decision hooks read
 the round's recorded actions instead of deciding anything.
 
-**Actions are addressed by position in the round, never by a per-seat
-queue.** That is the one design decision in this module worth spelling
-out, because the obvious alternative is wrong. The engine auto-applies a
-bid whenever a seat has exactly one legal action, *without consulting the
-seat* (see ``Round.manage_bidding``), and a record holds those forced
-passes like any other bid. A seat popping its own queue would therefore
-fall one behind the moment it was skipped — and a seat can be skipped and
-then consulted again in the same auction: the partner of a Slam bidder
-has only Pass until an opponent doubles, and gains the redouble the
-moment one does.
+**How an action is addressed is the one design decision in this module,
+and the two obvious answers are both wrong.**
 
-Indexing off ``len(auction.bids)`` sidesteps all of it. The auto-applied
-bids advance that counter exactly as consulted ones do, so the script and
-the engine stay in step by construction, and the seat check below turns
-any disagreement into an error rather than a silent swap.
+The engine auto-applies a bid whenever a seat has exactly one legal
+action, *without consulting the seat* (see ``Round.manage_bidding``). So
+a seat popping its own FIFO queue falls one behind the moment it is
+skipped — and a seat can be skipped and then consulted again in the same
+auction: the partner of a Slam bidder has only Pass until an opponent
+doubles, and gains the redouble the moment one does.
+
+Addressing bids by position in the auction fails the other way. An
+observed table never transmits those forced passes — the doubling side
+after a double, all four seats after a redouble — so the record holds
+fewer bids than the replayed auction, and every index after the first
+insertion points at the wrong bid.
+
+What both cases share is each seat's *own* subsequence of bids, which a
+missing forced pass and an inserted one shift identically. So a bid is
+addressed by **(seat, how many bids that seat has already made)**, a
+number read straight off the replayed auction — self-synchronising
+through both.
+
+Cards need none of this: nothing is ever auto-played, so a card is
+addressed by its flat position in the round, and the seat check below
+turns a turn-order disagreement into an error rather than a silent swap.
+That is exactly how a trick-winner divergence surfaces — the record's
+next leader is not the seat core says won.
 """
 
 from __future__ import annotations
@@ -88,35 +100,42 @@ class RoundScript:
         plays.extend(round_.current_trick)
         return cls(number=round_.number, bids=round_.auction, plays=tuple(plays))
 
-    def bid_at(self, index: int, seat: Position) -> Bid[Position]:
-        """The recorded bid at ``index``, checked against ``seat``.
+    def bid_at(self, ordinal: int, seat: Position) -> Bid[Position]:
+        """``seat``'s ``ordinal``-th recorded bid, counting only its own.
+
+        Bids are addressed **per seat**, not by position in the auction,
+        and the reason is that the two numberings genuinely differ. The
+        engine writes forced passes that an observed table never
+        transmits — the doubling side after a double, every seat after a
+        redouble — so a record and the auction replayed from it can hold
+        different numbers of bids while describing the same bidding.
+        Only each seat's *own* subsequence is reliably shared, and the
+        caller derives the ordinal by counting that seat's bids already
+        in the replayed auction, which stays in step through both a
+        missing forced pass and an inserted one.
 
         Args:
-            index: How many bids the replayed auction already holds —
-                which is the 0-based position of the bid now due.
+            ordinal: How many bids this seat has already made in the
+                replayed auction — the 0-based index into its own
+                recorded bids.
             seat: The seat the engine is consulting.
 
         Returns:
             The recorded bid, still seated on its :class:`Position`.
 
         Raises:
-            ScriptExhaustedError: If the auction ran past the record.
-            SeatMismatchError: If the record's bid at ``index`` belongs
-                to another seat.
+            ScriptExhaustedError: If that seat ran past its recorded
+                bids.
         """
 
-        if index >= len(self.bids):
+        own = [bid for bid in self.bids if bid.player is seat]
+        if ordinal >= len(own):
             raise ScriptExhaustedError(
                 f"Round {self.number}: {seat} was asked for bid "
-                f"{index + 1}, but the record holds {len(self.bids)}"
+                f"{ordinal + 1} of its own, but the record holds "
+                f"{len(own)} for that seat"
             )
-        bid = self.bids[index]
-        if bid.player is not seat:
-            raise SeatMismatchError(
-                f"Round {self.number}: bid {index + 1} is {bid.player}'s in "
-                f"the record, but the engine consulted {seat}"
-            )
-        return bid
+        return own[ordinal]
 
     def play_at(self, index: int, seat: Position) -> "Card":
         """The recorded card at ``index``, checked against ``seat``.
@@ -208,19 +227,31 @@ class RecordedPlayer(Player):
         player off the bid.
 
         Args:
-            auction: The auction so far. Its length is the address of the
-                bid now due.
+            auction: The auction so far. How many of its bids are this
+                seat's is the address of the bid now due — see
+                :meth:`RoundScript.bid_at` for why that, rather than the
+                auction's length, is what keeps script and engine in
+                step.
 
         Returns:
             The recorded bid, re-seated, with a rationale naming the
             record as its source.
 
         Raises:
-            ScriptExhaustedError: If the auction ran past the record.
-            SeatMismatchError: If that bid was another seat's.
+            ScriptExhaustedError: If this seat ran past its recorded
+                bids.
         """
 
-        recorded = self._due().bid_at(len(auction.bids), self.position)
+        # Counted by *seat*, not by player identity: a live auction seats
+        # its bids on players and a record's on bare positions, and the
+        # question — how many bids has this seat made — is the same one
+        # either way.
+        ordinal = sum(
+            1
+            for bid in auction.bids
+            if getattr(bid.player, "position", bid.player) is self.position
+        )
+        recorded = self._due().bid_at(ordinal, self.position)
         return BidDecision(
             bid=dataclasses.replace(recorded, player=self),
             rationale=Rationale(
