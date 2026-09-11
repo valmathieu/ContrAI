@@ -2146,8 +2146,9 @@ class TestPresetPickerOffersTheRememberedSetup:
 
     def test_it_can_be_picked_by_number(self, contrai_home):
         save_setup(setup_path(), TableSetup(rules=RuleConfig(target_score=500)))
-        # classic is 1; the remembered row is appended after the presets.
-        view = _drive_landing(RichView(), ["2"])
+        # classic is 1 and tournament 2; the remembered row is appended
+        # after the presets, so it numbers one past ``len(PRESETS)``.
+        view = _drive_landing(RichView(), ["3"])
 
         result = view._show_preset_picker(TableSetup())
 
