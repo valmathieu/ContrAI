@@ -44,6 +44,7 @@ class TestDefaults:
         assert cfg.reshuffle_every_round is False
         assert (cfg.solo_slam_available, cfg.slam_can_be_doubled,
                 cfg.solo_slam_can_be_doubled) == (True, True, True)
+        assert cfg.double_closes_auction is False
         assert cfg.under_trump_exemption is True
         assert cfg.solo_slam_gives_the_lead is False
         assert cfg.belote_counts_toward_contract is True
@@ -58,8 +59,8 @@ class TestDefaults:
         assert cfg.rounding is Rounding.EXACT
         assert cfg.win_on_belote_points_alone is True
 
-    def test_has_exactly_22_fields(self):
-        assert len(dataclasses.fields(RuleConfig)) == 22
+    def test_has_exactly_23_fields(self):
+        assert len(dataclasses.fields(RuleConfig)) == 23
 
     def test_target_scores_constant(self):
         assert TARGET_SCORES == (500, 1000, 1500, 2000, 3000, 4000, 5000)
@@ -117,7 +118,7 @@ class TestPresets:
         assert set(PRESETS) == {"classic", "tournament"}
         assert PRESETS["classic"] == RuleConfig()
 
-    def test_tournament_moves_exactly_three_knobs_off_classic(self):
+    def test_tournament_moves_exactly_four_knobs_off_classic(self):
         tournament = RuleConfig.tournament()
         assert PRESETS["tournament"] == tournament
         moved = {
@@ -129,7 +130,9 @@ class TestPresets:
             "any_failure_marks_160",
             "only_announced_points_multiplied",
             "solo_slam_gives_the_lead",
+            "double_closes_auction",
         }
         assert tournament.any_failure_marks_160 is True
         assert tournament.only_announced_points_multiplied is False
         assert tournament.solo_slam_gives_the_lead is True
+        assert tournament.double_closes_auction is True

@@ -48,7 +48,8 @@ SECTIONS: dict[str, tuple[str, ...]] = {
     "general": ("target_score", "turn_direction"),
     "trump": ("extended_trump_choices", "all_trump_belote"),
     "deal": ("reshuffle_every_round",),
-    "bidding": ("solo_slam_available", "slam_can_be_doubled", "solo_slam_can_be_doubled"),
+    "bidding": ("solo_slam_available", "slam_can_be_doubled",
+                "solo_slam_can_be_doubled", "double_closes_auction"),
     "card_play": ("under_trump_exemption", "solo_slam_gives_the_lead",
                   "belote_counts_toward_contract", "belote_lost_when_contract_fails"),
     "scoring": ("mark_made_points", "mark_announced_points",
@@ -463,7 +464,7 @@ def non_default_knobs(rules: RuleConfig) -> tuple[tuple[str, str], ...]:
 
     The compact answer to "how far from classic is this table?" — the
     setup panel counts them, and a simulation log can print them instead
-    of dumping all 22 rows.
+    of dumping all 23 rows.
 
     Args:
         rules: The ruleset to compare against ``RuleConfig()``.

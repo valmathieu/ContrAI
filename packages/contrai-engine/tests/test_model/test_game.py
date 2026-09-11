@@ -12,7 +12,9 @@ import random
 
 import pytest
 from contrai_engine.debug_state import round_result_lines
+from contrai_engine.model import deal as deal_module
 from contrai_engine.model import game as game_module
+from contrai_engine.model.deal import DealSource, RandomDealSource
 from contrai_engine.model.game import Game
 from contrai_engine.model.player import (
     AiPlayer,
@@ -810,11 +812,121 @@ def test_next_dealer_picks_random_when_none(game, monkeypatch):
     assert game.dealer is None
 
     # Force the "random" choice to be deterministic for the assertion.
-    monkeypatch.setattr(game_module.random, 'choice', lambda seq: seq[2])
+    # The draw lives in the default deal source, which is what ``Game``
+    # delegates to — patching ``game_module`` would miss it.
+    monkeypatch.setattr(deal_module.random, 'choice', lambda seq: seq[2])
 
     game.next_dealer()
 
     assert game.dealer is game.players[2]
+
+
+class TestDealSource:
+    """The seam :class:`Game` sources each round's dealer and deck from.
+
+    The default is :class:`RandomDealSource`, which is today's behaviour
+    under a name, so the whole point of these tests is that *nothing*
+    observable moved when the inline code became a strategy object.
+    """
+
+    def test_the_default_source_is_the_random_one(self, game):
+        assert isinstance(game.deal_source, RandomDealSource)
+        assert isinstance(game.deal_source, DealSource)
+
+    def test_an_explicit_source_is_kept(self, players):
+        source = RandomDealSource()
+
+        assert Game(players, deal_source=source).deal_source is source
+
+    def test_a_seeded_first_deal_is_pinned(self, players):
+        # The regression guard on ``start_new_round``'s step order. The
+        # deck is now sourced *after* ``set_players_order`` so a scripted
+        # source can see the seating; ``set_players_order`` consumes no
+        # randomness, so the seeded deal must be byte-for-byte what it
+        # was before the move. These literals are that "before" — read
+        # off the pre-move code at seed 1 — so any future reshuffling of
+        # the steps that does touch the RNG fails right here.
+        random.seed(1)
+        game = Game(players)
+
+        game.start_new_round()
+
+        assert game.dealer.position is Position.WEST
+        assert [p.position for p in game.players_order] == [
+            Position.SOUTH,
+            Position.EAST,
+            Position.NORTH,
+            Position.WEST,
+        ]
+        south = game.players_by_position[Position.SOUTH]
+        assert [(c.rank.name, c.suit.name) for c in south.hand.cards] == [
+            ("NINE", "SPADES"),
+            ("EIGHT", "DIAMONDS"),
+            ("NINE", "HEARTS"),
+            ("NINE", "DIAMONDS"),
+            ("TEN", "HEARTS"),
+            ("EIGHT", "CLUBS"),
+            ("QUEEN", "CLUBS"),
+            ("KING", "SPADES"),
+        ]
+
+    def test_a_seeded_game_deals_the_same_way_twice(self, players):
+        def deal_two_rounds() -> list[tuple]:
+            random.seed(7)
+            game = Game([type(p)(p.name, position=p.position) for p in players])
+            seen: list[tuple] = []
+            for _ in range(2):
+                game.start_new_round()
+                seen.append(
+                    (
+                        game.dealer.position,
+                        tuple(
+                            (seat.position, tuple(seat.hand.cards))
+                            for seat in game.players_order
+                        ),
+                    )
+                )
+                for seat in game.players_order:
+                    game.deck.add_cards(seat.hand)
+                    seat.hand.clear()
+            return seen
+
+        assert deal_two_rounds() == deal_two_rounds()
+
+    def test_the_source_decides_the_dealer(self, game):
+        class AlwaysEast:
+            def next_dealer(self, game):
+                return game.players_by_position[Position.EAST]
+
+            def next_deck(self, game):
+                return game.deck
+
+        game.deal_source = AlwaysEast()
+
+        game.next_dealer()
+        game.next_dealer()
+
+        assert game.dealer.position is Position.EAST
+
+    def test_the_source_decides_the_deck(self, game, monkeypatch):
+        replacement = Deck()
+
+        class FixedDeck:
+            def next_dealer(self, inner):
+                return inner.players[0]
+
+            def next_deck(self, inner):
+                # The seating is already known when the deck is asked
+                # for — that is what a scripted source needs it for.
+                assert len(inner.players_order) == 4
+                return replacement
+
+        game.deal_source = FixedDeck()
+        monkeypatch.setattr(game_module, "Round", FakeRound)
+
+        game.start_new_round()
+
+        assert game.deck is replacement
 
 
 def test_set_players_order_starts_after_dealer(game):
