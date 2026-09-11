@@ -113,6 +113,23 @@ class TestPresets:
     def test_classic_is_the_defaults(self):
         assert RuleConfig.classic() == RuleConfig()
 
-    def test_presets_registry(self):
-        assert set(PRESETS) == {"classic"}
+    def test_presets_name_classic_and_tournament(self):
+        assert set(PRESETS) == {"classic", "tournament"}
         assert PRESETS["classic"] == RuleConfig()
+
+    def test_tournament_moves_exactly_three_knobs_off_classic(self):
+        tournament = RuleConfig.tournament()
+        assert PRESETS["tournament"] == tournament
+        moved = {
+            field.name
+            for field in dataclasses.fields(RuleConfig)
+            if getattr(tournament, field.name) != getattr(RuleConfig(), field.name)
+        }
+        assert moved == {
+            "any_failure_marks_160",
+            "only_announced_points_multiplied",
+            "solo_slam_gives_the_lead",
+        }
+        assert tournament.any_failure_marks_160 is True
+        assert tournament.only_announced_points_multiplied is False
+        assert tournament.solo_slam_gives_the_lead is True

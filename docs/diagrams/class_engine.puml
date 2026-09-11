@@ -43,6 +43,18 @@ class RuleConfig <<from contrai-core>> #E1F0FF
 enum Suit       <<from contrai-core>> #E1F0FF
 class "ContractSuit" as p_contractsuit <<from contrai-core>> #E1F0FF
 
+' contrai-data boundary types, in that package's palette. Declared
+' explicitly so the relationship lines below do not auto-create them
+' in the engine's orange.
+class RecordWriter <<from contrai-data>> #E8F5E9 {
+    + path : Path <<property>>
+    + closed : bool <<property>>
+    --
+    + write(event: GameEvent) : None
+    + close() : None
+}
+class GameEvent <<from contrai-data>> #E8F5E9
+
 ' =========================================================
 ' model/player/ — Player hierarchy + pluggable AI strategies
 ' =========================================================
@@ -700,8 +712,9 @@ package "cli.py" as p_cli {
         + main() : None
         --
         - _build_parser() : ArgumentParser
-        - _parse_args(argv) : (DebugOptions, TableSetup)
+        - _parse_args(argv) : (DebugOptions, TableSetup, RecordRequest)
         - _build_game(autoplay, rules) : Game
+        - _attach_recorder(view, record, setup) : RichView | RecordingView
         --
         Drives landing → game loop →
         end-game; routes 'n' / 'r' / 'q'.
@@ -724,7 +737,103 @@ package "cli.py" as p_cli {
       What ""show~_landing"" hands back is what the
       ""Game"" is built from; its ""aids"" are re-pointed
       on the view, never threaded into the model.
+      ""--record [DIR]"" / ""--no-record"" are the second
+      mutually exclusive pair. ""main()"" drives the
+      ""RecordingView"" //wrapper//, not the view — which
+      is why ""on~_round~_complete"" and ""show~_end~_game""
+      reach a record at all — and re-resolves the
+      request after every landing screen, so the
+      ""[r]"" knob takes the next deal.
     end note
+}
+
+' =========================================================
+' recording.py — the one seam where the engine meets contrai-data
+' =========================================================
+package "recording.py" as p_recording {
+    class RecordingView <<view decorator>> #FFEFD9 {
+        - _record~_inner : Any
+        - _record~_root : Path
+        - _record~_preset : str
+        - _record~_writer : RecordWriter?
+        - _record~_round : int
+        - _record~_cards : int
+        - _record~_belotes : set<(Position, Suit)>
+        - _record~_totals : dict<TeamSide, int>?
+        .. transparency ..
+        + ~__getattr~__(name) : Any
+        + ~__setattr~__(name, value) : None
+        - _record~_forward(name, *args, **kwargs) : None
+        .. lifecycle ..
+        + attach(game, target~_score) : None
+        + close~_record(reason, *, status) : None
+        + show~_end~_game(status) : str
+        .. fact-carrying hooks ..
+        + on~_round~_dealt(round) : None
+        + on~_bid~_made(player, bid, history) : None
+        + on~_card~_played(player, card, plays) : None
+        + on~_belote~_announced(player, kind, suit, round) : None
+        + on~_round~_complete(round, running~_scores) : None
+        - _record~_score(round, running~_scores) : None
+    }
+
+    class RecordRequest <<dataclass, frozen>> #FFEFD9 {
+        + directory : Path | None | UNSET = UNSET
+        + disabled : bool = False
+        --
+        + resolve(aids: TableAids) : Path?
+    }
+
+    class "recording.py" as p_recording_fn <<module>> #FFEFD9 {
+        UNSET : Final<Any>
+        finish~_recording(view) : None
+        --
+        - _utc~_now() : str
+        - _generator() : str
+        - _ai~_level(player) : str
+        - _seat(player) : Seat
+        - _outcome(contract~_made: bool?) : RoundOutcome
+        - _slam(contract, score) : SlamOutcome
+    }
+
+    note bottom of RecordingView
+      **A decorator over the view, not a hook on the model.**
+      Every engine notification is ""hasattr""-guarded and
+      goes to exactly one duck-typed view, so wrapping that
+      view records a game with //no// call site changed —
+      and ""--autoplay"" records for the same reason a human
+      game does. Forwarding runs both ways: ""~__getattr~__""
+      passes reads down, ""~__setattr~__"" passes writes down
+      (""main()"" re-points ""view.aids"", which must reach
+      the real view), and only ""~_record~_"" names stay here.
+      Defining a hook makes the engine's guard pass whatever
+      sits underneath, so ""~_record~_forward"" re-asks the
+      question the engine no longer can.
+      **Three hooks are deliberately not intercepted** and
+      fall through: ""on~_all~_pass~_redeal"",
+      ""on~_contract~_established"" and ""on~_trick~_complete"".
+      Each carries a fact the format calls //derived// — an
+      all-pass is a deal plus four passes, a contract folds
+      out of the auction, a trick winner comes from
+      ""TrickRecord.winner"" — and a derived fact stored
+      twice can disagree with itself.
+      **No display name reaches a record**: an AI seat is
+      ""ai:<level>"", a human seat is ""human"", and ""id"" /
+      ""account"" stay null — those belong to a watched table.
+    end note
+
+    note bottom of RecordRequest
+      **Flag > knob > off.** Held apart from the resolved
+      root because the knob it defers to lives on the table
+      setup, which the landing screen can still change:
+      ""main()"" keeps the request and re-resolves it after
+      every landing, so ""[r]"" takes the next deal rather
+      than the next run. ""UNSET"" is what tells an //absent//
+      ""--record"" (defer to the knob) from a //bare// one
+      (the default root) — a plain ""None"" cannot.
+    end note
+
+    RecordRequest ..> TableAids : <<reads .record>>
 }
 
 ' =========================================================
@@ -768,6 +877,7 @@ package "ruleset.py" as p_ruleset {
 
     class TableAids <<dataclass, frozen>> {
         + live~_round~_score : bool = True
+        + record : bool = False
     }
 
     class RulesetError <<ValueError>>
@@ -871,6 +981,11 @@ Round ..> RichView : <<human input + hooks>>
 Cli ..> Game : <<owns game loop>>
 Cli ..> RichView : <<owns view + screens>>
 Cli ..> Ruleset : <<--rules / --preset>>
+Cli ..> RecordRequest : <<--record / --no-record>>
+Cli ..> RecordingView : <<wraps the view when recording>>
+RecordingView --> RichView : decorates
+RecordingView "1" o-- "0..1" RecordWriter : one open game
+RecordingView ..> GameEvent : <<builds>>
 Ruleset ..> RuleConfig : <<builds / validates>>
 RichView "1" *-- "0..N" RoundSummary : history
 RichView ..> p_view_screens : <<composes + prints>>

@@ -421,6 +421,7 @@ version = "0.4.0"
 source = { editable = "packages/contrai-engine" }
 dependencies = [
     { name = "contrai-core" },
+    { name = "contrai-data" },
     { name = "pyfiglet" },
     { name = "rich" },
 ]
@@ -434,6 +435,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "contrai-core", editable = "packages/contrai-core" },
+    { name = "contrai-data", editable = "packages/contrai-data" },
     { name = "pyfiglet", specifier = ">=1.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.4" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.0" },
