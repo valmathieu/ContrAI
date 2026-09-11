@@ -105,6 +105,7 @@ def parse_session(
     game_id: str | None = None,
     generator: str = "contrai-scraper",
     now: datetime | None = None,
+    end_reason: EndReason | None = None,
 ) -> SessionResult:
     """Assemble one observed game from a session's events.
 
@@ -116,6 +117,11 @@ def parse_session(
             rather than duplicated.
         generator: The producer string for the header.
         now: The instant to stamp the header with; defaults to now, in UTC.
+        end_reason: How the game finished, when the caller knows better than
+            the wire does. A watchdog that gives up on a silent table and a
+            process stopped by a signal are both invisible to the stream, and
+            neither is what the wire's own flags would suggest.
+            Unconditional: a caller that passes one is asserting it.
 
     Returns:
         The record and the parser's notes.
@@ -177,7 +183,7 @@ def parse_session(
             continue
         record += produced
 
-    record.append(_game_ended(ordered, translator, snapshots, ts))
+    record.append(_game_ended(ordered, translator, snapshots, ts, end_reason))
     return SessionResult(tuple(record), tuple(notes), tuple(skipped))
 
 
@@ -499,12 +505,17 @@ def _game_ended(
     translator: Translator,
     snapshots: Sequence[Snapshot],
     ts: str,
+    override: EndReason | None,
 ) -> GameEnded:
     """How the game finished, and with what totals.
 
     The totals come from the newest score read and are ``None`` when there was
     none — a game whose last rounds were never scored has no total, and the
     schema says so rather than the parser adding up what it saw.
+
+    An ``override`` short-circuits the whole reading: the caller saw something
+    the stream cannot carry, and the flags left on the wire would describe a
+    different ending.
     """
 
     totals = next(
@@ -512,6 +523,8 @@ def _game_ended(
          if snapshot.totals),
         None,
     )
+    if override is not None:
+        return GameEnded(totals=totals, winner=None, reason=override, ts=ts)
 
     # The table's own game-over flag wins over the observer leaving: a game
     # that finished and was then left finished.

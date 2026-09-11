@@ -25,6 +25,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) `contrai-scrape parse RAW... --profile P` — re-parse a raw wire log into a `contrai-data` record. See [scraper docs](docs/scraper/index.md).
 - (scraper) Profile gains the pledge, scoreboard and state-resume keys plus a `[recorder]` section of loop thresholds. See [scraper docs](docs/scraper/index.md).
 - (scraper) `HealthLog` — one JSON line per transition plus a counter heartbeat, on stderr. See [scraper docs](docs/scraper/index.md).
+- (scraper) `parse_session(end_reason=…)` — a caller states how a game ended when the wire cannot, e.g. a watchdog's `abandoned`.
 
 ### Changed
 
