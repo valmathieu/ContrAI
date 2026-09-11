@@ -53,10 +53,12 @@ mmdc      -i docs/diagrams/file.mmd -o docs/diagrams/file.png
 **PlantUML silently clips large PNGs at 4096 px** — no error, no warning, just a
 truncated image. `class_core.puml` and `class_engine.puml` both exceed it today,
 so render them with the limit raised, then check the result's pixel dimensions (a
-side landing at exactly 4096 means it was clipped):
+side landing at exactly the limit in force means it was clipped, so raise it and
+re-render until neither side does):
 
 ```bash
-PLANTUML_LIMIT_SIZE=8192 plantuml -tpng docs/diagrams/class_core.puml
+PLANTUML_LIMIT_SIZE=16384 plantuml -tpng docs/diagrams/class_core.puml    # 11807 x 3739
+PLANTUML_LIMIT_SIZE=8192  plantuml -tpng docs/diagrams/class_engine.puml  #  7586 x 4972
 ```
 
 Only the raster export is affected; the MkDocs site renders SVG and is not

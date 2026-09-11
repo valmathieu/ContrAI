@@ -201,6 +201,7 @@ package "rule_config.py" as p_rule_config {
         + win_on_belote_points_alone : bool = True
         --
         + {static} classic() : RuleConfig
+        + {static} tournament() : RuleConfig
     }
 
     class "rule_config.py" as p_rule_config_fn <<module>> {
@@ -222,10 +223,15 @@ package "rule_config.py" as p_rule_config {
       combinations (failed-Slam announced points without
       any-failure-160; all-trump belote without extended
       trump choices) are documented, not rejected.
-      **Presets** are core constructors: ""classic()"" is
-      the defaults; ""PRESETS"" names them for the engine's
-      loader. **No knob is consulted yet** — behaviour
-      lands per knob in later steps.
+      **Presets** are core constructors and record labels:
+      ""classic()"" is the §9 defaults; ""tournament()"" is
+      the rule set the observed online tables play — three
+      knobs off classic (""any_failure_marks_160"" on,
+      ""only_announced_points_multiplied"" off,
+      ""solo_slam_gives_the_lead"" on). ""PRESETS"" names
+      both, for the engine's ""--preset"" flag and for a
+      record's ""ruleset.preset"". A preset is a //label//;
+      the resolved ""RuleConfig"" is what is played under.
     end note
 }
 
