@@ -6,7 +6,7 @@ which-side value and the ``is_teammate`` same-side predicate built on
 them, strict value parsing
 (the plain constructor accepts only the exact display strings — no
 case-folding, no French fallback), the French seat-name bijection the
-scraper's DOM ids need, the absence of ordering support, and the
+scraper needs, the absence of ordering support, and the
 ``str()`` rendering that f-strings and error contexts rely on to read as
 plain seat names.
 """
