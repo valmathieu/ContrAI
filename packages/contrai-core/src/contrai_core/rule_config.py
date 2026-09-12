@@ -169,16 +169,17 @@ class RuleConfig:
     def tournament(cls) -> RuleConfig:
         """The rule set the observed online tournament tables play.
 
-        Three knobs off the §9 defaults, each read off the captured
-        tables rather than assumed: any failed contract marks the flat
-        160, the double multiplier applies to the whole mark rather than
-        to the announced component alone, and a Solo Slam declarer opens
-        trick 1.
+        Four knobs off the §9 defaults, each read off the captured
+        tables rather than assumed: play runs clockwise, any failed
+        contract marks the flat 160, the double multiplier applies to the
+        whole mark rather than to the announced component alone, and a
+        Solo Slam declarer opens trick 1.
 
         Returns:
             The tournament ruleset.
         """
         return cls(
+            turn_direction=TurnDirection.CLOCKWISE,
             any_failure_marks_160=True,
             only_announced_points_multiplied=False,
             solo_slam_gives_the_lead=True,

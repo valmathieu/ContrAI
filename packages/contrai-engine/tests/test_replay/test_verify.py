@@ -67,7 +67,7 @@ class TestCleanRecords:
         assert len(verdict.rounds) == len(recorded_game.rounds)
 
     def test_a_tournament_record_verifies(self, recorded_tournament_game):
-        # The ruleset observed games carry.
+        # The ruleset observed games carry, and a clockwise one.
         verdict = verify_game(recorded_tournament_game)
 
         assert verdict.verdict is Verdict.VERIFIED

@@ -184,7 +184,7 @@ class TestRoundTrip:
         assert second.game.scores == first.game.scores
 
     def test_it_replays_a_tournament_record(self, recorded_tournament_game):
-        # ``tournament`` is what observed games carry.
+        # ``tournament`` is what observed games carry, and it plays clockwise.
         controller = ReplayController(recorded_tournament_game)
 
         controller.run()

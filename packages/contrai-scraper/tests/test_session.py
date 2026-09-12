@@ -3,7 +3,7 @@
 import dataclasses
 
 import pytest
-from contrai_core import Position, SlamLevel, Suit, TeamSide
+from contrai_core import Position, SlamLevel, Suit, TeamSide, TurnDirection
 from contrai_data import (
     CardPlayed,
     EndReason,
@@ -106,13 +106,22 @@ class TestRoundTrip:
             if isinstance(event, GameStarted)
         )
         assert started.seats[Position.NORTH].account == "1001"
-        assert started.seats[Position.WEST].level is None
+        assert started.seats[Position.EAST].level is None
 
     def test_the_game_id_defaults_to_the_wires_own(
         self, profile, source_game, synthesize
     ):
         header = _parse(profile, synthesize(source_game)).events[0]
         assert header.game_id == "obs-g1"
+
+    def test_the_record_names_the_clockwise_ruleset(
+        self, profile, source_game, synthesize
+    ):
+        started = next(
+            event for event in _parse(profile, synthesize(source_game)).events
+            if isinstance(event, GameStarted)
+        )
+        assert started.ruleset.config.turn_direction is TurnDirection.CLOCKWISE
 
 
 class TestSkippedRounds:
@@ -281,7 +290,7 @@ class TestSlams:
     ):
         game = game_builders.game_events(
             game_builders.round_events(
-                1, Position.NORTH, Position.WEST, SlamLevel.SLAM, Suit.SPADES,
+                1, Position.SOUTH, Position.WEST, SlamLevel.SLAM, Suit.SPADES,
                 True, {TeamSide.NS: 0, TeamSide.EW: 250}),
         )
         scored = next(event for event in _parse(profile, synthesize(game)).events
@@ -294,7 +303,7 @@ class TestSlams:
     ):
         game = game_builders.game_events(
             game_builders.round_events(
-                1, Position.NORTH, Position.WEST, SlamLevel.SOLO_SLAM,
+                1, Position.SOUTH, Position.WEST, SlamLevel.SOLO_SLAM,
                 Suit.SPADES, True, {TeamSide.NS: 0, TeamSide.EW: 500}),
         )
         scored = next(event for event in _parse(profile, synthesize(game)).events
@@ -321,7 +330,7 @@ class TestTargetReached:
     ):
         game = game_builders.game_events(
             game_builders.round_events(
-                1, Position.NORTH, Position.WEST, 80, Suit.SPADES, True,
+                1, Position.SOUTH, Position.WEST, 80, Suit.SPADES, True,
                 {TeamSide.NS: 0, TeamSide.EW: 2000}),
             reason=EndReason.TARGET_REACHED,
         )

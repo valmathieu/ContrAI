@@ -225,8 +225,9 @@ package "rule_config.py" as p_rule_config {
       trump choices) are documented, not rejected.
       **Presets** are core constructors and record labels:
       ""classic()"" is the §9 defaults; ""tournament()"" is
-      the rule set the observed online tables play — three
-      knobs off classic (""any_failure_marks_160"" on,
+      the rule set the observed online tables play — four
+      knobs off classic (""turn_direction"" clockwise,
+      ""any_failure_marks_160"" on,
       ""only_announced_points_multiplied"" off,
       ""solo_slam_gives_the_lead"" on). ""PRESETS"" names
       both, for the engine's ""--preset"" flag and for a

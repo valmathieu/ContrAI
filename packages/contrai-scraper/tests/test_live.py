@@ -25,11 +25,12 @@ from contrai_scraper import (
     play_events,
 )
 
+#: As the fixture profile places them: the handles walk the table clockwise.
 SEATS = {
     "p1": Position.NORTH,
-    "p2": Position.WEST,
+    "p2": Position.EAST,
     "p3": Position.SOUTH,
-    "p4": Position.EAST,
+    "p4": Position.WEST,
 }
 
 TS = "2026-09-11T18:18:15Z"
@@ -102,7 +103,7 @@ class TestBids:
         ]
         bids = _bids(profile, frames)
         assert isinstance(bids[1].bid, DoubleBid)
-        assert bids[1].position is Position.WEST      # not NORTH
+        assert bids[1].position is Position.EAST      # not NORTH
 
     def test_a_redouble_is_attributed_to_its_own_actor(self, profile, builders):
         frames = [
@@ -162,7 +163,7 @@ class TestPlays:
         # the seat comes from the player handle.
         frames = [builders.play_frame(trick=3, index=2, actor="p4", card="9z")]
         play = _plays(profile, frames)[0]
-        assert (play.trick, play.position) == (3, Position.EAST)
+        assert (play.trick, play.position) == (3, Position.WEST)
         assert (play.card.suit, play.card.rank.value) == (Suit.CLUBS, "Ace")
 
     def test_think_time_comes_from_the_metadata(self, profile, builders):
@@ -183,10 +184,10 @@ class TestPlays:
         ]
         plays = _plays(profile, frames)
         assert [(p.trick, p.position) for p in plays] == [
-            (1, Position.NORTH), (1, Position.WEST), (1, Position.SOUTH),
-            (1, Position.EAST),
-            (2, Position.NORTH), (2, Position.WEST), (2, Position.SOUTH),
-            (2, Position.EAST),
+            (1, Position.NORTH), (1, Position.EAST), (1, Position.SOUTH),
+            (1, Position.WEST),
+            (2, Position.NORTH), (2, Position.EAST), (2, Position.SOUTH),
+            (2, Position.WEST),
         ]
 
     def test_no_observed_play_is_marked_derived(self, profile, builders):
