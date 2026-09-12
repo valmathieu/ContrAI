@@ -9,7 +9,7 @@ scalars derived from one — the loops own the state and do the printing.
 The summary deliberately names four things and stops: where the ruleset
 came from and how far it sits from the §9 defaults, the target score, the
 trump choices, and the live round score. Everything else is one keystroke
-away in the per-knob editor, and a wall of 23 rows before the first deal
+away in the per-knob editor, and a wall of 22 rows before the first deal
 would bury the three a player actually changes.
 """
 
@@ -89,7 +89,7 @@ def _panel_table_setup(setup: TableSetup) -> Panel:
 
     # Where the rules came from, and how far they have been pushed. The
     # count is the honest headline: "classic" alone would be a lie once a
-    # knob has been turned, and listing all 23 rows would not be a summary.
+    # knob has been turned, and listing all 22 rows would not be a summary.
     changed = non_default_knobs(rules)
     body.append(f"{'Ruleset':<{LABEL_WIDTH}}", style=DIM)
     body.append(setup.origin, style=f"bold {GOLD}")
@@ -152,7 +152,7 @@ def _panel_preset_list(names: Sequence[str], selected: str) -> Panel:
     """
     rows = Text()
     rows.append("Ruleset", style=f"bold {FG}")
-    rows.append("   (a named set of the 23 table rules)\n\n", style=DIM)
+    rows.append("   (a named set of the 22 table rules)\n\n", style=DIM)
     for index, name in enumerate(names, start=1):
         line = Text()
         if name == selected:

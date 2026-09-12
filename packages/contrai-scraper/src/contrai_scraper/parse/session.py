@@ -38,6 +38,7 @@ from contrai_core import (
     ObservedPlay,
     Position,
     Rank,
+    RuleConfig,
     SlamLevel,
     TeamSide,
     TrickRecord,
@@ -153,6 +154,7 @@ def parse_session(
     )
     ts = stamp
 
+    rules = PRESETS[profile.rules.preset]
     record: list[GameEvent] = [
         Header(
             format=FORMAT,
@@ -162,9 +164,7 @@ def parse_session(
             created_at=stamp,
         ),
         GameStarted(
-            ruleset=Ruleset(
-                preset=profile.rules.preset, config=PRESETS[profile.rules.preset]
-            ),
+            ruleset=Ruleset(preset=profile.rules.preset, config=rules),
             seats=_seats(opening, seat_of_player),
             observed_from=_observed_from(opening),
             ts=ts,
@@ -176,7 +176,7 @@ def parse_session(
     for number in sorted(rounds):
         round_ = rounds[number]
         produced = _round(
-            round_, translator, seat_of_player, scores.get(number), ts, notes
+            round_, translator, seat_of_player, rules, scores.get(number), ts, notes
         )
         if produced is None:
             skipped.append(number)
@@ -282,6 +282,7 @@ def _round(
     round_: LiveRound,
     translator: Translator,
     seat_of_player: Mapping[str, Position],
+    rules: RuleConfig,
     score: tuple[ScoreRow, Mapping[TeamSide, int] | None] | None,
     ts: str,
     notes: list[str],
@@ -310,8 +311,18 @@ def _round(
         )
         return None
 
-    hands = deal_hands(stock, dealer.next, translator.rotation)
-    bids = bid_events(round_, translator, seat_of_player, ts=ts)
+    # The first packet goes to the seat after the dealer in the table's own
+    # direction — the same seat that speaks first.
+    hands = deal_hands(stock, dealer.next_in(rules.turn_direction), translator.rotation)
+    try:
+        bids = bid_events(
+            round_, translator, seat_of_player, dealer=dealer, rules=rules, ts=ts
+        )
+    except ParseError as error:
+        # A round-level refusal, like an unresolvable dealer: one auction the
+        # parser cannot account for costs that round, not the whole game.
+        notes.append(f"round {number}: {error} — skipped")
+        return None
     contract = _contract(bids)
 
     if contract is None:

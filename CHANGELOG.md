@@ -12,8 +12,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 - (data) New `contrai-data` package — one append-only JSONL record per game, one event per line, shared by the engine and the scraper. See [data docs](docs/data/index.md).
 - (data) `load_game` / `project` — a record folds back into rounds with its contract, tricks and winners re-derived from `contrai-core`. See [data docs](docs/data/index.md).
-- (core) `RuleConfig.tournament()` / `PRESETS["tournament"]` — the observed tables' rule set; `contrai --preset tournament` plays it. See [core docs](docs/core/index.md).
-- (core) `RuleConfig.double_closes_auction` (§9.4, off by default) — a double closes the auction once the doubled side declines, a redouble at once. `tournament()` sets it. See [core docs](docs/core/index.md).
+- (core) `RuleConfig.tournament()` / `PRESETS["tournament"]` — the observed tables' rule set, played clockwise; `contrai --preset tournament` plays it. See [core docs](docs/core/index.md).
 - (core) `Deck.stacked(hands)` — build a deck that deals four chosen hands, the inverse of `deal`'s 3-2-3 layout. See [core docs](docs/core/index.md).
 - (engine) `contrai --record [DIR]` / `--no-record` and a `record` table knob — the game you just played is written as a `contrai-data` record. See [engine docs](docs/engine/index.md).
 - (engine) `Game(players, deal_source=…)` — the dealer and the deal become a seam; `ScriptedDealSource` takes both off a record. Default unchanged. See [engine docs](docs/engine/index.md).
@@ -23,7 +22,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (engine) `contrai verify PATH... [--json] [--out DIR] [--no-write]` — per-round verdict table, exit 1 on a suspect round. `contrai` gains subcommands; `play` is the default, so every existing invocation is unchanged. See [engine docs](docs/engine/index.md).
 - (engine) `contrai replay PATH [--round N]` — step a recorded game through the game's own screens, hands face up: `n` action, `t` trick, `r` round, `p` back, `q` out. See [engine docs](docs/engine/index.md).
 - (scraper) `load_profile` — the site's URL, credentials, selectors and wire vocabulary move into a local `profile.toml`; `profile.example.toml` ships the schema. See [scraper docs](docs/scraper/index.md).
-- (scraper) `contrai-scrape parse RAW... --profile P` — re-parse a raw wire log into a `contrai-data` record. See [scraper docs](docs/scraper/index.md).
+- (scraper) `contrai-scrape parse RAW... --profile P` — re-parse a raw wire log into a `contrai-data` record, restoring the forced passes the wire never sends. See [scraper docs](docs/scraper/index.md).
 - (scraper) Profile gains the pledge, scoreboard and state-resume keys plus a `[recorder]` section of loop thresholds. See [scraper docs](docs/scraper/index.md).
 - (scraper) `HealthLog` — one JSON line per transition plus a counter heartbeat, on stderr. See [scraper docs](docs/scraper/index.md).
 - (scraper) `parse_session(end_reason=…)` — a caller states how a game ended when the wire cannot, e.g. a watchdog's `abandoned`.
@@ -42,6 +41,10 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) Profile keys `selectors.table_row` and `selectors.leave_table` — the server seats you, and the exit control is unrecoverable.
 - (scraper) `run.py`, the step-1 notebook and the two site screenshots under `docs/scraper/`.
 - (scraper) `jupyter` and `nest-asyncio` dependencies — neither was imported; `uv sync` installs less.
+
+### Fixed
+
+- (core) `Auction` judges double and redouble legality by seat, so a teamless seated player may double and a sealed `Position` auction lists its legal bids.
 
 ## [0.4.0] - 2026-09-01
 

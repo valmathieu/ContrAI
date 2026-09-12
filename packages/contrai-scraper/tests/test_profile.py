@@ -6,7 +6,7 @@ import pytest
 from contrai_core import Position
 
 import contrai_scraper
-from contrai_scraper import ProfileError, load_profile
+from contrai_scraper import ProfileError, Translator, load_profile
 
 #: The committed schema, three levels up from the installed package.
 EXAMPLE = (
@@ -66,7 +66,7 @@ class TestTokens:
 
     def test_an_incomplete_seat_map_is_refused(self, tmp_path, profile_text):
         path = tmp_path / "p.toml"
-        path.write_text(profile_text.replace(', left = "E"', ""), encoding="utf-8")
+        path.write_text(profile_text.replace(', left = "W"', ""), encoding="utf-8")
         with pytest.raises(ProfileError, match="seats"):
             load_profile(path)
 
@@ -249,6 +249,14 @@ class TestTheCommittedExample:
         monkeypatch.setenv("CONTRAI_SCRAPER_CODE", "0000")
         monkeypatch.setenv("CONTRAI_SCRAPER_SALT", "pepper")
         assert load_profile(EXAMPLE).rules.preset in {"classic", "tournament"}
+
+    def test_its_seat_map_walks_the_table_the_presets_way(self, monkeypatch):
+        # A user copies the seat map along with everything else, so the
+        # example has to pass the rotation check its own preset implies.
+        monkeypatch.setenv("CONTRAI_SCRAPER_CODE", "0000")
+        monkeypatch.setenv("CONTRAI_SCRAPER_SALT", "pepper")
+        assert Translator(load_profile(EXAMPLE)).rotation == (
+            Position.NORTH, Position.EAST, Position.SOUTH, Position.WEST)
 
 
 class TestPrivacy:

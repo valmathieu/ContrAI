@@ -226,8 +226,8 @@ def recorded_tournament_game(tmp_path) -> GameRecord:
     """The same, under the ``tournament`` preset.
 
     Worth its own fixture because ``tournament`` is the ruleset observed
-    games carry, and it is the one that turns ``double_closes_auction``
-    on — so a replay under it exercises the early auction close.
+    games carry, and it plays clockwise — so a replay under it walks the
+    table the other way round from ``recorded_game``.
     """
 
     return play_and_record(

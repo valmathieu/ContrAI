@@ -142,15 +142,17 @@ class Auction:
             return self._is_redouble_legal(bid)
         return False
 
-    def legal_actions(self, player: BasePlayer) -> tuple[Bid, ...]:
+    def legal_actions(self, player: BasePlayer | Position) -> tuple[Bid, ...]:
         """Enumerate every legal bid ``player`` could make right now.
 
         Suitable for handing to an MCTS / RL action enumerator or for
         filtering a UI's option list down to only the choices the
-        engine will accept.
+        engine will accept. A record's sealed auction answers it too:
+        its actors are bare seats, and every rule here that asks which
+        side a bid came from reads it off the seat.
 
         Args:
-            player: The player whose turn it is.
+            player: The player whose turn it is, or that player's seat.
 
         Returns:
             A tuple of legal :class:`Bid` instances. Always non-empty
@@ -221,15 +223,12 @@ class Auction:
     def is_terminal(self) -> bool:
         """Return whether the auction has concluded.
 
-        The auction ends on any of:
+        The auction ends on either of:
 
         1. Four consecutive passes from the very first bid — the
            first-round all-pass wipe.
         2. Three consecutive passes after at least one non-pass bid.
            The winning contract is the last non-pass numeric bid.
-        3. Only when ``rules.double_closes_auction`` is on: the early
-           close after a double described in
-           :meth:`_closed_after_double`.
         """
 
         if not self.bids:
@@ -237,60 +236,8 @@ class Auction:
         # All-pass wipe — exactly four players, every bid a pass.
         if all(isinstance(b, PassBid) for b in self.bids):
             return len(self.bids) >= 4
-        if self._closed_after_double():
-            return True
         # Three passes after a non-pass.
         return self.consecutive_passes >= 3
-
-    def _closed_after_double(self) -> bool:
-        """Whether the ``double_closes_auction`` variant has ended this
-        auction (contree-domain.md §9.4).
-
-        Once a double stands, the only bids left are the doubled side's
-        redouble and passes, so tables running this variant do not wait
-        for the third consecutive pass: a redouble closes the auction at
-        once, and a plain double closes it as soon as **both** members of
-        the doubled side have declined to redouble.
-
-        On the engine's own path the double half never changes the
-        outcome — seats alternate sides, so after the doubler the cycle
-        runs opponent → partner → opponent and the doubled side's second
-        pass *is* the third consecutive pass. What it changes is a
-        **sealed** auction, where a source that never transmits the
-        doubling side's forced passes would otherwise leave a closed
-        auction looking unfinished. The redouble half does change the
-        engine: it drops the three forced passes that follow.
-
-        Returns:
-            ``False`` when the variant is off, when no double stands, or
-            when the history is too malformed to name a doubled side.
-        """
-
-        if not self.rules.double_closes_auction or not self.has_double:
-            return False
-        if self.has_redouble:
-            return True
-        # The doubled side is the side that *bid* the contract — the one
-        # holding the redouble. A stray double with no contract behind it
-        # names no side: a live auction refuses that bid, but a record's
-        # auction is built by construction, and a structural layer must
-        # not raise on rule-illegal input.
-        declaring = self.last_contract_bid
-        if declaring is None:
-            return False
-        doubled_side = _actor_side(declaring.player)
-        if doubled_side is None:
-            return False
-        declined: set[Position] = set()
-        for bid in reversed(self.bids):
-            if isinstance(bid, DoubleBid):
-                # The standing double: ``has_double`` guarantees no
-                # contract bid lies between it and the end, so every bid
-                # walked so far came after it.
-                break
-            if isinstance(bid, PassBid) and _actor_side(bid.player) is doubled_side:
-                declined.add(getattr(bid.player, "position", bid.player))
-        return len(declined) >= 2
 
     def contract(self) -> Optional[Contract]:
         """Return the :class:`Contract` produced by this auction.
@@ -528,7 +475,7 @@ class Auction:
 
     def _is_double_legal(self, bid: DoubleBid) -> bool:
         """A :class:`DoubleBid` requires a live :class:`ContractBid`
-        by the opposing team and no prior :class:`DoubleBid` /
+        by the opposing side and no prior :class:`DoubleBid` /
         :class:`RedoubleBid`.
 
         Intervening passes since the contract bid do **not** close the
@@ -551,13 +498,20 @@ class Auction:
             return False
         if not self._slam_double_allowed(last_contract_bid):
             return False
-        if last_contract_bid.player.team is bid.player.team:
+        # Sides are read off the seat (see ``_actor_side``), so a record's
+        # bare positions answer this exactly as a live auction's players
+        # do. An actor with no seat names no side, and a double whose side
+        # cannot be told is refused rather than assumed to come from the
+        # other one.
+        doubled_side = _actor_side(last_contract_bid.player)
+        doubler_side = _actor_side(bid.player)
+        if doubled_side is None or doubler_side is None:
             return False
-        return True
+        return doubled_side is not doubler_side
 
     def _is_redouble_legal(self, bid: RedoubleBid) -> bool:
         """A :class:`RedoubleBid` requires a live :class:`DoubleBid`
-        against the bidder's team and no prior :class:`RedoubleBid`.
+        against the bidder's side and no prior :class:`RedoubleBid`.
 
         Symmetrically with :meth:`_is_double_legal`, intervening passes
         between the Double and the Redouble do **not** close the
@@ -582,6 +536,7 @@ class Auction:
                 break
         if not has_double or has_redouble or contract_player is None:
             return False
-        if contract_player.team is not bid.player.team:
-            return False
-        return True
+        # Read off the seat, like the double: only the side holding the
+        # contract may redouble it, and an actor with no seat is refused.
+        declaring_side = _actor_side(contract_player)
+        return declaring_side is not None and _actor_side(bid.player) is declaring_side

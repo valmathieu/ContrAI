@@ -17,9 +17,11 @@ plays per trick numbered 0-3 look exactly like four seats numbered 0-3, and
 the mistake is invisible until a trick winner comes out wrong. The seat comes
 from the player handle, through the snapshot's seat map.
 
-One smaller rule, from the corpus: the wire's per-bid sequence numbers **have
-gaps**, and ``contrai-data``'s projection refuses any sequence that is not
-exactly ``1..n``, so the record renumbers them.
+One more thing the wire leaves out: a pass from a seat that had no other bid.
+The table spends the turn's sequence number and sends nothing, so the auction
+it transmits can look closed early — after a double, and at once after a
+redouble. :mod:`~contrai_scraper.parse.forced_passes` puts those passes back
+before the bids are numbered ``1..n`` for the record.
 """
 
 from __future__ import annotations
@@ -35,12 +37,14 @@ from contrai_core import (
     PassBid,
     Position,
     RedoubleBid,
+    RuleConfig,
 )
 from contrai_data import BidMade, CardPlayed
 
 from ..exceptions import ParseError
 from ..lzstring import decompress_from_base64
 from ..wire import DEAL_VERB, WireEvent
+from .forced_passes import restore_forced_passes
 from .translate import Translator
 
 
@@ -113,25 +117,34 @@ def bid_events(
     translator: Translator,
     seat_of_player: Mapping[str, Position],
     *,
+    dealer: Position,
+    rules: RuleConfig,
     ts: str,
 ) -> tuple[BidMade, ...]:
     """Turn one round's auction into record events.
+
+    The wire leaves out every pass a seat was forced to make; they are put
+    back here, so the record holds the auction a replay plays.
 
     Args:
         round_: The round as the wire described it.
         translator: The vocabulary layer.
         seat_of_player: Which seat each player handle sits in.
+        dealer: The round's dealer, whose successor speaks first.
+        rules: The table ruleset, which decides who was forced to pass.
         ts: The timestamp to stamp every event with.
 
     Returns:
-        The auction, renumbered ``1..n``.
+        The whole auction, forced passes included, numbered ``1..n``.
 
     Raises:
         ParseError: If a payload names a value or trump the profile does not
-            describe.
+            describe, or the transmitted bids leave a turn no forced pass
+            explains — see
+            :func:`~contrai_scraper.parse.forced_passes.restore_forced_passes`.
     """
 
-    events: list[BidMade] = []
+    transmitted: list[tuple[int, Bid[Position]]] = []
     seen_double = seen_redouble = False
     for wire_seq in sorted(round_.bids):
         handle, payload = round_.bids[wire_seq]
@@ -139,7 +152,8 @@ def bid_events(
         if actor is None:
             # A handle nobody was seen sitting in. Skipping is the only safe
             # move: a bid attributed to a guessed seat changes whose auction
-            # it was.
+            # it was, and the empty turn it leaves is refused below as a bid
+            # gone missing.
             continue
 
         bid = _bid(payload, actor, translator, seen_double, seen_redouble)
@@ -147,20 +161,20 @@ def bid_events(
             seen_redouble = True
         elif isinstance(bid, DoubleBid):
             seen_double = True
+        transmitted.append((wire_seq, bid))
 
-        events.append(
-            BidMade(
-                round=round_.number,
-                # Gapless, because the projection refuses anything else — and
-                # the wire's own numbering does skip values.
-                seq=len(events) + 1,
-                position=actor,
-                bid=bid,
-                think_ms=None,
-                ts=ts,
-            )
+    auction = restore_forced_passes(transmitted, dealer=dealer, rules=rules)
+    return tuple(
+        BidMade(
+            round=round_.number,
+            seq=seq,
+            position=bid.player,
+            bid=bid,
+            think_ms=None,
+            ts=ts,
         )
-    return tuple(events)
+        for seq, bid in enumerate(auction, start=1)
+    )
 
 
 def play_events(

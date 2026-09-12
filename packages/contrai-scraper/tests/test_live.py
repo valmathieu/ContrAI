@@ -1,9 +1,10 @@
-"""Pins the live events: who a double belongs to, which seat played, gapless seq."""
+"""Pins the live events: who a double belongs to, which seat played, forced passes."""
 
 import json
 
 import pytest
 from contrai_core import (
+    PRESETS,
     ContractBid,
     DoubleBid,
     PassBid,
@@ -25,11 +26,12 @@ from contrai_scraper import (
     play_events,
 )
 
+#: As the fixture profile places them: the handles walk the table clockwise.
 SEATS = {
     "p1": Position.NORTH,
-    "p2": Position.WEST,
+    "p2": Position.EAST,
     "p3": Position.SOUTH,
-    "p4": Position.EAST,
+    "p4": Position.WEST,
 }
 
 TS = "2026-09-11T18:18:15Z"
@@ -53,11 +55,20 @@ def _rounds(profile, frames):
     return collect_rounds(order_events(events), Translator(profile))
 
 
-def _bids(profile, frames, seat_of_player=None, number=1):
+def _bids(profile, frames, seat_of_player=None, number=1, dealer=Position.WEST):
+    """The round's auction as ``bid_events`` reads it.
+
+    West deals by default, so North — ``p1`` — speaks first and the turn runs
+    clockwise from ``p1`` to ``p4``, the way the fixture profile's
+    ``tournament`` preset plays.
+    """
+
     return bid_events(
         _rounds(profile, frames)[number],
         Translator(profile),
         seat_of_player or SEATS,
+        dealer=dealer,
+        rules=PRESETS[profile.rules.preset],
         ts=TS,
     )
 
@@ -102,22 +113,39 @@ class TestBids:
         ]
         bids = _bids(profile, frames)
         assert isinstance(bids[1].bid, DoubleBid)
-        assert bids[1].position is Position.WEST      # not NORTH
+        assert bids[1].position is Position.EAST      # not NORTH
 
     def test_a_redouble_is_attributed_to_its_own_actor(self, profile, builders):
+        # South, North's partner, redoubles the double on North's contract.
         frames = [
             builders.bid_frame(seq=1, actor="p1",
                                payload={"who": "p1", "colour": "wood", "level": 80}),
             builders.bid_frame(seq=2, actor="p2",
                                payload={"who": "p1", "colour": "wood", "level": 80,
                                         "twice": "p2"}),
-            builders.bid_frame(seq=3, actor="p1",
+            builders.bid_frame(seq=3, actor="p3",
                                payload={"who": "p1", "colour": "wood", "level": 80,
-                                        "twice": "p2", "fourfold": "p1"}),
+                                        "twice": "p2", "fourfold": "p3"}),
         ]
         bids = _bids(profile, frames)
         assert isinstance(bids[2].bid, RedoubleBid)
-        assert bids[2].position is Position.NORTH
+        assert bids[2].position is Position.SOUTH
+
+    def test_a_forced_pass_fills_the_gap_it_left(self, profile, builders):
+        # East doubles North; South declines; West — East's partner — has
+        # nothing but a pass, so the wire skips number 4; North declines.
+        frames = [
+            builders.bid_frame(seq=1, actor="p1",
+                               payload={"who": "p1", "colour": "wood", "level": 80}),
+            builders.bid_frame(seq=2, actor="p2",
+                               payload={"who": "p1", "colour": "wood", "level": 80,
+                                        "twice": "p2"}),
+            builders.bid_frame(seq=3, actor="p3", payload=None),
+            builders.bid_frame(seq=5, actor="p1", payload=None),
+        ]
+        bids = _bids(profile, frames)
+        assert [bid.seq for bid in bids] == [1, 2, 3, 4, 5]
+        assert (bids[3].position, type(bids[3].bid)) == (Position.WEST, PassBid)
 
     def test_a_double_is_only_read_once(self, profile, builders):
         # Every bid after a double repeats the doubler in its payload, so a
@@ -134,13 +162,6 @@ class TestBids:
         ]
         bids = _bids(profile, frames)
         assert [type(bid.bid) for bid in bids] == [ContractBid, DoubleBid, ContractBid]
-
-    def test_the_record_sequence_is_renumbered_gaplessly(self, profile, builders):
-        # The wire's own numbering skips values (two rounds of the real corpus
-        # each skip one); contrai-data's projection refuses anything but 1..n.
-        frames = [builders.bid_frame(seq=n, actor="p1", payload=None)
-                  for n in (1, 2, 4, 5)]
-        assert [bid.seq for bid in _bids(profile, frames)] == [1, 2, 3, 4]
 
     def test_a_bid_by_an_unseated_player_is_skipped(self, profile, builders):
         frames = [
@@ -162,7 +183,7 @@ class TestPlays:
         # the seat comes from the player handle.
         frames = [builders.play_frame(trick=3, index=2, actor="p4", card="9z")]
         play = _plays(profile, frames)[0]
-        assert (play.trick, play.position) == (3, Position.EAST)
+        assert (play.trick, play.position) == (3, Position.WEST)
         assert (play.card.suit, play.card.rank.value) == (Suit.CLUBS, "Ace")
 
     def test_think_time_comes_from_the_metadata(self, profile, builders):
@@ -183,10 +204,10 @@ class TestPlays:
         ]
         plays = _plays(profile, frames)
         assert [(p.trick, p.position) for p in plays] == [
-            (1, Position.NORTH), (1, Position.WEST), (1, Position.SOUTH),
-            (1, Position.EAST),
-            (2, Position.NORTH), (2, Position.WEST), (2, Position.SOUTH),
-            (2, Position.EAST),
+            (1, Position.NORTH), (1, Position.EAST), (1, Position.SOUTH),
+            (1, Position.WEST),
+            (2, Position.NORTH), (2, Position.EAST), (2, Position.SOUTH),
+            (2, Position.WEST),
         ]
 
     def test_no_observed_play_is_marked_derived(self, profile, builders):
@@ -256,6 +277,17 @@ class TestRefusals:
         frames = [builders.bid_frame(seq=1, actor="p1",
                                      payload={"who": "p1", "level": 80})]
         with pytest.raises(ParseError, match="trump"):
+            _bids(profile, frames)
+
+    def test_a_skipped_seat_that_had_a_choice_is_refused(self, profile, builders):
+        # East could have bid over North, so a missing number there is a lost
+        # bid, not a forced pass.
+        frames = [
+            builders.bid_frame(seq=1, actor="p1",
+                               payload={"who": "p1", "colour": "wood", "level": 80}),
+            builders.bid_frame(seq=3, actor="p3", payload=None),
+        ]
+        with pytest.raises(ParseError, match="missing"):
             _bids(profile, frames)
 
 

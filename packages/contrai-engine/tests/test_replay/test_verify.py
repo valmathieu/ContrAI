@@ -67,8 +67,7 @@ class TestCleanRecords:
         assert len(verdict.rounds) == len(recorded_game.rounds)
 
     def test_a_tournament_record_verifies(self, recorded_tournament_game):
-        # The ruleset observed games carry, and the one that turns
-        # ``double_closes_auction`` on.
+        # The ruleset observed games carry, and a clockwise one.
         verdict = verify_game(recorded_tournament_game)
 
         assert verdict.verdict is Verdict.VERIFIED
@@ -544,7 +543,7 @@ class TestRulesetDrift:
         assert verdict.verdict is Verdict.VERIFIED
         assert len(verdict.notes) == 1
         assert "tournament" in verdict.notes[0]
-        assert "double_closes_auction" in verdict.notes[0]
+        assert "any_failure_marks_160" in verdict.notes[0]
 
     def test_a_matching_preset_produces_no_note(self, recorded_tournament_game):
         assert verify_game(recorded_tournament_game).notes == ()

@@ -184,8 +184,7 @@ class TestRoundTrip:
         assert second.game.scores == first.game.scores
 
     def test_it_replays_a_tournament_record(self, recorded_tournament_game):
-        # ``tournament`` is what observed games carry, and the ruleset
-        # that turns ``double_closes_auction`` on.
+        # ``tournament`` is what observed games carry, and it plays clockwise.
         controller = ReplayController(recorded_tournament_game)
 
         controller.run()
@@ -222,9 +221,11 @@ class TestTable:
         assert {p.position for p in controller.players} == set(Position)
 
     def test_partners_share_one_team_instance(self, recorded_game):
-        # ``Auction._is_double_legal`` compares teams by identity, so a
-        # driver assembling players by hand would see every coinche in
-        # the corpus refused. Going through ``Game`` is what prevents it.
+        # Card-play legality still compares teams by identity — the
+        # partner-master exemption and the over-trump scan in
+        # ``PlayState`` — so a driver assembling players by hand would
+        # misread which trick winner is a partner. Going through ``Game``
+        # is what prevents it.
         controller = ReplayController(recorded_game)
         seats = controller.game.players_by_position
 

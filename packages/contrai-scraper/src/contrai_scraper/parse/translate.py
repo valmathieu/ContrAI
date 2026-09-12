@@ -7,17 +7,17 @@ change its wording without a line of parser changing, and — more to the point
 file ever has to spell the real one.
 
 The seat map deserves its own paragraph, because it is where this layer earns
-its keep. The observed table's rotation runs the **opposite way** round from
-``contrai_core``'s ``Position`` order, so the two side seats map crosswise: the
-seat on the right of the screen is West, not East. A map that translates the
-four seat names literally — which is what a name-to-name helper does — passes
-every spot check you would think to write and still produces a record in which
-the table turns backwards. Every trick winner is then wrong, every legality
-check is wrong, and the file looks perfectly well formed throughout.
+its keep. It is a placement map — each on-screen seat maps to the compass seat
+it shows — and it can be wrong in a way no spot check sees: cross the two side
+seats and every name still reads plausibly while the record's table turns
+backwards. Every trick winner is then wrong, every legality check is wrong,
+and the file looks perfectly well formed throughout.
 
 So the constructor does not check the names. It checks the **invariant**:
 walking the site's own rotation through the map must walk core's seats one
-step at a time. A crosswise map satisfies it; a literal one cannot.
+step at a time, in the direction the profile's preset plays — clockwise, at
+the observed tables. A map with its side seats crossed walks the other way
+and is refused.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from contrai_core import Card, ContractSuit, Position, SlamLevel, TeamSide
+from contrai_core import PRESETS, Card, ContractSuit, Position, SlamLevel, TeamSide
 
 from ..exceptions import ParseError, ProfileError
 from ..profile import Profile
@@ -48,9 +48,10 @@ class Translator:
             profile: The loaded profile.
 
         Raises:
-            ProfileError: If the seat map does not preserve the table's
-                rotation — see this module's docstring; that is the one
-                profile mistake no later check could catch.
+            ProfileError: If the seat map does not walk the table in the
+                direction the profile's preset plays — see this module's
+                docstring; that is the one profile mistake no later check
+                could catch.
         """
 
         self._profile = profile
@@ -69,16 +70,21 @@ class Translator:
             **tokens.suit_words,
         }
 
+        # The direction is the preset's, because that is the ruleset every
+        # record of this table is replayed under: a map walking the other way
+        # would turn the replayed table backwards.
+        direction = PRESETS[profile.rules.preset].turn_direction
         rotation = tuple(tokens.seats[name] for name in tokens.seat_rotation)
         for name, seat, follower in zip(
             tokens.seat_rotation, rotation, rotation[1:] + rotation[:1], strict=True
         ):
-            if seat.next is not follower:
+            successor = seat.next_in(direction)
+            if successor is not follower:
                 raise ProfileError(
                     "[wire.tokens].seats does not preserve the table's "
                     f"rotation: {name!r} maps to {seat.value}, whose next seat "
-                    f"is {seat.next.value}, but seat_rotation goes on to "
-                    f"{follower.value}"
+                    f"{direction} is {successor.value}, but seat_rotation goes "
+                    f"on to {follower.value}"
                 )
         self._rotation = rotation
 
