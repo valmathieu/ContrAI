@@ -252,7 +252,8 @@ def _made(row: Mapping[str, Any], translator: Translator) -> bool:
     comparing the two is the reading that has held on every row observed. The
     status token alone does not: a contract made by taking every trick
     carries a status of its own, which one "made" token would read as a
-    failure. The status stays as the fallback for a row naming neither side.
+    failure. The status stays as the fallback for a row that does not name
+    both sides.
     """
 
     declarer = translator.field(row, "row_declarer")
@@ -279,7 +280,9 @@ def _totals(
 
     Returns ``None`` rather than a partial mapping when a total is missing or
     its label cannot be placed: a total attributed to the wrong side is worse
-    than no total, and the record's own schema allows the absence.
+    than no total. The record's own schema allows the absence — except at a
+    mid-game join, where ``ObservedFrom`` needs both sides and the parser
+    refuses it there instead.
     """
 
     raw = translator.field(round_state, "totals")

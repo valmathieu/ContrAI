@@ -49,9 +49,22 @@ class FakeLocator:
     async def all(self):
         return [FakeLocator(self.page, self.selector, [m]) for m in self._matches]
 
-    async def get_attribute(self, name):
+    @property
+    def first(self):
+        # Narrowed to at most one match, empty when there was none — the same
+        # shape Playwright's own ``.first`` leaves a locator in.
+        return FakeLocator(self.page, self.selector, self._matches[:1])
+
+    async def get_attribute(self, name, timeout=None):
         if not self._matches:
             return None
+        if len(self._matches) > 1:
+            # Mirrors Playwright's real strict-mode error: an action that
+            # resolves to one element refuses when the locator did not.
+            raise Exception(
+                f"strict mode violation: {self.selector} resolved to "
+                f"{len(self._matches)} elements"
+            )
         if name == "class":
             return " ".join(self._matches[0].classes)
         return self._matches[0].attrs.get(name)
@@ -65,8 +78,9 @@ class FakePage:
     """A page answering from a ``selector -> [Match]`` map.
 
     It implements only the surface ``Spectator`` actually uses. Playwright's
-    ``.first`` is a property rather than a method, so ``Spectator`` resolves a
-    single element through ``locator(...)`` alone and this fake never needs it.
+    ``.first`` is a property rather than a method: ``read_options`` narrows a
+    child lookup to it before reading an attribute, so this fake's locator
+    carries the same property, sliced to its own first match.
     """
 
     def __init__(self, matches=None):
@@ -77,19 +91,25 @@ class FakePage:
         self.init_scripts: list[str] = []
         self.goto_url: str | None = None
         self.waited: list[int] = []
+        self.trace: list[tuple[str, Any]] = []
+        """Every ``locator``/``goto``/``wait``/``fill`` call, in call order."""
 
     def locator(self, selector):
+        self.trace.append(("locator", selector))
         return FakeLocator(self, selector, self.matches.get(selector, []))
 
     async def goto(self, url):
+        self.trace.append(("goto", url))
         self.goto_url = url
 
     async def wait_for_timeout(self, ms):
+        self.trace.append(("wait", ms))
         self.waited.append(ms)
 
     async def fill(self, selector, value, timeout=None):
         if selector not in self.matches:
             raise TimeoutError(selector)
+        self.trace.append(("fill", selector))
         self.filled.append((selector, value))
 
     async def evaluate(self, script, arg=None):
@@ -248,9 +268,18 @@ class TestLogin:
             await Spectator(page, profile).log_in()
 
         drain(scenario)
-        assert (page.goto_url, page.waited) == (
-            "https://example.invalid/lobby", [PAGE_SETTLE_MS]
-        )
+        # The order itself is the point: each marker's first occurrence must
+        # come strictly after the one before it.
+        markers = [
+            ("goto", "https://example.invalid/lobby"),
+            ("wait", PAGE_SETTLE_MS),
+            ("locator", "#no-thanks"),
+            ("locator", "#by-email"),
+            ("fill", "#email"),
+        ]
+        indices = [page.trace.index(marker) for marker in markers]
+        for earlier, later in zip(indices, indices[1:]):
+            assert earlier < later
 
     def test_a_missing_email_entry_names_the_key(self, profile):
         page = FakePage({"#email": ["input"]})
@@ -446,6 +475,32 @@ class TestOptionsGate:
 
         drain(scenario)
         assert page.clicks[-1] == "#close"
+
+    def test_a_row_whose_id_element_matches_twice_reads_the_first(self, profile):
+        # The id and the switch each sit on a child selector, and nothing
+        # promises that selector is unique inside the row. Reading the first
+        # match rather than tripping Playwright's strict mode is the point.
+        row = Match(
+            classes=("option-row",),
+            children={
+                ".option-name": [
+                    Match(attrs={"data-option": "opt_alpha"}),
+                    Match(attrs={"data-option": "opt_other"}),
+                ],
+                ".option-switch": [Match(classes=("option-switch", "on"))],
+            },
+        )
+        page = FakePage({"#options": ["Options"],
+                         ".option-row": [row, option_row("opt_beta", False)],
+                         "#close": ["x"]})
+
+        async def scenario():
+            return await Spectator(page, profile).read_options(
+                profile.rules.options
+            )
+
+        reading = drain(scenario)
+        assert reading.observed == {"opt_alpha": True, "opt_beta": False}
 
 
 class TestScoreboard:

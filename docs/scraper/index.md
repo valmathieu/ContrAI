@@ -81,7 +81,7 @@ The join snapshot's running totals are read by the profile's team letters alone:
 them may carry other things beside them, such as the per-round rows. A mid-game join whose totals
 cannot be placed on a side is refused as a `ParseError`, because the record has to say what the
 score was when watching began. A score row reads as made when the side it names as the winner is
-the declaring side; the row's status token is only consulted when a row names neither.
+the declaring side; the row's status token is only consulted when a row does not name both.
 
 ## Profile
 
@@ -95,7 +95,7 @@ silently wrong data.
 | `[site]` | Where the site lives, and which language it answers in. |
 | `[account]` | The spectator account. Values may read `env:NAME` instead of holding the secret. |
 | `[browser]` | Headless or headed, slow-motion, screenshot-on-error. |
-| `[selectors]` | One entry per UI step; a list means "try these in order". Three keys are looked up inside something else: `seat_element` fills a `{seat}` placeholder, and the option id and switch elements are resolved inside each option row. |
+| `[selectors]` | One entry per UI step; a list means "try these in order". `seat_element` is a template filled with a seat token; `scoreboard_cell` is looked up inside each scoreboard row; `options_id_element` and `options_state_element` inside each option row. |
 | `[wire]` | How a frame is recognised, unwrapped and keyed. |
 | `[wire.events]` | The three event names the parser reacts to. |
 | `[wire.fields]` | Dotted paths, one per logical field the parser reads. The set of names is fixed. |

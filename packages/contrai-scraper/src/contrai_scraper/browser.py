@@ -255,16 +255,23 @@ class Spectator:
         for row in await self._rows("options_row"):
             # The id and the switch are two different children of the row, so
             # each is resolved inside it. A row lacking either — a group
-            # heading, the objective selector — is not an option.
-            identity_node = row.locator(self._selectors.options_id_element)
-            state_node = row.locator(self._selectors.options_state_element)
+            # heading, the objective selector — is not an option. Each is
+            # pinned to ``.first``: a child selector that matches more than
+            # once inside the row would otherwise trip Playwright's strict
+            # mode and raise, ending the run rather than just this row.
+            identity_node = row.locator(self._selectors.options_id_element).first
+            state_node = row.locator(self._selectors.options_state_element).first
             if not await identity_node.count() or not await state_node.count():
                 continue
-            identity = await identity_node.get_attribute(self._selectors.options_id_attr)
+            identity = await identity_node.get_attribute(
+                self._selectors.options_id_attr, timeout=STEP_TIMEOUT_MS
+            )
             if identity is None:
                 # Keying a row on ``None`` would collide with the next such row.
                 continue
-            classes = (await state_node.get_attribute(_CLASS_ATTR)) or ""
+            classes = (
+                await state_node.get_attribute(_CLASS_ATTR, timeout=STEP_TIMEOUT_MS)
+            ) or ""
             observed[identity] = self._selectors.options_on_class in classes.split()
         await self._close_panel()
 
