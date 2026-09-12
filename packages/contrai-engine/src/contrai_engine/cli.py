@@ -28,7 +28,7 @@ malformed, unreadable or impossible ruleset is reported as an
 ``argparse`` usage error rather than a traceback.
 
 That resolved setup is what the landing screen opens on and edits: a
-player can pick a preset, load a file, turn any of the 23 knobs or
+player can pick a preset, load a file, turn any of the 22 knobs or
 switch the live round score without leaving the screen, and what
 :meth:`RichView.show_landing` hands back is what the next :class:`Game`
 is built from. The model then owns every rule it names —
