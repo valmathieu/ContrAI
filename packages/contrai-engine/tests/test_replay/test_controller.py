@@ -221,11 +221,10 @@ class TestTable:
         assert {p.position for p in controller.players} == set(Position)
 
     def test_partners_share_one_team_instance(self, recorded_game):
-        # Card-play legality still compares teams by identity — the
-        # partner-master exemption and the over-trump scan in
-        # ``PlayState`` — so a driver assembling players by hand would
-        # misread which trick winner is a partner. Going through ``Game``
-        # is what prevents it.
+        # Legality reads seats, but ``Contract.team`` and the rule-based
+        # bidding strategy still reach a side through ``Team`` identity, so
+        # partners must share one instance. Building the table through
+        # ``Game`` is what guarantees it.
         controller = ReplayController(recorded_game)
         seats = controller.game.players_by_position
 

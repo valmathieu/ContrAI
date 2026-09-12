@@ -34,6 +34,7 @@ from contrai_core import (
     IllegalPlayError,
     PlayRuleViolation,
     PlayState,
+    Position,
     Rank,
     RuleConfig,
     Suit,
@@ -596,4 +597,90 @@ class TestClassifyPlayViolation:
         )
         with pytest.raises(IllegalPlayError) as excinfo:
             state.apply(Play(players["W"], illegal))
+        assert excinfo.value.reason == PlayRuleViolation.MUST_OVERTRUMP
+
+
+# ---------------------------------------------------------------------------
+# Partners and opponents are read off the seat
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def seated_players() -> dict[str, BasePlayer]:
+    """Four seated players, none of them ever handed a ``Team``.
+
+    Returns:
+        A mapping of seat letter to the :class:`BasePlayer` seated there.
+    """
+    return {
+        "N": BasePlayer("N", Position.NORTH),
+        "E": BasePlayer("E", Position.EAST),
+        "S": BasePlayer("S", Position.SOUTH),
+        "W": BasePlayer("W", Position.WEST),
+    }
+
+
+class TestPartnersAndOpponentsAreReadOffTheSeat:
+    """Card legality reads partnership off the seat, not off ``Team``.
+
+    The same trick states as the partner-master tests above, played by
+    seated players who were never handed a :class:`Team`: comparing
+    ``Team`` objects would read every seat as everyone's partner.
+    """
+
+    def test_the_partner_master_exemption_needs_no_team(self, seated_players):
+        """N (partner) led ♥A and E followed ♥7: partner is still master,
+        so S, void in hearts, may discard freely."""
+        contract = _contract(seated_players["N"], 100, Suit.SPADES)
+        hand = [
+            Card(Suit.SPADES, Rank.JACK),
+            Card(Suit.DIAMONDS, Rank.ACE),
+            Card(Suit.CLUBS, Rank.SEVEN),
+        ]
+        state = _make_state(
+            seated_players,
+            {"S": hand},
+            contract,
+            [("N", Card(Suit.HEARTS, Rank.ACE)),
+             ("E", Card(Suit.HEARTS, Rank.SEVEN))],
+        )
+        assert set(state.legal_actions(seated_players["S"])) == set(hand)
+
+    def test_an_opponents_ruff_is_not_a_partners(self, seated_players):
+        """N (partner) led ♥A and E (opponent) ruffed with ♠7: E is master,
+        so S must trump over it — only the ♠J will do."""
+        contract = _contract(seated_players["N"], 100, Suit.SPADES)
+        hand = [
+            Card(Suit.SPADES, Rank.JACK),
+            Card(Suit.DIAMONDS, Rank.ACE),
+            Card(Suit.CLUBS, Rank.SEVEN),
+        ]
+        state = _make_state(
+            seated_players,
+            {"S": hand},
+            contract,
+            [("N", Card(Suit.HEARTS, Rank.ACE)),
+             ("E", Card(Suit.SPADES, Rank.SEVEN))],
+        )
+        assert set(state.legal_actions(seated_players["S"])) == {
+            Card(Suit.SPADES, Rank.JACK)
+        }
+
+    def test_an_under_trump_is_classified_against_the_opponents_ruff(
+        self, seated_players
+    ):
+        """N (partner) led ♥A and E (opponent) ruffed with ♠9. S holds the
+        ♠J and the ♠8; playing the ♠8 under E's ruff → must over-trump."""
+        contract = _contract(seated_players["N"], 100, Suit.SPADES)
+        illegal = Card(Suit.SPADES, Rank.EIGHT)
+        hand = [Card(Suit.SPADES, Rank.JACK), illegal, Card(Suit.DIAMONDS, Rank.ACE)]
+        state = _make_state(
+            seated_players,
+            {"S": hand},
+            contract,
+            [("N", Card(Suit.HEARTS, Rank.ACE)),
+             ("E", Card(Suit.SPADES, Rank.NINE))],
+        )
+        with pytest.raises(IllegalPlayError) as excinfo:
+            state.apply(Play(seated_players["S"], illegal))
         assert excinfo.value.reason == PlayRuleViolation.MUST_OVERTRUMP
