@@ -638,6 +638,10 @@ package "view/ package" as p_view {
         + show_landing(selected: TableSetup?) : TableSetup
         + show_round_recap(round_, running_scores, *, is_final=False, is_tiebreaker=False, belote_gated=None) : None
         + show_end_game(status) : str <<'n' | 'r' | 'q'>>
+        ..  replay screens ..
+        + show_replay_summary(rows: Sequence<ReplayRow>, game_id: str) : int?
+        + show_replay_deal(round_) : None
+        + show_replay_step(*, can_go_back: bool) : str <<'n'|'t'|'r'|'p'|'q'>>
         ..  setup sub-screens (private) ..
         - _show_preset_picker(current) : TableSetup
         - _show_file_loader(current) : TableSetup
@@ -675,8 +679,10 @@ package "view/ package" as p_view {
 
     note right of RichView
       Stateful orchestrator (in ""rich_view.py"").
-      Six-screen UI: landing, bidding, mid-trick,
-      trick-won, round-recap, end-game. Per-round
+      Eight-screen UI: landing, bidding, mid-trick,
+      trick-won, round-recap, end-game, plus the two
+      a record is watched through — the replay picker
+      and the replay step prompt. Per-round
       summaries tracked here (""history"") so Game
       stays UI-free. A rolling 5-line ""event_log""
       is shown below the hand in every in-game
@@ -939,6 +945,52 @@ package "replay/ package" as p_replay {
         - ~_notify(hook: str, *args) : None
     }
 
+    class SteppingView <<view decorator>> #FFEFD9 {
+        + quiet : bool = True
+        - ~_inner : Any
+        - ~_resume~_at : int
+        - ~_mode : StepMode
+        --
+        + stops : int <<property>>
+        - ~__getattr~__(name) : Any <<forwards to inner>>
+        .. hooks that cross the quiet gate ..
+        + attach(game, target~_score) : None
+        + on~_round~_complete(round~_, running~_scores) : None
+        .. hooks that stop ..
+        + on~_round~_dealt(round~_) : None
+        + on~_bid~_made(player, bid, history) : None
+        + on~_card~_played(player, card, plays) : None
+        + on~_belote~_announced(player, kind, suit, round~_) : None
+        + on~_trick~_complete(plays, winner, round~_) : None
+        .. the gate ..
+        - ~_stop(*, trick~_end: bool = False) : None
+    }
+
+    enum StepMode #FFEFD9 {
+        ACTION
+        TRICK
+        ROUND
+    }
+
+    class ReplayInterrupt <<exception>> #FFEFD9 {
+        + resume~_at : int?
+    }
+
+    class ReplayRow <<frozen dataclass>> #FFEFD9 {
+        + number : int
+        + contract : ObservedContract?
+        + outcome : RoundOutcome?
+        + totals : dict<TeamSide, int>?
+        + verdict : Verdict?
+        + steppable : bool
+        --
+        + declarer~_side : TeamSide? <<property>>
+    }
+
+    class "summary.py" as p_summary_fn <<module>> #FFEFD9 {
+        replay~_rows(record: GameRecord, verdict: GameVerdict? = None) : tuple<ReplayRow>
+    }
+
     class VerifyingObserver <<view stand-in>> #FFEFD9 {
         + record : GameRecord
         + rounds : list<RoundVerdict>
@@ -1047,6 +1099,38 @@ package "replay/ package" as p_replay {
       double in a corpus refused.
       A round the record left structurally unfinished is
       listed in ""skipped"" and never replayed.
+    end note
+
+    note bottom of SteppingView
+      **The recorder's other mirror.** ""RecordingView"" wraps
+      a view and //writes// what it sees; this one wraps a view,
+      //forwards// what it sees, and then blocks on it.
+      **It stops after the action, not before it.** The pull
+      hooks the spec imagined (""request~_bid~_action"" /
+      ""request~_card~_action"") are reached only for a seat
+      whose ""is~_human"" is true, which a ""RecordedPlayer""
+      never is — and the push hooks frame the action better
+      anyway: each stop shows what just landed.
+      **Four stops per trick, not five.** The fourth card's
+      stop is skipped because ""on~_trick~_complete"" follows
+      immediately and its frame names the winner.
+      **Going back is a restart.** ""Round"" keeps only the
+      latest ""PlayState"", so there is no earlier frame to
+      return to; ""ReplayInterrupt.resume~_at"" says how many
+      stops the next attempt passes over in silence. That is
+      also how a round is picked, since ""ScriptedDealSource""
+      indexes on the game's round counter and cannot seek —
+      which is what ""quiet"" is for.
+    end note
+
+    note bottom of ReplayRow
+      **Joined on the record's own round number**, never
+      positionally: a record's numbers are its source's deal
+      count, so they may start above one and may skip, and a
+      positional join would sit permanently off by one with
+      nothing looking wrong.
+      Every round is listed, steppable or not — the round a
+      viewer is hunting is usually one the driver refuses.
     end note
 
     note bottom of VerifyingObserver
@@ -1261,6 +1345,18 @@ VerifyingObserver ..> RoundScored : <<compares score_round against>>
 VerifyingObserver ..> GameVerdict : <<builds>>
 p_verify_fn ..> ReplayController : <<drives round by round>>
 Cli ..> p_verify_fn : <<verify PATH...>>
+
+' Stepping is replay with the keyboard in the view's place.
+ReplayController ..> SteppingView : <<notifies as a view>>
+SteppingView o-- "1" RichView : inner
+SteppingView --> StepMode : mode
+SteppingView ..> ReplayInterrupt : <<raises>>
+p_summary_fn ..> GameRecord : <<reads rounds>>
+p_summary_fn ..> GameVerdict : <<joins by round number>>
+p_summary_fn ..> ReplayRow : <<builds>>
+RichView ..> ReplayRow : <<renders the picker from>>
+Cli ..> p_summary_fn : <<replay PATH>>
+Cli ..> SteppingView : <<builds, one per attempt>>
 Ruleset ..> RuleConfig : <<builds / validates>>
 RichView "1" *-- "0..N" RoundSummary : history
 RichView ..> p_view_screens : <<composes + prints>>

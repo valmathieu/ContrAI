@@ -37,6 +37,7 @@ from contrai_engine.cli import (
     _parse_args,
     _parse_argv,
     _record_paths,
+    _run_replay,
     _run_verify,
     main,
 )
@@ -1329,6 +1330,51 @@ class TestVerifyArguments:
         assert "contrai verify" not in capsys.readouterr().err
 
 
+class TestReplayArguments:
+    def test_a_replay_invocation_is_left_alone(self):
+        assert _normalise_argv(["replay", "a.jsonl"]) == [
+            "replay",
+            "a.jsonl",
+        ]
+
+    def test_a_replay_invocation_is_recognised(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["contrai", "replay", "a.jsonl"])
+
+        args, _ = _parse_argv()
+
+        assert args.command == "replay"
+        assert args.path == Path("a.jsonl")
+        assert args.round is None
+
+    def test_round_takes_a_number(self, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv", ["contrai", "replay", "a.jsonl", "--round", "9"]
+        )
+
+        args, _ = _parse_argv()
+
+        assert args.round == 9
+
+    def test_the_path_is_required(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["contrai", "replay"])
+
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_argv()
+
+        assert excinfo.value.code == 2
+
+    def test_the_bare_record_hint_names_replay_too(self, capsys, tmp_path):
+        record = tmp_path / "some-game.jsonl"
+        record.write_text("", encoding="utf-8")
+
+        with pytest.raises(SystemExit):
+            _parse_argv([str(record)])
+
+        err = capsys.readouterr().err
+        assert "contrai verify" in err
+        assert "contrai replay" in err
+
+
 class TestRecordPaths:
     def test_a_file_stands_for_itself(self, tmp_path):
         record = tmp_path / "a.jsonl"
@@ -1472,6 +1518,208 @@ class TestRunVerify:
         assert "no records found" in capsys.readouterr().err
 
 
+class TestRunReplay:
+    """``_run_replay`` against a real record and a scripted view."""
+
+    @staticmethod
+    def _args(path, **overrides):
+        """The ``replay`` namespace, with every flag off unless overridden."""
+
+        fields = {"round": None}
+        fields.update(overrides)
+        return argparse.Namespace(path=Path(path), **fields)
+
+    @pytest.fixture
+    def record_path(self, tmp_path):
+        """One clean 4-AI game, written as a record."""
+
+        from tests.test_replay.conftest import play_and_record
+
+        play_and_record(tmp_path, seed=1, rounds=3)
+        (path,) = (tmp_path / "games").glob("*.jsonl")
+        return path
+
+    @staticmethod
+    def _view(picks, keys):
+        """A view scripting the picker's answers and the step keys."""
+
+        class _ReplayView:
+            def __init__(self):
+                self.options = None
+                self.console = _RecordingConsole()
+                self.summaries: list[tuple] = []
+                self.recaps = 0
+                self.steps = 0
+                self._picks = list(picks)
+                self._keys = list(keys)
+
+            def attach(self, game, target_score):
+                pass
+
+            def on_round_dealt(self, round_):
+                pass
+
+            def on_bid_made(self, player, bid, history):
+                pass
+
+            def on_card_played(self, player, card, plays):
+                pass
+
+            def on_belote_announced(self, player, kind, suit, round_):
+                pass
+
+            def on_trick_complete(self, plays, winner, round_):
+                pass
+
+            def on_round_complete(self, round_, running_scores):
+                pass
+
+            def show_replay_deal(self, round_):
+                pass
+
+            def show_round_recap(self, round_, scores, **kwargs):
+                self.recaps += 1
+
+            def show_replay_summary(self, rows, game_id):
+                self.summaries.append((tuple(rows), game_id))
+                return self._picks.pop(0) if self._picks else None
+
+            def show_replay_step(self, *, can_go_back):
+                self.steps += 1
+                return self._keys.pop(0) if self._keys else "r"
+
+        return _ReplayView()
+
+    def test_quitting_the_picker_exits_zero(self, record_path, monkeypatch):
+        view = self._view([None], [])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        assert len(view.summaries) == 1
+
+    def test_the_picker_lists_every_recorded_round(
+        self, record_path, monkeypatch
+    ):
+        view = self._view([None], [])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        _run_replay(self._args(record_path))
+
+        (rows, _), = view.summaries
+        assert len(rows) == 3
+        assert all(row.verdict is not None for row in rows)
+
+    def test_stepping_a_round_reaches_its_recap(
+        self, record_path, monkeypatch
+    ):
+        # 'r' runs the round out, then the picker is answered with quit.
+        view = self._view([1, None], ["r"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        assert view.recaps == 1
+
+    def test_stepping_a_later_round_replays_the_earlier_ones_in_silence(
+        self, record_path, monkeypatch
+    ):
+        # Round 3 is reached by replaying 1 and 2 quietly: one recap, and
+        # no deal frame for the rounds nobody asked to watch.
+        view = self._view([3, None], ["r"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        assert view.recaps == 1
+
+    def test_the_view_is_built_in_replay_mode(
+        self, record_path, monkeypatch
+    ):
+        seen: list[DebugOptions] = []
+        view = self._view([None], [])
+
+        def _make_view(options=None, aids=None):
+            seen.append(options)
+            return view
+
+        monkeypatch.setattr(cli_module, "RichView", _make_view)
+
+        _run_replay(self._args(record_path))
+
+        assert seen[0].replay is True
+
+    def test_round_opens_straight_on_that_round(
+        self, record_path, monkeypatch
+    ):
+        view = self._view([None], ["r"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path, round=1)) == 0
+        # The round ran before the picker was ever shown.
+        assert view.recaps == 1
+
+    def test_leaving_a_round_returns_to_the_picker(
+        self, record_path, monkeypatch
+    ):
+        # 'q' at the round's first stop unwinds to the picker, which is
+        # then answered with quit.
+        view = self._view([1, None], ["q"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        assert view.recaps == 0
+        assert len(view.summaries) == 2
+
+    def test_going_back_replays_the_round_from_its_deal(
+        self, record_path, monkeypatch
+    ):
+        # Two actions, then back, then run out: the round is replayed a
+        # second time and still reaches exactly one recap.
+        view = self._view([1, None], ["n", "n", "p", "r"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        assert view.recaps == 1
+
+    def test_going_back_from_the_recap_re_enters_the_round(
+        self, record_path, monkeypatch
+    ):
+        # 'r' to the recap, 'p' at the recap prompt, then 'r' again: two
+        # recaps, because the round was walked to its end twice.
+        view = self._view([1, None], ["r", "p", "r"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        assert view.recaps == 2
+
+    def test_an_unknown_round_exits_one(
+        self, record_path, monkeypatch, capsys
+    ):
+        view = self._view([None], [])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path, round=99)) == 1
+        assert "99" in capsys.readouterr().err
+
+    def test_an_unreadable_record_exits_one(self, tmp_path, capsys):
+        missing = tmp_path / "nope.jsonl"
+
+        assert _run_replay(self._args(missing)) == 1
+        assert "cannot be read" in capsys.readouterr().err
+
+    def test_an_interrupt_exits_zero(self, record_path, monkeypatch):
+        class _Interrupting:
+            options = None
+            console = _RecordingConsole()
+
+            def show_replay_summary(self, rows, game_id):
+                raise KeyboardInterrupt
+
+        monkeypatch.setattr(
+            cli_module, "RichView", lambda *a, **k: _Interrupting()
+        )
+
+        assert _run_replay(self._args(record_path)) == 0
+
+
 class TestMainDispatch:
     def test_the_streams_are_utf8_before_verify_writes_anything(
         self, monkeypatch
@@ -1526,6 +1774,27 @@ class TestMainDispatch:
             cli_module,
             "RichView",
             lambda *a, **k: pytest.fail("verify must not build a view"),
+        )
+
+        with pytest.raises(SystemExit):
+            main()
+
+    def test_replay_exits_with_its_own_code(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["contrai", "replay", "a.jsonl"])
+        monkeypatch.setattr(cli_module, "_run_replay", lambda args: 4)
+
+        with pytest.raises(SystemExit) as excinfo:
+            main()
+
+        assert excinfo.value.code == 4
+
+    def test_replay_never_reaches_the_game_loop(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["contrai", "replay", "a.jsonl"])
+        monkeypatch.setattr(cli_module, "_run_replay", lambda args: 0)
+        monkeypatch.setattr(
+            cli_module,
+            "_build_game",
+            lambda *a, **k: pytest.fail("replay must not build a game"),
         )
 
         with pytest.raises(SystemExit):
