@@ -252,18 +252,26 @@ def _totals(
 ) -> dict[TeamSide, int] | None:
     """Read the running totals, keyed by side rather than by team label.
 
-    Returns ``None`` rather than a partial mapping when a label cannot be
-    placed: a total attributed to the wrong side is worse than no total, and
-    the record's own schema allows the absence.
+    Only the profile's own team letters are read. The block the totals live
+    in may hold other things beside them — at the observed tables the
+    per-round rows sit in it — and treating every key as a label would turn
+    one of those into a team no seat holds, and lose both totals.
+
+    Returns ``None`` rather than a partial mapping when a total is missing or
+    its label cannot be placed: a total attributed to the wrong side is worse
+    than no total, and the record's own schema allows the absence.
     """
 
     raw = translator.field(round_state, "totals")
     if not isinstance(raw, Mapping):
         return None
-    try:
-        return {
-            translator.side(letter, seat_of_letter): value
-            for letter, value in raw.items()
-        }
-    except ParseError:
-        return None
+    totals: dict[TeamSide, int] = {}
+    for letter in translator.profile.wire.tokens.team_letters:
+        value = raw.get(letter)
+        if not isinstance(value, int):
+            return None
+        try:
+            totals[translator.side(letter, seat_of_letter)] = value
+        except ParseError:
+            return None
+    return totals

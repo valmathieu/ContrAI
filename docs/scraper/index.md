@@ -77,6 +77,11 @@ The raw log is what makes all of this correctable. Frames are stored verbatim *b
 is interpreted, so a parser fix applies to games already watched — `contrai-scrape parse` is that
 re-run, and it is the same code path a live session takes.
 
+The join snapshot's running totals are read by the profile's team letters alone: the block holding
+them may carry other things beside them, such as the per-round rows. A mid-game join whose totals
+cannot be placed on a side is refused as a `ParseError`, because the record has to say what the
+score was when watching began.
+
 ## Profile
 
 One TOML document, git-ignored; `profile.example.toml` in the package is the committed schema,

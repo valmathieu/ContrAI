@@ -304,6 +304,17 @@ class TestObservedFrom:
         assert started.observed_from.round == 5
         assert started.observed_from.totals == {TeamSide.NS: 40, TeamSide.EW: 60}
 
+    def test_a_join_whose_totals_cannot_be_placed_is_refused(self, profile, builders):
+        # contrai-data refuses a join that does not name both sides' totals.
+        # That has to reach the caller as a ParseError — which `parse` reports
+        # per log and the recorder hops on — never as the data package's own
+        # error escaping the command.
+        payload = builders.snapshot_payload(round_index=4)
+        del payload["state"]["round.g1"]["score"]["by_team"]["Y"]
+        texts = [(builders.envelope("payload", "joinTable", payload), 0)]
+        with pytest.raises(ParseError, match="totals"):
+            _parse(profile, texts)
+
 
 class TestUnresolvableRounds:
     def test_a_round_with_no_plays_leaves_the_dealer_unknown(
