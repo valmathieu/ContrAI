@@ -21,10 +21,12 @@ from contrai_core import (
     PRESETS,
     Card,
     ContractBid,
+    DoubleBid,
     ObservedPlay,
     PassBid,
     Position,
     Rank,
+    RedoubleBid,
     SlamLevel,
     Suit,
     TeamSide,
@@ -544,8 +546,14 @@ def _after(declarer):
         yield seat
 
 
-def round_events(number, dealer, declarer, value, suit, made, totals):
-    """One complete round of a record: deal, auction, play, score."""
+def round_events(number, dealer, declarer, value, suit, made, totals, *,
+                 auction=None, multiplier=1):
+    """One complete round of a record: deal, auction, play, score.
+
+    ``auction`` replaces the default auction — the declarer's bid and three
+    passes — with bids of its own; ``multiplier`` is the contract's, 2 when
+    doubled and 4 when redoubled.
+    """
 
     hands = _deal(_deck(number * 5), dealer)
     events = [
@@ -557,10 +565,11 @@ def round_events(number, dealer, declarer, value, suit, made, totals):
             ts=TS,
         )
     ]
-    auction = [
-        ContractBid(player=declarer, value=value, suit=suit),
-        *(PassBid(player=seat) for seat in _after(declarer)),
-    ]
+    if auction is None:
+        auction = [
+            ContractBid(player=declarer, value=value, suit=suit),
+            *(PassBid(player=seat) for seat in _after(declarer)),
+        ]
     events += [
         BidMade(round=number, seq=seq, position=bid.player, bid=bid,
                 think_ms=None, ts=TS)
@@ -581,7 +590,7 @@ def round_events(number, dealer, declarer, value, suit, made, totals):
             round=number,
             outcome=RoundOutcome.MADE if made else RoundOutcome.FAILED,
             declarer=declarer,
-            contract=ContractTerms(value=value, suit=suit, multiplier=1),
+            contract=ContractTerms(value=value, suit=suit, multiplier=multiplier),
             taken={TeamSide.NS: 90, TeamSide.EW: 72},
             belote={TeamSide.NS: 0, TeamSide.EW: 0},
             announcements={TeamSide.NS: 0, TeamSide.EW: 0},
@@ -674,7 +683,7 @@ def _snapshot_of(seen_rounds, totals, round_index):
     return payload
 
 
-def synthesize_frames(events, *, game="g1", keepalive_every=5, sockets=(0, 1)):
+def synthesize_frames(events, *, game="g1", keepalive_every=5, sockets=(0, 1), silent=frozenset()):
     """The raw frame texts a session would have produced for a record.
 
     Everything the parser has to undo is done here: the deal goes out as a
@@ -687,6 +696,8 @@ def synthesize_frames(events, *, game="g1", keepalive_every=5, sockets=(0, 1)):
         game: The wire's own id for the game.
         keepalive_every: How often to interleave a keepalive.
         sockets: Which connections carry the traffic.
+        silent: ``(round, seq)`` pairs naming forced passes the table would
+            not send: their numbers are spent and no frame goes out.
 
     Returns:
         ``(text, socket)`` pairs, in the order they would have arrived.
@@ -724,6 +735,10 @@ def synthesize_frames(events, *, game="g1", keepalive_every=5, sockets=(0, 1)):
                                for card in stock_for(event.hands, event.dealer)]))
                 case BidMade():
                     seq += 1
+                    if (number, seq) in silent:
+                        # A forced pass: the table spends the number and
+                        # sends nothing.
+                        continue
                     texts.append(bid_frame(
                         game=game, round_=number, seq=seq,
                         actor=HANDLE_OF_SEAT[event.position],
@@ -785,20 +800,30 @@ def value_token(value):
 
 
 def _bid_payload(made, round_events_):
-    """The payload the wire would have sent for one bid."""
+    """The payload the wire would have sent for one bid.
+
+    A double and a redouble repeat the contract under attack and add who
+    attacked it; a later payload keeps those fields.
+    """
 
     bid = made.bid
     if isinstance(bid, PassBid):
         return None
+    auction = [event for event in round_events_ if isinstance(event, BidMade)]
     contract = next(
-        event.bid for event in round_events_
-        if isinstance(event, BidMade) and isinstance(event.bid, ContractBid)
+        event.bid for event in auction if isinstance(event.bid, ContractBid)
     )
-    return {
+    payload = {
         "who": HANDLE_OF_SEAT[contract.player],
         "colour": _SUIT_TOKEN[contract.suit],
         "level": value_token(contract.value),
     }
+    for event in auction[: auction.index(made) + 1]:
+        if isinstance(event.bid, DoubleBid):
+            payload["twice"] = HANDLE_OF_SEAT[event.position]
+        elif isinstance(event.bid, RedoubleBid):
+            payload["fourfold"] = HANDLE_OF_SEAT[event.position]
+    return payload
 
 
 def _wire_row(scored):

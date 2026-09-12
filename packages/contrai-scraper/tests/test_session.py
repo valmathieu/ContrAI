@@ -3,7 +3,7 @@
 import dataclasses
 
 import pytest
-from contrai_core import Position, SlamLevel, Suit, TeamSide, TurnDirection
+from contrai_core import ContractBid, DoubleBid, PassBid, Position, RedoubleBid, SlamLevel, Suit, TeamSide, TurnDirection
 from contrai_data import (
     CardPlayed,
     EndReason,
@@ -64,6 +64,50 @@ def _parse(profile, texts, **kwargs):
         if (event := stream.ingest(text, socket=socket)) is not None
     ]
     return parse_session(order_events(events), profile, **kwargs)
+
+
+def _doubled_round(builders):
+    """One round where West bids, North doubles and West redoubles.
+
+    South deals, so the turn runs West, North, East, South. After the
+    double, South — the doubler's partner — has nothing but a pass; after
+    the redouble, nobody has anything else. Those four passes are the ones a
+    table never sends: bids 4, 6, 7 and 8.
+    """
+
+    auction = (
+        ContractBid(player=Position.WEST, value=80, suit=Suit.SPADES),
+        DoubleBid(player=Position.NORTH),
+        PassBid(player=Position.EAST),
+        PassBid(player=Position.SOUTH),
+        RedoubleBid(player=Position.WEST),
+        PassBid(player=Position.NORTH),
+        PassBid(player=Position.EAST),
+        PassBid(player=Position.SOUTH),
+    )
+    return builders.round_events(
+        1, Position.SOUTH, Position.WEST, 80, Suit.SPADES, True,
+        {TeamSide.NS: 0, TeamSide.EW: 640}, auction=auction, multiplier=4)
+
+
+#: The ``(round, seq)`` of every forced pass in ``_doubled_round``.
+_FORCED = frozenset({(1, 4), (1, 6), (1, 7), (1, 8)})
+
+
+class TestForcedPasses:
+    def test_the_passes_the_wire_never_sent_come_back(
+        self, profile, synthesize, game_builders
+    ):
+        game = game_builders.game_events(_doubled_round(game_builders))
+        result = _parse(profile, synthesize(game, silent=_FORCED), game_id="obs-g1")
+        assert _comparable(result.events) == _comparable(game)
+
+    def test_the_restored_auction_closes(self, profile, synthesize, game_builders):
+        # Without the passes put back the auction ends on a redouble, and the
+        # projection calls the round unfinished.
+        game = game_builders.game_events(_doubled_round(game_builders))
+        parsed = _parse(profile, synthesize(game, silent=_FORCED)).events
+        assert project(parsed).complete is True
 
 
 class TestRoundTrip:
@@ -275,13 +319,28 @@ class TestUnresolvableRounds:
         assert any("dealer" in note for note in result.notes)
 
     def test_a_round_whose_auction_reached_no_contract_is_skipped(
-        self, profile, source_game, synthesize
+        self, profile, source_game, synthesize, builders, game_builders
     ):
-        texts = [(text, socket) for text, socket in synthesize(source_game)
-                 if '"id": "b1-1"' not in text]
+        # The declarer's bid arrives as a pass, so every seat passes.
+        declarer = game_builders.handle_of_seat[Position.WEST]
+        passed = builders.bid_frame(round_=1, seq=1, actor=declarer, payload=None)
+        texts = [
+            (passed if '"id": "b1-1"' in text else text, socket)
+            for text, socket in synthesize(source_game)
+        ]
         result = _parse(profile, texts)
         assert result.skipped_rounds == (1,)
         assert any("contract" in note for note in result.notes)
+
+    def test_a_round_missing_a_bid_is_skipped(self, profile, source_game, synthesize):
+        # North's pass never arrives, but North could have doubled: that is a
+        # lost bid, not a forced pass, and the round is refused rather than
+        # repaired.
+        texts = [(text, socket) for text, socket in synthesize(source_game)
+                 if '"id": "b1-2"' not in text]
+        result = _parse(profile, texts)
+        assert result.skipped_rounds == (1,)
+        assert any("missing" in note for note in result.notes)
 
 
 class TestSlams:
