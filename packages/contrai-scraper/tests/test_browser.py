@@ -108,16 +108,29 @@ def drain(scenario):
     return asyncio.run(scenario())
 
 
+def option_row(name=None, on=False, *, state=True):
+    """One options-panel row, laid out as the observed panel lays it out.
+
+    The id sits on one child and the on/off class on another, so a reader
+    that looks for both on the row itself finds neither. ``name=None`` leaves
+    the id attribute off; ``state=False`` leaves the switch out, as a group
+    heading does.
+    """
+
+    children = {".option-name": [Match(attrs={} if name is None else {"data-option": name})]}
+    if state:
+        children[".option-switch"] = [
+            Match(classes=("option-switch", "on") if on else ("option-switch",))
+        ]
+    return Match(classes=("option-row",), children=children)
+
+
 def option_panel(**options):
     """A table options panel showing ``id -> on`` and nothing else."""
 
     return {
         "#options": ["Options"],
-        ".option-row": [
-            Match(attrs={"data-option": name}, classes=("option-row", "on") if on
-                  else ("option-row",))
-            for name, on in options.items()
-        ],
+        ".option-row": [option_row(name, on) for name, on in options.items()],
         "#close": ["x"],
     }
 
@@ -314,11 +327,39 @@ class TestOptionsGate:
 
     def test_a_row_without_an_id_is_ignored(self, profile):
         page = FakePage({"#options": ["Options"],
+                         ".option-row": [option_row(),
+                                         option_row("opt_alpha", True),
+                                         option_row("opt_beta", False)],
+                         "#close": ["x"]})
+
+        async def scenario():
+            return await Spectator(page, profile).read_options(
+                profile.rules.options
+            )
+
+        assert drain(scenario).matches is True
+
+    def test_a_heading_row_without_a_switch_is_ignored(self, profile):
+        # The panel interleaves group headings and the objective selector with
+        # the toggles. Neither carries a switch, and neither is an option.
+        page = FakePage({"#options": ["Options"],
+                         ".option-row": [option_row("objective", state=False),
+                                         option_row("opt_alpha", True),
+                                         option_row("opt_beta", False)],
+                         "#close": ["x"]})
+
+        async def scenario():
+            return await Spectator(page, profile).read_options(
+                profile.rules.options
+            )
+
+        assert drain(scenario).observed == {"opt_alpha": True, "opt_beta": False}
+
+    def test_a_row_without_an_id_element_is_ignored(self, profile):
+        page = FakePage({"#options": ["Options"],
                          ".option-row": [Match(classes=("option-row",)),
-                                         Match(attrs={"data-option": "opt_alpha"},
-                                               classes=("option-row", "on")),
-                                         Match(attrs={"data-option": "opt_beta"},
-                                               classes=("option-row",))],
+                                         option_row("opt_alpha", True),
+                                         option_row("opt_beta", False)],
                          "#close": ["x"]})
 
         async def scenario():

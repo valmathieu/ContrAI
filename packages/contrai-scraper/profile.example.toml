@@ -42,8 +42,13 @@ tournament_marker = "#placeholder-table-kind"
 tournament_marker_text = "placeholder"
 next_table = "#placeholder-next"
 options_button = "#placeholder-options"
+# One row per table option. Inside a row, the id sits on one element and the
+# on/off state on another: options_id_attr is read off options_id_element, and
+# options_on_class is looked for in options_state_element's class list.
 options_row = ".placeholder-option-row"
+options_id_element = ".placeholder-option-name"
 options_id_attr = "data-placeholder"
+options_state_element = ".placeholder-option-switch"
 options_on_class = "placeholder-on"
 panel_close = "#placeholder-close"
 # The score panel the boundary read falls back to when the wire cannot answer.

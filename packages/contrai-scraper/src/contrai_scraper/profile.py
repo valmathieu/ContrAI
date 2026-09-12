@@ -169,6 +169,12 @@ class SelectorSection:
     next_table: Selector
     options_button: Selector
     options_row: Selector
+    options_id_element: str
+    """Looked up inside one option row: the element carrying the option's id."""
+
+    options_state_element: str
+    """Looked up inside one option row: the element whose class says on or off."""
+
     options_id_attr: str
     options_on_class: str
     panel_close: Selector
@@ -574,6 +580,8 @@ def _selectors(table: _Table) -> SelectorSection:
         next_table=table.selector("next_table"),
         options_button=table.selector("options_button"),
         options_row=table.selector("options_row"),
+        options_id_element=table.string("options_id_element"),
+        options_state_element=table.string("options_state_element"),
         options_id_attr=table.string("options_id_attr"),
         options_on_class=table.string("options_on_class"),
         panel_close=table.selector("panel_close"),
