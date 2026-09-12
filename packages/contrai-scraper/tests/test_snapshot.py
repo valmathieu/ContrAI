@@ -102,6 +102,41 @@ class TestScoreRows:
         rows = (builders.score_row(made=False),)
         assert read(profile, builders.snapshot_payload(rows=rows)).score_rows[0].made is False
 
+    def test_a_row_won_by_the_declaring_side_is_made_whatever_its_status(
+        self, profile, builders
+    ):
+        # A contract made by taking every trick carries a status of its own at
+        # the observed tables, and a single "made" token reads it as failed.
+        # The sides the row names are what decide it.
+        row = builders.score_row(made=True)
+        row["deal"]["status"] = "sweep"
+        payload = builders.snapshot_payload(rows=(row,))
+        assert read(profile, payload).score_rows[0].made is True
+
+    def test_a_row_won_by_the_defence_is_failed_whatever_its_status(
+        self, profile, builders
+    ):
+        # A failed contract's row can carry a status of its own too, and a
+        # single "made" token would misread it as made. The sides the row
+        # names are what decide it.
+        row = builders.score_row(made=False)
+        row["deal"]["status"] = "ok"
+        payload = builders.snapshot_payload(rows=(row,))
+        assert read(profile, payload).score_rows[0].made is False
+
+    @pytest.mark.parametrize(("status", "made"), [("ok", True), ("down", False)])
+    def test_a_row_naming_neither_side_falls_back_to_its_status(
+        self, profile, builders, status, made
+    ):
+        # A row naming neither the declarer nor the winner falls back to its
+        # status token, the reading that held before those fields existed.
+        row = builders.score_row()
+        del row["deal"]["taker"]
+        del row["deal"]["winner"]
+        row["deal"]["status"] = status
+        payload = builders.snapshot_payload(rows=(row,))
+        assert read(profile, payload).score_rows[0].made is made
+
     def test_the_components_are_keyed_by_side_not_by_team_letter(
         self, profile, builders
     ):

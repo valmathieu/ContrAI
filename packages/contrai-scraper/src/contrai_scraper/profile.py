@@ -103,6 +103,8 @@ FIELD_NAMES: frozenset[str] = frozenset({
     "row_value",
     "row_suit",
     "row_multiplier",
+    "row_declarer",
+    "row_winner",
     "side_taken",
     "side_belote",
     "side_marked_made",

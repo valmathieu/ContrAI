@@ -232,7 +232,7 @@ def _score_row(
             translator.field(block, "side_marked_announced") or 0,
         )
     return ScoreRow(
-        made=translator.field(row, "row_status") == tokens.score_made,
+        made=_made(row, translator),
         contract=RowContract(
             value=None if value_token is None
             else translator.contract_value(value_token),
@@ -242,6 +242,26 @@ def _score_row(
         taken=taken,
         belote=belote,
         marked=marked,
+    )
+
+
+def _made(row: Mapping[str, Any], translator: Translator) -> bool:
+    """Whether the declaring side made its contract.
+
+    The row names the declaring side and the side that won the round, and
+    comparing the two is the reading that has held on every row observed. The
+    status token alone does not: a contract made by taking every trick
+    carries a status of its own, which one "made" token would read as a
+    failure. The status stays as the fallback for a row naming neither side.
+    """
+
+    declarer = translator.field(row, "row_declarer")
+    winner = translator.field(row, "row_winner")
+    if declarer is not None and winner is not None:
+        return winner == declarer
+    return (
+        translator.field(row, "row_status")
+        == translator.profile.wire.tokens.score_made
     )
 
 

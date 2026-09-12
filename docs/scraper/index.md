@@ -80,7 +80,8 @@ re-run, and it is the same code path a live session takes.
 The join snapshot's running totals are read by the profile's team letters alone: the block holding
 them may carry other things beside them, such as the per-round rows. A mid-game join whose totals
 cannot be placed on a side is refused as a `ParseError`, because the record has to say what the
-score was when watching began.
+score was when watching began. A score row reads as made when the side it names as the winner is
+the declaring side; the row's status token is only consulted when a row names neither.
 
 ## Profile
 
