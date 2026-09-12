@@ -142,15 +142,17 @@ class Auction:
             return self._is_redouble_legal(bid)
         return False
 
-    def legal_actions(self, player: BasePlayer) -> tuple[Bid, ...]:
+    def legal_actions(self, player: BasePlayer | Position) -> tuple[Bid, ...]:
         """Enumerate every legal bid ``player`` could make right now.
 
         Suitable for handing to an MCTS / RL action enumerator or for
         filtering a UI's option list down to only the choices the
-        engine will accept.
+        engine will accept. A record's sealed auction answers it too:
+        its actors are bare seats, and every rule here that asks which
+        side a bid came from reads it off the seat.
 
         Args:
-            player: The player whose turn it is.
+            player: The player whose turn it is, or that player's seat.
 
         Returns:
             A tuple of legal :class:`Bid` instances. Always non-empty
@@ -528,7 +530,7 @@ class Auction:
 
     def _is_double_legal(self, bid: DoubleBid) -> bool:
         """A :class:`DoubleBid` requires a live :class:`ContractBid`
-        by the opposing team and no prior :class:`DoubleBid` /
+        by the opposing side and no prior :class:`DoubleBid` /
         :class:`RedoubleBid`.
 
         Intervening passes since the contract bid do **not** close the
@@ -551,13 +553,20 @@ class Auction:
             return False
         if not self._slam_double_allowed(last_contract_bid):
             return False
-        if last_contract_bid.player.team is bid.player.team:
+        # Sides are read off the seat (see ``_actor_side``), so a record's
+        # bare positions answer this exactly as a live auction's players
+        # do. An actor with no seat names no side, and a double whose side
+        # cannot be told is refused rather than assumed to come from the
+        # other one.
+        doubled_side = _actor_side(last_contract_bid.player)
+        doubler_side = _actor_side(bid.player)
+        if doubled_side is None or doubler_side is None:
             return False
-        return True
+        return doubled_side is not doubler_side
 
     def _is_redouble_legal(self, bid: RedoubleBid) -> bool:
         """A :class:`RedoubleBid` requires a live :class:`DoubleBid`
-        against the bidder's team and no prior :class:`RedoubleBid`.
+        against the bidder's side and no prior :class:`RedoubleBid`.
 
         Symmetrically with :meth:`_is_double_legal`, intervening passes
         between the Double and the Redouble do **not** close the
@@ -582,6 +591,7 @@ class Auction:
                 break
         if not has_double or has_redouble or contract_player is None:
             return False
-        if contract_player.team is not bid.player.team:
-            return False
-        return True
+        # Read off the seat, like the double: only the side holding the
+        # contract may redouble it, and an actor with no seat is refused.
+        declaring_side = _actor_side(contract_player)
+        return declaring_side is not None and _actor_side(bid.player) is declaring_side

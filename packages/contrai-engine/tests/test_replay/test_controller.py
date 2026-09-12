@@ -222,9 +222,11 @@ class TestTable:
         assert {p.position for p in controller.players} == set(Position)
 
     def test_partners_share_one_team_instance(self, recorded_game):
-        # ``Auction._is_double_legal`` compares teams by identity, so a
-        # driver assembling players by hand would see every coinche in
-        # the corpus refused. Going through ``Game`` is what prevents it.
+        # Card-play legality still compares teams by identity — the
+        # partner-master exemption and the over-trump scan in
+        # ``PlayState`` — so a driver assembling players by hand would
+        # misread which trick winner is a partner. Going through ``Game``
+        # is what prevents it.
         controller = ReplayController(recorded_game)
         seats = controller.game.players_by_position
 

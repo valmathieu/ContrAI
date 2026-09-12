@@ -43,6 +43,10 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) `run.py`, the step-1 notebook and the two site screenshots under `docs/scraper/`.
 - (scraper) `jupyter` and `nest-asyncio` dependencies — neither was imported; `uv sync` installs less.
 
+### Fixed
+
+- (core) `Auction` judges double and redouble legality by seat, so a teamless seated player may double and a sealed `Position` auction lists its legal bids.
+
 ## [0.4.0] - 2026-09-01
 
 Configurable-table release: the rules of the table become data — a `RuleConfig` of the 22 §9 knobs threaded from the auction through play to the score sheet. All trump joins no trump as a playable regime, a round mark decomposes into made and announced points, seven flow-and-play conventions become switchable, the landing screen edits and remembers the whole setup, and the expert AI bids, plays and doubles under whichever table it sits at — returning a rationale with every decision.
