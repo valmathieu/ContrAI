@@ -103,6 +103,7 @@ screenshot_on_error = false
 
 [selectors]
 dismiss_tutorial = "#no-thanks"
+login_start = ["#by-email", "#by-email-icon"]
 login_email = "#email"
 login_continue = ["#go", "#go-icon"]
 code_input = "#code"

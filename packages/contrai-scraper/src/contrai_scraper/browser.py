@@ -43,6 +43,13 @@ from .profile import Profile, Selector
 #: ``slow_mo_ms`` paces the run; this bounds a step that is simply not there.
 STEP_TIMEOUT_MS: Final[int] = 10_000
 
+#: How long the landing page is given before the walk looks at it. The
+#: first-visit tutorial is probed rather than waited for, and a probe made the
+#: moment navigation returns misses an offer the page draws a beat later —
+#: which then covers the login entry. The flow that last logged in waited this
+#: long.
+PAGE_SETTLE_MS: Final[int] = 5_000
+
 #: The attribute a class-membership test reads. Playwright's locator has no
 #: class list of its own, so the attribute is read and split.
 _CLASS_ATTR: Final[str] = "class"
@@ -154,7 +161,11 @@ class Spectator:
         """
 
         await self._page.goto(self._profile.site.url)
+        await self._page.wait_for_timeout(PAGE_SETTLE_MS)
         await self._dismiss("dismiss_tutorial")
+        # The site offers several ways in, and the address form appears only
+        # once its e-mail entry is chosen.
+        await self._click("login_start")
         await self._fill("login_email", self._profile.account.email)
         await self._click("login_continue")
         await self._fill("code_input", self._profile.account.verification_code)
@@ -187,7 +198,16 @@ class Spectator:
 
         await self._click("mode_online")
         await self.answer_pledge()
-        await self._click("mode_observe")
+        try:
+            await self._click("mode_observe")
+        except BrowserError:
+            # The pledge can be drawn a moment after the probe above looked
+            # for it, and then covers this menu. One answer and one retry is
+            # the pattern the browser-flow probe measured; a menu that is
+            # blocked by anything else still fails, naming its key.
+            if not await self.answer_pledge():
+                raise
+            await self._click("mode_observe")
         await self._click("variant")
 
     async def next_table(self) -> None:

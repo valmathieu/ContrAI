@@ -7,6 +7,7 @@ import pytest
 from contrai_core import Position
 
 from contrai_scraper import BrowserError, Spectator
+from contrai_scraper.browser import PAGE_SETTLE_MS
 
 
 class Match:
@@ -75,12 +76,16 @@ class FakePage:
         self.evaluated: list[tuple[str, Any]] = []
         self.init_scripts: list[str] = []
         self.goto_url: str | None = None
+        self.waited: list[int] = []
 
     def locator(self, selector):
         return FakeLocator(self, selector, self.matches.get(selector, []))
 
     async def goto(self, url):
         self.goto_url = url
+
+    async def wait_for_timeout(self, ms):
+        self.waited.append(ms)
 
     async def fill(self, selector, value, timeout=None):
         if selector not in self.matches:
@@ -106,6 +111,29 @@ def drain(scenario):
     """
 
     return asyncio.run(scenario())
+
+
+class LatePledgePage(FakePage):
+    """A page whose pledge is drawn only after the walk first looked for it.
+
+    Until the pledge is accepted it covers the spectator menu, so the menu
+    click fails — the timing the browser-flow probe met on fresh accounts.
+    """
+
+    def __init__(self):
+        super().__init__({"#online": ["Online"], "#pledge-ok": ["OK"],
+                          "#variant": ["Contree"]})
+        self.probes = 0
+
+    def locator(self, selector):
+        answered = "#pledge-ok" in self.clicks
+        if selector == "#pledge":
+            self.probes += 1
+            drawn = self.probes > 1 and not answered
+            return FakeLocator(self, selector, ["Fair play"] if drawn else [])
+        if selector == "#observe":
+            return FakeLocator(self, selector, ["Watch"] if answered else [])
+        return super().locator(selector)
 
 
 def option_row(name=None, on=False, *, state=True):
@@ -174,8 +202,8 @@ class TestPledge:
 
 class TestLogin:
     def test_the_address_and_the_code_are_filled_in_order(self, profile):
-        page = FakePage({"#email": ["input"], "#go": ["Continue"],
-                         "#code": ["input"], "#submit": ["OK"]})
+        page = FakePage({"#by-email": ["Email"], "#email": ["input"],
+                         "#go": ["Continue"], "#code": ["input"], "#submit": ["OK"]})
 
         async def scenario():
             await Spectator(page, profile).log_in()
@@ -184,13 +212,13 @@ class TestLogin:
         assert (page.goto_url, page.filled, page.clicks) == (
             "https://example.invalid/lobby",
             [("#email", "watcher@example.invalid"), ("#code", "0000")],
-            ["#go", "#submit"],
+            ["#by-email", "#go", "#submit"],
         )
 
     def test_a_showing_tutorial_is_dismissed_first(self, profile):
-        page = FakePage({"#no-thanks": ["No thanks"], "#email": ["input"],
-                         "#go": ["Continue"], "#code": ["input"],
-                         "#submit": ["OK"]})
+        page = FakePage({"#by-email": ["Email"], "#no-thanks": ["No thanks"],
+                         "#email": ["input"], "#go": ["Continue"],
+                         "#code": ["input"], "#submit": ["OK"]})
 
         async def scenario():
             await Spectator(page, profile).log_in()
@@ -201,14 +229,37 @@ class TestLogin:
     def test_an_absent_tutorial_is_skipped(self, profile):
         # The offer comes once per browser profile, so every later session
         # logs in without it.
-        page = FakePage({"#email": ["input"], "#go": ["Continue"],
-                         "#code": ["input"], "#submit": ["OK"]})
+        page = FakePage({"#by-email": ["Email"], "#email": ["input"],
+                         "#go": ["Continue"], "#code": ["input"], "#submit": ["OK"]})
 
         async def scenario():
             await Spectator(page, profile).log_in()
 
         drain(scenario)
         assert "#no-thanks" not in page.clicks
+
+    def test_the_landing_page_settles_before_anything_is_probed(self, profile):
+        # The tutorial is probed, not waited for; probed the instant
+        # navigation returns, it is missed — and then covers the login entry.
+        page = FakePage({"#by-email": ["Email"], "#email": ["input"],
+                         "#go": ["Continue"], "#code": ["input"], "#submit": ["OK"]})
+
+        async def scenario():
+            await Spectator(page, profile).log_in()
+
+        drain(scenario)
+        assert (page.goto_url, page.waited) == (
+            "https://example.invalid/lobby", [PAGE_SETTLE_MS]
+        )
+
+    def test_a_missing_email_entry_names_the_key(self, profile):
+        page = FakePage({"#email": ["input"]})
+
+        async def scenario():
+            await Spectator(page, profile).log_in()
+
+        with pytest.raises(BrowserError, match="login_start"):
+            drain(scenario)
 
 
 class TestMenu:
@@ -234,6 +285,24 @@ class TestMenu:
 
         drain(scenario)
         assert page.clicks == ["#online", "#pledge-ok", "#observe", "#variant"]
+
+    def test_a_pledge_drawn_late_is_answered_and_the_menu_retried(self, profile):
+        page = LatePledgePage()
+
+        async def scenario():
+            await Spectator(page, profile).enter_variant()
+
+        drain(scenario)
+        assert page.clicks == ["#online", "#pledge-ok", "#observe", "#variant"]
+
+    def test_a_blocked_menu_with_no_pledge_still_names_the_key(self, profile):
+        page = FakePage({"#online": ["Online"], "#variant": ["Contree"]})
+
+        async def scenario():
+            await Spectator(page, profile).enter_variant()
+
+        with pytest.raises(BrowserError, match="mode_observe"):
+            drain(scenario)
 
     def test_the_hop_is_the_table_control(self, profile):
         # There is no leave operation to test: the exit control leaves
@@ -565,7 +634,7 @@ class TestWalk:
     def test_a_missing_field_names_the_profile_key(self, profile):
         # A login form that moved its address input fails here rather than
         # three steps later on a verification code nobody was asked for.
-        page = FakePage({"#go": ["Continue"]})
+        page = FakePage({"#by-email": ["Email"], "#go": ["Continue"]})
 
         async def scenario():
             await Spectator(page, profile).log_in()
@@ -574,11 +643,11 @@ class TestWalk:
             drain(scenario)
 
     def test_a_selector_list_falls_back_to_the_next_candidate(self, profile):
-        page = FakePage({"#email": ["input"], "#go-icon": ["icon"],
-                         "#code": ["input"], "#submit": ["OK"]})
+        page = FakePage({"#by-email": ["Email"], "#email": ["input"],
+                         "#go-icon": ["icon"], "#code": ["input"], "#submit": ["OK"]})
 
         async def scenario():
             await Spectator(page, profile).log_in()
 
         drain(scenario)
-        assert page.clicks == ["#go-icon", "#submit"]
+        assert page.clicks == ["#by-email", "#go-icon", "#submit"]
