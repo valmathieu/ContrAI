@@ -43,6 +43,13 @@ from .profile import Profile, Selector
 #: ``slow_mo_ms`` paces the run; this bounds a step that is simply not there.
 STEP_TIMEOUT_MS: Final[int] = 10_000
 
+#: How long the landing page is given before the walk looks at it. The
+#: first-visit tutorial is probed rather than waited for, and a probe made the
+#: moment navigation returns misses an offer the page draws a beat later —
+#: which then covers the login entry. The flow that last logged in waited this
+#: long.
+PAGE_SETTLE_MS: Final[int] = 5_000
+
 #: The attribute a class-membership test reads. Playwright's locator has no
 #: class list of its own, so the attribute is read and split.
 _CLASS_ATTR: Final[str] = "class"
@@ -154,7 +161,11 @@ class Spectator:
         """
 
         await self._page.goto(self._profile.site.url)
+        await self._page.wait_for_timeout(PAGE_SETTLE_MS)
         await self._dismiss("dismiss_tutorial")
+        # The site offers several ways in, and the address form appears only
+        # once its e-mail entry is chosen.
+        await self._click("login_start")
         await self._fill("login_email", self._profile.account.email)
         await self._click("login_continue")
         await self._fill("code_input", self._profile.account.verification_code)
@@ -187,7 +198,16 @@ class Spectator:
 
         await self._click("mode_online")
         await self.answer_pledge()
-        await self._click("mode_observe")
+        try:
+            await self._click("mode_observe")
+        except BrowserError:
+            # The pledge can be drawn a moment after the probe above looked
+            # for it, and then covers this menu. One answer and one retry is
+            # the pattern the browser-flow probe measured; a menu that is
+            # blocked by anything else still fails, naming its key.
+            if not await self.answer_pledge():
+                raise
+            await self._click("mode_observe")
         await self._click("variant")
 
     async def next_table(self) -> None:
@@ -217,7 +237,7 @@ class Spectator:
         return self._selectors.tournament_marker_text.casefold() in text.casefold()
 
     async def read_options(self, expected: Mapping[str, bool]) -> OptionsReading:
-        """Open the options panel, read every row, and diff it.
+        """Open the options panel, read every option row's id and switch, and diff it.
 
         Args:
             expected: Option id to whether it should be switched on, as
@@ -233,12 +253,25 @@ class Spectator:
         await self._click("options_button")
         observed: dict[str, bool] = {}
         for row in await self._rows("options_row"):
-            identity = await row.get_attribute(self._selectors.options_id_attr)
-            if identity is None:
-                # A decorative row — a separator, a heading — has no id, and
-                # keying one on ``None`` would collide with the next.
+            # The id and the switch are two different children of the row, so
+            # each is resolved inside it. A row lacking either — a group
+            # heading, the objective selector — is not an option. Each is
+            # pinned to ``.first``: a child selector that matches more than
+            # once inside the row would otherwise trip Playwright's strict
+            # mode and raise, ending the run rather than just this row.
+            identity_node = row.locator(self._selectors.options_id_element).first
+            state_node = row.locator(self._selectors.options_state_element).first
+            if not await identity_node.count() or not await state_node.count():
                 continue
-            classes = (await row.get_attribute(_CLASS_ATTR)) or ""
+            identity = await identity_node.get_attribute(
+                self._selectors.options_id_attr, timeout=STEP_TIMEOUT_MS
+            )
+            if identity is None:
+                # Keying a row on ``None`` would collide with the next such row.
+                continue
+            classes = (
+                await state_node.get_attribute(_CLASS_ATTR, timeout=STEP_TIMEOUT_MS)
+            ) or ""
             observed[identity] = self._selectors.options_on_class in classes.split()
         await self._close_panel()
 

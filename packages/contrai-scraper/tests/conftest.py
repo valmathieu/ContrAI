@@ -103,6 +103,7 @@ screenshot_on_error = false
 
 [selectors]
 dismiss_tutorial = "#no-thanks"
+login_start = ["#by-email", "#by-email-icon"]
 login_email = "#email"
 login_continue = ["#go", "#go-icon"]
 code_input = "#code"
@@ -117,6 +118,8 @@ tournament_marker_text = "cup"
 next_table = "#next"
 options_button = "#options"
 options_row = ".option-row"
+options_id_element = ".option-name"
+options_state_element = ".option-switch"
 options_id_attr = "data-option"
 options_on_class = "on"
 panel_close = "#close"
@@ -181,6 +184,8 @@ row_status = "deal.status"
 row_value = "deal.level"
 row_suit = "deal.suit"
 row_multiplier = "deal.coeff"
+row_declarer = "deal.taker"
+row_winner = "deal.winner"
 side_taken = "done.points"
 side_belote = "done.belotes"
 side_marked_made = "marks.points"
@@ -333,13 +338,19 @@ def snapshot_payload(*, table_id="t1", round_index=2, rows=(), totals=(40, 60)) 
     }
 
 
-def score_row(*, made=True, value=80, suit="wood", multiplier=1,
+def score_row(*, made=True, value=80, suit="wood", multiplier=1, declarer="X",
               taken=(90, 72), belote=(0, 0), marked=((80, 0), (0, 0))) -> dict:
-    """One row of the per-round breakdown, keyed by team letter."""
+    """One row of the per-round breakdown, keyed by team letter.
 
+    The row names the declaring side and the side that won the round; the
+    winner is the declarer when ``made`` and the other letter otherwise.
+    """
+
+    defence = "Y" if declarer == "X" else "X"
     return {
         "deal": {"status": "ok" if made else "down", "level": value,
-                 "suit": suit, "coeff": multiplier},
+                 "suit": suit, "coeff": multiplier,
+                 "taker": declarer, "winner": declarer if made else defence},
         "X": {"done": {"points": taken[0], "belotes": belote[0]},
               "marks": {"points": marked[0][0], "bid": marked[0][1]}},
         "Y": {"done": {"points": taken[1], "belotes": belote[1]},
@@ -834,6 +845,7 @@ def _wire_row(scored):
         value=value_token(scored.contract.value),
         suit=_SUIT_TOKEN[scored.contract.suit],
         multiplier=scored.contract.multiplier,
+        declarer="X" if scored.declarer.team_side is TeamSide.NS else "Y",
         taken=(scored.taken[TeamSide.NS], scored.taken[TeamSide.EW]),
         belote=(scored.belote[TeamSide.NS], scored.belote[TeamSide.EW]),
         marked=(

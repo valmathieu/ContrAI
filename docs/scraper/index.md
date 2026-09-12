@@ -77,6 +77,12 @@ The raw log is what makes all of this correctable. Frames are stored verbatim *b
 is interpreted, so a parser fix applies to games already watched — `contrai-scrape parse` is that
 re-run, and it is the same code path a live session takes.
 
+The join snapshot's running totals are read by the profile's team letters alone: the block holding
+them may carry other things beside them, such as the per-round rows. A mid-game join whose totals
+cannot be placed on a side is refused as a `ParseError`, because the record has to say what the
+score was when watching began. A score row reads as made when the side it names as the winner is
+the declaring side; the row's status token is only consulted when a row does not name both.
+
 ## Profile
 
 One TOML document, git-ignored; `profile.example.toml` in the package is the committed schema,
@@ -89,7 +95,7 @@ silently wrong data.
 | `[site]` | Where the site lives, and which language it answers in. |
 | `[account]` | The spectator account. Values may read `env:NAME` instead of holding the secret. |
 | `[browser]` | Headless or headed, slow-motion, screenshot-on-error. |
-| `[selectors]` | One entry per UI step; a list means "try these in order". |
+| `[selectors]` | One entry per UI step; a list means "try these in order". `seat_element` is a template filled with a seat token; `scoreboard_cell` is looked up inside each scoreboard row; `options_id_element` and `options_state_element` inside each option row. |
 | `[wire]` | How a frame is recognised, unwrapped and keyed. |
 | `[wire.events]` | The three event names the parser reacts to. |
 | `[wire.fields]` | Dotted paths, one per logical field the parser reads. The set of names is fixed. |
@@ -124,6 +130,11 @@ have had:
   and the answer arrives on the socket as a fresh join snapshot — 0.21 s against 2.58 s for the
   rendered panel, with no replay cost. The panel is the fallback, and it is evidence for the raw
   log rather than a score the parser can use.
+
+The walk follows the site's timing, not only its markup. It lets the landing page settle before
+probing for the first-visit tutorial, opens the address form through its own entry, and, because
+the first-use pledge can be drawn a moment after it was looked for, answers it and retries once
+when the spectator menu refuses a click.
 
 The states, in order: reset the buffer and the stream, wait for a join snapshot, refuse a table
 that is not a tournament or is already `hop_after_rows` rounds old, refuse one whose options

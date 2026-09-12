@@ -27,6 +27,10 @@ screenshot_on_error = true
 # way on every page.
 [selectors]
 dismiss_tutorial = "#placeholder-tutorial"
+# The site offers several ways in; the address form below appears only once
+# its e-mail entry is chosen. A list, because the entry may be labelled or
+# icon-only depending on the locale.
+login_start = ["#placeholder-email-entry", "#placeholder-email-entry-icon"]
 login_email = "#placeholder-email"
 login_continue = ["#placeholder-continue", "#placeholder-continue-icon"]
 code_input = "#placeholder-code"
@@ -42,8 +46,15 @@ tournament_marker = "#placeholder-table-kind"
 tournament_marker_text = "placeholder"
 next_table = "#placeholder-next"
 options_button = "#placeholder-options"
+# One row per table option. Inside a row, the id sits on one element and the
+# on/off state on another: options_id_attr is read off options_id_element, and
+# options_on_class is looked for in options_state_element's class list.
+# options_id_element and options_state_element each take one selector, not a
+# list of candidates.
 options_row = ".placeholder-option-row"
+options_id_element = ".placeholder-option-name"
 options_id_attr = "data-placeholder"
+options_state_element = ".placeholder-option-switch"
 options_on_class = "placeholder-on"
 panel_close = "#placeholder-close"
 # The score panel the boundary read falls back to when the wire cannot answer.
@@ -117,6 +128,11 @@ row_status = "deal.status"
 row_value = "deal.value"
 row_suit = "deal.suit"
 row_multiplier = "deal.coefficient"
+# The row's declaring side and the side that won the round, as team letters.
+# Comparing them is how a row reads as made or failed; score_made below is
+# only consulted for a row that does not name both.
+row_declarer = "deal.declarer"
+row_winner = "deal.winner"
 side_taken = "done.points"
 side_belote = "done.belotes"
 side_marked_made = "marks.points"
@@ -156,6 +172,8 @@ bid_slam = "PLACEHOLDER_SLAM"
 bid_solo_slam = "PLACEHOLDER_SOLO_SLAM"
 # Whether a pass is sent as a null rather than as a token of its own.
 pass_is_null = true
+# The status a made row carries, for a row that does not name both the
+# declarer and the winner.
 score_made = "placeholder-made"
 
 # The core preset the observed tables play under.

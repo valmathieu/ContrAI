@@ -7,6 +7,7 @@ import pytest
 from contrai_core import Position
 
 from contrai_scraper import BrowserError, Spectator
+from contrai_scraper.browser import PAGE_SETTLE_MS
 
 
 class Match:
@@ -48,9 +49,22 @@ class FakeLocator:
     async def all(self):
         return [FakeLocator(self.page, self.selector, [m]) for m in self._matches]
 
-    async def get_attribute(self, name):
+    @property
+    def first(self):
+        # Narrowed to at most one match, empty when there was none — the same
+        # shape Playwright's own ``.first`` leaves a locator in.
+        return FakeLocator(self.page, self.selector, self._matches[:1])
+
+    async def get_attribute(self, name, timeout=None):
         if not self._matches:
             return None
+        if len(self._matches) > 1:
+            # Mirrors Playwright's real strict-mode error: an action that
+            # resolves to one element refuses when the locator did not.
+            raise Exception(
+                f"strict mode violation: {self.selector} resolved to "
+                f"{len(self._matches)} elements"
+            )
         if name == "class":
             return " ".join(self._matches[0].classes)
         return self._matches[0].attrs.get(name)
@@ -64,8 +78,9 @@ class FakePage:
     """A page answering from a ``selector -> [Match]`` map.
 
     It implements only the surface ``Spectator`` actually uses. Playwright's
-    ``.first`` is a property rather than a method, so ``Spectator`` resolves a
-    single element through ``locator(...)`` alone and this fake never needs it.
+    ``.first`` is a property rather than a method: ``read_options`` narrows a
+    child lookup to it before reading an attribute, so this fake's locator
+    carries the same property, sliced to its own first match.
     """
 
     def __init__(self, matches=None):
@@ -75,16 +90,26 @@ class FakePage:
         self.evaluated: list[tuple[str, Any]] = []
         self.init_scripts: list[str] = []
         self.goto_url: str | None = None
+        self.waited: list[int] = []
+        self.trace: list[tuple[str, Any]] = []
+        """Every ``locator``/``goto``/``wait``/``fill`` call, in call order."""
 
     def locator(self, selector):
+        self.trace.append(("locator", selector))
         return FakeLocator(self, selector, self.matches.get(selector, []))
 
     async def goto(self, url):
+        self.trace.append(("goto", url))
         self.goto_url = url
+
+    async def wait_for_timeout(self, ms):
+        self.trace.append(("wait", ms))
+        self.waited.append(ms)
 
     async def fill(self, selector, value, timeout=None):
         if selector not in self.matches:
             raise TimeoutError(selector)
+        self.trace.append(("fill", selector))
         self.filled.append((selector, value))
 
     async def evaluate(self, script, arg=None):
@@ -108,16 +133,52 @@ def drain(scenario):
     return asyncio.run(scenario())
 
 
+class LatePledgePage(FakePage):
+    """A page whose pledge is drawn only after the walk first looked for it.
+
+    Until the pledge is accepted it covers the spectator menu, so the menu
+    click fails — the timing the browser-flow probe met on fresh accounts.
+    """
+
+    def __init__(self):
+        super().__init__({"#online": ["Online"], "#pledge-ok": ["OK"],
+                          "#variant": ["Contree"]})
+        self.probes = 0
+
+    def locator(self, selector):
+        answered = "#pledge-ok" in self.clicks
+        if selector == "#pledge":
+            self.probes += 1
+            drawn = self.probes > 1 and not answered
+            return FakeLocator(self, selector, ["Fair play"] if drawn else [])
+        if selector == "#observe":
+            return FakeLocator(self, selector, ["Watch"] if answered else [])
+        return super().locator(selector)
+
+
+def option_row(name=None, on=False, *, state=True):
+    """One options-panel row, laid out as the observed panel lays it out.
+
+    The id sits on one child and the on/off class on another, so a reader
+    that looks for both on the row itself finds neither. ``name=None`` leaves
+    the id attribute off; ``state=False`` leaves the switch out, as a group
+    heading does.
+    """
+
+    children = {".option-name": [Match(attrs={} if name is None else {"data-option": name})]}
+    if state:
+        children[".option-switch"] = [
+            Match(classes=("option-switch", "on") if on else ("option-switch",))
+        ]
+    return Match(classes=("option-row",), children=children)
+
+
 def option_panel(**options):
     """A table options panel showing ``id -> on`` and nothing else."""
 
     return {
         "#options": ["Options"],
-        ".option-row": [
-            Match(attrs={"data-option": name}, classes=("option-row", "on") if on
-                  else ("option-row",))
-            for name, on in options.items()
-        ],
+        ".option-row": [option_row(name, on) for name, on in options.items()],
         "#close": ["x"],
     }
 
@@ -161,8 +222,8 @@ class TestPledge:
 
 class TestLogin:
     def test_the_address_and_the_code_are_filled_in_order(self, profile):
-        page = FakePage({"#email": ["input"], "#go": ["Continue"],
-                         "#code": ["input"], "#submit": ["OK"]})
+        page = FakePage({"#by-email": ["Email"], "#email": ["input"],
+                         "#go": ["Continue"], "#code": ["input"], "#submit": ["OK"]})
 
         async def scenario():
             await Spectator(page, profile).log_in()
@@ -171,13 +232,13 @@ class TestLogin:
         assert (page.goto_url, page.filled, page.clicks) == (
             "https://example.invalid/lobby",
             [("#email", "watcher@example.invalid"), ("#code", "0000")],
-            ["#go", "#submit"],
+            ["#by-email", "#go", "#submit"],
         )
 
     def test_a_showing_tutorial_is_dismissed_first(self, profile):
-        page = FakePage({"#no-thanks": ["No thanks"], "#email": ["input"],
-                         "#go": ["Continue"], "#code": ["input"],
-                         "#submit": ["OK"]})
+        page = FakePage({"#by-email": ["Email"], "#no-thanks": ["No thanks"],
+                         "#email": ["input"], "#go": ["Continue"],
+                         "#code": ["input"], "#submit": ["OK"]})
 
         async def scenario():
             await Spectator(page, profile).log_in()
@@ -188,14 +249,46 @@ class TestLogin:
     def test_an_absent_tutorial_is_skipped(self, profile):
         # The offer comes once per browser profile, so every later session
         # logs in without it.
-        page = FakePage({"#email": ["input"], "#go": ["Continue"],
-                         "#code": ["input"], "#submit": ["OK"]})
+        page = FakePage({"#by-email": ["Email"], "#email": ["input"],
+                         "#go": ["Continue"], "#code": ["input"], "#submit": ["OK"]})
 
         async def scenario():
             await Spectator(page, profile).log_in()
 
         drain(scenario)
         assert "#no-thanks" not in page.clicks
+
+    def test_the_landing_page_settles_before_anything_is_probed(self, profile):
+        # The tutorial is probed, not waited for; probed the instant
+        # navigation returns, it is missed — and then covers the login entry.
+        page = FakePage({"#by-email": ["Email"], "#email": ["input"],
+                         "#go": ["Continue"], "#code": ["input"], "#submit": ["OK"]})
+
+        async def scenario():
+            await Spectator(page, profile).log_in()
+
+        drain(scenario)
+        # The order itself is the point: each marker's first occurrence must
+        # come strictly after the one before it.
+        markers = [
+            ("goto", "https://example.invalid/lobby"),
+            ("wait", PAGE_SETTLE_MS),
+            ("locator", "#no-thanks"),
+            ("locator", "#by-email"),
+            ("fill", "#email"),
+        ]
+        indices = [page.trace.index(marker) for marker in markers]
+        for earlier, later in zip(indices, indices[1:]):
+            assert earlier < later
+
+    def test_a_missing_email_entry_names_the_key(self, profile):
+        page = FakePage({"#email": ["input"]})
+
+        async def scenario():
+            await Spectator(page, profile).log_in()
+
+        with pytest.raises(BrowserError, match="login_start"):
+            drain(scenario)
 
 
 class TestMenu:
@@ -221,6 +314,24 @@ class TestMenu:
 
         drain(scenario)
         assert page.clicks == ["#online", "#pledge-ok", "#observe", "#variant"]
+
+    def test_a_pledge_drawn_late_is_answered_and_the_menu_retried(self, profile):
+        page = LatePledgePage()
+
+        async def scenario():
+            await Spectator(page, profile).enter_variant()
+
+        drain(scenario)
+        assert page.clicks == ["#online", "#pledge-ok", "#observe", "#variant"]
+
+    def test_a_blocked_menu_with_no_pledge_still_names_the_key(self, profile):
+        page = FakePage({"#online": ["Online"], "#variant": ["Contree"]})
+
+        async def scenario():
+            await Spectator(page, profile).enter_variant()
+
+        with pytest.raises(BrowserError, match="mode_observe"):
+            drain(scenario)
 
     def test_the_hop_is_the_table_control(self, profile):
         # There is no leave operation to test: the exit control leaves
@@ -314,11 +425,39 @@ class TestOptionsGate:
 
     def test_a_row_without_an_id_is_ignored(self, profile):
         page = FakePage({"#options": ["Options"],
+                         ".option-row": [option_row(),
+                                         option_row("opt_alpha", True),
+                                         option_row("opt_beta", False)],
+                         "#close": ["x"]})
+
+        async def scenario():
+            return await Spectator(page, profile).read_options(
+                profile.rules.options
+            )
+
+        assert drain(scenario).matches is True
+
+    def test_a_heading_row_without_a_switch_is_ignored(self, profile):
+        # The panel interleaves group headings and the objective selector with
+        # the toggles. Neither carries a switch, and neither is an option.
+        page = FakePage({"#options": ["Options"],
+                         ".option-row": [option_row("objective", state=False),
+                                         option_row("opt_alpha", True),
+                                         option_row("opt_beta", False)],
+                         "#close": ["x"]})
+
+        async def scenario():
+            return await Spectator(page, profile).read_options(
+                profile.rules.options
+            )
+
+        assert drain(scenario).observed == {"opt_alpha": True, "opt_beta": False}
+
+    def test_a_row_without_an_id_element_is_ignored(self, profile):
+        page = FakePage({"#options": ["Options"],
                          ".option-row": [Match(classes=("option-row",)),
-                                         Match(attrs={"data-option": "opt_alpha"},
-                                               classes=("option-row", "on")),
-                                         Match(attrs={"data-option": "opt_beta"},
-                                               classes=("option-row",))],
+                                         option_row("opt_alpha", True),
+                                         option_row("opt_beta", False)],
                          "#close": ["x"]})
 
         async def scenario():
@@ -336,6 +475,32 @@ class TestOptionsGate:
 
         drain(scenario)
         assert page.clicks[-1] == "#close"
+
+    def test_a_row_whose_id_element_matches_twice_reads_the_first(self, profile):
+        # The id and the switch each sit on a child selector, and nothing
+        # promises that selector is unique inside the row. Reading the first
+        # match rather than tripping Playwright's strict mode is the point.
+        row = Match(
+            classes=("option-row",),
+            children={
+                ".option-name": [
+                    Match(attrs={"data-option": "opt_alpha"}),
+                    Match(attrs={"data-option": "opt_other"}),
+                ],
+                ".option-switch": [Match(classes=("option-switch", "on"))],
+            },
+        )
+        page = FakePage({"#options": ["Options"],
+                         ".option-row": [row, option_row("opt_beta", False)],
+                         "#close": ["x"]})
+
+        async def scenario():
+            return await Spectator(page, profile).read_options(
+                profile.rules.options
+            )
+
+        reading = drain(scenario)
+        assert reading.observed == {"opt_alpha": True, "opt_beta": False}
 
 
 class TestScoreboard:
@@ -524,7 +689,7 @@ class TestWalk:
     def test_a_missing_field_names_the_profile_key(self, profile):
         # A login form that moved its address input fails here rather than
         # three steps later on a verification code nobody was asked for.
-        page = FakePage({"#go": ["Continue"]})
+        page = FakePage({"#by-email": ["Email"], "#go": ["Continue"]})
 
         async def scenario():
             await Spectator(page, profile).log_in()
@@ -533,11 +698,11 @@ class TestWalk:
             drain(scenario)
 
     def test_a_selector_list_falls_back_to_the_next_candidate(self, profile):
-        page = FakePage({"#email": ["input"], "#go-icon": ["icon"],
-                         "#code": ["input"], "#submit": ["OK"]})
+        page = FakePage({"#by-email": ["Email"], "#email": ["input"],
+                         "#go-icon": ["icon"], "#code": ["input"], "#submit": ["OK"]})
 
         async def scenario():
             await Spectator(page, profile).log_in()
 
         drain(scenario)
-        assert page.clicks == ["#go-icon", "#submit"]
+        assert page.clicks == ["#by-email", "#go-icon", "#submit"]
