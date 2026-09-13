@@ -756,10 +756,13 @@ def _output(table: _Table, base: Path) -> OutputSection:
             moved with the data it points at.
     """
 
+    retention = table.integer("raw_retention_days")
+    if retention < 0:
+        raise ProfileError("[output].raw_retention_days may not be negative")
     section = OutputSection(
         root=(base / table.string("root")).resolve(),
         raw_root=(base / table.string("raw_root")).resolve(),
-        raw_retention_days=table.integer("raw_retention_days"),
+        raw_retention_days=retention,
     )
     table.done()
     return section

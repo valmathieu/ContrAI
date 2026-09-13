@@ -164,5 +164,6 @@ heartbeat — so a shift is `journalctl`-readable without a parser being written
   watched.
 - Pseudonymisation: records currently carry raw ids, names and account fields — personal data,
   local only.
-- Raw-log retention: `[output].raw_retention_days` is read and nothing sweeps yet.
+- Raw-log retention: `prune_raw_logs` deletes logs past `[output].raw_retention_days`, but no
+  loop calls it yet.
 - Rate-limiting / ToS considerations.

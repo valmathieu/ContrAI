@@ -258,6 +258,15 @@ class TestRecorder:
         with pytest.raises(ProfileError, match="stale_after_s"):
             load_profile(path)
 
+    def test_a_negative_retention_is_refused(self, tmp_path, profile_text):
+        path = tmp_path / "fixture-profile.toml"
+        path.write_text(
+            profile_text.replace("raw_retention_days = 30", "raw_retention_days = -1"),
+            encoding="utf-8",
+        )
+        with pytest.raises(ProfileError, match="raw_retention_days"):
+            load_profile(path)
+
     def test_both_roots_name_one_directory(self, profile):
         # game_path appends games/ and raw_path appends raw/, so two roots
         # that differ put a session's log and its record in unrelated trees.

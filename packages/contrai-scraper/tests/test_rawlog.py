@@ -1,6 +1,9 @@
-"""Pins the raw log: header, verbatim text, dedup, replay."""
+"""Pins the raw log: header, verbatim text, dedup, replay, retention."""
 
 import json
+import os
+import pathlib
+from datetime import UTC, datetime
 
 import pytest
 
@@ -10,9 +13,14 @@ from contrai_scraper import (
     RawLogWriter,
     WireError,
     new_session_id,
+    prune_raw_logs,
     raw_path,
     read_raw_log,
 )
+
+#: The instant retention is judged at.
+NOW = datetime(2026, 9, 14, 12, 0, tzinfo=UTC)
+DAY = 86_400
 
 
 def frame(text: str, socket: int = 0) -> RawFrame:
@@ -173,6 +181,70 @@ class TestLayout:
             now=datetime(2026, 9, 11, 18, 30, 0, tzinfo=UTC), entropy="abc123"
         )
         assert stamped == "20260911T183000Z-abc123"
+
+
+def aged(path, days):
+    """Write a log and backdate its last write by ``days``."""
+
+    with RawLogWriter(path) as log:
+        log.write_frame(frame("one"))
+    stamp = NOW.timestamp() - days * DAY
+    os.utime(path, (stamp, stamp))
+    return path
+
+
+def vanishing(method, victim):
+    """Wrap a ``Path`` method so it raises for one path, as if already deleted.
+
+    Every other path keeps the real method: the directory check and the
+    listing go through ``Path`` too, and must keep working.
+    """
+
+    def wrapper(self, *args, **kwargs):
+        if self == victim:
+            raise FileNotFoundError(str(self))
+        return method(self, *args, **kwargs)
+
+    return wrapper
+
+
+class TestRetention:
+    def test_a_log_last_written_before_the_retention_is_deleted(self, tmp_path):
+        old = aged(raw_path(tmp_path, "old"), days=31)
+        new = aged(raw_path(tmp_path, "new"), days=1)
+        removed = prune_raw_logs(tmp_path, 30, now=NOW)
+        assert (removed, old.exists(), new.exists()) == ((old,), False, True)
+
+    def test_zero_keeps_every_log(self, tmp_path):
+        old = aged(raw_path(tmp_path, "old"), days=400)
+        assert (prune_raw_logs(tmp_path, 0, now=NOW), old.exists()) == ((), True)
+
+    def test_a_root_without_a_raw_directory_prunes_nothing(self, tmp_path):
+        # A first shift on a fresh box prunes before its first log exists.
+        assert prune_raw_logs(tmp_path, 30, now=NOW) == ()
+
+    def test_only_raw_logs_are_considered(self, tmp_path):
+        # An operator's note left beside the logs is not the sweep's to delete.
+        notes = tmp_path / "raw" / "notes.txt"
+        aged(raw_path(tmp_path, "keep-dir"), days=1)
+        notes.write_text("kept", encoding="utf-8")
+        stamp = NOW.timestamp() - 40 * DAY
+        os.utime(notes, (stamp, stamp))
+        assert (prune_raw_logs(tmp_path, 30, now=NOW), notes.exists()) == ((), True)
+
+    def test_a_log_gone_before_its_age_is_read_is_skipped(self, tmp_path, monkeypatch):
+        # Two processes may share one records root; losing the race is not a
+        # failure, and the file it lost is not this call's to report.
+        first = aged(raw_path(tmp_path, "a"), days=31)
+        second = aged(raw_path(tmp_path, "b"), days=31)
+        monkeypatch.setattr(pathlib.Path, "stat", vanishing(pathlib.Path.stat, first))
+        assert prune_raw_logs(tmp_path, 30, now=NOW) == (second,)
+
+    def test_a_log_gone_before_its_delete_is_skipped(self, tmp_path, monkeypatch):
+        first = aged(raw_path(tmp_path, "a"), days=31)
+        second = aged(raw_path(tmp_path, "b"), days=31)
+        monkeypatch.setattr(pathlib.Path, "unlink", vanishing(pathlib.Path.unlink, first))
+        assert prune_raw_logs(tmp_path, 30, now=NOW) == (second,)
 
 
 class TestNotes:

@@ -34,6 +34,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) Profile `[schedule]` — timezone-aware daily windows, midnight-crossing allowed, with an overrun cap for the game in hand. See [scraper docs](docs/scraper/index.md).
 - (scraper) Profile `[egress]` — exit address not home, expected country, route through the tunnel; `check-profile` checks it before opening a browser. See [scraper docs](docs/scraper/index.md).
 - (scraper) `[account].email` may read `env:NAME` like the verification code, so one profile can serve any account.
+- (scraper) `prune_raw_logs(root, retention_days)` — delete raw logs whose last write is older than the retention; `0` keeps them all.
 
 ### Changed
 
