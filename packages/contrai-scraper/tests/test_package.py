@@ -31,6 +31,17 @@ class TestWiring:
         }
         assert public - exported == set()
 
+    def test_the_public_surface_is_listed_in_order(self):
+        # Constants, then classes, then functions, each alphabetical: every
+        # new export has exactly one right place, so the list stays scannable.
+        def group(name: str) -> int:
+            if name.isupper():
+                return 0
+            return 1 if name[0].isupper() else 2
+
+        names = contrai_scraper.__all__
+        assert names == sorted(names, key=lambda name: (group(name), name))
+
     def test_the_v1_browser_flow_is_gone(self):
         # config.py was the last tracked file naming the site, and it held a
         # live credential pair. The profile owns both now.
