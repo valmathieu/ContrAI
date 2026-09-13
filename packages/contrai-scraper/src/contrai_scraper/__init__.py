@@ -31,6 +31,12 @@ from contrai_scraper.browser import (
     Spectator,
     open_spectator,
 )
+from contrai_scraper.egress import (
+    EgressGate,
+    EgressReading,
+    EgressRefusal,
+    route_device_from,
+)
 from contrai_scraper.exceptions import (
     BrowserError,
     ParseError,
@@ -87,6 +93,7 @@ from contrai_scraper.parse.translate import Translator
 from contrai_scraper.profile import (
     AccountSection,
     BrowserSection,
+    EgressSection,
     OutputSection,
     PrivacySection,
     Profile,
@@ -132,6 +139,10 @@ __all__ = [
     "BrowserError",
     "BrowserSection",
     "Counters",
+    "EgressGate",
+    "EgressReading",
+    "EgressRefusal",
+    "EgressSection",
     "EventKey",
     "FrameSource",
     "HealthLog",
@@ -193,6 +204,7 @@ __all__ = [
     "read_snapshot",
     "resolve_dealer",
     "restore_forced_passes",
+    "route_device_from",
     "timezone_named",
     "unwrap",
 ]

@@ -31,6 +31,7 @@ from typing import Final
 from contrai_data import GameEvent, RecordWriter, RoundDealt, game_path
 
 from contrai_scraper.browser import open_spectator
+from contrai_scraper.egress import EgressGate, EgressReading
 from contrai_scraper.exceptions import ScraperError
 from contrai_scraper.frames import RawFrame, RawLogFrameSource
 from contrai_scraper.health import HealthLog
@@ -240,8 +241,40 @@ def _run_check(args: argparse.Namespace) -> int:
         return _report([*results, ("rotation holds", False, str(error))])
 
     results.append(("rotation holds", True, "the seat map walks the table's cycle"))
+
+    egress = _egress_result(_egress_reading(profile))
+    results.append(egress)
+    if not egress[1]:
+        # A refused egress means the next step would walk the site from the
+        # wrong address. Stop here rather than report on a walk never taken.
+        return _report(results)
+
     results += asyncio.run(_check(profile, args.headless))
     return _report(results)
+
+
+def _egress_reading(profile: Profile) -> EgressReading:  # pragma: no cover - real network
+    """Ask the network where this machine's traffic leaves."""
+
+    return EgressGate(profile.egress, profile.site.url).check_now()
+
+
+def _egress_result(reading: EgressReading) -> tuple[str, bool, str]:
+    """One check line for an egress reading, never naming the home address.
+
+    Args:
+        reading: What the gate answered.
+
+    Returns:
+        The ``(name, passed, detail)`` triple the report prints.
+    """
+
+    name = "egress leaves through the tunnel"
+    if reading.ok:
+        route = reading.route_device or "not checked on this machine"
+        return (name, True, f"exit {reading.exit_ip} ({reading.country}), route {route}")
+    detail = ", ".join(f"{key} {value}" for key, value in reading.fields().items() if value)
+    return (name, False, f"refused, nothing sent to the site: {detail}")
 
 
 def _report(results: Sequence[tuple[str, bool, str]]) -> int:

@@ -15,6 +15,7 @@ rather than at every lookup.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import tomllib
@@ -273,6 +274,37 @@ class RecorderSection:
 
 
 @dataclass(frozen=True, slots=True)
+class EgressSection:
+    """The gate every check runs against before any traffic reaches the site."""
+
+    home_ip: str
+    """The address that must never be the exit. May be indirected."""
+
+    expected_country: str
+    """Two letters, compared case-insensitively."""
+
+    probe_url: str
+    """A service answering with the caller's public address and country."""
+
+    probe_ip_field: str
+    probe_country_field: str
+    tunnel_interface: str | None
+    """The device the site's route must leave through, where one can be asked."""
+
+    def __post_init__(self) -> None:
+        try:
+            ipaddress.ip_address(self.home_ip)
+        except ValueError:
+            # The value is never echoed: it may well be a real address, and a
+            # refusal message is the one place it must not appear.
+            raise ProfileError("[egress].home_ip is not an IP address") from None
+        if len(self.expected_country) != 2 or not self.expected_country.isalpha():
+            raise ProfileError(
+                "[egress].expected_country must be a two-letter country code"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class OutputSection:
     """Where records and raw logs are written, and for how long they are kept."""
 
@@ -300,6 +332,7 @@ class Profile:
     rules: RulesSection
     recorder: RecorderSection
     schedule: Schedule
+    egress: EgressSection
     output: OutputSection
     privacy: PrivacySection
 
@@ -699,6 +732,21 @@ def _schedule(table: _Table) -> Schedule:
     return section
 
 
+def _egress(table: _Table) -> EgressSection:
+    """Read ``[egress]``, resolving the home address's indirection."""
+
+    section = EgressSection(
+        home_ip=_secret("[egress].home_ip", table.string("home_ip")),
+        expected_country=table.string("expected_country"),
+        probe_url=table.string("probe_url"),
+        probe_ip_field=table.string("probe_ip_field"),
+        probe_country_field=table.string("probe_country_field"),
+        tunnel_interface=table.optional_string("tunnel_interface"),
+    )
+    table.done()
+    return section
+
+
 def _output(table: _Table, base: Path) -> OutputSection:
     """Read ``[output]``, resolving both roots against the profile's directory.
 
@@ -761,6 +809,7 @@ def load_profile(path: Path | str) -> Profile:
         rules=_rules(root.section("rules")),
         recorder=_recorder(root.section("recorder")),
         schedule=_schedule(root.section("schedule")),
+        egress=_egress(root.section("egress")),
         output=_output(root.section("output"), path.parent),
         privacy=_privacy(root.section("privacy")),
     )

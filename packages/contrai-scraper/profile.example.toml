@@ -210,6 +210,22 @@ finish_current_game = true
 max_overrun_minutes = 30
 idle_poll_minutes = 5
 
+# Checked before any traffic reaches the site, and again before every hop:
+# the exit address must not be the home address, must be in the expected
+# country and — where a route table can be asked — the site's route must leave
+# through the tunnel. A failed check seats nothing. Never write the home
+# address here; name the environment variable that holds it.
+[egress]
+home_ip = "env:CONTRAI_HOME_IP"
+expected_country = "FR"
+# Any service answering with the caller's public address and country as JSON.
+probe_url = "https://ipinfo.io/json"
+probe_ip_field = "ip"
+probe_country_field = "country"
+# The tunnel device in the scraper's network namespace. Omit it where there is
+# no `ip` route table to ask, such as a desktop VPN on Windows.
+tunnel_interface = "tun0"
+
 # Where records and raw logs are written. Both roots resolve relative to this
 # file, so a profile moves with its data. Both roots name the same directory:
 # game_path appends games/ and raw_path appends raw/.

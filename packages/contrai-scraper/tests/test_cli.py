@@ -7,13 +7,30 @@ import sys
 import pytest
 from contrai_data import load_game
 
-from contrai_scraper import ScoreboardReading, Translator, read_snapshot
+from contrai_scraper import (
+    EgressReading,
+    EgressRefusal,
+    ScoreboardReading,
+    Translator,
+    read_snapshot,
+)
 from contrai_scraper.cli import (
+    _egress_result,
     _orientation_result,
     _reconfigure_streams,
     _treat_sigterm_as_interrupt,
     main,
 )
+
+#: What a working tunnel says, in documentation addresses.
+OPEN = EgressReading(refusal=None, exit_ip="203.0.113.7", country="XX", route_device=None)
+
+
+@pytest.fixture(autouse=True)
+def open_egress(monkeypatch):
+    """check-profile asks the network for its exit address; no test here may."""
+
+    monkeypatch.setattr("contrai_scraper.cli._egress_reading", lambda profile: OPEN)
 
 
 class TestDispatch:
@@ -210,6 +227,27 @@ class TestCheckProfile:
         monkeypatch.setattr("contrai_scraper.cli._check", _one_failed_check)
         code = main(["check-profile", str(profile_path)])
         assert (code, "options" in capsys.readouterr().out) == (1, True)
+
+
+class TestCheckProfileEgress:
+    def test_a_blocked_egress_fails_before_any_browser_opens(self, monkeypatch,
+                                                             profile_path, capsys):
+        opened = []
+        monkeypatch.setattr(
+            "contrai_scraper.cli._egress_reading",
+            lambda profile: EgressReading(refusal=EgressRefusal.EXIT_IS_HOME,
+                                          exit_ip=None, country="XX", route_device=None),
+        )
+        monkeypatch.setattr("contrai_scraper.cli._check",
+                            lambda profile, headless: opened.append(True))
+        code = main(["check-profile", str(profile_path)])
+        assert (code, "exit_is_home" in capsys.readouterr().out, opened) == (1, True, [])
+
+    def test_an_open_egress_names_the_exit_and_an_unchecked_route(self):
+        name, passed, detail = _egress_result(OPEN)
+        assert (name, passed, "203.0.113.7" in detail, "not checked" in detail) == (
+            "egress leaves through the tunnel", True, True, True
+        )
 
 
 class TestOrientationCheck:

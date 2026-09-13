@@ -236,6 +236,13 @@ finish_current_game = true
 max_overrun_minutes = 30
 idle_poll_minutes = 5
 
+[egress]
+home_ip = "198.51.100.1"
+expected_country = "XX"
+probe_url = "https://probe.invalid/ip.json"
+probe_ip_field = "addr"
+probe_country_field = "land"
+
 [output]
 # Both roots name the same directory: game_path appends games/ and raw_path
 # appends raw/.

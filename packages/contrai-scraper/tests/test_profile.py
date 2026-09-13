@@ -279,8 +279,61 @@ class TestSchedule:
 def _without_schedule(text: str) -> str:
     """The fixture profile with its whole ``[schedule]`` section cut out."""
 
-    start = text.index("[schedule]")
+    return _without_section(text, "[schedule]")
+
+
+def _without_section(text: str, header: str) -> str:
+    """The fixture profile with one whole section cut out."""
+
+    start = text.index(header)
     return text[:start] + text[text.index("\n\n", start) + 2:]
+
+
+class TestEgress:
+    def test_the_gate_is_read(self, profile):
+        assert (profile.egress.home_ip, profile.egress.expected_country,
+                profile.egress.tunnel_interface) == ("198.51.100.1", "XX", None)
+
+    def test_the_tunnel_interface_is_read_when_present(self, tmp_path, profile_text):
+        path = tmp_path / "p.toml"
+        path.write_text(
+            profile_text.replace('probe_country_field = "land"',
+                                 'probe_country_field = "land"\ntunnel_interface = "tun0"'),
+            encoding="utf-8")
+        assert load_profile(path).egress.tunnel_interface == "tun0"
+
+    def test_the_home_ip_can_come_from_the_environment(self, tmp_path, profile_text,
+                                                       monkeypatch):
+        # The address is the operator's own; it belongs in the box's env file,
+        # never in a document that travels.
+        monkeypatch.setenv("CONTRAI_HOME_IP", "198.51.100.2")
+        path = tmp_path / "p.toml"
+        path.write_text(
+            profile_text.replace('home_ip = "198.51.100.1"',
+                                 'home_ip = "env:CONTRAI_HOME_IP"'), encoding="utf-8")
+        assert load_profile(path).egress.home_ip == "198.51.100.2"
+
+    def test_a_home_ip_that_is_not_an_address_is_refused(self, tmp_path, profile_text):
+        path = tmp_path / "p.toml"
+        path.write_text(
+            profile_text.replace('home_ip = "198.51.100.1"', 'home_ip = "home"'),
+            encoding="utf-8")
+        with pytest.raises(ProfileError, match="home_ip"):
+            load_profile(path)
+
+    def test_a_country_that_is_not_two_letters_is_refused(self, tmp_path, profile_text):
+        path = tmp_path / "p.toml"
+        path.write_text(
+            profile_text.replace('expected_country = "XX"',
+                                 'expected_country = "France"'), encoding="utf-8")
+        with pytest.raises(ProfileError, match="expected_country"):
+            load_profile(path)
+
+    def test_a_missing_egress_is_refused(self, tmp_path, profile_text):
+        path = tmp_path / "p.toml"
+        path.write_text(_without_section(profile_text, "[egress]"), encoding="utf-8")
+        with pytest.raises(ProfileError, match="egress"):
+            load_profile(path)
 
 
 class TestTheCommittedExample:
@@ -290,6 +343,7 @@ class TestTheCommittedExample:
         # error, and nothing else in the suite reads that file.
         monkeypatch.setenv("CONTRAI_SCRAPER_CODE", "0000")
         monkeypatch.setenv("CONTRAI_SCRAPER_SALT", "pepper")
+        monkeypatch.setenv("CONTRAI_HOME_IP", "198.51.100.1")
         assert load_profile(EXAMPLE).rules.preset in {"classic", "tournament"}
 
     def test_its_seat_map_walks_the_table_the_presets_way(self, monkeypatch):
@@ -297,6 +351,7 @@ class TestTheCommittedExample:
         # example has to pass the rotation check its own preset implies.
         monkeypatch.setenv("CONTRAI_SCRAPER_CODE", "0000")
         monkeypatch.setenv("CONTRAI_SCRAPER_SALT", "pepper")
+        monkeypatch.setenv("CONTRAI_HOME_IP", "198.51.100.1")
         assert Translator(load_profile(EXAMPLE)).rotation == (
             Position.NORTH, Position.EAST, Position.SOUTH, Position.WEST)
 
