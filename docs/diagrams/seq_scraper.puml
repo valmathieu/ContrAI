@@ -1,5 +1,5 @@
 @startuml seq_scraper
-title contrai-scraper — the table loop (cli.run → Recorder.run)
+title contrai-scraper — the table loop (cli.run → Shift.run → Recorder.run)
 
 ' --- Palette: scraper purple, with contrai-data teal for the record end ---
 skinparam shadowing false
@@ -32,6 +32,7 @@ actor "Operator" as U
 
 box "browser half" #F3E5F5
     participant "cli.py" as C <<scraper>>
+    participant "Shift\n(shift.py)" as SH <<scraper>>
     participant "Spectator\n(browser.py)" as SP <<scraper>>
     participant "page\n(Chromium)" as PG
 end box
@@ -52,8 +53,21 @@ end box
 U -> C : contrai-scrape run ~--profile P ~--headless
 activate C
 
-C -> SP : open_spectator(profile)
-note right of C
+C -> SH : Shift(profile, health, egress).run()
+activate SH
+
+== 0. Shift gates ==
+
+SH -> SH : schedule.is_active(now)
+SH -> SH : egress.check()
+note right of SH
+  Outside the window no browser is open.
+  The echo service is asked before the site's name
+  is resolved; the home address is never logged.
+end note
+
+SH -> SP : open_spectator(profile, health)
+note right of SH
   The frame source is attached
   //before// navigation: the first
   socket opens during the walk,
@@ -69,7 +83,7 @@ note right of SP
 end note
 PG -> SK : <<opens>> two connections
 
-C -> R : Recorder(...).run()
+SH -> R : Recorder(..., egress).run()
 activate R
 
 == 1. Seat ==
@@ -145,6 +159,7 @@ PS --> R : SessionResult(events, notes, skipped_rounds)
 deactivate PS
 R -> RW : write every event
 RW -> RW : ""<root>/games/<game_id>.jsonl""
+R -> R : egress.check() — refused: stop, no hop
 R -> SP : next_table()
 note over R, RW
   The watchdog states ""abandoned"" and an interrupt states
@@ -152,8 +167,10 @@ note over R, RW
   flags left on it would describe a different ending.
 end note
 
+SH <-- R : SessionSummary(stop_reason)
 deactivate R
-C --> U : games recorded, tables seated, tables rejected
+deactivate SH
+C --> U : sessions, games recorded, tables seated, tables rejected
 deactivate C
 
 @enduml

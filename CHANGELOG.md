@@ -36,6 +36,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) `[account].email` may read `env:NAME` like the verification code, so one profile can serve any account.
 - (scraper) `prune_raw_logs(root, retention_days)` — delete raw logs whose last write is older than the retention; `0` keeps them all.
 - (scraper) `RecorderLimits.seat_until_s`, `Recorder(egress=…)` and `SessionSummary.stop_reason` — stop seating at a deadline; a refused egress stops the hop and writes a stalled game `interrupted`.
+- (scraper) `contrai-scrape run` runs shifts — no browser outside `[schedule]`, egress checked per session, a raw log per session, exit 3 when a failure budget is spent. See [scraper docs](docs/scraper/index.md).
 
 ### Changed
 

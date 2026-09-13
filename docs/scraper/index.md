@@ -27,6 +27,7 @@ the same reason.
 | `contrai_scraper.recorder` | `Recorder` — the table loop: seat, gate, watch, write, hop. Imports no Playwright. |
 | `contrai_scraper.schedule` | `Schedule` — daily ranges in a named timezone; answers "is it open now" and "when does that change". |
 | `contrai_scraper.egress` | `EgressGate` — exit address, country and route device, checked before the site is touched. |
+| `contrai_scraper.shift` | `Shift` — the outer loop: schedule gate, egress gate, one browser session and raw log per window, failure budgets. |
 | `contrai_scraper.health` | `HealthLog` and `Counters` — one JSON line per transition, on stderr. |
 | `contrai_scraper.cli` | `contrai-scrape`: `run` (the default), `check-profile` and `parse`. |
 
@@ -162,12 +163,39 @@ would seat four players from a table we left.
 `HealthLog` writes one JSON object per line to stderr — a transition per line plus a counter
 heartbeat — so a shift is `journalctl`-readable without a parser being written for it.
 
+## Shifts
+
+`contrai-scrape run` is a shift: a process meant to stay up for weeks, watching only inside the
+profile's `[schedule]` and only through the tunnel `[egress]` describes. `Shift` is the loop that
+reconciles the two, one browser session at a time.
+
+```mermaid format="svg" source="state_scraper_shift.mmd"
+```
+
+- **No browser outside the window.** A closed schedule holds nothing open — a closed browser costs
+  nothing and cannot drift. The process logs `schedule_idle` once, naming the next opening, and
+  asks again every `idle_poll_minutes`.
+- **The egress is checked before every session, cheapest-to-leak first.** The echo service is
+  asked for the exit address before the site's name is even resolved, so a leaking setup is refused
+  before it has looked the site up; then the country; then, where `tunnel_interface` is set, the
+  device the site's route leaves through. A refusal (`egress_blocked`) sends nothing to the site,
+  and the home address is compared, never logged. The recorder asks again before every hop and
+  when a table goes quiet.
+- **Each session keeps its own raw log**, and logs past `[output].raw_retention_days` are pruned
+  before a session opens, so a process running for weeks never holds one file past its retention.
+  Records are never pruned.
+- **A closing window ends seating, not the game in hand.** No table is taken after the close; with
+  `finish_current_game` the game already being watched runs on for at most `max_overrun_minutes`,
+  and one still running then is written `observer_left` — we stopped watching it, it did not end.
+- **Budgets hand the process back.** Six refused egress checks in a row, or three failed sessions
+  in a row (a browser error, or frames that simply stopped), end the process with exit code 3, so
+  its supervisor starts a fresh one. Exit code 130 means it was interrupted — Ctrl+C, or the
+  SIGTERM a service or container stop sends — and the game in hand was written `interrupted`.
+
 ## Pending
 
 - Multi-table orchestration: several browser contexts, a shared registry of tables already
   watched.
 - Pseudonymisation: records currently carry raw ids, names and account fields — personal data,
   local only.
-- Raw-log retention: `prune_raw_logs` deletes logs past `[output].raw_retention_days`, but no
-  loop calls it yet.
 - Rate-limiting / ToS considerations.

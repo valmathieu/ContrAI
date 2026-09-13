@@ -35,6 +35,7 @@ The importable package lives under `src/contrai_scraper/`:
 | `recorder` | `Recorder` — the table loop: seat, gate, watch, write, hop. Imports no Playwright. |
 | `schedule` | `Schedule` — daily ranges in a named timezone; answers "is it open now" and "when does that change". |
 | `egress` | `EgressGate` — exit address, country and route device, checked before the site is touched. |
+| `shift` | `Shift` — the outer loop: schedule gate, egress gate, one browser session and raw log per window, failure budgets. |
 | `health` | `HealthLog` and `Counters` — one JSON line per transition, on stderr. |
 | `cli` | `contrai-scrape`: `run` (the default), `check-profile` and `parse`. |
 

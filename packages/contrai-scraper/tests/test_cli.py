@@ -11,6 +11,7 @@ from contrai_scraper import (
     EgressReading,
     EgressRefusal,
     ScoreboardReading,
+    ShiftError,
     Translator,
     read_snapshot,
 )
@@ -83,7 +84,7 @@ class TestDispatch:
 class TestLimits:
     def test_minutes_becomes_a_second_limit(self, monkeypatch, profile_path):
         seen = []
-        monkeypatch.setattr("contrai_scraper.cli._watch",
+        monkeypatch.setattr("contrai_scraper.cli._shift",
                             lambda p, limits, headless: seen.append(limits))
         monkeypatch.setattr("contrai_scraper.cli.asyncio.run", lambda c: c)
         main(["run", "--profile", str(profile_path), "--minutes", "20"])
@@ -91,7 +92,7 @@ class TestLimits:
 
     def test_max_games_reaches_the_recorder(self, monkeypatch, profile_path):
         seen = []
-        monkeypatch.setattr("contrai_scraper.cli._watch",
+        monkeypatch.setattr("contrai_scraper.cli._shift",
                             lambda p, limits, headless: seen.append(limits))
         monkeypatch.setattr("contrai_scraper.cli.asyncio.run", lambda c: c)
         main(["run", "--profile", str(profile_path), "--max-games", "2"])
@@ -99,7 +100,7 @@ class TestLimits:
 
     def test_headless_overrides_the_profile(self, monkeypatch, profile_path):
         seen = []
-        monkeypatch.setattr("contrai_scraper.cli._watch",
+        monkeypatch.setattr("contrai_scraper.cli._shift",
                             lambda p, limits, headless: seen.append(headless))
         monkeypatch.setattr("contrai_scraper.cli.asyncio.run", lambda c: c)
         main(["run", "--profile", str(profile_path), "--headless"])
@@ -110,11 +111,22 @@ class TestLimits:
         # ``None`` is what tells the launcher to read [browser].headless;
         # defaulting to False here would silently ignore the profile.
         seen = []
-        monkeypatch.setattr("contrai_scraper.cli._watch",
+        monkeypatch.setattr("contrai_scraper.cli._shift",
                             lambda p, limits, headless: seen.append(headless))
         monkeypatch.setattr("contrai_scraper.cli.asyncio.run", lambda c: c)
         main(["run", "--profile", str(profile_path)])
         assert seen == [None]
+
+    def test_an_exhausted_shift_exits_3(self, monkeypatch, profile_path, capsys):
+        # A spent budget is the process handing itself back: the supervisor
+        # restarts it, and a code of its own says why it stopped.
+        def exhausted(coroutine):
+            coroutine.close()
+            raise ShiftError("egress refused 6 times in a row")
+
+        monkeypatch.setattr("contrai_scraper.cli.asyncio.run", exhausted)
+        code = main(["run", "--profile", str(profile_path)])
+        assert (code, "refused" in capsys.readouterr().err) == (3, True)
 
 
 class TestSigterm:

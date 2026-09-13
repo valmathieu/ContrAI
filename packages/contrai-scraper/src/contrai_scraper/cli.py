@@ -32,24 +32,22 @@ from contrai_data import GameEvent, RecordWriter, RoundDealt, game_path
 
 from contrai_scraper.browser import open_spectator
 from contrai_scraper.egress import EgressGate, EgressReading
-from contrai_scraper.exceptions import ScraperError
+from contrai_scraper.exceptions import ScraperError, ShiftError
 from contrai_scraper.frames import RawFrame, RawLogFrameSource
 from contrai_scraper.health import HealthLog
 from contrai_scraper.parse.session import SessionResult, parse_session
 from contrai_scraper.parse.snapshot import read_snapshot
 from contrai_scraper.parse.translate import Translator
 from contrai_scraper.profile import Profile, load_profile
-from contrai_scraper.rawlog import RawLogWriter, new_session_id, raw_path
 from contrai_scraper.recorder import (
-    Recorder,
     RecorderLimits,
-    SessionSummary,
     # The same two helpers the recorder gates a table with. Imported rather
     # than restated so ``check-profile`` cannot pass a table the recorder
     # would refuse, or the other way round.
     _orientation_holds,
     _wire_pair,
 )
+from contrai_scraper.shift import Shift, ShiftSummary
 from contrai_scraper.wire import WireStream, order_events
 
 #: The subcommands, and the one a bare invocation means.
@@ -65,6 +63,10 @@ _MINUTE: Final[float] = 60.0
 
 #: The exit status a shell gives a process stopped by an interrupt.
 EXIT_INTERRUPTED: Final[int] = 130
+
+#: The exit status of a shift that spent a failure budget: hand the process
+#: back to its supervisor for a fresh start.
+EXIT_SHIFT_ENDED: Final[int] = 3
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -146,9 +148,9 @@ def _run_recorder(args: argparse.Namespace) -> int:
         args: The parsed ``run`` arguments.
 
     Returns:
-        0, or 130 when an interrupt stopped the run. A session that watched
-        nothing is not a failure — an empty shift is what a quiet evening
-        looks like, and the health log says so.
+        0; 130 when an interrupt stopped the run; 3 when a failure budget was
+        spent. A shift that watched nothing is not a failure — an empty shift
+        is what a quiet evening looks like, and the health log says so.
 
     Raises:
         SystemExit: If the profile cannot be read (exit code 2).
@@ -160,50 +162,46 @@ def _run_recorder(args: argparse.Namespace) -> int:
         max_seconds=None if args.minutes is None else args.minutes * _MINUTE,
     )
     try:
-        asyncio.run(_watch(profile, limits, args.headless))
+        asyncio.run(_shift(profile, limits, args.headless))
     except KeyboardInterrupt:
         # Both Ctrl+C and, through the handler above, a service stop: the
         # recorder has already written the game in hand as interrupted.
         return EXIT_INTERRUPTED
+    except ShiftError as error:
+        # A spent budget. A code of its own hands the process back to its
+        # supervisor, which starts a fresh one.
+        print(f"contrai-scrape: {error}", file=sys.stderr)
+        return EXIT_SHIFT_ENDED
     return 0
 
 
-async def _watch(  # pragma: no cover - needs a real browser
+async def _shift(  # pragma: no cover - needs a real browser
     profile: Profile, limits: RecorderLimits, headless: bool | None
-) -> SessionSummary:
-    """Open a browser, seat a spectator, and record until the limits stop it.
+) -> ShiftSummary:
+    """Run shifts until the limits stop them, printing what they did.
 
     Args:
         profile: The loaded profile.
-        limits: When to stop.
+        limits: When to stop, across every session.
         headless: Override for ``[browser].headless``; ``None`` takes it.
 
     Returns:
-        What the session did.
+        What the shift did, across its sessions.
     """
 
     _treat_sigterm_as_interrupt()
-    health = HealthLog()
-    session = new_session_id()
-    log = RawLogWriter(raw_path(profile.output.raw_root, session))
-    health.event("session_started", session=session, raw=str(log.path))
-    try:
-        async with open_spectator(profile, headless=headless, health=health) as (
-            spectator,
-            frames,
-        ):
-            await spectator.log_in()
-            await spectator.enter_variant()
-            recorder = Recorder(
-                spectator, frames, profile, health, limits=limits, raw=log
-            )
-            summary = await recorder.run()
-    finally:
-        log.close()
-
+    shift = Shift(
+        profile,
+        HealthLog(),
+        open_session=open_spectator,
+        egress=EgressGate(profile.egress, profile.site.url),
+        headless=headless,
+        limits=limits,
+    )
+    summary = await shift.run()
     print(
-        f"{summary.games_recorded} games, {summary.tables_seated} tables seated, "
-        f"{summary.tables_rejected} rejected"
+        f"{summary.sessions} sessions, {summary.games_recorded} games, "
+        f"{summary.tables_seated} tables seated, {summary.tables_rejected} rejected"
     )
     for path in summary.records:
         print(f"  -> {path}")

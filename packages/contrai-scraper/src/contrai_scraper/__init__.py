@@ -13,6 +13,9 @@ The package is a pipeline with a browser at one end and a record at the other:
 * :mod:`contrai_scraper.recorder` is the loop that drives all of it, one table
   at a time, with :mod:`contrai_scraper.rawlog` keeping the evidence and
   :mod:`contrai_scraper.health` saying what it is doing.
+* :mod:`contrai_scraper.shift` runs recorders only inside the
+  :mod:`contrai_scraper.schedule` window and only once
+  :mod:`contrai_scraper.egress` says traffic leaves through the tunnel.
 
 :mod:`contrai_scraper.cli` wires them into the ``contrai-scrape`` console
 script.
@@ -42,6 +45,7 @@ from contrai_scraper.exceptions import (
     ParseError,
     ProfileError,
     ScraperError,
+    ShiftError,
     WireError,
 )
 from contrai_scraper.frames import (
@@ -115,6 +119,12 @@ from contrai_scraper.schedule import (
     parse_range,
     timezone_named,
 )
+from contrai_scraper.shift import (
+    EGRESS_BUDGET,
+    FAILURE_BUDGET,
+    Shift,
+    ShiftSummary,
+)
 from contrai_scraper.wire import (
     DEAL_VERB,
     EventKey,
@@ -130,6 +140,8 @@ from contrai_scraper.wire import (
 __all__ = [
     "DEAL_PACKETS",
     "DEAL_VERB",
+    "EGRESS_BUDGET",
+    "FAILURE_BUDGET",
     "INIT_SCRIPT",
     "RECEIVED",
     "SCOREBOARD_PANEL",
@@ -174,6 +186,9 @@ __all__ = [
     "SelectorSection",
     "SessionResult",
     "SessionSummary",
+    "Shift",
+    "ShiftError",
+    "ShiftSummary",
     "SiteSection",
     "Snapshot",
     "Spectator",
