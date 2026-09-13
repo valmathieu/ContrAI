@@ -30,6 +30,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) `Recorder` — seats at a tournament table, gates it, watches a whole game and writes one record per game. See [scraper docs](docs/scraper/index.md).
 - (scraper) `contrai-scrape run --profile P [--headless] [--max-games N] [--minutes N]` — watch tables unattended, one record per game. See [scraper docs](docs/scraper/index.md).
 - (scraper) `contrai-scrape check-profile P` — validate a profile against the live site before a shift starts.
+- (scraper) The health log counts and names every socket open and close, so a dropped connection shows in the heartbeat.
 
 ### Changed
 

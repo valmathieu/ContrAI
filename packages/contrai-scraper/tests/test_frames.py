@@ -1,8 +1,9 @@
-"""Pins the frame source: socket indexing, queueing, close."""
+"""Pins the frame source: socket indexing, queueing, close, socket counting."""
 
 import asyncio
+import json
 
-from contrai_scraper import PlaywrightFrameSource
+from contrai_scraper import HealthLog, PlaywrightFrameSource
 
 
 class FakeSocket:
@@ -117,3 +118,60 @@ class TestPlaywrightFrameSource:
             return [f.text async for f in source]
 
         assert drain(scenario) == ["first"]
+
+
+class TestSocketCounting:
+    def test_an_opened_socket_is_counted_and_logged(self, profile):
+        async def scenario():
+            lines: list[str] = []
+            health = HealthLog(write=lines.append)
+            page = FakePage()
+            PlaywrightFrameSource(page, profile.wire, health=health)
+            page.open_socket("wss://example.invalid/sock/1")
+            return health.counters.sockets_opened, [
+                json.loads(line)["event"] for line in lines
+            ]
+
+        assert drain(scenario) == (1, ["socket_opened"])
+
+    def test_a_closed_socket_is_counted_and_names_its_index(self, profile):
+        async def scenario():
+            lines: list[str] = []
+            health = HealthLog(write=lines.append)
+            page = FakePage()
+            PlaywrightFrameSource(page, profile.wire, health=health)
+            page.open_socket("wss://example.invalid/sock/1")
+            second = page.open_socket("wss://example.invalid/sock/2")
+            second.emit("close", second)
+            closed = [
+                json.loads(line)
+                for line in lines
+                if json.loads(line)["event"] == "socket_closed"
+            ]
+            return health.counters.sockets_closed, [line["socket"] for line in closed]
+
+        assert drain(scenario) == (1, [1])
+
+    def test_a_socket_that_is_not_ours_is_not_counted(self, profile):
+        # A page opens sockets for chat, telemetry and whatever else the site
+        # runs; only the game's connections say anything about the recording.
+        async def scenario():
+            health = HealthLog(write=lambda _: None)
+            page = FakePage()
+            PlaywrightFrameSource(page, profile.wire, health=health)
+            other = page.open_socket("wss://elsewhere.invalid/other")
+            other.emit("close", other)
+            return health.counters.sockets_opened, health.counters.sockets_closed
+
+        assert drain(scenario) == (0, 0)
+
+    def test_without_a_health_log_nothing_is_counted(self, profile):
+        # The replay path and the profile check build a source with no log.
+        async def scenario():
+            page = FakePage()
+            PlaywrightFrameSource(page, profile.wire)
+            socket = page.open_socket("wss://example.invalid/sock/1")
+            socket.emit("close", socket)
+            return "no counting, no crash"
+
+        assert drain(scenario) == "no counting, no crash"

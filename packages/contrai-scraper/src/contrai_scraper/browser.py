@@ -36,6 +36,7 @@ from contrai_core import Position
 
 from .exceptions import BrowserError
 from .frames import PlaywrightFrameSource
+from .health import HealthLog
 from .parse.translate import Translator
 from .profile import Profile, Selector
 
@@ -527,7 +528,10 @@ def _number_in(text: str, prefix: str) -> str | None:
 
 @asynccontextmanager
 async def open_spectator(  # pragma: no cover - needs a real browser
-    profile: Profile, *, headless: bool | None = None
+    profile: Profile,
+    *,
+    headless: bool | None = None,
+    health: HealthLog | None = None,
 ) -> AsyncIterator[tuple[Spectator, PlaywrightFrameSource]]:
     """Launch a browser, attach a frame source, yield the pair.
 
@@ -538,6 +542,7 @@ async def open_spectator(  # pragma: no cover - needs a real browser
     Args:
         profile: The loaded profile.
         headless: Override for ``[browser].headless``; ``None`` takes it.
+        health: The session's log, so socket opens and closes are counted.
 
     Yields:
         The spectator and the frames its page will produce.
@@ -552,7 +557,7 @@ async def open_spectator(  # pragma: no cover - needs a real browser
         )
         try:
             page = await browser.new_page()
-            frames = PlaywrightFrameSource(page, profile.wire)
+            frames = PlaywrightFrameSource(page, profile.wire, health=health)
             await page.add_init_script(INIT_SCRIPT)
             yield Spectator(page, profile), frames
         finally:

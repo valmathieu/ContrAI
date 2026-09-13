@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from .health import HealthLog
 from .profile import WireSection
 from .rawlog import FRAME, read_raw_log
 
@@ -70,15 +71,21 @@ class PlaywrightFrameSource:
     that is the only description of the table's opening state.
     """
 
-    __slots__ = ("_wire", "_queue", "_started", "_sockets", "_closed")
+    __slots__ = ("_wire", "_queue", "_started", "_sockets", "_closed", "_health")
 
-    def __init__(self, page: Any, wire: WireSection) -> None:
+    def __init__(
+        self, page: Any, wire: WireSection, *, health: HealthLog | None = None
+    ) -> None:
         """Attach to a page.
 
         Args:
             page: A Playwright page, or anything with the same ``on`` surface.
             wire: The profile's wire section, which knows which socket URLs
                 belong to the game.
+            health: The session's log, when the caller keeps one. The source
+                counts through it rather than keeping a tally of its own: a
+                shift opens one source per window, and these counters are the
+                ones documented as never resetting.
         """
 
         self._wire = wire
@@ -86,6 +93,7 @@ class PlaywrightFrameSource:
         self._started = time.perf_counter()
         self._sockets = 0
         self._closed = False
+        self._health = health
         page.on("websocket", self._attach)
 
     def _attach(self, socket: Any) -> None:
@@ -95,8 +103,21 @@ class PlaywrightFrameSource:
             return
         index = self._sockets
         self._sockets += 1
+        if self._health is not None:
+            # A dropped connection is invisible in the frames themselves — the
+            # mirror carries on — so every open and close is said out loud.
+            self._health.counters.sockets_opened += 1
+            self._health.event("socket_opened", socket=index)
         socket.on("framereceived", lambda payload: self._push(index, RECEIVED, payload))
         socket.on("framesent", lambda payload: self._push(index, SENT, payload))
+        socket.on("close", lambda *_: self._closed_socket(index))
+
+    def _closed_socket(self, index: int) -> None:
+        """Count and log one socket closing. Runs inside Playwright's callback."""
+
+        if self._health is not None:
+            self._health.counters.sockets_closed += 1
+            self._health.event("socket_closed", socket=index)
 
     def _push(self, socket: int, direction: str, payload: str | bytes) -> None:
         """Queue one frame. Runs inside Playwright's callback, so it must not

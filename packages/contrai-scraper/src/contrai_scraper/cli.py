@@ -187,7 +187,10 @@ async def _watch(  # pragma: no cover - needs a real browser
     log = RawLogWriter(raw_path(profile.output.raw_root, session))
     health.event("session_started", session=session, raw=str(log.path))
     try:
-        async with open_spectator(profile, headless=headless) as (spectator, frames):
+        async with open_spectator(profile, headless=headless, health=health) as (
+            spectator,
+            frames,
+        ):
             await spectator.log_in()
             await spectator.enter_variant()
             recorder = Recorder(
