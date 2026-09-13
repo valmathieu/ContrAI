@@ -190,15 +190,20 @@ class Spectator:
         await self._click("pledge_accept")
         return True
 
-    async def enter_variant(self) -> None:
+    async def enter_variant(self) -> bool:
         """Walk to the variant. The server chooses the table.
+
+        Returns:
+            Whether the first-use pledge was showing and answered on the way.
+            Only this walk can tell: the dialog is drawn between the menu
+            steps, so a probe made before them finds nothing.
 
         Raises:
             BrowserError: If a menu step is not there.
         """
 
         await self._click("mode_online")
-        await self.answer_pledge()
+        answered = await self.answer_pledge()
         try:
             await self._click("mode_observe")
         except BrowserError:
@@ -208,8 +213,10 @@ class Spectator:
             # blocked by anything else still fails, naming its key.
             if not await self.answer_pledge():
                 raise
+            answered = True
             await self._click("mode_observe")
         await self._click("variant")
+        return answered
 
     async def next_table(self) -> None:
         """Ask the server for another table.

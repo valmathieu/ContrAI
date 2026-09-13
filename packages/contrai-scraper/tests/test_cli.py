@@ -8,8 +8,11 @@ import pytest
 from contrai_data import load_game
 
 from contrai_scraper import (
+    BrowserError,
     EgressReading,
     EgressRefusal,
+    OptionsReading,
+    RawFrame,
     ScoreboardReading,
     ShiftError,
     Translator,
@@ -17,6 +20,7 @@ from contrai_scraper import (
 )
 from contrai_scraper.cli import (
     _egress_result,
+    _live_checks,
     _orientation_result,
     _reconfigure_streams,
     _treat_sigterm_as_interrupt,
@@ -260,6 +264,122 @@ class TestCheckProfileEgress:
         assert (name, passed, "203.0.113.7" in detail, "not checked" in detail) == (
             "egress leaves through the tunnel", True, True, True
         )
+
+
+class FakeWalk:
+    """A spectator whose walk and panels are scripted; a named step may raise."""
+
+    def __init__(self, *, pledge=False, fail=None, marker=True, ids=None):
+        self._pledge = pledge
+        self._fail = fail or {}
+        self._marker = marker
+        self._ids = ids or {}
+
+    def _step(self, name):
+        if name in self._fail:
+            raise BrowserError(self._fail[name])
+
+    async def log_in(self):
+        self._step("log_in")
+
+    async def enter_variant(self):
+        self._step("enter_variant")
+        return self._pledge
+
+    async def read_tournament_marker(self):
+        return self._marker
+
+    async def read_options(self, expected):
+        self._step("read_options")
+        return OptionsReading(observed=dict(expected), missing=(), extra=(), differing=())
+
+    async def read_player_id(self, position):
+        return self._ids.get(position)
+
+    async def read_scoreboard(self):
+        return ScoreboardReading(rows=(), text="")
+
+
+class Frames:
+    """A frame source that yields its frames, then ends."""
+
+    def __init__(self, *frames):
+        self._frames = list(frames)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._frames:
+            raise StopAsyncIteration
+        return self._frames.pop(0)
+
+
+def _received(text):
+    return RawFrame(socket=0, direction="recv", at=0.0, text=text)
+
+
+def _join_frame(builders):
+    """The join snapshot a freshly seated spectator receives."""
+
+    return _received(
+        builders.envelope("payload", "joinTable", builders.snapshot_payload(), frame_id="s0")
+    )
+
+
+def _accounts(snapshot):
+    """Seat to the account the wire names there — what an honest panel shows."""
+
+    return {
+        position: None if snapshot.players.get(handle) is None
+        else snapshot.players[handle].account
+        for handle, position in snapshot.seats.items()
+    }
+
+
+class TestLiveChecks:
+    def test_a_missing_login_selector_is_a_failed_line_not_a_traceback(self, profile):
+        # The walk is what finds a site change; a traceback would bury the one
+        # line that says which profile key stopped matching.
+        message = "[selectors].login_start matched nothing that could be clicked"
+        results = asyncio.run(_live_checks(FakeWalk(fail={"log_in": message}), Frames(),
+                                           profile))
+        assert results == [("login", False, message)]
+
+    @pytest.mark.parametrize(("answered", "detail"), [(True, "answered"),
+                                                      (False, "not showing")])
+    def test_the_pledge_line_reports_what_the_menu_walk_met(self, profile, answered, detail):
+        # The dialog is drawn between the menu steps, so only the walk that
+        # enters the variant can tell whether it was there.
+        results = asyncio.run(_live_checks(FakeWalk(pledge=answered), Frames(), profile))
+        assert results[:3] == [
+            ("login", True, profile.account.email),
+            ("pledge", True, detail),
+            ("variant entered", True, "the server chose a table"),
+        ]
+
+    def test_a_panel_that_fails_mid_table_names_its_check(self, profile, builders):
+        message = "[selectors].options_button matched nothing that could be clicked"
+        results = asyncio.run(_live_checks(FakeWalk(fail={"read_options": message}),
+                                           Frames(_join_frame(builders)), profile))
+        assert results[-1] == ("options match [rules.options]", False, message)
+
+    def test_a_table_that_agrees_with_the_profile_passes_every_check(self, profile, builders):
+        snapshot = read_snapshot(builders.snapshot_payload(), Translator(profile))
+        walk = FakeWalk(marker=bool(snapshot.is_tournament), ids=_accounts(snapshot))
+        # A keepalive ahead of the snapshot: the wait skips what is not one.
+        results = asyncio.run(_live_checks(walk, Frames(_received("tick"),
+                                                        _join_frame(builders)), profile))
+        assert ([name for name, passed, _ in results if not passed], len(results)) == ([], 8)
+
+    def test_a_panel_id_that_differs_from_the_wire_fails(self, profile, builders):
+        snapshot = read_snapshot(builders.snapshot_payload(), Translator(profile))
+        ids = _accounts(snapshot)
+        ids[next(iter(ids))] = "999"
+        walk = FakeWalk(marker=bool(snapshot.is_tournament), ids=ids)
+        results = asyncio.run(_live_checks(walk, Frames(_join_frame(builders)), profile))
+        passed = {name: ok for name, ok, _ in results}
+        assert passed["panel ids equal the wire's accounts"] is False
 
 
 class TestOrientationCheck:

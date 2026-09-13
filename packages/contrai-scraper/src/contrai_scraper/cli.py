@@ -26,17 +26,17 @@ import signal
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from contrai_data import GameEvent, RecordWriter, RoundDealt, game_path
 
 from contrai_scraper.browser import open_spectator
 from contrai_scraper.egress import EgressGate, EgressReading
-from contrai_scraper.exceptions import ScraperError, ShiftError
+from contrai_scraper.exceptions import BrowserError, ScraperError, ShiftError
 from contrai_scraper.frames import RawFrame, RawLogFrameSource
 from contrai_scraper.health import HealthLog
 from contrai_scraper.parse.session import SessionResult, parse_session
-from contrai_scraper.parse.snapshot import read_snapshot
+from contrai_scraper.parse.snapshot import Snapshot, read_snapshot
 from contrai_scraper.parse.translate import Translator
 from contrai_scraper.profile import Profile, load_profile
 from contrai_scraper.recorder import (
@@ -48,7 +48,7 @@ from contrai_scraper.recorder import (
     _wire_pair,
 )
 from contrai_scraper.shift import Shift, ShiftSummary
-from contrai_scraper.wire import WireStream, order_events
+from contrai_scraper.wire import WireEvent, WireStream, order_events
 
 #: The subcommands, and the one a bare invocation means.
 SUBCOMMANDS: Final[tuple[str, ...]] = ("run", "parse", "check-profile")
@@ -307,16 +307,41 @@ async def _check(  # pragma: no cover - needs a real browser
         ``(name, passed, detail)`` per live check, in the order they ran.
     """
 
+    async with open_spectator(profile, headless=headless) as (spectator, frames):
+        return await _live_checks(spectator, frames, profile)
+
+
+async def _live_checks(
+    spectator: Any, frames: Any, profile: Profile
+) -> list[tuple[str, bool, str]]:
+    """The live checks, over a browser that is already open.
+
+    Split from :func:`_check` so the walk runs against a scripted spectator.
+    A browser step that fails ends the walk with a failed line naming the
+    check it was on: ``check-profile`` exists to find a site change, and a
+    traceback would bury the one line that says which profile key stopped
+    matching.
+
+    Args:
+        spectator: The browser half, or anything with its surface.
+        frames: The frame source the spectator's page feeds.
+        profile: The loaded profile.
+
+    Returns:
+        ``(name, passed, detail)`` per check, in the order they ran.
+    """
+
     translator = Translator(profile)
     results: list[tuple[str, bool, str]] = []
-    async with open_spectator(profile, headless=headless) as (spectator, frames):
+    step = "login"
+    try:
         await spectator.log_in()
         results.append(("login", True, profile.account.email))
-        answered = await spectator.answer_pledge()
-        results.append(
-            ("pledge", True, "answered" if answered else "not showing")
-        )
-        await spectator.enter_variant()
+        step = "variant entered"
+        # The pledge is drawn between the menu steps, so only the walk into the
+        # variant can see it: a probe made before that walk found nothing.
+        answered = await spectator.enter_variant()
+        results.append(("pledge", True, "answered" if answered else "not showing"))
         results.append(("variant entered", True, "the server chose a table"))
 
         event = await _first_snapshot(frames, profile)
@@ -326,29 +351,35 @@ async def _check(  # pragma: no cover - needs a real browser
         results.append(("snapshot arrives", True, "the table described itself"))
 
         snapshot = read_snapshot(event.data, translator, at=event.received_ms)
+        step = "marker agrees with the wire"
         marker = await spectator.read_tournament_marker()
         results.append((
-            "marker agrees with the wire",
+            step,
             marker == bool(snapshot.is_tournament),
             f"rendered {marker}, wire {bool(snapshot.is_tournament)}",
         ))
 
+        step = "options match [rules.options]"
         reading = await spectator.read_options(profile.rules.options)
         results.append((
-            "options match [rules.options]",
+            step,
             reading.matches,
             f"missing {list(reading.missing)}, extra {list(reading.extra)}, "
             f"differing {list(reading.differing)}",
         ))
 
+        step = "panel ids equal the wire's accounts"
         results.append(await _seat_ids_agree(spectator, snapshot, translator))
 
+        step = "us is the south seat's side"
         board = await spectator.read_scoreboard()
         results.append(_orientation_result(snapshot, board))
+    except BrowserError as error:
+        results.append((step, False, str(error)))
     return results
 
 
-async def _first_snapshot(frames, profile: Profile):  # pragma: no cover - browser
+async def _first_snapshot(frames: Any, profile: Profile) -> WireEvent | None:
     """The first join snapshot off the socket, or ``None`` if none arrives."""
 
     stream = WireStream(profile.wire)
@@ -365,8 +396,8 @@ async def _first_snapshot(frames, profile: Profile):  # pragma: no cover - brows
             return event
 
 
-async def _seat_ids_agree(  # pragma: no cover - needs a real browser
-    spectator, snapshot, translator
+async def _seat_ids_agree(
+    spectator: Any, snapshot: Snapshot, translator: Translator
 ) -> tuple[str, bool, str]:
     """Whether every seat's panel shows the account the wire named.
 

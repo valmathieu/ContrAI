@@ -297,32 +297,34 @@ class TestMenu:
                          "#variant": ["Contree"]})
 
         async def scenario():
-            await Spectator(page, profile).enter_variant()
+            return await Spectator(page, profile).enter_variant()
 
-        drain(scenario)
-        assert page.clicks == ["#online", "#observe", "#variant"]
+        assert (drain(scenario), page.clicks) == (False, ["#online", "#observe", "#variant"])
 
     def test_a_pledge_between_the_steps_is_answered(self, profile):
         # It blocks the spectator menu, so the walk stops at the second step
-        # unless the dialog is answered on the way through.
+        # unless the dialog is answered on the way through — and the walk
+        # says so, because only it can see the dialog between the steps.
         page = FakePage({"#online": ["Online"], "#pledge": ["Fair play"],
                          "#pledge-ok": ["OK"], "#observe": ["Watch"],
                          "#variant": ["Contree"]})
 
         async def scenario():
-            await Spectator(page, profile).enter_variant()
+            return await Spectator(page, profile).enter_variant()
 
-        drain(scenario)
-        assert page.clicks == ["#online", "#pledge-ok", "#observe", "#variant"]
+        assert (drain(scenario), page.clicks) == (
+            True, ["#online", "#pledge-ok", "#observe", "#variant"]
+        )
 
     def test_a_pledge_drawn_late_is_answered_and_the_menu_retried(self, profile):
         page = LatePledgePage()
 
         async def scenario():
-            await Spectator(page, profile).enter_variant()
+            return await Spectator(page, profile).enter_variant()
 
-        drain(scenario)
-        assert page.clicks == ["#online", "#pledge-ok", "#observe", "#variant"]
+        assert (drain(scenario), page.clicks) == (
+            True, ["#online", "#pledge-ok", "#observe", "#variant"]
+        )
 
     def test_a_blocked_menu_with_no_pledge_still_names_the_key(self, profile):
         page = FakePage({"#online": ["Online"], "#variant": ["Contree"]})
