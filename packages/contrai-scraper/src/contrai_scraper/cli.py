@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import signal
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -60,6 +61,9 @@ RAW_GLOB: Final[str] = "*.jsonl"
 #: Seconds in a minute, since ``--minutes`` is the friendlier flag and
 #: :class:`~contrai_scraper.recorder.RecorderLimits` counts in seconds.
 _MINUTE: Final[float] = 60.0
+
+#: The exit status a shell gives a process stopped by an interrupt.
+EXIT_INTERRUPTED: Final[int] = 130
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -116,6 +120,24 @@ def _reconfigure_streams() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _treat_sigterm_as_interrupt() -> None:
+    """Make SIGTERM take the path Ctrl+C takes.
+
+    A service manager stops a process with SIGTERM, whose default is to end
+    it without raising — so nothing unwinds and the game being watched is
+    never written. Inside ``asyncio.run`` the SIGINT handler is asyncio's
+    own, which cancels the main task; installing it for SIGTERM too is what
+    lets the recorder close its record as ``interrupted``.
+
+    Must be called from inside the running coroutine: asyncio installs its
+    handler only for the duration of ``run``.
+    """
+
+    handler = signal.getsignal(signal.SIGINT)
+    if callable(handler):
+        signal.signal(signal.SIGTERM, handler)
+
+
 def _run_recorder(args: argparse.Namespace) -> int:
     """Watch tables until the limits are reached.
 
@@ -123,8 +145,9 @@ def _run_recorder(args: argparse.Namespace) -> int:
         args: The parsed ``run`` arguments.
 
     Returns:
-        0. A session that watched nothing is not a failure — an empty shift
-        is what a quiet evening looks like, and the health log says so.
+        0, or 130 when an interrupt stopped the run. A session that watched
+        nothing is not a failure — an empty shift is what a quiet evening
+        looks like, and the health log says so.
 
     Raises:
         SystemExit: If the profile cannot be read (exit code 2).
@@ -135,7 +158,12 @@ def _run_recorder(args: argparse.Namespace) -> int:
         max_games=args.max_games,
         max_seconds=None if args.minutes is None else args.minutes * _MINUTE,
     )
-    asyncio.run(_watch(profile, limits, args.headless))
+    try:
+        asyncio.run(_watch(profile, limits, args.headless))
+    except KeyboardInterrupt:
+        # Both Ctrl+C and, through the handler above, a service stop: the
+        # recorder has already written the game in hand as interrupted.
+        return EXIT_INTERRUPTED
     return 0
 
 
@@ -153,6 +181,7 @@ async def _watch(  # pragma: no cover - needs a real browser
         What the session did.
     """
 
+    _treat_sigterm_as_interrupt()
     health = HealthLog()
     session = new_session_id()
     log = RawLogWriter(raw_path(profile.output.raw_root, session))

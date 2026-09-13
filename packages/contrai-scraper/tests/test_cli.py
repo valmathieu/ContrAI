@@ -1,12 +1,19 @@
 """Pins the CLI: dispatch, the limits, the profile check, what parse writes."""
 
+import asyncio
+import signal
 import sys
 
 import pytest
 from contrai_data import load_game
 
 from contrai_scraper import ScoreboardReading, Translator, read_snapshot
-from contrai_scraper.cli import _orientation_result, _reconfigure_streams, main
+from contrai_scraper.cli import (
+    _orientation_result,
+    _reconfigure_streams,
+    _treat_sigterm_as_interrupt,
+    main,
+)
 
 
 class TestDispatch:
@@ -91,6 +98,54 @@ class TestLimits:
         monkeypatch.setattr("contrai_scraper.cli.asyncio.run", lambda c: c)
         main(["run", "--profile", str(profile_path)])
         assert seen == [None]
+
+
+class TestSigterm:
+    def test_sigterm_cancels_the_run_the_way_ctrl_c_does(self):
+        # A service stop is SIGTERM, and Python's default for it is to die
+        # without raising — the recorder's interrupt handler would never run.
+        previous = signal.getsignal(signal.SIGTERM)
+        seen: list[str] = []
+
+        async def scenario():
+            _treat_sigterm_as_interrupt()
+            handler = signal.getsignal(signal.SIGTERM)
+            asyncio.get_running_loop().call_soon(handler, signal.SIGTERM, None)
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                seen.append("cancelled")
+                raise
+
+        try:
+            with pytest.raises(KeyboardInterrupt):
+                asyncio.run(scenario())
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+        assert seen == ["cancelled"]
+
+    def test_without_a_callable_sigint_handler_sigterm_is_left_alone(self, monkeypatch):
+        # Outside asyncio's own installation — an embedded interpreter, a
+        # thread that is not the main one — there is nothing to copy across,
+        # and overwriting SIGTERM with a sentinel would be worse than leaving
+        # the default in place.
+        installed: list[object] = []
+        monkeypatch.setattr(signal, "getsignal", lambda number: signal.SIG_IGN)
+        monkeypatch.setattr(
+            signal, "signal", lambda number, handler: installed.append(handler)
+        )
+        _treat_sigterm_as_interrupt()
+        assert installed == []
+
+    def test_an_interrupted_run_exits_130(self, monkeypatch, profile_path):
+        # 130 is what a shell reports for a process an interrupt stopped, and
+        # it is what tells a supervisor this was a stop rather than a fault.
+        def interrupted(coroutine):
+            coroutine.close()
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr("contrai_scraper.cli.asyncio.run", interrupted)
+        assert main(["run", "--profile", str(profile_path)]) == 130
 
 
 class TestStreams:
