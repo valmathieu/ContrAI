@@ -568,10 +568,10 @@ def _site(table: _Table) -> SiteSection:
 
 
 def _account(table: _Table) -> AccountSection:
-    """Read ``[account]``, resolving the verification code's indirection."""
+    """Read ``[account]``, resolving both values' indirection."""
 
     section = AccountSection(
-        email=table.string("email"),
+        email=_secret("[account].email", table.string("email")),
         verification_code=_secret(
             "[account].verification_code", table.string("verification_code")
         ),

@@ -10,7 +10,8 @@ url = "https://example.invalid/lobby"
 locale = "xx"
 
 # The spectator account. Both values may be indirected through the
-# environment; the verification code almost always should be.
+# environment ("env:CONTRAI_SCRAPER_EMAIL", "env:CONTRAI_SCRAPER_CODE"), which
+# keeps the account out of this file: one profile then serves any account.
 [account]
 email = "watcher@example.invalid"
 verification_code = "env:CONTRAI_SCRAPER_CODE"

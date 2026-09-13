@@ -175,6 +175,29 @@ class TestSecrets:
         with pytest.raises(ProfileError, match="CONTRAI_SCRAPER_CODE"):
             load_profile(path)
 
+    def test_an_email_can_come_from_the_environment(self, tmp_path, profile_text,
+                                                    monkeypatch):
+        # One site profile for every account: the account itself lives in
+        # the environment, beside its code.
+        monkeypatch.setenv("CONTRAI_SCRAPER_EMAIL", "watcher-2@example.invalid")
+        path = tmp_path / "p.toml"
+        path.write_text(
+            profile_text.replace('email = "watcher@example.invalid"',
+                                 'email = "env:CONTRAI_SCRAPER_EMAIL"'),
+            encoding="utf-8")
+        assert load_profile(path).account.email == "watcher-2@example.invalid"
+
+    def test_an_unset_email_variable_is_refused(self, tmp_path, profile_text,
+                                                monkeypatch):
+        monkeypatch.delenv("CONTRAI_SCRAPER_EMAIL", raising=False)
+        path = tmp_path / "p.toml"
+        path.write_text(
+            profile_text.replace('email = "watcher@example.invalid"',
+                                 'email = "env:CONTRAI_SCRAPER_EMAIL"'),
+            encoding="utf-8")
+        with pytest.raises(ProfileError, match="CONTRAI_SCRAPER_EMAIL"):
+            load_profile(path)
+
 
 class TestSelectors:
     def test_a_single_string_and_a_candidate_list_both_load(self, profile):
