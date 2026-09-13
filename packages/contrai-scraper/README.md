@@ -33,6 +33,7 @@ The importable package lives under `src/contrai_scraper/`:
 | `parse/` | `translate`, `deal`, `snapshot`, `live`, `session` — wire events → a record. |
 | `browser` | `Spectator` — the only module that touches a page: login, the walk, the hop, the two panels. |
 | `recorder` | `Recorder` — the table loop: seat, gate, watch, write, hop. Imports no Playwright. |
+| `schedule` | `Schedule` — daily ranges in a named timezone; answers "is it open now" and "when does that change". |
 | `health` | `HealthLog` and `Counters` — one JSON line per transition, on stderr. |
 | `cli` | `contrai-scrape`: `run` (the default), `check-profile` and `parse`. |
 

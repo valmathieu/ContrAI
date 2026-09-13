@@ -198,6 +198,18 @@ health_interval_s = 60
 # How long to wait for a join snapshot after being seated.
 snapshot_timeout_s = 30
 
+# When the scraper may watch. Ranges are local times in `timezone` and may
+# cross midnight ("22:00-02:00"); "00:00-24:00" is always. Outside every range
+# no browser is open and the process checks again every `idle_poll_minutes`.
+# A range that closes mid-game lets that game finish, for at most
+# `max_overrun_minutes`, when `finish_current_game` is on.
+[schedule]
+timezone = "Europe/Paris"
+active = ["08:00-23:30"]
+finish_current_game = true
+max_overrun_minutes = 30
+idle_poll_minutes = 5
+
 # Where records and raw logs are written. Both roots resolve relative to this
 # file, so a profile moves with its data. Both roots name the same directory:
 # game_path appends games/ and raw_path appends raw/.

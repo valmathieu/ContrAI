@@ -241,6 +241,48 @@ class TestRecorder:
         assert profile.output.raw_root == profile.output.root
 
 
+class TestSchedule:
+    def test_the_window_is_read(self, profile):
+        assert (profile.schedule.timezone.key, profile.schedule.active[0].end,
+                profile.schedule.idle_poll_minutes) == ("Europe/Paris", 1440, 5)
+
+    def test_a_missing_schedule_is_refused(self, tmp_path, profile_text):
+        # A shift with no window would watch around the clock, which is the
+        # one thing an unattended deployment must never decide for itself.
+        path = tmp_path / "p.toml"
+        path.write_text(_without_schedule(profile_text), encoding="utf-8")
+        with pytest.raises(ProfileError, match="schedule"):
+            load_profile(path)
+
+    def test_an_empty_range_list_is_refused(self, tmp_path, profile_text):
+        path = tmp_path / "p.toml"
+        path.write_text(profile_text.replace('active = ["00:00-24:00"]', "active = []"),
+                        encoding="utf-8")
+        with pytest.raises(ProfileError, match="active"):
+            load_profile(path)
+
+    def test_a_non_positive_poll_is_refused(self, tmp_path, profile_text):
+        path = tmp_path / "p.toml"
+        path.write_text(profile_text.replace("idle_poll_minutes = 5",
+                                             "idle_poll_minutes = 0"), encoding="utf-8")
+        with pytest.raises(ProfileError, match="idle_poll_minutes"):
+            load_profile(path)
+
+    def test_a_negative_overrun_is_refused(self, tmp_path, profile_text):
+        path = tmp_path / "p.toml"
+        path.write_text(profile_text.replace("max_overrun_minutes = 30",
+                                             "max_overrun_minutes = -1"), encoding="utf-8")
+        with pytest.raises(ProfileError, match="max_overrun_minutes"):
+            load_profile(path)
+
+
+def _without_schedule(text: str) -> str:
+    """The fixture profile with its whole ``[schedule]`` section cut out."""
+
+    start = text.index("[schedule]")
+    return text[:start] + text[text.index("\n\n", start) + 2:]
+
+
 class TestTheCommittedExample:
     def test_it_loads(self, monkeypatch):
         # ``profile.example.toml`` is the schema a user copies. A key the

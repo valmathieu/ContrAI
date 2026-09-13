@@ -100,6 +100,12 @@ from contrai_scraper.profile import (
     WireTokens,
     load_profile,
 )
+from contrai_scraper.schedule import (
+    ActiveRange,
+    Schedule,
+    parse_range,
+    timezone_named,
+)
 from contrai_scraper.wire import (
     DEAL_VERB,
     EventKey,
@@ -122,6 +128,7 @@ __all__ = [
     "SENT",
     "STEP_TIMEOUT_MS",
     "AccountSection",
+    "ActiveRange",
     "BrowserError",
     "BrowserSection",
     "Counters",
@@ -146,6 +153,7 @@ __all__ = [
     "RecorderSection",
     "RowContract",
     "RulesSection",
+    "Schedule",
     "ScoreRow",
     "ScoreboardReading",
     "ScraperError",
@@ -176,6 +184,7 @@ __all__ = [
     "open_spectator",
     "order_events",
     "parse_key",
+    "parse_range",
     "parse_session",
     "play_events",
     "raw_dir",
@@ -184,5 +193,6 @@ __all__ = [
     "read_snapshot",
     "resolve_dealer",
     "restore_forced_passes",
+    "timezone_named",
     "unwrap",
 ]

@@ -229,6 +229,13 @@ stale_after_s = 180
 health_interval_s = 60
 snapshot_timeout_s = 30
 
+[schedule]
+timezone = "Europe/Paris"
+active = ["00:00-24:00"]
+finish_current_game = true
+max_overrun_minutes = 30
+idle_poll_minutes = 5
+
 [output]
 # Both roots name the same directory: game_path appends games/ and raw_path
 # appends raw/.

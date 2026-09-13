@@ -26,6 +26,7 @@ from typing import Any
 from contrai_core import PRESETS, Position, Rank, Suit
 
 from .exceptions import ProfileError
+from .schedule import Schedule, parse_range, timezone_named
 
 #: A UI step is either one selector or a list of candidates tried in order.
 Selector = str | tuple[str, ...]
@@ -298,6 +299,7 @@ class Profile:
     wire: WireSection
     rules: RulesSection
     recorder: RecorderSection
+    schedule: Schedule
     output: OutputSection
     privacy: PrivacySection
 
@@ -683,6 +685,20 @@ def _recorder(table: _Table) -> RecorderSection:
     return section
 
 
+def _schedule(table: _Table) -> Schedule:
+    """Read ``[schedule]``."""
+
+    section = Schedule(
+        timezone=timezone_named(table.string("timezone")),
+        active=tuple(parse_range(text) for text in table.strings("active")),
+        finish_current_game=table.boolean("finish_current_game"),
+        max_overrun_minutes=table.integer("max_overrun_minutes"),
+        idle_poll_minutes=table.integer("idle_poll_minutes"),
+    )
+    table.done()
+    return section
+
+
 def _output(table: _Table, base: Path) -> OutputSection:
     """Read ``[output]``, resolving both roots against the profile's directory.
 
@@ -744,6 +760,7 @@ def load_profile(path: Path | str) -> Profile:
         wire=_wire(root.section("wire")),
         rules=_rules(root.section("rules")),
         recorder=_recorder(root.section("recorder")),
+        schedule=_schedule(root.section("schedule")),
         output=_output(root.section("output"), path.parent),
         privacy=_privacy(root.section("privacy")),
     )
