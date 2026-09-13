@@ -3,7 +3,22 @@
 import asyncio
 import json
 
+from playwright._impl._async_base import mapping
+
 from contrai_scraper import HealthLog, PlaywrightFrameSource
+
+
+def playwright_wraps(handler):
+    """Wraps a handler exactly as Playwright's own ``on`` does.
+
+    Playwright caches the wrapper it builds as an attribute of the handler's
+    owner — of the *instance*, for a bound method — so registering a method of
+    a slotted class fails. A fake that only stored the handler hid that until
+    the first live run. The mapping is Playwright's private one: an upgrade
+    that moves it fails here, loudly, rather than hiding the trap again.
+    """
+
+    return mapping.wrap_handler(handler)
 
 
 class FakeSocket:
@@ -12,7 +27,7 @@ class FakeSocket:
         self._handlers: dict[str, list] = {}
 
     def on(self, name: str, handler) -> None:
-        self._handlers.setdefault(name, []).append(handler)
+        self._handlers.setdefault(name, []).append(playwright_wraps(handler))
 
     def emit(self, name: str, payload) -> None:
         for handler in self._handlers.get(name, []):
@@ -24,7 +39,7 @@ class FakePage:
         self._handlers: dict[str, list] = {}
 
     def on(self, name: str, handler) -> None:
-        self._handlers.setdefault(name, []).append(handler)
+        self._handlers.setdefault(name, []).append(playwright_wraps(handler))
 
     def open_socket(self, url: str) -> FakeSocket:
         socket = FakeSocket(url)

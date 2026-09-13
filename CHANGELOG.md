@@ -56,6 +56,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (core) `PlayState` reads partners and opponents off the seat, so card legality no longer depends on a player's `Team`.
 - (scraper) `contrai-scrape run` stopped by SIGTERM — a service or container stop — now writes the game in hand as `interrupted` instead of losing it.
 - (scraper) `contrai-scrape check-profile` reports a missing selector as a `FAIL` line naming its check, and reports the pledge the menu walk actually met.
+- (scraper) `contrai-scrape run` and `check-profile` no longer crash opening a real browser: the page's socket handler now survives Playwright's handler wrapping.
 
 ## [0.4.0] - 2026-09-01
 

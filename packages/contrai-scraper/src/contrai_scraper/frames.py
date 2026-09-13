@@ -94,7 +94,11 @@ class PlaywrightFrameSource:
         self._sockets = 0
         self._closed = False
         self._health = health
-        page.on("websocket", self._attach)
+        # A function, never the bound method: Playwright caches the wrapper it
+        # builds as an attribute of a bound method's instance, and a slotted
+        # instance has nowhere to put it. On a function the cache lands on the
+        # function object — which is also why the lambdas in _attach work.
+        page.on("websocket", lambda socket: self._attach(socket))
 
     def _attach(self, socket: Any) -> None:
         """Index a newly opened socket and listen to it, if it is ours."""
