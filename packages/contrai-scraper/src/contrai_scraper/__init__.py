@@ -59,6 +59,7 @@ from contrai_scraper.recorder import (
     Recorder,
     RecorderLimits,
     SessionSummary,
+    StopReason,
 )
 from contrai_scraper.rawlog import (
     RawLine,
@@ -176,6 +177,7 @@ __all__ = [
     "SiteSection",
     "Snapshot",
     "Spectator",
+    "StopReason",
     "Translator",
     "WireError",
     "WireEvent",

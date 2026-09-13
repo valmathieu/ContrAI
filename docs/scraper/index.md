@@ -149,6 +149,10 @@ not that the game finished. A table that plays nothing for `stale_after_s` is wr
 `abandoned`, and an interrupted process writes what it saw as `interrupted` — neither is visible
 to the wire, which is why `parse_session` takes an `end_reason` the caller can state.
 
+A shift can hand the recorder a seat deadline — after it no new table is taken, while the game in
+hand runs on — and an egress gate, checked before every hop and when a table goes quiet: behind a
+refused egress the game is written `interrupted`, not `abandoned`.
+
 The buffer is what keeps one parser from becoming two. A seated table's events are collected
 and handed to the same batch parser `contrai-scrape parse` uses, so "a round is complete at
 twenty-eight plays" and "skip the round in progress at seating" exist once. It is reset at every

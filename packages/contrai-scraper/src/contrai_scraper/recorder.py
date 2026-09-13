@@ -38,6 +38,7 @@ import asyncio
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -58,12 +59,26 @@ from .wire import DEAL_VERB, WireEvent, WireStream, duplicate_key, order_events
 SCOREBOARD_PANEL = "scoreboard"
 
 
+class StopReason(StrEnum):
+    """Why a recorder stopped seating tables."""
+
+    MAX_GAMES = "max_games"
+    TIME_LIMIT = "time_limit"
+    WINDOW_CLOSED = "window_closed"
+    EGRESS_BLOCKED = "egress_blocked"
+    SOURCE_ENDED = "source_ended"
+
+
 @dataclass(frozen=True, slots=True)
 class RecorderLimits:
-    """When to stop; both unset means "until interrupted"."""
+    """When to stop; all unset means "until interrupted"."""
 
     max_games: int | None = None
     max_seconds: float | None = None
+    """Hard stop: past it, the game in hand is closed as ``observer_left``."""
+
+    seat_until_s: float | None = None
+    """Seconds after which no new table is taken; the game in hand runs on to max_seconds."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +89,8 @@ class SessionSummary:
     tables_seated: int
     tables_rejected: int
     records: tuple[Path, ...]
+    stop_reason: StopReason
+    """What ended the session: a limit, the window, the egress, or the frames."""
 
 
 class Recorder:
@@ -96,7 +113,8 @@ class Recorder:
         "_spectator", "_frames", "_profile", "_health", "_limits", "_raw",
         "_monotonic", "_translator", "_iterator", "_stream", "_buffer",
         "_seen_snapshots", "_records", "_deadline", "_stopped", "_active",
-        "_last_activity", "_seated", "_rejected", "_base",
+        "_last_activity", "_seated", "_rejected", "_base", "_egress",
+        "_seat_deadline", "_stop_reason",
     )
 
     def __init__(
@@ -109,6 +127,7 @@ class Recorder:
         limits: RecorderLimits = RecorderLimits(),
         raw: RawLogWriter | None = None,
         monotonic: Callable[[], float] = time.monotonic,
+        egress: Any = None,
     ) -> None:
         """Wire the loop up.
 
@@ -126,6 +145,9 @@ class Recorder:
                 interrupted session re-parsable.
             monotonic: The clock the watchdog and the run deadline are
                 measured on.
+            egress: Anything with ``async check() -> EgressReading``, asked
+                before every hop and when a table goes quiet. ``None`` skips
+                both checks, which is what a replay or a test wants.
         """
 
         self._spectator = spectator
@@ -135,6 +157,7 @@ class Recorder:
         self._limits = limits
         self._raw = raw
         self._monotonic = monotonic
+        self._egress = egress
         self._translator = Translator(profile)
         self._iterator: Any = None
         self._stream: WireStream | None = None
@@ -142,7 +165,9 @@ class Recorder:
         self._seen_snapshots: set[str] = set()
         self._records: list[Path] = []
         self._deadline: float | None = None
+        self._seat_deadline: float | None = None
         self._stopped = False
+        self._stop_reason: StopReason | None = None
         self._active = False
         self._last_activity = 0.0
         self._seated = 0
@@ -153,7 +178,7 @@ class Recorder:
         """Watch tables until the limits are reached or the frames stop.
 
         Returns:
-            What the session did.
+            What the session did, and why it stopped.
 
         Raises:
             BaseException: Whatever stopped the process. An interruption
@@ -163,8 +188,15 @@ class Recorder:
         """
 
         self._iterator = self._frames.__aiter__()
-        if self._limits.max_seconds is not None:
-            self._deadline = self._monotonic() + self._limits.max_seconds
+        limits = self._limits
+        if limits.max_seconds is not None or limits.seat_until_s is not None:
+            # One reading for both: a second call would shift every scripted
+            # clock in the suite by a tick.
+            started = self._monotonic()
+            if limits.max_seconds is not None:
+                self._deadline = started + limits.max_seconds
+            if limits.seat_until_s is not None:
+                self._seat_deadline = started + limits.seat_until_s
         try:
             while not self._finished():
                 seated = await self._seat()
@@ -184,6 +216,7 @@ class Recorder:
             tables_seated=self._seated,
             tables_rejected=self._rejected,
             records=tuple(self._records),
+            stop_reason=self._stop_reason or self._limit_reason(),
         )
 
     # -- 1. seat ---------------------------------------------------------
@@ -193,7 +226,8 @@ class Recorder:
 
         Returns:
             The snapshot and the event that carried it, or ``None`` when the
-            wait ran out — in which case the table has already been left.
+            wait ran out — in which case the table has already been left —
+            or when the shift stopped taking tables while it waited.
         """
 
         self._reset_buffer()
@@ -201,9 +235,14 @@ class Recorder:
         timeout = self._profile.recorder.snapshot_timeout_s
         while True:
             if self._past_deadline():
-                self._stopped = True
+                self._stop(StopReason.TIME_LIMIT)
                 return None
-            remaining = self._capped(timeout - (self._monotonic() - started))
+            if self._past_seat_deadline():
+                self._stop(StopReason.WINDOW_CLOSED)
+                return None
+            remaining = self._capped(
+                timeout - (self._monotonic() - started), seating=True
+            )
             if remaining <= 0:
                 return await self._give_up_on_seat()
             pulled = await self._pull(remaining)
@@ -222,6 +261,12 @@ class Recorder:
             snapshot = read_snapshot(
                 event.data, self._translator, at=event.received_ms
             )
+            if self._past_seat_deadline():
+                # The table described itself a moment too late: the window
+                # closed while the snapshot was on its way, and a table seated
+                # now would be watched on time the shift no longer has.
+                self._stop(StopReason.WINDOW_CLOSED)
+                return None
             return snapshot, event
 
     async def _give_up_on_seat(self) -> None:
@@ -317,8 +362,9 @@ class Recorder:
                 self._health.heartbeat(table=table_id)
             if self._past_deadline():
                 # The shift is over. The game was not abandoned and did not
-                # finish: we stopped watching it.
-                self._stopped = True
+                # finish: we stopped watching it. Only this hard deadline stops
+                # a game in hand; the seat deadline is never checked here.
+                self._stop(StopReason.TIME_LIMIT)
                 self._write(EndReason.OBSERVER_LEFT)
                 return
             remaining = self._capped(
@@ -413,19 +459,37 @@ class Recorder:
                 return
 
     async def _abandon(self) -> None:
-        """Give up on a table that has stopped playing, and leave."""
+        """Give up on a table that has stopped playing — or on a tunnel that has."""
 
         self._health.event("table_stale")
+        if self._egress is not None and not await self._egress_open():
+            # Silence behind a dead tunnel is not a table breaking up. Writing
+            # `abandoned` would blame the players for our network.
+            self._write(EndReason.INTERRUPTED)
+            return
         self._write(EndReason.ABANDONED)
-        await self._hop()
+        await self._hop(egress_checked=True)
 
-    async def _hop(self) -> None:
-        """Ask the server for another table.
+    async def _hop(self, *, egress_checked: bool = False) -> None:
+        """Ask the server for another table, if the shift still wants one.
 
         There is no leave: the site's exit control leaves spectating rather
-        than the table, and nothing in-session recovers from that.
+        than the table, and nothing in-session recovers from that. The egress
+        is re-checked first, because a hop is new traffic to the site.
+
+        Args:
+            egress_checked: Whether the caller has just checked the egress,
+                so a stale table costs one probe rather than two.
         """
 
+        if self._finished():
+            return
+        if (
+            self._egress is not None
+            and not egress_checked
+            and not await self._egress_open()
+        ):
+            return
         await self._spectator.next_table()
 
     # -- the record ------------------------------------------------------
@@ -488,7 +552,7 @@ class Recorder:
         except TimeoutError:
             return None
         except StopAsyncIteration:
-            self._stopped = True
+            self._stop(StopReason.SOURCE_ENDED)
             return None
 
         if self._raw is not None:
@@ -559,27 +623,84 @@ class Recorder:
 
         return self._profile.wire.events.join_snapshot
 
-    def _capped(self, remaining: float) -> float:
-        """One wait, shortened so it cannot outlive the run's deadline."""
+    def _capped(self, remaining: float, *, seating: bool = False) -> float:
+        """One wait, shortened so it cannot outlive the deadlines that bound it.
 
-        if self._deadline is None:
+        Args:
+            remaining: The wait the caller wants, in seconds.
+            seating: Whether the wait is for a table to seat, which the seat
+                deadline bounds too. A game already being watched is bounded
+                by the hard deadline only: capping it by the seat deadline
+                would abandon the game in hand the moment the window closed.
+
+        Returns:
+            The wait, cut to the earliest deadline that applies.
+        """
+
+        deadlines = [self._deadline]
+        if seating:
+            deadlines.append(self._seat_deadline)
+        present = [deadline for deadline in deadlines if deadline is not None]
+        if not present:
             return remaining
-        return min(remaining, self._deadline - self._monotonic())
+        return min(remaining, min(present) - self._monotonic())
 
     def _past_deadline(self) -> bool:
         """Whether the run's own time limit has passed."""
 
         return self._deadline is not None and self._monotonic() >= self._deadline
 
+    def _past_seat_deadline(self) -> bool:
+        """Whether the shift has stopped taking new tables."""
+
+        return (
+            self._seat_deadline is not None
+            and self._monotonic() >= self._seat_deadline
+        )
+
     def _finished(self) -> bool:
         """Whether the loop should stop seating tables."""
 
-        if self._stopped or self._past_deadline():
+        if self._stopped or self._past_deadline() or self._past_seat_deadline():
             return True
         return (
             self._limits.max_games is not None
             and len(self._records) >= self._limits.max_games
         )
+
+    def _stop(self, reason: StopReason) -> None:
+        """Stop seating, keeping the first reason given."""
+
+        self._stopped = True
+        if self._stop_reason is None:
+            self._stop_reason = reason
+
+    def _limit_reason(self) -> StopReason:
+        """Which limit ended a loop that stopped without saying why.
+
+        Every stop that is not a limit goes through :meth:`_stop` and names
+        itself, so a loop that ended with no reason ended on a limit — and one
+        that was neither the game count nor the hard deadline was the seat
+        deadline. Checked in that order, so a hard deadline that has also
+        passed is the one reported.
+        """
+
+        limits = self._limits
+        if limits.max_games is not None and len(self._records) >= limits.max_games:
+            return StopReason.MAX_GAMES
+        if self._past_deadline():
+            return StopReason.TIME_LIMIT
+        return StopReason.WINDOW_CLOSED
+
+    async def _egress_open(self) -> bool:
+        """Check the egress; on a refusal, say so and stop."""
+
+        reading = await self._egress.check()
+        if reading.ok:
+            return True
+        self._health.event("egress_blocked", **reading.fields())
+        self._stop(StopReason.EGRESS_BLOCKED)
+        return False
 
 
 def _orientation_holds(

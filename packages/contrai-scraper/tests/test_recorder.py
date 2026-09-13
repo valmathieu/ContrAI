@@ -10,6 +10,8 @@ from contrai_core import Position, Suit, TeamSide
 from contrai_data import EndReason, load_game
 
 from contrai_scraper import (
+    EgressReading,
+    EgressRefusal,
     HealthLog,
     OptionsReading,
     RawFrame,
@@ -17,8 +19,26 @@ from contrai_scraper import (
     Recorder,
     RecorderLimits,
     ScoreboardReading,
+    StopReason,
     read_raw_log,
 )
+
+#: A working tunnel, and one that is not.
+OPEN = EgressReading(refusal=None, exit_ip="203.0.113.7", country="XX", route_device="tun0")
+BLOCKED = EgressReading(refusal=EgressRefusal.PROBE_FAILED, exit_ip=None, country=None,
+                        route_device=None)
+
+
+class FakeEgress:
+    """Answers every check with one reading, and counts the checks."""
+
+    def __init__(self, reading):
+        self.reading = reading
+        self.calls = 0
+
+    async def check(self):
+        self.calls += 1
+        return self.reading
 
 
 class FakeSpectator:
@@ -354,16 +374,174 @@ class TestBoundary:
         assert health.counters.score_reads_failed == 1
 
 
+class TestShiftTerms:
+    def test_no_table_is_seated_once_the_seat_deadline_has_passed(self, profile, builders):
+        spectator = FakeSpectator()
+        summary = run_recorder(spectator, [snapshot_frame(builders)], profile,
+                               limits=RecorderLimits(seat_until_s=0.0))
+        assert (summary.tables_seated, summary.stop_reason, spectator.calls) == (
+            0, StopReason.WINDOW_CLOSED, []
+        )
+
+    def test_a_wait_that_outlasts_the_seat_deadline_seats_nothing(self, profile, builders):
+        # The window closes while the seat is still waiting for a snapshot:
+        # the next frame, whatever it is, ends the wait rather than the table.
+        clock = [0.0]
+        spectator = FakeSpectator()
+        script = [lambda: clock.__setitem__(0, 601.0), frame("tick"),
+                  snapshot_frame(builders)]
+        summary = run_recorder(spectator, script, profile,
+                               limits=RecorderLimits(seat_until_s=600.0),
+                               monotonic=lambda: clock[0])
+        assert (summary.tables_seated, summary.stop_reason, spectator.calls) == (
+            0, StopReason.WINDOW_CLOSED, []
+        )
+
+    def test_a_snapshot_arriving_after_the_seat_deadline_is_not_seated(self, profile, builders):
+        clock = [0.0]
+        spectator = FakeSpectator()
+        script = [lambda: clock.__setitem__(0, 601.0), snapshot_frame(builders)]
+        summary = run_recorder(spectator, script, profile,
+                               limits=RecorderLimits(seat_until_s=600.0),
+                               monotonic=lambda: clock[0])
+        assert (summary.tables_seated, summary.stop_reason, spectator.calls) == (
+            0, StopReason.WINDOW_CLOSED, []
+        )
+
+    def test_the_game_in_hand_carries_on_past_the_seat_deadline(
+        self, profile, session_frames, game_builders
+    ):
+        # The seat deadline is the window's close; the game already being
+        # watched is worth finishing, so only the next table is refused.
+        clock = [0.0]
+        spectator = FakeSpectator()
+        ended = game_builders.game_events(
+            game_builders.round_events(1, *_ROUND_ONE),
+            reason=EndReason.TARGET_REACHED,
+        )
+        frames = session_frames(ended)
+        # After the join snapshot and its mirror: the table is already seated.
+        script = [*frames[:2], lambda: clock.__setitem__(0, 601.0), *frames[2:]]
+        summary = run_recorder(spectator, script, profile,
+                               limits=RecorderLimits(seat_until_s=600.0),
+                               monotonic=lambda: clock[0])
+        assert (summary.games_recorded, records_in(profile)[0].ended.reason,
+                ("next_table",) in spectator.calls) == (1, EndReason.TARGET_REACHED, False)
+
+    def test_a_finished_run_asks_for_no_further_table(
+        self, profile, builders, session_frames, game_builders
+    ):
+        # A hop is traffic to the site; after the last game it buys nothing.
+        spectator = FakeSpectator()
+        ended = game_builders.game_events(
+            game_builders.round_events(1, *_ROUND_ONE),
+            reason=EndReason.TARGET_REACHED,
+        )
+        closing = snapshot_frame(builders, frame_id="sz", round_index=1,
+                                 rows=[builders.score_row()])
+        summary = run_recorder(spectator, [*session_frames(ended), closing], profile,
+                               limits=RecorderLimits(max_games=1))
+        assert (("next_table",) in spectator.calls, summary.stop_reason) == (
+            False, StopReason.MAX_GAMES
+        )
+
+    def test_a_time_limit_is_reported_as_such(self, profile, session_frames, source_game):
+        clock = [0.0]
+        script = [
+            *session_frames(source_game),
+            lambda: clock.__setitem__(0, 9999.0),
+            frame("tick"),
+        ]
+        summary = run_recorder(FakeSpectator(), script, profile,
+                               limits=RecorderLimits(max_seconds=60.0),
+                               monotonic=lambda: clock[0])
+        assert summary.stop_reason is StopReason.TIME_LIMIT
+
+    def test_a_run_whose_time_is_already_spent_reports_the_time_limit(self, profile, builders):
+        summary = run_recorder(FakeSpectator(), [snapshot_frame(builders)], profile,
+                               limits=RecorderLimits(max_seconds=0.0))
+        assert (summary.tables_seated, summary.stop_reason) == (0, StopReason.TIME_LIMIT)
+
+    def test_a_second_stop_keeps_the_first_reason(self, profile):
+        # The cause is what a shift acts on: a refused egress that then also
+        # ran the frames dry must still be reported as the egress.
+        recorder = Recorder(FakeSpectator(), FakeFrameSource([]), profile,
+                            HealthLog(write=lambda _: None))
+        recorder._stop(StopReason.EGRESS_BLOCKED)
+        recorder._stop(StopReason.SOURCE_ENDED)
+        assert asyncio.run(recorder.run()).stop_reason is StopReason.EGRESS_BLOCKED
+
+
+class TestEgressAtTheHop:
+    def test_a_blocked_egress_stops_the_hop(self, profile, builders):
+        lines: list[str] = []
+        spectator = FakeSpectator()
+        summary = run_recorder(spectator, [snapshot_frame(builders, tournament=False)], profile,
+                               health=HealthLog(write=lines.append), egress=FakeEgress(BLOCKED))
+        events = [json.loads(line)["event"] for line in lines]
+        assert (spectator.calls, summary.stop_reason, "egress_blocked" in events) == (
+            [], StopReason.EGRESS_BLOCKED, True
+        )
+
+    def test_an_open_egress_lets_the_hop_through(self, profile, builders):
+        spectator = FakeSpectator()
+        egress = FakeEgress(OPEN)
+        run_recorder(spectator, [snapshot_frame(builders, tournament=False)], profile,
+                     egress=egress)
+        assert (spectator.calls, egress.calls) == ([("next_table",)], 1)
+
+    def test_a_quiet_table_behind_a_blocked_egress_is_interrupted(
+        self, profile, session_frames, source_game
+    ):
+        # Silence behind a dead tunnel is not a table breaking up: writing
+        # `abandoned` would blame the players for our network.
+        clock = [0.0]
+        spectator = FakeSpectator()
+        script = [
+            *session_frames(source_game),
+            lambda: clock.__setitem__(0, 9999.0),
+            frame("tick"),
+        ]
+        summary = run_recorder(spectator, script, profile, monotonic=lambda: clock[0],
+                               egress=FakeEgress(BLOCKED))
+        assert (records_in(profile)[0].ended.reason, ("next_table",) in spectator.calls,
+                summary.stop_reason) == (EndReason.INTERRUPTED, False,
+                                         StopReason.EGRESS_BLOCKED)
+
+    def test_a_quiet_table_behind_an_open_egress_is_abandoned_with_one_check(
+        self, profile, session_frames, source_game
+    ):
+        # The check that cleared the table as stale also clears the hop:
+        # a stale table costs one probe, not two.
+        clock = [0.0]
+        egress = FakeEgress(OPEN)
+        script = [
+            *session_frames(source_game),
+            lambda: clock.__setitem__(0, 9999.0),
+            frame("tick"),
+        ]
+        run_recorder(FakeSpectator(), script, profile, monotonic=lambda: clock[0],
+                     egress=egress)
+        assert (records_in(profile)[0].ended.reason, egress.calls) == (
+            EndReason.ABANDONED, 1
+        )
+
+
 class TestEnding:
     def test_the_game_over_flag_ends_the_record_and_hops(
-        self, profile, session_frames, game_builders
+        self, profile, builders, session_frames, game_builders
     ):
         spectator = FakeSpectator()
         ended = game_builders.game_events(
             game_builders.round_events(1, *_ROUND_ONE),
             reason=EndReason.TARGET_REACHED,
         )
-        run_recorder(spectator, session_frames(ended), profile)
+        # The table answers the closing request, so the session is still live
+        # when it asks for the next table. A source that simply ran dry would
+        # mean the browser is gone, and a hop is not asked of a dead session.
+        closing = snapshot_frame(builders, frame_id="sz", round_index=1,
+                                 rows=[builders.score_row()])
+        run_recorder(spectator, [*session_frames(ended), closing], profile)
         record = records_in(profile)[0]
         assert (record.ended.reason, ("next_table",) in spectator.calls) == (
             EndReason.TARGET_REACHED,
