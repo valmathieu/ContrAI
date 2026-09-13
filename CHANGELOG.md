@@ -45,6 +45,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 ### Fixed
 
 - (core) `Auction` judges double and redouble legality by seat, so a teamless seated player may double and a sealed `Position` auction lists its legal bids.
+- (core) `PlayState` reads partners and opponents off the seat, so card legality no longer depends on a player's `Team`.
 
 ## [0.4.0] - 2026-09-01
 
