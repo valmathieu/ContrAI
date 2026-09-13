@@ -159,3 +159,18 @@ class TestRefusals:
         ]
         with pytest.raises(ParseError, match="closed"):
             _restore(sent)
+
+    def test_a_bid_after_a_close_reached_mid_walk_is_refused(self):
+        # At a table that never doubles a Slam, West's pass is forced and is
+        # the third in a row, so the auction closes while the walk is still on
+        # its way to East, whose bid can only have come after the close.
+        rules = RuleConfig(slam_can_be_doubled=False,
+                           turn_direction=TurnDirection.CLOCKWISE)
+        sent = [
+            (1, ContractBid(player=NORTH, value=SlamLevel.SLAM, suit=Suit.HEARTS)),
+            (2, PassBid(player=EAST)),
+            (3, PassBid(player=SOUTH)),
+            (6, PassBid(player=EAST)),
+        ]
+        with pytest.raises(ParseError, match="closed"):
+            _restore(sent, rules=rules)
