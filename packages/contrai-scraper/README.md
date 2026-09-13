@@ -57,10 +57,15 @@ when it is refused. `parse` needs no browser at all: it replays a
 raw log through the same pipeline a live session uses and writes a `contrai-data` record per
 game, which `contrai verify` then checks.
 
+`run` now runs shifts — no browser outside `[schedule]`, the egress checked before each session,
+exit code 3 when a failure budget is spent; see the [scraper docs](../../docs/scraper/index.md).
+
 ## Status
 
 Both halves are in place: the profile, the raw log, the wire parser, the profile-driven browser
-walk, the table loop and the health log. What is left is multi-table orchestration, the raw-log
-retention sweep, and pseudonymisation — records currently carry raw ids, names and account
-fields, which makes them personal data and local-only. See the
+walk, the table loop, the health log, and shifts with their schedule and egress gates. What is left
+is multi-table orchestration and pseudonymisation — records currently carry raw ids, names and
+account fields, which makes them personal data and local-only. See the
 [scraper docs](../../docs/scraper/index.md).
+
+Deployment: `deploy/` (Docker Compose, VPN sidecar), see `deploy/install.md`.

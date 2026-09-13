@@ -192,6 +192,25 @@ reconciles the two, one browser session at a time.
   its supervisor starts a fresh one. Exit code 130 means it was interrupted — Ctrl+C, or the
   SIGTERM a service or container stop sends — and the game in hand was written `interrupted`.
 
+## Deployment
+
+The confinement is structural. On the box the scraper runs in a container with no network of its
+own: Docker Compose puts it in the network namespace of a gluetun VPN container, whose firewall lets
+traffic out only through the WireGuard tunnel. When the tunnel is down there is no route at all —
+the scraper fails closed rather than falling back to the home connection — and nothing else on the
+shared host is rerouted.
+
+The egress gate is what makes a failure of that confinement visible rather than merely unlikely. It
+runs before every session, before every hop and when a table goes quiet, and a refusal sends nothing
+to the site; but it is visibility, not the guarantee.
+
+The image, the Compose file, the environment templates and the procedures that prove the
+confinement — the exit address, the refusal of the home address, a tunnel outage under a packet
+capture — live in `deploy/install.md`.
+
+```mermaid format="svg" source="deploy_scraper.mmd"
+```
+
 ## Pending
 
 - Multi-table orchestration: several browser contexts, a shared registry of tables already

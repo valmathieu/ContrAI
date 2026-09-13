@@ -62,5 +62,8 @@ profile.toml
 pseudonyms.json
 records/
 raw/
+# Deployment secrets live on the host under /etc/contrai; keep stray copies out.
+deploy/*.env
+deploy/wireguard/
 # Local `--rules` ruleset, kept on the machine that made it.
 table.toml
