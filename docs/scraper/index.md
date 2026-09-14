@@ -54,16 +54,24 @@ that is not JSON at all**, which a parser assuming otherwise trips over roughly 
 Three more shape the parser, and all three are cases where the wrong reading produces a record
 that is well-formed and wrong:
 
-- **The seat map is a mirror.** The table's rotation runs the opposite way round from
-  `Position`'s order, so the two side seats map crosswise. The profile owns the map and
-  `Translator` asserts the *rotation*, not the names — a literal one-to-one map passes every
-  spot check and still turns the table backwards.
+- **The seat map is checked by rotation, not by name.** The observed tables turn clockwise,
+  which is what the `tournament` preset says, so each on-screen seat maps to the compass seat
+  it shows. The profile owns the map and `Translator` asserts that the site's rotation walks
+  the seats in the preset's direction — a map with its side seats crossed passes every spot
+  check and still turns the table backwards.
 - **A double's payload names the player being doubled**, not the doubler. The doubler is the
   event key's actor; taking the payload's owner credits the double to the side it was aimed at,
   and the round still looks legal.
 - **The join snapshot describes the last *completed* round.** The round in progress when the
   session joined is skipped, never reconstructed, so an observed game's hands are always
   `dealt_from_deck`.
+
+One thing the wire leaves out entirely is a **forced pass**. The table skips a seat whose only
+legal bid is a pass — the doubler's partner, the partner of a Slam bidder, everyone after a
+redouble — spending its sequence number and transmitting nothing, so an auction read literally
+ends short and projects as unfinished. `restore_forced_passes` puts each one back where core's
+own legality says it falls and checks it against the gap it left in the numbering; a gap on a
+seat that had a choice is a lost bid, and that round is skipped with a note instead of repaired.
 
 The raw log is what makes all of this correctable. Frames are stored verbatim *before* anything
 is interpreted, so a parser fix applies to games already watched — `contrai-scrape parse` is that

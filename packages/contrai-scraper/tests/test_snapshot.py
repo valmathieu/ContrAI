@@ -1,4 +1,4 @@
-"""Pins the join snapshot: seats through the mirror, players, score rows."""
+"""Pins the join snapshot: seats as placed, players, score rows."""
 
 import pytest
 from contrai_core import Position, Suit, TeamSide
@@ -13,16 +13,16 @@ def read(profile, payload, *, at=AT):
 
 
 class TestSeats:
-    def test_the_four_seats_map_through_the_mirror(self, profile, builders):
-        # The seat on the right of the screen is West, not East. Reading the
-        # names literally would put p2 and p4 on each other's sides and every
-        # trick winner after that would be wrong.
+    def test_the_four_seats_map_as_placed(self, profile, builders):
+        # The seat on the right of the screen is East. The translator has
+        # already checked that the placement walks the table the preset's
+        # way, so reading it literally is safe.
         snapshot = read(profile, builders.snapshot_payload())
         assert snapshot.seats == {
             "p1": Position.NORTH,
-            "p2": Position.WEST,
+            "p2": Position.EAST,
             "p3": Position.SOUTH,
-            "p4": Position.EAST,
+            "p4": Position.WEST,
         }
 
     def test_a_seat_without_an_id_is_skipped(self, profile, builders):
@@ -38,7 +38,7 @@ class TestPlayers:
 
     def test_a_player_knows_the_seat_it_sits_in(self, profile, builders):
         players = read(profile, builders.snapshot_payload()).players
-        assert players["p4"].position is Position.EAST
+        assert players["p4"].position is Position.WEST
 
     def test_a_missing_level_reads_as_none(self, profile, builders):
         # Measured live: the level is nullable per snapshot, so a seat can

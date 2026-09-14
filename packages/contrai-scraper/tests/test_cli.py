@@ -132,15 +132,15 @@ class TestCheckProfile:
         code = main(["check-profile", str(bad)])
         assert (code, "profile loads" in capsys.readouterr().out) == (1, True)
 
-    def test_a_literal_seat_map_fails_before_the_browser_opens(
+    def test_a_crossed_seat_map_fails_before_the_browser_opens(
         self, tmp_path, profile_text, capsys
     ):
         # The rotation check is the one profile mistake no later check could
         # catch, so it runs before anything is launched.
-        path = tmp_path / "mirrored.toml"
+        path = tmp_path / "crossed.toml"
         path.write_text(
-            profile_text.replace('right = "W", bottom = "S", left = "E"',
-                                 'right = "E", bottom = "S", left = "W"'),
+            profile_text.replace('right = "E", bottom = "S", left = "W"',
+                                 'right = "W", bottom = "S", left = "E"'),
             encoding="utf-8",
         )
         code = main(["check-profile", str(path)])

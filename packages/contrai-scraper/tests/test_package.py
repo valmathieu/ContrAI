@@ -38,9 +38,10 @@ class TestWiring:
             with pytest.raises(ImportError):
                 import_module(f"contrai_scraper.{name}")
 
-    def test_the_literal_seat_map_is_never_used(self):
-        # Position.from_french maps the four names one to one, which is the
-        # exact bug the mirrored seat map exists to avoid.
+    def test_the_seat_vocabulary_comes_from_the_profile(self):
+        # Position.from_french would spell the site's own seat names into the
+        # package and skip the rotation check a profile's seat map goes
+        # through; the profile owns that vocabulary.
         sources = pathlib.Path(contrai_scraper.__path__[0]).rglob("*.py")
         offenders = [
             path.name for path in sources

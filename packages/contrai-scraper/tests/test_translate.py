@@ -1,7 +1,7 @@
 """Pins the vocabulary layer, including the rotation the seat map must preserve."""
 
 import pytest
-from contrai_core import Card, Position, Rank, Suit, TeamSide
+from contrai_core import PRESETS, Card, Position, Rank, Suit, TeamSide, TurnDirection
 
 from contrai_scraper import ParseError, ProfileError, Translator, load_profile
 
@@ -28,24 +28,41 @@ class TestCards:
 
 
 class TestRotation:
-    def test_the_seat_map_preserves_the_table_rotation(self, profile):
-        # The invariant, not the names: walking the site's own rotation through
-        # the seat map must walk core's seats one step at a time. A map that
-        # reads the four names literally passes every spot check and still
-        # turns the table backwards — every trick winner and every legality
-        # check silently wrong.
+    def test_the_seat_map_walks_the_table_the_presets_way(self, profile):
+        # The invariant, not the names: walking the site's own rotation
+        # through the seat map must walk core's seats one step at a time, in
+        # the direction the profile's preset plays. A map with its side seats
+        # crossed passes every spot check and still turns the table
+        # backwards — every trick winner and every legality check silently
+        # wrong.
         translator = Translator(profile)
         seats = translator.rotation
-        assert all(a.next is b for a, b in zip(seats, seats[1:] + seats[:1]))
+        direction = PRESETS[profile.rules.preset].turn_direction
+        assert direction is TurnDirection.CLOCKWISE
+        assert all(
+            a.next_in(direction) is b for a, b in zip(seats, seats[1:] + seats[:1])
+        )
 
-    def test_a_literal_seat_map_is_refused(self, tmp_path, profile_text):
+    def test_a_crossed_seat_map_is_refused(self, tmp_path, profile_text):
         path = tmp_path / "p.toml"
         path.write_text(
-            profile_text.replace('right = "W"', 'right = "E"')
-                        .replace('left = "E"', 'left = "W"'),
+            profile_text.replace('right = "E"', 'right = "W"')
+                        .replace('left = "W"', 'left = "E"'),
             encoding="utf-8")
         with pytest.raises(ProfileError, match="rotation"):
             Translator(load_profile(path))
+
+    def test_the_direction_comes_from_the_preset(self, tmp_path, profile_text):
+        # The same crossed map is right for a table that plays anticlockwise:
+        # the check follows the ruleset rather than one fixed way round.
+        path = tmp_path / "p.toml"
+        path.write_text(
+            profile_text.replace('right = "E"', 'right = "W"')
+                        .replace('left = "W"', 'left = "E"')
+                        .replace('preset = "tournament"', 'preset = "classic"'),
+            encoding="utf-8")
+        assert Translator(load_profile(path)).rotation == (
+            Position.NORTH, Position.WEST, Position.SOUTH, Position.EAST)
 
     def test_a_seat_name_reads_back(self, profile):
         translator = Translator(profile)

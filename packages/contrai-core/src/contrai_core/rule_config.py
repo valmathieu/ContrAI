@@ -61,7 +61,7 @@ TARGET_SCORES: tuple[int, ...] = (500, 1000, 1500, 2000, 3000, 4000, 5000)
 
 @dataclass(frozen=True, slots=True)
 class RuleConfig:
-    """The 23 configurable table rules of ``contree-domain.md`` §9.
+    """The 22 configurable table rules of ``contree-domain.md`` §9.
 
     Defaults are the catalogue's bold values. Two combinations are
     documented as inert rather than rejected: ``failed_slam_marks_announced_points``
@@ -78,9 +78,6 @@ class RuleConfig:
         solo_slam_available: Solo Slam is on the bid ladder (§9.4).
         slam_can_be_doubled: A Slam may be doubled (§9.4).
         solo_slam_can_be_doubled: A Solo Slam may be doubled (§9.4).
-        double_closes_auction: A double closes the auction as soon as the
-            doubled side has declined to redouble, and a redouble closes
-            it at once (§9.4).
         under_trump_exemption: A void player may discard instead of
             under-trumping (§9.5).
         solo_slam_gives_the_lead: The Solo Slam bidder leads trick 1 (§9.5).
@@ -120,7 +117,6 @@ class RuleConfig:
     solo_slam_available: bool = True
     slam_can_be_doubled: bool = True
     solo_slam_can_be_doubled: bool = True
-    double_closes_auction: bool = False
     # --- §9.5 Card play ---
     under_trump_exemption: bool = True
     solo_slam_gives_the_lead: bool = False
@@ -161,7 +157,7 @@ class RuleConfig:
             )
 
     @classmethod
-    def classic(cls) -> "RuleConfig":
+    def classic(cls) -> RuleConfig:
         """The §9 default set, by name — so a log can say *which* defaults.
 
         Returns:
@@ -170,24 +166,23 @@ class RuleConfig:
         return cls()
 
     @classmethod
-    def tournament(cls) -> "RuleConfig":
+    def tournament(cls) -> RuleConfig:
         """The rule set the observed online tournament tables play.
 
         Four knobs off the §9 defaults, each read off the captured
-        tables rather than assumed: any failed contract marks the flat
-        160, the double multiplier applies to the whole mark rather than
-        to the announced component alone, a Solo Slam declarer opens
-        trick 1, and a double closes the auction without waiting for the
-        third consecutive pass.
+        tables rather than assumed: play runs clockwise, any failed
+        contract marks the flat 160, the double multiplier applies to the
+        whole mark rather than to the announced component alone, and a
+        Solo Slam declarer opens trick 1.
 
         Returns:
             The tournament ruleset.
         """
         return cls(
+            turn_direction=TurnDirection.CLOCKWISE,
             any_failure_marks_160=True,
             only_announced_points_multiplied=False,
             solo_slam_gives_the_lead=True,
-            double_closes_auction=True,
         )
 
 

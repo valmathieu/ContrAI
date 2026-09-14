@@ -68,6 +68,7 @@ from contrai_scraper.parse.deal import (
     final_trick,
     resolve_dealer,
 )
+from contrai_scraper.parse.forced_passes import restore_forced_passes
 from contrai_scraper.parse.live import (
     LiveRound,
     bid_events,
@@ -179,6 +180,7 @@ __all__ = [
     "play_events",
     "raw_dir",
     "resolve_dealer",
+    "restore_forced_passes",
     "raw_path",
     "read_raw_log",
     "read_snapshot",
