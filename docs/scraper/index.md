@@ -95,7 +95,7 @@ silently wrong data.
 | `[site]` | Where the site lives, and which language it answers in. |
 | `[account]` | The spectator account. Values may read `env:NAME` instead of holding the secret. |
 | `[browser]` | Headless or headed, slow-motion, screenshot-on-error. |
-| `[selectors]` | One entry per UI step; a list means "try these in order". |
+| `[selectors]` | One entry per UI step; a list means "try these in order". Three keys are looked up inside something else: `seat_element` fills a `{seat}` placeholder, and the option id and switch elements are resolved inside each option row. |
 | `[wire]` | How a frame is recognised, unwrapped and keyed. |
 | `[wire.events]` | The three event names the parser reacts to. |
 | `[wire.fields]` | Dotted paths, one per logical field the parser reads. The set of names is fixed. |

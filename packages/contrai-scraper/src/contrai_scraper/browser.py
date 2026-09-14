@@ -217,7 +217,7 @@ class Spectator:
         return self._selectors.tournament_marker_text.casefold() in text.casefold()
 
     async def read_options(self, expected: Mapping[str, bool]) -> OptionsReading:
-        """Open the options panel, read every row, and diff it.
+        """Open the options panel, read every option row's id and switch, and diff it.
 
         Args:
             expected: Option id to whether it should be switched on, as
@@ -233,12 +233,18 @@ class Spectator:
         await self._click("options_button")
         observed: dict[str, bool] = {}
         for row in await self._rows("options_row"):
-            identity = await row.get_attribute(self._selectors.options_id_attr)
-            if identity is None:
-                # A decorative row — a separator, a heading — has no id, and
-                # keying one on ``None`` would collide with the next.
+            # The id and the switch are two different children of the row, so
+            # each is resolved inside it. A row lacking either — a group
+            # heading, the objective selector — is not an option.
+            identity_node = row.locator(self._selectors.options_id_element)
+            state_node = row.locator(self._selectors.options_state_element)
+            if not await identity_node.count() or not await state_node.count():
                 continue
-            classes = (await row.get_attribute(_CLASS_ATTR)) or ""
+            identity = await identity_node.get_attribute(self._selectors.options_id_attr)
+            if identity is None:
+                # Keying a row on ``None`` would collide with the next such row.
+                continue
+            classes = (await state_node.get_attribute(_CLASS_ATTR)) or ""
             observed[identity] = self._selectors.options_on_class in classes.split()
         await self._close_panel()
 
