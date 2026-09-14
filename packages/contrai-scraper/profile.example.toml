@@ -49,6 +49,8 @@ options_button = "#placeholder-options"
 # One row per table option. Inside a row, the id sits on one element and the
 # on/off state on another: options_id_attr is read off options_id_element, and
 # options_on_class is looked for in options_state_element's class list.
+# options_id_element and options_state_element each take one selector, not a
+# list of candidates.
 options_row = ".placeholder-option-row"
 options_id_element = ".placeholder-option-name"
 options_id_attr = "data-placeholder"
@@ -128,7 +130,7 @@ row_suit = "deal.suit"
 row_multiplier = "deal.coefficient"
 # The row's declaring side and the side that won the round, as team letters.
 # Comparing them is how a row reads as made or failed; score_made below is
-# only consulted for a row that names neither.
+# only consulted for a row that does not name both.
 row_declarer = "deal.declarer"
 row_winner = "deal.winner"
 side_taken = "done.points"
@@ -170,7 +172,8 @@ bid_slam = "PLACEHOLDER_SLAM"
 bid_solo_slam = "PLACEHOLDER_SOLO_SLAM"
 # Whether a pass is sent as a null rather than as a token of its own.
 pass_is_null = true
-# The status a made row carries, for a row naming no declarer or winner.
+# The status a made row carries, for a row that does not name both the
+# declarer and the winner.
 score_made = "placeholder-made"
 
 # The core preset the observed tables play under.

@@ -116,9 +116,9 @@ class TestScoreRows:
     def test_a_row_won_by_the_defence_is_failed_whatever_its_status(
         self, profile, builders
     ):
-        # A failed contract's row can carry a status of its own too, and a
-        # single "made" token would misread it as made. The sides the row
-        # names are what decide it.
+        # Should a failed row ever carry a status of its own, a single
+        # "made" token would misread it as made. The sides the row names are
+        # what decide it.
         row = builders.score_row(made=False)
         row["deal"]["status"] = "ok"
         payload = builders.snapshot_payload(rows=(row,))
@@ -136,6 +136,18 @@ class TestScoreRows:
         row["deal"]["status"] = status
         payload = builders.snapshot_payload(rows=(row,))
         assert read(profile, payload).score_rows[0].made is made
+
+    def test_a_row_naming_only_one_side_falls_back_to_its_status(
+        self, profile, builders
+    ):
+        # The declarer alone is not enough: the reading needs both names, so
+        # a row missing the winner falls back to its status just as one
+        # naming neither side would.
+        row = builders.score_row()
+        del row["deal"]["winner"]
+        row["deal"]["status"] = "down"
+        payload = builders.snapshot_payload(rows=(row,))
+        assert read(profile, payload).score_rows[0].made is False
 
     def test_the_components_are_keyed_by_side_not_by_team_letter(
         self, profile, builders
