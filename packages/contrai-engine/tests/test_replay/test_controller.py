@@ -184,8 +184,7 @@ class TestRoundTrip:
         assert second.game.scores == first.game.scores
 
     def test_it_replays_a_tournament_record(self, recorded_tournament_game):
-        # ``tournament`` is what observed games carry, and the ruleset
-        # that turns ``double_closes_auction`` on.
+        # ``tournament`` is what observed games carry.
         controller = ReplayController(recorded_tournament_game)
 
         controller.run()

@@ -34,7 +34,6 @@ CLASSIC_TOML = (
     "solo_slam_available      = true\n"
     "slam_can_be_doubled      = true\n"
     "solo_slam_can_be_doubled = true\n"
-    "double_closes_auction    = false\n"
     "\n"
     "[card_play]\n"
     "under_trump_exemption           = true\n"
