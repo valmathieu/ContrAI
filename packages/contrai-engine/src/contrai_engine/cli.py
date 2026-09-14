@@ -1,10 +1,12 @@
 """``contrai`` CLI entry point.
 
-Two subcommands, and ``play`` is the default. It is inserted by
+Three subcommands, and ``play`` is the default. It is inserted by
 :func:`_normalise_argv` whenever the first argument does not name one, so
 bare ``contrai`` and every flag that predates subcommands parse exactly
 as they did; ``contrai verify PATH...`` replays recorded games and
-reports what does not add up, exiting non-zero on a suspect round.
+reports what does not add up, exiting non-zero on a suspect round, and
+``contrai replay PATH`` steps one through the game's own screens with
+every hand face up.
 
 The ``play`` path drives the landing → game loop → end-game flow, wiring
 a :class:`RichView` into ``Game.manage_round``. Pure orchestration —
@@ -53,11 +55,12 @@ import logging
 import random
 import sys
 from pathlib import Path
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
+from contrai_core.exceptions import IllegalBidError, IllegalPlayError
 from contrai_core.position import Position
 from contrai_core.rule_config import PRESETS, RuleConfig
-from contrai_data import RecordError
+from contrai_data import RecordError, load_game
 from contrai_engine.log_setup import configure_logging
 from contrai_engine.model.game import Game
 from contrai_engine.model.player import AiPlayer, HumanPlayer
@@ -68,10 +71,23 @@ from contrai_engine.recording import (
     RecordRequest,
     finish_recording,
 )
-from contrai_engine.replay import GameVerdict, Verdict, verify_record
+from contrai_engine.replay import (
+    GameVerdict,
+    ReplayController,
+    ReplayError,
+    ReplayInterrupt,
+    SteppingView,
+    Verdict,
+    replay_rows,
+    verify_game,
+    verify_record,
+)
 from contrai_engine.replay.verify import default_out_root
 from contrai_engine.ruleset import TableSetup, resolve_setup, save_setup, setup_path
 from contrai_engine.view.rich_view import RichView
+
+if TYPE_CHECKING:
+    from contrai_data import GameRecord
 
 
 # TODO: replace with a seat picker on the landing screen. For now the
@@ -86,7 +102,7 @@ logger = logging.getLogger(__name__)
 
 #: The subcommands ``contrai`` answers to. Anything else in first
 #: position is a flag (or a mistake) belonging to the default one.
-SUBCOMMANDS: Final[tuple[str, ...]] = ("play", "verify")
+SUBCOMMANDS: Final[tuple[str, ...]] = ("play", "replay", "verify")
 
 #: The subcommand a bare ``contrai`` means.
 DEFAULT_SUBCOMMAND: Final[str] = "play"
@@ -133,8 +149,10 @@ def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
         description="Play a game of contrée against three AI seats.",
         # ``contrai --help`` normalises to ``contrai play --help``, so
         # this is where a reader finds out the other subcommand exists.
-        epilog="other subcommands: verify (see: contrai verify --help)",
+        epilog="other subcommands: replay, verify "
+        "(see: contrai replay --help)",
     )
+    _add_replay_parser(subcommands)
     _add_verify_parser(subcommands)
     play.add_argument(
         "--debug",
@@ -194,6 +212,41 @@ def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
         help="do not record, whatever the table's record knob says",
     )
     return parser, play
+
+
+def _add_replay_parser(subcommands: Any) -> argparse.ArgumentParser:
+    """Register the ``replay`` subcommand.
+
+    Args:
+        subcommands: The top-level parser's subcommand group.
+
+    Returns:
+        The ``replay`` subparser.
+    """
+
+    replay = subcommands.add_parser(
+        "replay",
+        help="step through a recorded game in the terminal",
+        description=(
+            "Replay a record through the engine and walk it one action at "
+            "a time, every hand face up. Opens on the game's rounds with "
+            "their verification verdicts."
+        ),
+    )
+    replay.add_argument(
+        "path",
+        type=Path,
+        metavar="PATH",
+        help="the record file to step through",
+    )
+    replay.add_argument(
+        "--round",
+        type=int,
+        default=None,
+        metavar="N",
+        help="open straight on this round, in the record's own numbering",
+    )
+    return replay
 
 
 def _add_verify_parser(subcommands: Any) -> argparse.ArgumentParser:
@@ -294,7 +347,8 @@ def _refuse_a_bare_record(
     first = Path(argv[0])
     if first.suffix == ".jsonl" or first.is_file():
         parser.error(
-            f"{argv[0]}: to check a record, write: contrai verify {argv[0]}"
+            f"{argv[0]}: to check a record, write: contrai verify "
+            f"{argv[0]}; to step through it: contrai replay {argv[0]}"
         )
 
 
@@ -595,6 +649,102 @@ def _run_verify(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def _step_round(record: "GameRecord", number: int, view: Any) -> None:
+    """Step one recorded round, restarting it whenever the viewer goes back.
+
+    Every attempt builds a fresh :class:`ReplayController` and replays the
+    rounds before this one in silence, because
+    :class:`~contrai_engine.replay.deal.ScriptedDealSource` indexes on the
+    game's own round counter and cannot seek. That is also how stepping
+    back works: the engine keeps no earlier state, so the round is simply
+    played again with more of its stops passed over. A round replays in
+    milliseconds, which is what makes both affordable.
+
+    Args:
+        record: The record being replayed.
+        number: The record's number for the round to step.
+        view: The view to render through.
+    """
+
+    resume_at = 0
+    while True:
+        stepper = SteppingView(view, resume_at=resume_at)
+        controller = ReplayController(record, view=stepper)
+        index = [r.number for r in controller.rounds].index(number)
+        stepper.attach(controller.game, controller.game.rules.target_score)
+        try:
+            for earlier in controller.rounds[:index]:
+                try:
+                    controller.replay_round(earlier)
+                except (IllegalBidError, IllegalPlayError, ReplayError):
+                    # A suspect earlier round is the verifier's business,
+                    # not this screen's: clear the hands it left behind and
+                    # carry on to the round the viewer asked for.
+                    controller.clear_hands()
+            stepper.quiet = False
+            controller.replay_round(controller.rounds[index])
+        except ReplayInterrupt as interrupt:
+            if interrupt.resume_at is None:
+                return
+            resume_at = interrupt.resume_at
+            continue
+        except (IllegalBidError, IllegalPlayError, ReplayError) as exc:
+            view.console.print(
+                f"Round {number} diverges from the record: {exc}"
+            )
+            view.show_replay_step(can_go_back=False)
+            return
+        view.show_round_recap(
+            controller.game.current_round, controller.game.scores
+        )
+        if view.show_replay_step(can_go_back=stepper.stops > 0) == "p":
+            resume_at = max(stepper.stops - 1, 0)
+            continue
+        return
+
+
+def _run_replay(args: argparse.Namespace) -> int:
+    """Step through a recorded game in the terminal.
+
+    Args:
+        args: The parsed ``replay`` namespace.
+
+    Returns:
+        ``0`` normally, ``1`` when the record cannot be read or names no
+        such replayable round.
+    """
+
+    try:
+        record = load_game(args.path)
+    except (OSError, RecordError) as exc:
+        print(f"{args.path}: cannot be read: {exc}", file=sys.stderr)
+        return 1
+    # Verified live rather than read back from ``verdicts/``: a replay is
+    # fast, and a verdict file beside a record may describe an older one.
+    rows = replay_rows(record, verify_game(record))
+    steppable = [row.number for row in rows if row.steppable]
+    if args.round is not None and args.round not in steppable:
+        print(
+            f"{args.path}: round {args.round} is not there, or cannot be "
+            "replayed",
+            file=sys.stderr,
+        )
+        return 1
+    view = RichView(options=DebugOptions(replay=True))
+    pick = args.round
+    try:
+        while True:
+            if pick is None:
+                pick = view.show_replay_summary(rows, record.header.game_id)
+                if pick is None:
+                    return 0
+            _step_round(record, pick, view)
+            pick = None
+    except (KeyboardInterrupt, EOFError):
+        view.console.print("\nGoodbye.")
+        return 0
+
+
 def _force_utf8_streams() -> None:
     """Switch stdout and stderr to UTF-8, where the streams allow it.
 
@@ -621,16 +771,19 @@ def _force_utf8_streams() -> None:
 def main() -> None:
     """Entry point registered as the ``contrai`` console script.
 
-    Dispatches on the subcommand: ``verify`` reports and exits with its
-    own code, everything else is a game.
+    Dispatches on the subcommand: ``verify`` and ``replay`` each report
+    and exit with their own code, everything else is a game.
 
     Raises:
-        SystemExit: With the ``verify`` exit code, or on a usage error.
+        SystemExit: With the ``verify`` or ``replay`` exit code, or on a
+            usage error.
     """
     _force_utf8_streams()
     args, play = _parse_argv()
     if args.command == "verify":
         raise SystemExit(_run_verify(args))
+    if args.command == "replay":
+        raise SystemExit(_run_replay(args))
     options, setup, record = _play_setup(args, play)
     options = _apply_seed(options)
     configure_logging(options)

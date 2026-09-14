@@ -55,6 +55,7 @@ from contrai_engine.view.screens.trick import (
     _panel_round,
     _render_diamond,
 )
+from contrai_engine.view.theme import GOLD
 
 
 # ======================================================================
@@ -1886,6 +1887,72 @@ class TestDebugStrip:
         assert "Debug — all hands" not in combined
 
 
+class TestReplayMode:
+    """``DebugOptions.replay`` buys face-up hands and zero pacing.
+
+    A replay is not a live game: it has no AI thinking to pace and no
+    waits of its own, because the step prompt that drives it owns the
+    keystroke ``_wait_or_pause`` would otherwise read and throw away.
+    """
+
+    def test_replay_collapses_a_pacing_default_to_zero(self, monkeypatch):
+        from contrai_engine.view import rich_view
+
+        slept: list[float] = []
+        monkeypatch.setattr(rich_view.time, "sleep", slept.append)
+        view = RichView(options=DebugOptions(replay=True))
+
+        view._pause("CONTRAI_AI_CARD_DELAY", 0.9)
+
+        assert slept == [0.0]
+
+    def test_an_explicit_env_value_still_wins_under_replay(self, monkeypatch):
+        from contrai_engine.view import rich_view
+
+        slept: list[float] = []
+        monkeypatch.setattr(rich_view.time, "sleep", slept.append)
+        monkeypatch.setenv("CONTRAI_AI_CARD_DELAY", "0.25")
+        view = RichView(options=DebugOptions(replay=True))
+
+        view._pause("CONTRAI_AI_CARD_DELAY", 0.9)
+
+        assert slept == [0.25]
+
+    def test_replay_neither_sleeps_nor_reads_at_a_wait(self, monkeypatch):
+        from contrai_engine.view import rich_view
+
+        slept: list[float] = []
+        monkeypatch.setattr(rich_view.time, "sleep", slept.append)
+        view = RichView(options=DebugOptions(replay=True))
+        view.console.input = lambda *a, **k: pytest.fail(
+            "the step prompt owns the keystroke, not _wait_or_pause"
+        )
+
+        view._wait_or_pause(GOLD, "CONTRAI_AUTOPLAY_PAUSE", 1.2)
+
+        assert slept == []
+
+    def test_replay_shows_every_hand_face_up(self, monkeypatch, four_players):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(replay=True))
+        view.attach(
+            TestDebugStrip._StubGame(list(four_players)), target_score=1500
+        )
+        captured = _capture_prints(view)
+
+        view._render_in_game(
+            phase="bidding",
+            current_player=None,
+            bidding_history=[],
+            prompt_question=Text(""),
+            mandatory=False,
+        )
+
+        assert any("Debug — all hands" in text for text in captured)
+
+
 class TestLiveRoundScoreAid:
     """``RichView`` carries the §9.7 interface aid and hands it to the frame.
 
@@ -2203,3 +2270,151 @@ class TestPresetPickerOffersTheRememberedSetup:
 
         assert result.rules.target_score == 500
         assert result.origin == "last used"
+
+
+class TestShowReplaySummary:
+    """The replay picker: a steppable round number, or ``[q]`` to leave."""
+
+    @staticmethod
+    def _rows():
+        from contrai_engine.replay.summary import ReplayRow
+
+        return [
+            ReplayRow(7, None, None, None, None, True),
+            ReplayRow(8, None, None, None, None, False),
+        ]
+
+    def test_a_steppable_pick_is_returned(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["7"]
+        )
+
+        assert view.show_replay_summary(self._rows(), "g") == 7
+
+    def test_q_leaves(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["q"]
+        )
+
+        assert view.show_replay_summary(self._rows(), "g") is None
+
+    def test_the_long_form_quit_leaves_too(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["quit"]
+        )
+
+        assert view.show_replay_summary(self._rows(), "g") is None
+
+    def test_an_unsteppable_pick_re_prompts(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["8", "7"]
+        )
+
+        assert view.show_replay_summary(self._rows(), "g") == 7
+
+    def test_a_blank_answer_re_prompts_rather_than_leaving(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["", "7"]
+        )
+
+        assert view.show_replay_summary(self._rows(), "g") == 7
+
+
+class TestShowReplayStep:
+    """The step prompt: one key, read under the frame it is stepping."""
+
+    def test_it_returns_the_key_typed(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["t"]
+        )
+
+        assert view.show_replay_step(can_go_back=True) == "t"
+
+    def test_enter_means_the_next_action(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), [""]
+        )
+
+        assert view.show_replay_step(can_go_back=True) == "n"
+
+    def test_an_unknown_key_re_prompts(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["z", "q"]
+        )
+
+        assert view.show_replay_step(can_go_back=True) == "q"
+
+    def test_back_re_prompts_at_the_first_stop(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["p", "n"]
+        )
+
+        assert view.show_replay_step(can_go_back=False) == "n"
+
+    def test_it_does_not_clear_the_frame_it_prompts_under(self):
+        view = RichView(options=DebugOptions(replay=True))
+        cleared: list[int] = []
+        view.console.clear = lambda *a, **k: cleared.append(1)
+        view.console.print = lambda *a, **k: None
+        view.console.input = lambda *a, **k: "n"
+
+        view.show_replay_step(can_go_back=True)
+
+        assert cleared == []
+
+
+class TestReplayRecapPrompt:
+    """The recap's own prompt is left off under replay.
+
+    It would invite a keystroke the recap never reads, and there is no
+    next round to deal — the step prompt drawn underneath owns the key.
+    """
+
+    class _StubRound:
+        round_number = 1
+        contract = None
+        dealer = None
+        round_scores = {}
+        announced_belotes = ()
+        play_state = None
+
+    def _recap_texts(self, view):
+        captured = _capture_prints(view)
+        view.show_round_recap(self._StubRound(), {TeamSide.NS: 0, TeamSide.EW: 0})
+        return "\n".join(captured)
+
+    def test_a_live_recap_still_invites_enter(self, monkeypatch):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(autoplay=True))
+
+        assert "Press [Enter]" in self._recap_texts(view)
+
+    def test_a_replayed_recap_does_not(self, monkeypatch):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(replay=True))
+
+        assert "Press [Enter]" not in self._recap_texts(view)
+
+
+class TestShowReplayDeal:
+    """The deal frame is the in-game frame, with the deal line as prompt."""
+
+    def test_it_renders_the_face_up_frame(self, monkeypatch, four_players):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(replay=True))
+        view.attach(
+            TestDebugStrip._StubGame(list(four_players)), target_score=1500
+        )
+        captured = _capture_prints(view)
+
+        view.show_replay_deal(view.game.current_round)
+
+        combined = "\n".join(captured)
+        assert "Debug — all hands" in combined
+        assert "Hands face up" in combined

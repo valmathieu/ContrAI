@@ -58,7 +58,7 @@ re-render until neither side does):
 
 ```bash
 PLANTUML_LIMIT_SIZE=16384 plantuml -tpng docs/diagrams/class_core.puml    # 11807 x 3739
-PLANTUML_LIMIT_SIZE=16384 plantuml -tpng docs/diagrams/class_engine.puml  #  9523 x 4751
+PLANTUML_LIMIT_SIZE=16384 plantuml -tpng docs/diagrams/class_engine.puml  # 11531 x 5275
 ```
 
 `class_engine.puml` outgrew 8192 when the `replay/` package landed — a reminder

@@ -5,6 +5,7 @@ stateDiagram-v2
     direction TB
 
     [*] --> Landing : uv run contrai
+    [*] --> ReplayPicker : uv run contrai replay PATH
 
     Landing : <b>0. Landing / table setup</b><br/>show_landing(setup) -> TableSetup<br/>summary: ruleset origin (+N changes) · target<br/>trump choices · live round score<br/>[Enter] deal · [p] preset · [f] file · [l] live score
     PresetPicker : <b>0a. Preset picker</b><br/>numbered radio over PRESETS,<br/>plus 'last used' when the cache loads<br/>[Enter] keeps the current ruleset
@@ -13,8 +14,10 @@ stateDiagram-v2
     Bidding : <b>1. Bidding</b><br/>request_bid_action(player, history)<br/>"80 h" / "pass" / "double" / "redouble"<br/>(hint adapts to '(pass / redouble)'<br/>when contractor was just doubled)
     MidTrick : <b>2. Mid-trick</b><br/>request_card_action(player, trick, contract, playable)<br/>diamond + live-winner gold pill<br/>★ Belote badge under holder, naming its suit at all trump (Belote/Rebelote in log)
     TrickWon : <b>3. Trick won</b><br/>on_trick_complete(trick, winner, round)<br/>"Press [Enter] to continue…"
-    RoundRecap : <b>4. Round recap</b><br/>show_round_recap(round, scores, is_final, is_tiebreaker, belote_gated)<br/>contract (doubled/redoubled verbose) · trump · made/failed<br/>Outcome: tricks won · round points<br/>Scoring: contract · tricks · last trick · belote · round score<br/>running totals · target<br/>gold notice when belote_gated: "past the target on Belote alone"<br/>"Press [Enter] to deal next round…"<br/>(or "…to see the final score…" when is_final,<br/>"…to deal the tiebreaker round…" when is_tiebreaker;<br/>belote_gated leaves the prompt alone)
+    RoundRecap : <b>4. Round recap</b><br/>show_round_recap(round, scores, is_final, is_tiebreaker, belote_gated)<br/>contract (doubled/redoubled verbose) · trump · made/failed<br/>Outcome: tricks won · round points<br/>Scoring: contract · tricks · last trick · belote · round score<br/>running totals · target<br/>gold notice when belote_gated: "past the target on Belote alone"<br/>"Press [Enter] to deal next round…"<br/>(or "…to see the final score…" when is_final,<br/>"…to deal the tiebreaker round…" when is_tiebreaker ·<br/>belote_gated leaves the prompt alone)
     EndGame : <b>5. End game</b><br/>show_end_game(status)<br/>[n] new · [r] rematch · [q] quit
+    ReplayPicker : <b>6. Replay picker</b><br/>show_replay_summary(rows, game_id) -> round | None<br/>one row per recorded round: # · contract · outcome<br/>· running totals · verification verdict<br/>[1-n] step a round · [q] quit<br/>a round that cannot be replayed is listed and marked, never hidden
+    ReplayStep : <b>7. Replay step</b><br/>show_replay_step(can_go_back) -> key<br/>[n] / [Enter] action · [t] end of trick · [r] end of round<br/>· [p] back · [q] rounds<br/>4 stops per trick, not 5<br/>the frames are the live game's own — Bidding / MidTrick /<br/>TrickWon / RoundRecap — with every hand face up
 
     Landing --> PresetPicker : [p]
     PresetPicker --> Landing : a pick,<br/>or [Enter]
@@ -38,6 +41,12 @@ stateDiagram-v2
     EndGame --> Landing : [n] new game<br/>(re-opens on the setup in play)
     EndGame --> Bidding : [r] rematch<br/>(same setup)
     EndGame --> [*] : [q] quit
+
+    ReplayPicker --> ReplayStep : [1-n]
+    ReplayStep --> ReplayStep : [n] [t] [r]
+    ReplayStep --> ReplayStep : [p] restart and<br/>fast-forward
+    ReplayStep --> ReplayPicker : [q], or the<br/>round ran out
+    ReplayPicker --> [*] : [q] quit
 
     note left of Landing
         The setup screen is a dispatcher: every
@@ -84,12 +93,29 @@ stateDiagram-v2
         ("All passed — no contract").
     end note
 
+    note right of ReplayStep
+        The step prompt draws under the frame it
+        is stepping rather than clearing it, so
+        the action that just landed stays on
+        screen while the viewer decides. Going
+        back is a restart: the engine keeps no
+        earlier PlayState, so the round replays
+        from its own deal with more of its stops
+        passed over in silence — which is also
+        how picking a round works, since the
+        scripted deal source indexes on the
+        game's round counter and cannot seek.
+        --round N opens straight on this state,
+        skipping the picker.
+    end note
+
     classDef screen0 fill:#FFEFD9,stroke:#B26A28,stroke-width:2px,color:#5C3A14;
     classDef screen1 fill:#FFEFD9,stroke:#B26A28,stroke-width:2px,color:#5C3A14;
     classDef screen2 fill:#FFEFD9,stroke:#B26A28,stroke-width:2px,color:#5C3A14;
     classDef screen3 fill:#FFF3E0,stroke:#E89A4F,stroke-width:2px,color:#5C3A14;
     classDef screen4 fill:#FFF3E0,stroke:#E89A4F,stroke-width:2px,color:#5C3A14;
     classDef screen5 fill:#FFD9B3,stroke:#B26A28,stroke-width:2px,color:#5C3A14;
+    classDef screen6 fill:#FFD9B3,stroke:#E89A4F,stroke-width:2px,color:#5C3A14;
 
     class Landing screen0
     class PresetPicker screen0
@@ -100,3 +126,5 @@ stateDiagram-v2
     class TrickWon screen3
     class RoundRecap screen4
     class EndGame screen5
+    class ReplayPicker screen6
+    class ReplayStep screen6

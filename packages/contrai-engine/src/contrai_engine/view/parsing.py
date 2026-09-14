@@ -9,7 +9,7 @@ Syntactic validation only — the auction and round rules own legality.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Final, Optional, Sequence
 
 from contrai_core import BasePlayer, Card
 from contrai_core.bid import (
@@ -117,3 +117,71 @@ def _parse_card_input(
     if card not in playable:
         return None
     return card
+
+
+def _parse_round_pick(
+    raw: str, steppable: Sequence[int]
+) -> Optional[int]:
+    """Parse a round number off the replay picker. ``None`` on anything else.
+
+    The answer is checked against the rounds that can actually be
+    replayed rather than against the record's full list, so a round the
+    table shows but the driver refuses is rejected here instead of
+    failing halfway through a replay.
+
+    Args:
+        raw: What the viewer typed.
+        steppable: The record round numbers that can be replayed.
+
+    Returns:
+        The chosen round number, or ``None`` if the answer named none.
+    """
+
+    # ``str.isdigit()`` is false for ``"-8"``, so a negative answer needs
+    # no guard of its own.
+    text = raw.strip()
+    if not text.isdigit():
+        return None
+    number = int(text)
+    return number if number in steppable else None
+
+
+#: The replay step keys, each with the word that spells it out.
+#: ``[Enter]`` maps to the next action, the same way it means "go on"
+#: everywhere else in this interface.
+_REPLAY_KEYS: Final[dict[str, str]] = {
+    "": "n",
+    "n": "n",
+    "next": "n",
+    "t": "t",
+    "trick": "t",
+    "r": "r",
+    "round": "r",
+    "p": "p",
+    "back": "p",
+    "q": "q",
+    "quit": "q",
+}
+
+
+def _parse_replay_key(raw: str, *, can_go_back: bool) -> Optional[str]:
+    """Parse a replay step key. ``None`` on anything the screen cannot do.
+
+    ``p`` is refused at a round's first stop rather than silently doing
+    nothing: there is no earlier action, and a key that looks like it
+    worked is worse than one that says it did not.
+
+    Args:
+        raw: What the viewer typed.
+        can_go_back: Whether a previous stop exists to return to.
+
+    Returns:
+        One of ``"n"``, ``"t"``, ``"r"``, ``"p"``, ``"q"``, or ``None``.
+    """
+
+    key = _REPLAY_KEYS.get(raw.strip().lower())
+    if key is None:
+        return None
+    if key == "p" and not can_go_back:
+        return None
+    return key
