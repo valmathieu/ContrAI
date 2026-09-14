@@ -216,6 +216,19 @@ class TestSelectors:
             "#pledge-ok",
         )
 
+    def test_the_optional_rail_toggle_is_read(self, profile):
+        assert profile.selectors.rail_show == "#rail-in:visible"
+
+    def test_a_profile_naming_no_rail_toggle_loads(self, tmp_path, profile_text):
+        # Optional: a site whose table controls never move away needs none.
+        path = tmp_path / "p.toml"
+        path.write_text(
+            profile_text.replace('rail_show = "#rail-in:visible"\n', ""),
+            encoding="utf-8",
+        )
+
+        assert load_profile(path).selectors.rail_show is None
+
     def test_the_scoreboard_selectors_are_read(self, profile):
         assert profile.selectors.scoreboard_row == ".score-row"
 

@@ -46,6 +46,13 @@ pledge_accept = "#placeholder-pledge-ok"
 tournament_marker = "#placeholder-table-kind"
 tournament_marker_text = "placeholder"
 next_table = "#placeholder-next"
+# Optional. Some tables slide the rails holding their panel buttons off the
+# screen while a game runs; a button left there is in the DOM but out of reach,
+# and clicking it only burns its timeout. This is the site's own control for
+# bringing the rails back, and it is shown only while they are away — so filter
+# it on visibility and it says both whether to click and what. Leave the key
+# out where a table's controls never move.
+rail_show = "#placeholder-rail-in:visible"
 options_button = "#placeholder-options"
 # One row per table option. Inside a row, the id sits on one element and the
 # on/off state on another: options_id_attr is read off options_id_element, and

@@ -170,6 +170,15 @@ class SelectorSection:
     tournament_marker: Selector
     tournament_marker_text: str
     next_table: Selector
+    rail_show: Selector | None
+    """Optional: the control that brings the table's panel rails back.
+
+    A table may slide the rails carrying its panel buttons off the screen
+    while a game runs. This control puts them back, and the site shows it
+    only while they are away — so a selector filtered on visibility answers
+    both "are they away" and "what to click". ``None`` where nothing moves.
+    """
+
     options_button: Selector
     options_row: Selector
     options_id_element: str
@@ -432,6 +441,13 @@ class _Table:
             return None
         return self.string(key)
 
+    def optional_selector(self, key: str) -> Selector | None:
+        """Read a selector key that may be absent."""
+
+        if key not in self._data:
+            return None
+        return self.selector(key)
+
     def booleans(self) -> Mapping[str, bool]:
         """Consume the whole table as site-chosen names bound to booleans.
 
@@ -615,6 +631,7 @@ def _selectors(table: _Table) -> SelectorSection:
         tournament_marker=table.selector("tournament_marker"),
         tournament_marker_text=table.string("tournament_marker_text"),
         next_table=table.selector("next_table"),
+        rail_show=table.optional_selector("rail_show"),
         options_button=table.selector("options_button"),
         options_row=table.selector("options_row"),
         options_id_element=table.string("options_id_element"),

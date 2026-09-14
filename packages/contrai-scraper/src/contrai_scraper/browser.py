@@ -258,6 +258,7 @@ class Spectator:
             BrowserError: If the options control is not there.
         """
 
+        await self._reveal_rails()
         await self._click("options_button")
         observed: dict[str, bool] = {}
         for row in await self._rows("options_row"):
@@ -308,6 +309,7 @@ class Spectator:
             BrowserError: If the scoreboard control is not there.
         """
 
+        await self._reveal_rails()
         await self._click("scoreboard_button")
         rows: list[tuple[int, int]] = []
         lines: list[str] = []
@@ -334,6 +336,7 @@ class Spectator:
         """
 
         token = self._translator.seat_name(seat)
+        await self._reveal_rails()
         await self._click_one(
             "seat_element", self._selectors.seat_element.format(seat=token)
         )
@@ -512,6 +515,22 @@ class Spectator:
 
         if await self._showing(key) is not None:
             await self._click(key)
+
+    async def _reveal_rails(self) -> None:
+        """Bring the table's panel controls back, if they have slid away.
+
+        A table may collapse the rails holding its panel buttons after a few
+        seconds of play. Those buttons stay in the DOM with a real box, simply
+        translated outside the window, so a click on one waits out its whole
+        timeout instead of landing — which ends the session rather than the
+        read. The site's own toggle restores them and is shown only while they
+        are away, so a selector filtered on visibility is both the question
+        and the answer. A profile naming no toggle skips this.
+        """
+
+        if self._selectors.rail_show is None:
+            return
+        await self._dismiss("rail_show")
 
 
 def _number_in(text: str, prefix: str) -> str | None:

@@ -98,7 +98,7 @@ silently wrong data.
 | `[site]` | Where the site lives, and which language it answers in. |
 | `[account]` | The spectator account. Values may read `env:NAME` instead of holding the secret. |
 | `[browser]` | Headless or headed, slow-motion, screenshot-on-error. |
-| `[selectors]` | One entry per UI step; a list means "try these in order". `seat_element` is a template filled with a seat token; `scoreboard_cell` is looked up inside each scoreboard row; `options_id_element` and `options_state_element` inside each option row. |
+| `[selectors]` | One entry per UI step; a list means "try these in order". `seat_element` is a template filled with a seat token; `scoreboard_cell` is looked up inside each scoreboard row; `options_id_element` and `options_state_element` inside each option row. `rail_show` is optional: it names the control that brings a table's collapsible panel rails back, filtered on visibility so it is clicked only while they are away. |
 | `[wire]` | How a frame is recognised, unwrapped and keyed. |
 | `[wire.events]` | The three event names the parser reacts to. |
 | `[wire.fields]` | Dotted paths, one per logical field the parser reads. The set of names is fixed. |

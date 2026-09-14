@@ -1,6 +1,7 @@
 """Pins the spectator: the walk, the gates, the panels, the resume frame."""
 
 import asyncio
+import dataclasses
 from typing import Any
 
 import pytest
@@ -371,6 +372,68 @@ class TestMarker:
             return await Spectator(page, profile).read_tournament_marker()
 
         assert drain(scenario) is False
+
+
+class TestRails:
+    def test_the_rail_is_pulled_back_before_a_panel_opens(self, profile):
+        # The table's rails slide away during play. Their buttons stay in the
+        # DOM, translated off the screen, so a click on one waits out its
+        # timeout rather than landing. The site's own toggle pulls them back,
+        # and that toggle is showing exactly while they are away.
+        page = FakePage({**option_panel(opt_alpha=True, opt_beta=False),
+                         "#rail-in:visible": ["<"]})
+
+        async def scenario():
+            await Spectator(page, profile).read_options(profile.rules.options)
+
+        drain(scenario)
+        assert page.clicks == ["#rail-in:visible", "#options", "#close"]
+
+    def test_rails_that_are_already_in_are_left_alone(self, profile):
+        # The toggle is hidden while the rails are in, so its :visible
+        # selector matches nothing and the panel opens straight away.
+        page = FakePage(option_panel(opt_alpha=True, opt_beta=False))
+
+        async def scenario():
+            await Spectator(page, profile).read_options(profile.rules.options)
+
+        drain(scenario)
+        assert page.clicks == ["#options", "#close"]
+
+    def test_a_profile_naming_no_toggle_opens_the_panel_anyway(self, profile):
+        # The key is optional: a site whose controls never move needs none.
+        bare = dataclasses.replace(
+            profile,
+            selectors=dataclasses.replace(profile.selectors, rail_show=None),
+        )
+        page = FakePage({**option_panel(opt_alpha=True, opt_beta=False),
+                         "#rail-in:visible": ["<"]})
+
+        async def scenario():
+            await Spectator(page, bare).read_options(bare.rules.options)
+
+        drain(scenario)
+        assert page.clicks == ["#options", "#close"]
+
+    def test_the_scoreboard_read_pulls_the_rail_back_too(self, profile):
+        page = FakePage({**score_panel((90, 72)), "#rail-in:visible": ["<"]})
+
+        async def scenario():
+            await Spectator(page, profile).read_scoreboard()
+
+        drain(scenario)
+        assert page.clicks == ["#rail-in:visible", "#scoreboard", "#close"]
+
+    def test_the_seat_panel_read_pulls_the_rail_back_too(self, profile):
+        page = FakePage({"#seat-bottom": ["South"],
+                         ".player-panel .title": ["no. 1003"],
+                         "#close": ["x"], "#rail-in:visible": ["<"]})
+
+        async def scenario():
+            await Spectator(page, profile).read_player_id(Position.SOUTH)
+
+        drain(scenario)
+        assert page.clicks == ["#rail-in:visible", "#seat-bottom", "#close"]
 
 
 class TestOptionsGate:
