@@ -135,6 +135,19 @@ class TestTotals:
             block["side"] = {}
         assert read(profile, payload).totals is None
 
+    def test_a_block_holding_more_than_the_totals_still_reads_them(self, profile, builders):
+        # The observed tables keep the per-round rows inside the same block as
+        # the two totals. Every key but the team letters belongs to something
+        # else, and reading one of them as a label must not cost both totals.
+        payload = builders.snapshot_payload(totals=(40, 60))
+        payload["state"]["round.g1"]["score"]["by_team"]["rows"] = []
+        assert read(profile, payload).totals == {TeamSide.NS: 40, TeamSide.EW: 60}
+
+    def test_a_block_missing_one_total_has_no_totals(self, profile, builders):
+        payload = builders.snapshot_payload()
+        del payload["state"]["round.g1"]["score"]["by_team"]["Y"]
+        assert read(profile, payload).totals is None
+
 
 class TestMalformedBlocks:
     # A snapshot that is merely odd must not stop a session: the browser half

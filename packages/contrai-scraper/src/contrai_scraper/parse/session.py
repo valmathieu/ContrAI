@@ -130,7 +130,8 @@ def parse_session(
     Raises:
         ParseError: If the session carries no join snapshot. Without one there
             is no seat map, and a record whose seats were guessed is worse
-            than no record at all.
+            than no record at all, or when a mid-game join's running totals
+            cannot be placed on a side.
     """
 
     translator = Translator(profile)
@@ -243,10 +244,18 @@ def _observed_from(snapshot: Snapshot) -> ObservedFrom | None:
 
     if snapshot.round_index is None:
         return None
+    if snapshot.totals is None:
+        # A join records the score it landed on, and the record has no way to
+        # say "unknown" there. Refusing as a ParseError keeps this a per-log
+        # report for `parse` and a hop for the recorder, rather than a crash.
+        raise ParseError(
+            "The join snapshot's running totals cannot be placed on a side, "
+            "so where the session joined cannot be recorded"
+        )
     return ObservedFrom(
         round=snapshot.round_index + 1,
         phase=JoinPhase.PLAY,
-        totals=dict(snapshot.totals or {}),
+        totals=dict(snapshot.totals),
     )
 
 
