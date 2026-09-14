@@ -36,6 +36,7 @@ from contrai_data import (
     project,
 )
 
+from contrai_engine.model.round import marked_components
 from contrai_engine.replay import (
     RecordedPlayer,
     ReplayController,
@@ -109,7 +110,10 @@ class TestRoundTrip:
     def test_the_replayed_round_scores_match_the_record(self, recorded_game):
         # The two components are compared separately, as the verifier
         # will: a round marking the same total out of a different made /
-        # announced split is a scoring-rule regression, not a match.
+        # announced split is a scoring-rule regression, not a match. The
+        # replay's components are reduced to the figures a score sheet
+        # carries, which is what a record holds — a doubled round's are
+        # already multiplied there.
         scored: list[tuple] = []
 
         class _Scores:
@@ -119,7 +123,9 @@ class TestRoundTrip:
                     (
                         round_.round_number,
                         {
-                            side: (mark.made, mark.announced)
+                            side: marked_components(
+                                mark, score.multiplier, round_.rules
+                            )
                             for side, mark in score.marks.items()
                         },
                         dict(score.card_points),

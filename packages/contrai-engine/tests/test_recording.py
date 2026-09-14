@@ -46,6 +46,7 @@ from contrai_data import (
 from contrai_engine.cli import main
 from contrai_engine.model.game import Game
 from contrai_engine.model.player import AiPlayer, HumanPlayer
+from contrai_engine.model.round import marked_components
 from contrai_engine.options import TableAids
 from contrai_engine.recording import (
     UNSET,
@@ -608,9 +609,14 @@ class TestEmission:
         assert scored.source is ScoreSource.ENGINE
         assert scored.announcements == {side: 0 for side in TeamSide}
         assert scored.carried_over == {side: 0 for side in TeamSide}
+        # The record states the figures a sheet carries, not the components
+        # the scorer works in: a doubled round's are already multiplied.
         for side, mark in score.marks.items():
-            assert scored.marked[side].made == mark.made
-            assert scored.marked[side].announced == mark.announced
+            made, announced = marked_components(
+                mark, score.multiplier, round_.rules
+            )
+            assert scored.marked[side].made == made
+            assert scored.marked[side].announced == announced
 
     def test_all_pass_round_scores_as_all_pass(self, all_pass_game):
         _, _, events = all_pass_game

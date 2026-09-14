@@ -52,6 +52,7 @@ from contrai_data import (
     load_game,
 )
 
+from ..model.round import marked_components
 from ..recording import _outcome, _slam
 from .controller import ReplayController
 from .exceptions import ReplayError, ScriptExhaustedError, SeatMismatchError
@@ -555,7 +556,8 @@ def _check_score(check: _RoundCheck, round_: Any) -> None:
     _check_contract_terms(check, contract, score, recorded)
 
     marks = {
-        side: (mark.made, mark.announced) for side, mark in score.marks.items()
+        side: marked_components(mark, score.multiplier, round_.rules)
+        for side, mark in score.marks.items()
     }
     wanted = {
         side: (mark.made, mark.announced)
