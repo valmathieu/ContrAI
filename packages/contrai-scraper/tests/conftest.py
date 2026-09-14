@@ -191,6 +191,7 @@ side_taken = "done.points"
 side_belote = "done.belotes"
 side_marked_made = "marks.points"
 side_marked_announced = "marks.bid"
+side_marked_belote = "marks.belotes"
 bid_owner = "who"
 bid_suit = "colour"
 bid_value = "level"
@@ -354,11 +355,15 @@ def snapshot_payload(*, table_id="t1", round_index=2, rows=(), totals=(40, 60)) 
 
 
 def score_row(*, made=True, value=80, suit="wood", multiplier=1, declarer="X",
-              taken=(90, 72), belote=(0, 0), marked=((80, 0), (0, 0))) -> dict:
+              taken=(90, 72), belote=(0, 0), marked=((80, 0), (0, 0)),
+              marked_belote=(0, 0)) -> dict:
     """One row of the per-round breakdown, keyed by team letter.
 
     The row names the declaring side and the side that won the round; the
     winner is the declarer when ``made`` and the other letter otherwise.
+    ``belote`` is what each side *held*; ``marked_belote`` is what the sheet
+    credited it — a component of its own, beside the made and announced
+    points.
     """
 
     defence = "Y" if declarer == "X" else "X"
@@ -367,9 +372,11 @@ def score_row(*, made=True, value=80, suit="wood", multiplier=1, declarer="X",
                  "suit": suit, "coeff": multiplier,
                  "taker": declarer, "winner": declarer if made else defence},
         "X": {"done": {"points": taken[0], "belotes": belote[0]},
-              "marks": {"points": marked[0][0], "bid": marked[0][1]}},
+              "marks": {"points": marked[0][0], "bid": marked[0][1],
+                        "belotes": marked_belote[0]}},
         "Y": {"done": {"points": taken[1], "belotes": belote[1]},
-              "marks": {"points": marked[1][0], "bid": marked[1][1]}},
+              "marks": {"points": marked[1][0], "bid": marked[1][1],
+                        "belotes": marked_belote[1]}},
     }
 
 

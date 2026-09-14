@@ -75,6 +75,15 @@ class ScoreRow:
     marked: Mapping[TeamSide, tuple[int, int]]
     """Made points and announced points, per side."""
 
+    marked_belote: Mapping[TeamSide, int]
+    """Belote as the score sheet credited it, per side.
+
+    A component of its own, beside the made and announced points: one
+    scoreboard column is the three added together, which is what a panel
+    read has to be compared against. Not the same question as
+    :attr:`belote`, which is what a side *held*.
+    """
+
 
 @dataclass(frozen=True, slots=True)
 class Snapshot:
@@ -222,6 +231,7 @@ def _score_row(
     taken: dict[TeamSide, int] = {}
     belote: dict[TeamSide, int] = {}
     marked: dict[TeamSide, tuple[int, int]] = {}
+    marked_belote: dict[TeamSide, int] = {}
     for letter in tokens.team_letters:
         side = translator.side(letter, seat_of_letter)
         block = row.get(letter) or {}
@@ -231,6 +241,7 @@ def _score_row(
             translator.field(block, "side_marked_made") or 0,
             translator.field(block, "side_marked_announced") or 0,
         )
+        marked_belote[side] = translator.field(block, "side_marked_belote") or 0
     return ScoreRow(
         made=_made(row, translator),
         contract=RowContract(
@@ -242,6 +253,7 @@ def _score_row(
         taken=taken,
         belote=belote,
         marked=marked,
+        marked_belote=marked_belote,
     )
 
 

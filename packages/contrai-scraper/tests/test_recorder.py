@@ -216,6 +216,23 @@ class TestGates:
                                  round_index=1)]
         assert run_recorder(spectator, script, profile).tables_seated == 1
 
+    def test_a_marked_belote_counts_toward_the_panel_column(self, profile,
+                                                            builders):
+        # The panel's column is the whole marked total, belote included. A
+        # table where either side had marked one was refused as though its
+        # sides were swapped, which is roughly a fifth of rounds (9A).
+        spectator = FakeSpectator(
+            scoreboard=ScoreboardReading(rows=((100, 0),), text="100 0")
+        )
+        script = [
+            snapshot_frame(
+                builders,
+                rows=[builders.score_row(belote=(20, 0), marked_belote=(20, 0))],
+                round_index=1,
+            )
+        ]
+        assert run_recorder(spectator, script, profile).tables_seated == 1
+
     def test_an_unscored_game_skips_the_orientation_check(self, profile,
                                                           builders):
         # A game with no scored round has nothing to compare, and a panel

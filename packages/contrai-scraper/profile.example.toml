@@ -145,6 +145,9 @@ side_taken = "done.points"
 side_belote = "done.belotes"
 side_marked_made = "marks.points"
 side_marked_announced = "marks.bid"
+# Belote as the sheet credited it, which is a component of its own: one
+# scoreboard column is the made points, the announced ones and this added up.
+side_marked_belote = "marks.belotes"
 bid_owner = "who"
 bid_suit = "colour"
 bid_value = "value"

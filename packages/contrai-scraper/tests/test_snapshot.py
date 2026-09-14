@@ -160,6 +160,14 @@ class TestScoreRows:
         assert row.belote == {TeamSide.NS: 20, TeamSide.EW: 0}
         assert row.marked[TeamSide.NS] == (90, 80)
 
+    def test_the_marked_belote_is_a_component_of_its_own(self, profile, builders):
+        # The sheet credits belote in a slot beside the made and announced
+        # points, which is why a scoreboard column totals more than those two.
+        rows = (builders.score_row(belote=(20, 0), marked=((90, 80), (0, 0)),
+                                   marked_belote=(20, 0)),)
+        row = read(profile, builders.snapshot_payload(rows=rows)).score_rows[0]
+        assert row.marked_belote == {TeamSide.NS: 20, TeamSide.EW: 0}
+
     def test_a_sweep_is_recorded_as_stated(self, profile, builders):
         # A side taking all eight tricks has its card-point component recorded
         # as 250, not 162. The row is stored as the wire stated it and never

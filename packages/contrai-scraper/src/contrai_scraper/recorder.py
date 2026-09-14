@@ -731,11 +731,14 @@ def _orientation_holds(
 def _wire_pair(row: ScoreRow) -> tuple[int, int]:
     """One score row as the panel would print it: the south seat's side first.
 
-    A round's marked points are what a scoreboard column holds — the made
-    points plus the announced ones — rather than the card points behind them.
+    A scoreboard column is a round's whole marked total — the made points,
+    the announced ones and the belote the sheet credited — rather than the
+    card points behind them. Leaving the belote out refused perfectly good
+    tables as though their sides were swapped, on every round where one was
+    marked.
     """
 
     return tuple(
-        sum(row.marked[seat.team_side])
+        sum(row.marked[seat.team_side]) + row.marked_belote[seat.team_side]
         for seat in (Position.SOUTH, Position.WEST)
     )

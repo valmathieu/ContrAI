@@ -111,6 +111,7 @@ FIELD_NAMES: frozenset[str] = frozenset({
     "side_belote",
     "side_marked_made",
     "side_marked_announced",
+    "side_marked_belote",
     "bid_owner",
     "bid_suit",
     "bid_value",
