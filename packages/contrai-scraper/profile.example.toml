@@ -139,13 +139,13 @@ observable_tables = "tables"
 # values are the canonical one-letter names — ranks 7 8 9 10 J Q K A, suits
 # S H D C, seats N W S E.
 #
-# The seat map is the one entry worth checking twice. It is a *placement* map,
-# not a translation: write the core seat each on-screen position actually
-# holds. Walking seat_rotation through it must reproduce core's own cycle
-# (N W S E), and a table whose rotation runs the other way round makes the two
-# side seats cross over. The translator refuses a map that does not.
+# The seat map is the one entry worth checking twice. It is a *placement* map:
+# write the core seat each on-screen position actually shows. Walking
+# seat_rotation through it must walk core's seats the way [rules].preset plays
+# (clockwise for `tournament`: N E S W). Crossing the two side seats walks the
+# other way, and the translator refuses the map.
 [wire.tokens]
-seats = { placeholder_a = "N", placeholder_b = "W", placeholder_c = "S", placeholder_d = "E" }
+seats = { placeholder_a = "N", placeholder_b = "E", placeholder_c = "S", placeholder_d = "W" }
 seat_rotation = ["placeholder_a", "placeholder_b", "placeholder_c", "placeholder_d"]
 ranks = { p7 = "7", p8 = "8", p9 = "9", p10 = "10", pJ = "J", pQ = "Q", pK = "K", pA = "A" }
 suits = { pS = "S", pH = "H", pD = "D", pC = "C" }

@@ -80,10 +80,11 @@ def tmp_root(tmp_path: Path) -> Path:
 #: verbs are ``card`` and ``bid:``. Every assertion in the suite reads against
 #: this vocabulary, which is what keeps the code free of the real one.
 #:
-#: The seat map is **mirrored on purpose**: ``right`` is West and ``left`` is
-#: East. Walking ``seat_rotation`` through it yields N → W → S → E, core's own
-#: cycle; a literal map would give N → E → S → W and fail the translator's
-#: rotation assertion. That mirror is the P-A finding D1, in miniature.
+#: The seat map is **literal**: ``right`` is East and ``left`` is West, where
+#: they sit on screen. Walking ``seat_rotation`` through it yields
+#: N → E → S → W, which is clockwise — the direction the ``tournament`` preset
+#: named under ``[rules]`` plays. A map with the two side seats crossed would
+#: walk anticlockwise and fail the translator's rotation check.
 PROFILE_TEXT = """
 [site]
 url = "https://example.invalid/lobby"
@@ -197,7 +198,7 @@ spectators = "watchers"
 observable_tables = "tables"
 
 [wire.tokens]
-seats = { top = "N", right = "W", bottom = "S", left = "E" }
+seats = { top = "N", right = "E", bottom = "S", left = "W" }
 seat_rotation = ["top", "right", "bottom", "left"]
 ranks = { "2" = "7", "3" = "8", "4" = "9", "5" = "10", "6" = "J", "7" = "Q", "8" = "K", "9" = "A" }
 suits = { w = "S", x = "H", y = "D", z = "C" }
@@ -416,11 +417,15 @@ def builders():
 
 TS = "2026-09-11T18:18:15Z"
 
-#: The four seats in the site's own rotation, which is core's ``next`` cycle.
-ROTATION = (Position.NORTH, Position.WEST, Position.SOUTH, Position.EAST)
+#: The direction the fixture profile's preset plays — clockwise.
+DIRECTION = PRESETS["tournament"].turn_direction
+
+#: The four seats in the site's own rotation — top, right, bottom, left —
+#: which is core's seats walked in ``DIRECTION``.
+ROTATION = (Position.NORTH, Position.EAST, Position.SOUTH, Position.WEST)
 
 #: Player handles, in the same order. The fixture profile's seat map places
-#: ``top`` at North and ``right`` at West — the mirror.
+#: ``top`` at North and ``right`` at East, where they sit on screen.
 HANDLES = ("p1", "p2", "p3", "p4")
 
 #: Handle to seat, and back.
@@ -459,7 +464,7 @@ def _deal(stock, dealer):
     test.
     """
 
-    start = ROTATION.index(dealer.next)
+    start = ROTATION.index(dealer.next_in(DIRECTION))
     order = [ROTATION[(start + step) % 4] for step in range(4)]
     hands = {seat: [] for seat in order}
     cursor = 0
@@ -478,7 +483,7 @@ def stock_for(hands, dealer):
     dealer, taking each seat's next cards in turn.
     """
 
-    start = ROTATION.index(dealer.next)
+    start = ROTATION.index(dealer.next_in(DIRECTION))
     order = [ROTATION[(start + step) % 4] for step in range(4)]
     cursor = dict.fromkeys(order, 0)
     stock = []
@@ -503,7 +508,7 @@ def _tricks(hands, leader, trump):
     for _ in range(8):
         order = [leader]
         while len(order) < 4:
-            order.append(order[-1].next)
+            order.append(order[-1].next_in(DIRECTION))
         trick = [(seat, remaining[seat].pop(0)) for seat in order]
         tricks.append(trick)
         leader = (
@@ -535,7 +540,7 @@ def _after(declarer):
 
     seat = declarer
     for _ in range(3):
-        seat = seat.next
+        seat = seat.next_in(DIRECTION)
         yield seat
 
 
@@ -561,7 +566,7 @@ def round_events(number, dealer, declarer, value, suit, made, totals):
                 think_ms=None, ts=TS)
         for seq, bid in enumerate(auction, start=1)
     ]
-    for index, trick in enumerate(_tricks(hands, dealer.next, suit), start=1):
+    for index, trick in enumerate(_tricks(hands, dealer.next_in(DIRECTION), suit), start=1):
         events += [
             CardPlayed(round=number, trick=index, position=seat, card=card,
                        derived=index == 8, think_ms=None, ts=TS)
@@ -649,10 +654,12 @@ def source_game():
         The events in file order, header first.
     """
 
+    # Each round is dealt by the seat before its declarer, so the declarer
+    # speaks first and the auction is its bid and three passes.
     return game_events(
-        round_events(1, Position.NORTH, Position.WEST, 80, Suit.SPADES, True,
+        round_events(1, Position.SOUTH, Position.WEST, 80, Suit.SPADES, True,
                      {TeamSide.NS: 0, TeamSide.EW: 170}),
-        round_events(2, Position.WEST, Position.SOUTH, 110, Suit.HEARTS, True,
+        round_events(2, Position.EAST, Position.SOUTH, 110, Suit.HEARTS, True,
                      {TeamSide.NS: 200, TeamSide.EW: 170}),
     )
 

@@ -54,10 +54,11 @@ that is not JSON at all**, which a parser assuming otherwise trips over roughly 
 Three more shape the parser, and all three are cases where the wrong reading produces a record
 that is well-formed and wrong:
 
-- **The seat map is a mirror.** The table's rotation runs the opposite way round from
-  `Position`'s order, so the two side seats map crosswise. The profile owns the map and
-  `Translator` asserts the *rotation*, not the names — a literal one-to-one map passes every
-  spot check and still turns the table backwards.
+- **The seat map is checked by rotation, not by name.** The observed tables turn clockwise,
+  which is what the `tournament` preset says, so each on-screen seat maps to the compass seat
+  it shows. The profile owns the map and `Translator` asserts that the site's rotation walks
+  the seats in the preset's direction — a map with its side seats crossed passes every spot
+  check and still turns the table backwards.
 - **A double's payload names the player being doubled**, not the doubler. The doubler is the
   event key's actor; taking the payload's owner credits the double to the side it was aimed at,
   and the round still looks legal.

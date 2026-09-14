@@ -552,9 +552,9 @@ class TestRefusals:
         assert "parse_note" in events
 
 
-#: The round the one-round games below are built from: dealer North,
-#: declarer West, eighty in spades, made.
-_ROUND_ONE = (Position.NORTH, Position.WEST, 80, Suit.SPADES, True,
+#: The round the one-round games below are built from: dealer South,
+#: declarer West — the seat after it, clockwise — eighty in spades, made.
+_ROUND_ONE = (Position.SOUTH, Position.WEST, 80, Suit.SPADES, True,
               {TeamSide.NS: 0, TeamSide.EW: 170})
 
 
