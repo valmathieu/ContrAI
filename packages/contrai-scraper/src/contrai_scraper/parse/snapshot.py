@@ -232,7 +232,7 @@ def _score_row(
             translator.field(block, "side_marked_announced") or 0,
         )
     return ScoreRow(
-        made=translator.field(row, "row_status") == tokens.score_made,
+        made=_made(row, translator),
         contract=RowContract(
             value=None if value_token is None
             else translator.contract_value(value_token),
@@ -245,6 +245,27 @@ def _score_row(
     )
 
 
+def _made(row: Mapping[str, Any], translator: Translator) -> bool:
+    """Whether the declaring side made its contract.
+
+    The row names the declaring side and the side that won the round, and
+    comparing the two is the reading that has held on every row observed. The
+    status token alone does not: a contract made by taking every trick
+    carries a status of its own, which one "made" token would read as a
+    failure. The status stays as the fallback for a row that does not name
+    both sides.
+    """
+
+    declarer = translator.field(row, "row_declarer")
+    winner = translator.field(row, "row_winner")
+    if declarer is not None and winner is not None:
+        return winner == declarer
+    return (
+        translator.field(row, "row_status")
+        == translator.profile.wire.tokens.score_made
+    )
+
+
 def _totals(
     round_state: Mapping[str, Any],
     translator: Translator,
@@ -252,18 +273,28 @@ def _totals(
 ) -> dict[TeamSide, int] | None:
     """Read the running totals, keyed by side rather than by team label.
 
-    Returns ``None`` rather than a partial mapping when a label cannot be
-    placed: a total attributed to the wrong side is worse than no total, and
-    the record's own schema allows the absence.
+    Only the profile's own team letters are read. The block the totals live
+    in may hold other things beside them — at the observed tables the
+    per-round rows sit in it — and treating every key as a label would turn
+    one of those into a team no seat holds, and lose both totals.
+
+    Returns ``None`` rather than a partial mapping when a total is missing or
+    its label cannot be placed: a total attributed to the wrong side is worse
+    than no total. The record's own schema allows the absence — except at a
+    mid-game join, where ``ObservedFrom`` needs both sides and the parser
+    refuses it there instead.
     """
 
     raw = translator.field(round_state, "totals")
     if not isinstance(raw, Mapping):
         return None
-    try:
-        return {
-            translator.side(letter, seat_of_letter): value
-            for letter, value in raw.items()
-        }
-    except ParseError:
-        return None
+    totals: dict[TeamSide, int] = {}
+    for letter in translator.profile.wire.tokens.team_letters:
+        value = raw.get(letter)
+        if not isinstance(value, int):
+            return None
+        try:
+            totals[translator.side(letter, seat_of_letter)] = value
+        except ParseError:
+            return None
+    return totals

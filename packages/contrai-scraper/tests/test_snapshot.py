@@ -102,6 +102,53 @@ class TestScoreRows:
         rows = (builders.score_row(made=False),)
         assert read(profile, builders.snapshot_payload(rows=rows)).score_rows[0].made is False
 
+    def test_a_row_won_by_the_declaring_side_is_made_whatever_its_status(
+        self, profile, builders
+    ):
+        # A contract made by taking every trick carries a status of its own at
+        # the observed tables, and a single "made" token reads it as failed.
+        # The sides the row names are what decide it.
+        row = builders.score_row(made=True)
+        row["deal"]["status"] = "sweep"
+        payload = builders.snapshot_payload(rows=(row,))
+        assert read(profile, payload).score_rows[0].made is True
+
+    def test_a_row_won_by_the_defence_is_failed_whatever_its_status(
+        self, profile, builders
+    ):
+        # Should a failed row ever carry a status of its own, a single
+        # "made" token would misread it as made. The sides the row names are
+        # what decide it.
+        row = builders.score_row(made=False)
+        row["deal"]["status"] = "ok"
+        payload = builders.snapshot_payload(rows=(row,))
+        assert read(profile, payload).score_rows[0].made is False
+
+    @pytest.mark.parametrize(("status", "made"), [("ok", True), ("down", False)])
+    def test_a_row_naming_neither_side_falls_back_to_its_status(
+        self, profile, builders, status, made
+    ):
+        # A row naming neither the declarer nor the winner falls back to its
+        # status token, the reading that held before those fields existed.
+        row = builders.score_row()
+        del row["deal"]["taker"]
+        del row["deal"]["winner"]
+        row["deal"]["status"] = status
+        payload = builders.snapshot_payload(rows=(row,))
+        assert read(profile, payload).score_rows[0].made is made
+
+    def test_a_row_naming_only_one_side_falls_back_to_its_status(
+        self, profile, builders
+    ):
+        # The declarer alone is not enough: the reading needs both names, so
+        # a row missing the winner falls back to its status just as one
+        # naming neither side would.
+        row = builders.score_row()
+        del row["deal"]["winner"]
+        row["deal"]["status"] = "down"
+        payload = builders.snapshot_payload(rows=(row,))
+        assert read(profile, payload).score_rows[0].made is False
+
     def test_the_components_are_keyed_by_side_not_by_team_letter(
         self, profile, builders
     ):
@@ -133,6 +180,19 @@ class TestTotals:
         payload = builders.snapshot_payload()
         for block in payload["state"]["people"].values():
             block["side"] = {}
+        assert read(profile, payload).totals is None
+
+    def test_a_block_holding_more_than_the_totals_still_reads_them(self, profile, builders):
+        # The observed tables keep the per-round rows inside the same block as
+        # the two totals. Every key but the team letters belongs to something
+        # else, and reading one of them as a label must not cost both totals.
+        payload = builders.snapshot_payload(totals=(40, 60))
+        payload["state"]["round.g1"]["score"]["by_team"]["rows"] = []
+        assert read(profile, payload).totals == {TeamSide.NS: 40, TeamSide.EW: 60}
+
+    def test_a_block_missing_one_total_has_no_totals(self, profile, builders):
+        payload = builders.snapshot_payload()
+        del payload["state"]["round.g1"]["score"]["by_team"]["Y"]
         assert read(profile, payload).totals is None
 
 
