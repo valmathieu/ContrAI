@@ -155,6 +155,7 @@ class SelectorSection:
     """One entry per UI step; a tuple means "try these in order"."""
 
     dismiss_tutorial: Selector
+    login_start: Selector
     login_email: Selector
     login_continue: Selector
     code_input: Selector
@@ -566,6 +567,7 @@ def _selectors(table: _Table) -> SelectorSection:
         )
     section = SelectorSection(
         dismiss_tutorial=table.selector("dismiss_tutorial"),
+        login_start=table.selector("login_start"),
         login_email=table.selector("login_email"),
         login_continue=table.selector("login_continue"),
         code_input=table.selector("code_input"),

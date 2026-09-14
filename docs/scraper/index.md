@@ -131,6 +131,11 @@ have had:
   rendered panel, with no replay cost. The panel is the fallback, and it is evidence for the raw
   log rather than a score the parser can use.
 
+The walk follows the site's timing, not only its markup. It lets the landing page settle before
+probing for the first-visit tutorial, opens the address form through its own entry, and, because
+the first-use pledge can be drawn a moment after it was looked for, answers it and retries once
+when the spectator menu refuses a click.
+
 The states, in order: reset the buffer and the stream, wait for a join snapshot, refuse a table
 that is not a tournament or is already `hop_after_rows` rounds old, refuse one whose options
 disagree with `[rules.options]`, check that the panel's *us* is the south seat's side, then watch.
