@@ -586,12 +586,20 @@ def _check_score(check: _RoundCheck, round_: Any) -> None:
         )
 
     if score.last_trick_side is not recorded.last_trick:
-        check.fault(
-            MismatchKind.SCORE,
-            "the last trick went to another side",
-            expected=str(score.last_trick_side),
-            observed=str(recorded.last_trick),
-        )
+        if recorded.last_trick is None:
+            # The source named no side. An observed table may fold the
+            # ten-point bonus into the row's card points and state nothing
+            # else, and those points are compared above — so the bonus is
+            # still checked, while the side itself was never claimed. A claim
+            # never made is not a disagreement.
+            check.unchecked.append(_SCORE)
+        else:
+            check.fault(
+                MismatchKind.SCORE,
+                "the last trick went to another side",
+                expected=str(score.last_trick_side),
+                observed=str(recorded.last_trick),
+            )
 
 
 def _check_contract_terms(

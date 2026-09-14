@@ -687,6 +687,25 @@ class TestCheckScore:
 
         assert "last trick went to another side" in _details(check)
 
+    def test_a_last_trick_the_record_never_states_is_unchecked(self):
+        # An observed source may name no side at all: a table that folds the
+        # ten-point bonus into the row's card points states the points and
+        # nothing else. Those points are compared above, so the bonus is still
+        # checked — but a claim never made cannot disagree with the replay.
+        check = self._run(_Scored(declarer=None, last_trick=None))
+
+        assert check.mismatches == []
+        assert check.unchecked == ["score"]
+
+    def test_two_silences_about_the_last_trick_agree(self):
+        # A round whose tricks were never played has no last trick on either
+        # side, which is agreement rather than something left unchecked.
+        check = self._run(
+            _Scored(declarer=None, last_trick=None), score=_score(last_trick=None)
+        )
+
+        assert (check.mismatches, check.unchecked) == ([], [])
+
     def test_every_disagreeing_field_is_reported(self):
         # The score check does not stop at the first fault: a reader
         # wants the whole picture of a divergent score line.
