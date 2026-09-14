@@ -66,6 +66,13 @@ that is well-formed and wrong:
   session joined is skipped, never reconstructed, so an observed game's hands are always
   `dealt_from_deck`.
 
+One thing the wire leaves out entirely is a **forced pass**. The table skips a seat whose only
+legal bid is a pass — the doubler's partner, the partner of a Slam bidder, everyone after a
+redouble — spending its sequence number and transmitting nothing, so an auction read literally
+ends short and projects as unfinished. `restore_forced_passes` puts each one back where core's
+own legality says it falls and checks it against the gap it left in the numbering; a gap on a
+seat that had a choice is a lost bid, and that round is skipped with a note instead of repaired.
+
 The raw log is what makes all of this correctable. Frames are stored verbatim *before* anything
 is interpreted, so a parser fix applies to games already watched — `contrai-scrape parse` is that
 re-run, and it is the same code path a live session takes.

@@ -314,7 +314,15 @@ def _round(
     # The first packet goes to the seat after the dealer in the table's own
     # direction — the same seat that speaks first.
     hands = deal_hands(stock, dealer.next_in(rules.turn_direction), translator.rotation)
-    bids = bid_events(round_, translator, seat_of_player, ts=ts)
+    try:
+        bids = bid_events(
+            round_, translator, seat_of_player, dealer=dealer, rules=rules, ts=ts
+        )
+    except ParseError as error:
+        # A round-level refusal, like an unresolvable dealer: one auction the
+        # parser cannot account for costs that round, not the whole game.
+        notes.append(f"round {number}: {error} — skipped")
+        return None
     contract = _contract(bids)
 
     if contract is None:

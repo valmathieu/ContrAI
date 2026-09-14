@@ -28,7 +28,7 @@ flowchart TD
 
     %% ---------- Assembly ----------
     Translate --> Snapshot["snapshot<br/>seats, players, score rows, totals"]
-    Translate --> LiveEv["live<br/>bids and plays, per round"]
+    Translate --> LiveEv["live<br/>bids and plays, per round<br/>forced passes put back"]
     Events -- "compressed blob" --> Lz["lzstring<br/>decompress the pre-deal deck"]
     Lz --> Deal
     Deal["deal<br/>3-2-3 hands, dealer,<br/>the forced eighth trick"]
