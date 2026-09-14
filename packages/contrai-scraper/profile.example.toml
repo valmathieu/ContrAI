@@ -117,6 +117,11 @@ row_status = "deal.status"
 row_value = "deal.value"
 row_suit = "deal.suit"
 row_multiplier = "deal.coefficient"
+# The row's declaring side and the side that won the round, as team letters.
+# Comparing them is how a row reads as made or failed; score_made below is
+# only consulted for a row that names neither.
+row_declarer = "deal.declarer"
+row_winner = "deal.winner"
 side_taken = "done.points"
 side_belote = "done.belotes"
 side_marked_made = "marks.points"
@@ -156,6 +161,7 @@ bid_slam = "PLACEHOLDER_SLAM"
 bid_solo_slam = "PLACEHOLDER_SOLO_SLAM"
 # Whether a pass is sent as a null rather than as a token of its own.
 pass_is_null = true
+# The status a made row carries, for a row naming no declarer or winner.
 score_made = "placeholder-made"
 
 # The core preset the observed tables play under.
