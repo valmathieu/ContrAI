@@ -184,6 +184,53 @@ class TestGates:
             [("next_table",)], 1
         )
 
+    def test_a_table_this_profile_cannot_read_is_left_rather_than_fatal(
+        self, profile, builders
+    ):
+        # The site runs variants whose contracts the tournament ruleset has no
+        # name for — all trump is the one that was met live. The options gate
+        # that refuses such a table runs *after* the snapshot is read, so an
+        # unreadable row would otherwise end the session and spend a slot of
+        # the shift's failure budget rather than costing one hop.
+        spectator = FakeSpectator()
+        script = [snapshot_frame(builders,
+                                 rows=[builders.score_row(suit="everything")])]
+        summary = run_recorder(spectator, script, profile)
+        assert (spectator.calls, summary.tables_rejected) == (
+            [("next_table",)], 1
+        )
+
+    def test_an_unreadable_table_logs_what_it_could_not_read(
+        self, profile, builders
+    ):
+        # Hopping must not hide a profile that has genuinely drifted, so the
+        # refused token travels into the health line.
+        lines: list[str] = []
+        health = HealthLog(write=lines.append)
+        run_recorder(FakeSpectator(),
+                     [snapshot_frame(builders,
+                                     rows=[builders.score_row(suit="everything")])],
+                     profile, health=health)
+        rejected = [json.loads(line) for line in lines
+                    if json.loads(line)["event"] == "table_rejected"]
+        assert [entry["reason"] for entry in rejected] == ["unreadable_snapshot"]
+        assert "everything" in rejected[0]["error"]
+        assert health.counters.tables_rejected == 1
+
+    def test_an_unreadable_table_is_followed_by_a_readable_one(
+        self, profile, builders
+    ):
+        # The hop has to leave the loop able to seat: a rejected table resets
+        # the buffer the way every other rejection does.
+        spectator = FakeSpectator()
+        script = [
+            snapshot_frame(builders, frame_id="s0",
+                           rows=[builders.score_row(suit="everything")]),
+            snapshot_frame(builders, frame_id="s1", table_id="t2"),
+        ]
+        summary = run_recorder(spectator, script, profile)
+        assert (summary.tables_rejected, summary.tables_seated) == (1, 1)
+
     def test_an_options_mismatch_aborts_the_table(self, profile, builders):
         spectator = FakeSpectator(
             options=OptionsReading(observed={"opt_alpha": True},

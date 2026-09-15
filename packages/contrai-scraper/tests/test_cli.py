@@ -364,6 +364,22 @@ class TestLiveChecks:
                                            Frames(_join_frame(builders)), profile))
         assert results[-1] == ("options match [rules.options]", False, message)
 
+    def test_a_snapshot_this_profile_cannot_read_is_a_failed_line(self, profile, builders):
+        # The server seats a spectator wherever it likes, including at a
+        # variant table whose contracts the tournament ruleset has no name
+        # for. That is as much a profile answer as a missing selector, and
+        # this command exists to name it rather than print a traceback.
+        payload = builders.snapshot_payload(
+            rows=[builders.score_row(suit="everything")]
+        )
+        frame = _received(
+            builders.envelope("payload", "joinTable", payload, frame_id="s0")
+        )
+        results = asyncio.run(_live_checks(FakeWalk(), Frames(frame), profile))
+        step, passed, detail = results[-1]
+        assert (step, passed) == ("the snapshot reads", False)
+        assert "everything" in detail
+
     def test_a_table_that_agrees_with_the_profile_passes_every_check(self, profile, builders):
         snapshot = read_snapshot(builders.snapshot_payload(), Translator(profile))
         walk = FakeWalk(marker=bool(snapshot.is_tournament), ids=_accounts(snapshot))

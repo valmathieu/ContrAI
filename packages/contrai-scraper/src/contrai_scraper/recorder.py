@@ -45,7 +45,7 @@ from typing import Any
 from contrai_core import Position
 from contrai_data import EndReason, RecordWriter, RoundDealt, game_path
 
-from .exceptions import ScraperError
+from .exceptions import ParseError, ScraperError
 from .frames import FrameSource, RawFrame
 from .health import HealthLog
 from .parse.session import parse_session
@@ -258,9 +258,21 @@ class Recorder:
                 # has already judged. Seating on it would re-seat the table
                 # that was just left.
                 continue
-            snapshot = read_snapshot(
-                event.data, self._translator, at=event.received_ms
-            )
+            try:
+                snapshot = read_snapshot(
+                    event.data, self._translator, at=event.received_ms
+                )
+            except ParseError as error:
+                # A table this profile cannot read is a table to leave, not a
+                # session to end. The site runs variants whose contracts the
+                # tournament ruleset has no name for — all trump is the one
+                # that was met — and the options gate that refuses such a
+                # table sits *after* this read, so without this a table we
+                # never wanted spends a slot of the shift's failure budget.
+                # The reason and the message are logged and the count lands
+                # in ``tables_rejected``, so a profile that has genuinely
+                # drifted still shows itself rather than hiding as a hop.
+                return await self._leave_unreadable(error)
             if self._past_seat_deadline():
                 # The table described itself a moment too late: the window
                 # closed while the snapshot was on its way, and a table seated
@@ -268,6 +280,22 @@ class Recorder:
                 self._stop(StopReason.WINDOW_CLOSED)
                 return None
             return snapshot, event
+
+    async def _leave_unreadable(self, error: ParseError) -> None:
+        """Leave a table whose snapshot this profile cannot read.
+
+        Args:
+            error: What the reader objected to, logged verbatim so the
+                operator sees the token rather than only the refusal.
+        """
+
+        self._rejected += 1
+        self._health.counters.tables_rejected += 1
+        self._health.event(
+            "table_rejected", reason="unreadable_snapshot", error=str(error)
+        )
+        await self._hop()
+        return None
 
     async def _give_up_on_seat(self) -> None:
         """Leave a table that never said what it was."""

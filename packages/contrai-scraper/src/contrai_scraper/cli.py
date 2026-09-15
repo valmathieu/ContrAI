@@ -32,7 +32,12 @@ from contrai_data import GameEvent, RecordWriter, RoundDealt, game_path
 
 from contrai_scraper.browser import open_spectator
 from contrai_scraper.egress import EgressGate, EgressReading
-from contrai_scraper.exceptions import BrowserError, ScraperError, ShiftError
+from contrai_scraper.exceptions import (
+    BrowserError,
+    ParseError,
+    ScraperError,
+    ShiftError,
+)
 from contrai_scraper.frames import RawFrame, RawLogFrameSource
 from contrai_scraper.health import HealthLog
 from contrai_scraper.parse.session import SessionResult, parse_session
@@ -350,6 +355,10 @@ async def _live_checks(
             return results
         results.append(("snapshot arrives", True, "the table described itself"))
 
+        # Named before the read, not after: a snapshot the profile cannot
+        # read would otherwise be reported against the menu step that last
+        # set ``step``, which is the one part of the walk that did work.
+        step = "the snapshot reads"
         snapshot = read_snapshot(event.data, translator, at=event.received_ms)
         step = "marker agrees with the wire"
         marker = await spectator.read_tournament_marker()
@@ -374,7 +383,10 @@ async def _live_checks(
         step = "us is the south seat's side"
         board = await spectator.read_scoreboard()
         results.append(_orientation_result(snapshot, board))
-    except BrowserError as error:
+    except (BrowserError, ParseError) as error:
+        # A snapshot the profile cannot read is as much a profile fault as a
+        # selector that stopped matching, and this command exists to name the
+        # key that broke rather than to print a traceback over it.
         results.append((step, False, str(error)))
     return results
 

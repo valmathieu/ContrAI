@@ -157,13 +157,21 @@ says *which* selector stopped matching but never *why* — and the why is routin
 selector can express: a dialog over the control, a rail that slid away, a font that did not load.
 
 The states, in order: reset the buffer and the stream, wait for a join snapshot, refuse a table
-that is not a tournament or is already `hop_after_rows` rounds old, refuse one whose options
+whose snapshot this profile cannot read, refuse one that is not a tournament or is already
+`hop_after_rows` rounds old, refuse one whose options
 disagree with `[rules.options]`, check that the panel's *us* is the south seat's side, then watch.
 A deal opening a new round triggers the boundary read; the table's own game-over flag closes the
 record; an observer-left flag alone does not, because it says the spectator stopped watching and
 not that the game finished. A table that plays nothing for `stale_after_s` is written as
 `abandoned`, and an interrupted process writes what it saw as `interrupted` — neither is visible
 to the wire, which is why `parse_session` takes an `end_reason` the caller can state.
+
+A snapshot that will not parse is a rejection and not a failure. The site runs variants the
+`tournament` ruleset has no vocabulary for — all trump is the one that was met — and the options
+gate that refuses such a table runs *after* the snapshot is read, so a table we never wanted would
+otherwise end the session and spend a slot of the shift's failure budget. It is logged as
+`table_rejected` with the token the reader objected to, and it counts in `tables_rejected`, so a
+profile that has genuinely drifted shows itself rather than hiding as a hop.
 
 A shift can hand the recorder a seat deadline — after it no new table is taken, while the game in
 hand runs on — and an egress gate, checked before every hop and when a table goes quiet: behind a
