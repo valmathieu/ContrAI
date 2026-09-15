@@ -27,6 +27,8 @@ lives in the profile. The code knows the *structure*; the document knows the
 
 from contrai_scraper.browser import (
     INIT_SCRIPT,
+    PANEL_ATTEMPT_TIMEOUT_MS,
+    PANEL_ATTEMPTS,
     SEND_SCRIPT,
     STEP_TIMEOUT_MS,
     OptionsReading,
@@ -143,6 +145,8 @@ __all__ = [
     "EGRESS_BUDGET",
     "FAILURE_BUDGET",
     "INIT_SCRIPT",
+    "PANEL_ATTEMPTS",
+    "PANEL_ATTEMPT_TIMEOUT_MS",
     "RECEIVED",
     "SCOREBOARD_PANEL",
     "SEND_SCRIPT",

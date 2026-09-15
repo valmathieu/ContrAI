@@ -30,6 +30,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Final
 
 from contrai_core import Position
@@ -50,6 +51,22 @@ STEP_TIMEOUT_MS: Final[int] = 10_000
 #: which then covers the login entry. The flow that last logged in waited this
 #: long.
 PAGE_SETTLE_MS: Final[int] = 5_000
+
+#: How many times a rail control is offered a click before it is a failure.
+#:
+#: Playwright already retries a click for its whole timeout, so a control that
+#: is merely covered for a moment needs no help from us. What it cannot
+#: recover from is the rails sliding away *while* it waits: the table draws
+#: transient dialogs over its own controls, and a click blocked long enough
+#: for the rails to leave is then waiting on a button that has gone
+#: off-screen and will never come back on its own. Splitting the budget into
+#: attempts is what lets the rails be revealed again between them.
+PANEL_ATTEMPTS: Final[int] = 4
+
+#: What one of those attempts waits. Derived, so the attempts together still
+#: cost what a single step costs and a panel read cannot outlast the rest of
+#: the walk.
+PANEL_ATTEMPT_TIMEOUT_MS: Final[int] = STEP_TIMEOUT_MS // PANEL_ATTEMPTS
 
 #: The attribute a class-membership test reads. Playwright's locator has no
 #: class list of its own, so the attribute is read and split.
@@ -258,8 +275,7 @@ class Spectator:
             BrowserError: If the options control is not there.
         """
 
-        await self._reveal_rails()
-        await self._click("options_button")
+        await self._click_panel("options_button")
         observed: dict[str, bool] = {}
         for row in await self._rows("options_row"):
             # The id and the switch are two different children of the row, so
@@ -309,8 +325,7 @@ class Spectator:
             BrowserError: If the scoreboard control is not there.
         """
 
-        await self._reveal_rails()
-        await self._click("scoreboard_button")
+        await self._click_panel("scoreboard_button")
         rows: list[tuple[int, int]] = []
         lines: list[str] = []
         for row in await self._rows("scoreboard_row"):
@@ -336,8 +351,7 @@ class Spectator:
         """
 
         token = self._translator.seat_name(seat)
-        await self._reveal_rails()
-        await self._click_one(
+        await self._click_panel(
             "seat_element", self._selectors.seat_element.format(seat=token)
         )
         title = await self._require("player_id_title")
@@ -372,6 +386,42 @@ class Spectator:
         }
         return bool(await self._page.evaluate(SEND_SCRIPT, envelope))
 
+    async def capture(self, stem: Path) -> tuple[Path, ...]:
+        """Save what the page looked like, as ``<stem>.png`` and ``<stem>.html``.
+
+        Written for the failure path. A browser step that fails names the
+        profile key it was on and nothing else, which says *which* selector
+        stopped matching but never *why* — and the why is routinely a thing
+        no selector can express: a dialog drawn over the control, a rail that
+        slid away, a font that did not load. Two files answer in one run what
+        the health log cannot answer in two.
+
+        Args:
+            stem: The path to write beside, without a suffix.
+
+        Returns:
+            The files that were written, which may be neither: a diagnosis
+            that fails must not replace the failure it was taken for, so
+            every step here is swallowed rather than raised.
+        """
+
+        saved: list[Path] = []
+        image = stem.with_suffix(".png")
+        try:
+            await self._page.screenshot(path=str(image))
+        except Exception:  # noqa: BLE001 - a diagnosis never raises
+            pass
+        else:
+            saved.append(image)
+        document = stem.with_suffix(".html")
+        try:
+            document.write_text(await self._page.content(), encoding="utf-8")
+        except Exception:  # noqa: BLE001 - a diagnosis never raises
+            pass
+        else:
+            saved.append(document)
+        return tuple(saved)
+
     # -- the page, behind the profile ------------------------------------
 
     def _candidates(self, key: str) -> tuple[str, ...]:
@@ -393,23 +443,52 @@ class Spectator:
                 return
         raise BrowserError(f"[selectors].{key} matched nothing that could be clicked")
 
-    async def _click_one(self, key: str, selector: str) -> None:
-        """Click one already-resolved selector, reporting it as ``key``.
+    async def _click_panel(self, key: str, selector: str | None = None) -> None:
+        """Click a control on a rail, revealing the rails before each attempt.
 
-        Used where the selector is built rather than read — the per-seat
-        element, whose placeholder is filled with a seat token.
+        A panel control is not like the rest of the walk. It sits on a rail
+        that slides away on its own, and the table draws transient dialogs
+        over it — a modal host and a decorative layer were both measured
+        covering the options button. Either one alone is harmless, because
+        Playwright keeps retrying for its whole timeout. Together they are
+        fatal: the click waits on the covered button, the rails leave under
+        it mid-wait, and no amount of further waiting brings them back.
+
+        So the wait is split, and the rails are revealed again at the top of
+        each attempt. That is the whole fix — the reveal itself was never
+        wrong, it was simply asked once, in front of a wait it could not
+        reach into.
+
+        Args:
+            key: The profile key to name in a failure.
+            selector: An already-resolved selector to use instead of the
+                key's own, for the per-seat element whose placeholder is
+                filled with a seat token.
 
         Raises:
-            BrowserError: If it is not actionable.
+            BrowserError: If no attempt landed, naming the key and never the
+                selector.
         """
 
-        if not await self._click_quietly(selector):
-            raise BrowserError(
-                f"[selectors].{key} matched nothing that could be clicked"
-            )
+        candidates = (selector,) if selector is not None else self._candidates(key)
+        for _ in range(PANEL_ATTEMPTS):
+            await self._reveal_rails()
+            for candidate in candidates:
+                if await self._click_quietly(
+                    candidate, timeout=PANEL_ATTEMPT_TIMEOUT_MS
+                ):
+                    return
+        raise BrowserError(f"[selectors].{key} matched nothing that could be clicked")
 
-    async def _click_quietly(self, selector: str) -> bool:
+    async def _click_quietly(
+        self, selector: str, *, timeout: int = STEP_TIMEOUT_MS
+    ) -> bool:
         """Try one selector.
+
+        Args:
+            selector: What to click.
+            timeout: How long to let Playwright wait for it to be
+                actionable.
 
         Returns:
             Whether the click landed. Playwright's click auto-waits, so a
@@ -418,7 +497,7 @@ class Spectator:
         """
 
         try:
-            await self._page.locator(selector).click(timeout=STEP_TIMEOUT_MS)
+            await self._page.locator(selector).click(timeout=timeout)
         except Exception:  # noqa: BLE001 - Playwright's timeout is its own type
             return False
         return True

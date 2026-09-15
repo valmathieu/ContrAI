@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
-from .exceptions import ShiftError
+from .exceptions import BrowserError, ShiftError
 from .health import HealthLog
 from .profile import Profile
 from .rawlog import RawLogWriter, new_session_id, prune_raw_logs, raw_path
@@ -231,19 +231,42 @@ class Shift:
             async with self._open(
                 self._profile, headless=self._headless, health=self._health
             ) as (spectator, frames):
-                await spectator.log_in()
-                await spectator.enter_variant()
-                recorder = self._recorder(
-                    spectator, frames, self._profile, self._health,
-                    limits=limits, raw=log, egress=self._egress,
-                )
-                summary = await recorder.run()
+                try:
+                    await spectator.log_in()
+                    await spectator.enter_variant()
+                    recorder = self._recorder(
+                        spectator, frames, self._profile, self._health,
+                        limits=limits, raw=log, egress=self._egress,
+                    )
+                    summary = await recorder.run()
+                except BrowserError:
+                    # The one moment the page can still be asked what it
+                    # looked like. A step that fails names the profile key it
+                    # was on, which never says whether the control was
+                    # missing, covered or off-screen — and the browser is
+                    # closed by the time the caller reads the error.
+                    await self._capture(spectator, log.path)
+                    raise
         finally:
             log.close()
         self._health.event(
             "session_ended", session=session, reason=str(summary.stop_reason)
         )
         return summary
+
+    async def _capture(self, spectator: Any, raw: Path) -> None:
+        """Save the page beside the session's raw log, if the profile asks.
+
+        Args:
+            spectator: The session's browser half, still open.
+            raw: The session's raw log, whose stem the files share so a
+                failure's evidence sorts next to the frames that led to it.
+        """
+
+        if not self._profile.browser.screenshot_on_error:
+            return
+        saved = await spectator.capture(raw.with_suffix(""))
+        self._health.event("failure_captured", files=[str(path) for path in saved])
 
     def _done(self, deadline: float | None) -> bool:
         """Whether the run's own limits are met: games across sessions, or time."""

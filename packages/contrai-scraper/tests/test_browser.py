@@ -8,7 +8,12 @@ import pytest
 from contrai_core import Position
 
 from contrai_scraper import BrowserError, Spectator
-from contrai_scraper.browser import PAGE_SETTLE_MS
+from contrai_scraper.browser import (
+    PAGE_SETTLE_MS,
+    PANEL_ATTEMPT_TIMEOUT_MS,
+    PANEL_ATTEMPTS,
+    STEP_TIMEOUT_MS,
+)
 
 
 class Match:
@@ -199,6 +204,60 @@ def score_panel(*rows, header=False):
                   children={".score-cell": [Match("us"), Match("them")]}),
         )
     return {"#scoreboard": ["Scores"], ".score-row": cells, "#close": ["x"]}
+
+
+class RailLocator(FakeLocator):
+    """The rail toggle. Clicking it brings the rails back in."""
+
+    async def click(self, timeout=None):
+        await super().click(timeout=timeout)
+        self.page.rails_out = False
+
+
+class CoveredPanelPage(FakePage):
+    """A table whose panel control is covered when the read starts.
+
+    Reproduces what 9A measured. The rails are *in*, so the toggle is hidden
+    and there is correctly nothing to reveal; a transient dialog is drawn
+    over the control, so the click cannot land; and the rails then slide away
+    under the waiting click. That last step is what turns a moment's blockage
+    into a dead session, because the control is now off-screen and the click
+    that is still waiting has no way to ask for it back.
+    """
+
+    def __init__(self, matches, *, covered="#options", attempts=1):
+        super().__init__(matches)
+        self.covered = covered
+        self.blocked = attempts
+        self.rails_out = False
+
+    def locator(self, selector):
+        if selector == "#rail-in:visible":
+            return RailLocator(self, selector, ["<"] if self.rails_out else [])
+        if selector == self.covered and self.blocked:
+            self.blocked -= 1
+            self.rails_out = True
+            return FakeLocator(self, selector, [])
+        return super().locator(selector)
+
+
+class CapturePage:
+    """A page that can be photographed, or refuse to be."""
+
+    def __init__(self, *, shot=True, dom=True):
+        self._shot = shot
+        self._dom = dom
+        self.shots: list[str] = []
+
+    async def screenshot(self, path):
+        if not self._shot:
+            raise RuntimeError("the page went away")
+        self.shots.append(path)
+
+    async def content(self):
+        if not self._dom:
+            raise RuntimeError("the page went away")
+        return "<html></html>"
 
 
 class TestPledge:
@@ -434,6 +493,110 @@ class TestRails:
 
         drain(scenario)
         assert page.clicks == ["#rail-in:visible", "#seat-bottom", "#close"]
+
+    def test_a_control_covered_at_first_is_clicked_on_the_next_attempt(self, profile):
+        # 9A's fault, in one page. The first click cannot land, and the rails
+        # leave while it waits — so a single attempt can never recover, however
+        # long it is given. The second attempt reveals them again and lands.
+        page = CoveredPanelPage(
+            {**option_panel(opt_alpha=True, opt_beta=False), "#rail-in:visible": ["<"]}
+        )
+
+        async def scenario():
+            return await Spectator(page, profile).read_options(profile.rules.options)
+
+        reading = drain(scenario)
+        assert page.clicks == ["#rail-in:visible", "#options", "#close"]
+        assert reading.matches
+
+    def test_a_control_that_never_frees_names_its_key(self, profile):
+        page = CoveredPanelPage(
+            {**option_panel(opt_alpha=True), "#rail-in:visible": ["<"]},
+            attempts=PANEL_ATTEMPTS,
+        )
+
+        async def scenario():
+            await Spectator(page, profile).read_options(profile.rules.options)
+
+        with pytest.raises(BrowserError, match=r"\[selectors\].options_button"):
+            drain(scenario)
+        # The rails are revealed again at the top of every attempt but the
+        # first, which found them already in.
+        assert page.clicks == ["#rail-in:visible"] * (PANEL_ATTEMPTS - 1)
+
+    def test_each_attempt_waits_a_share_of_one_step(self, profile):
+        # The attempts together must still cost what a single step costs, or a
+        # panel read could outlast the rest of the walk.
+        assert PANEL_ATTEMPT_TIMEOUT_MS * PANEL_ATTEMPTS == STEP_TIMEOUT_MS
+
+    def test_the_scoreboard_control_is_retried_too(self, profile):
+        page = CoveredPanelPage(
+            {**score_panel((90, 72)), "#rail-in:visible": ["<"]}, covered="#scoreboard"
+        )
+
+        async def scenario():
+            return await Spectator(page, profile).read_scoreboard()
+
+        assert drain(scenario).rows == ((90, 72),)
+        assert page.clicks == ["#rail-in:visible", "#scoreboard", "#close"]
+
+    def test_the_seat_element_is_retried_too(self, profile):
+        # The per-seat selector is built rather than read, and took a
+        # single-shot path of its own before the retry existed.
+        page = CoveredPanelPage(
+            {"#seat-bottom": ["South"], ".player-panel .title": ["no. 1003"],
+             "#close": ["x"], "#rail-in:visible": ["<"]},
+            covered="#seat-bottom",
+        )
+
+        async def scenario():
+            return await Spectator(page, profile).read_player_id(Position.SOUTH)
+
+        assert drain(scenario) == "1003"
+        assert page.clicks == ["#rail-in:visible", "#seat-bottom", "#close"]
+
+
+class TestCapture:
+    def test_both_the_image_and_the_dom_are_written(self, profile, tmp_path):
+        page = CapturePage()
+
+        async def scenario():
+            return await Spectator(page, profile).capture(tmp_path / "session")
+
+        saved = drain(scenario)
+        assert saved == (tmp_path / "session.png", tmp_path / "session.html")
+        assert (tmp_path / "session.html").read_text(encoding="utf-8") == "<html></html>"
+        assert page.shots == [str(tmp_path / "session.png")]
+
+    def test_a_page_that_cannot_be_photographed_still_yields_its_dom(
+        self, profile, tmp_path
+    ):
+        # A diagnosis must never replace the failure it was taken for, so each
+        # half is written on its own.
+        page = CapturePage(shot=False)
+
+        async def scenario():
+            return await Spectator(page, profile).capture(tmp_path / "session")
+
+        assert drain(scenario) == (tmp_path / "session.html",)
+
+    def test_a_page_that_cannot_be_read_still_yields_its_image(self, profile, tmp_path):
+        page = CapturePage(dom=False)
+
+        async def scenario():
+            return await Spectator(page, profile).capture(tmp_path / "session")
+
+        assert drain(scenario) == (tmp_path / "session.png",)
+
+    def test_a_page_that_is_gone_yields_nothing_and_does_not_raise(
+        self, profile, tmp_path
+    ):
+        page = CapturePage(shot=False, dom=False)
+
+        async def scenario():
+            return await Spectator(page, profile).capture(tmp_path / "session")
+
+        assert drain(scenario) == ()
 
 
 class TestOptionsGate:

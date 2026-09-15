@@ -38,6 +38,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) `RecorderLimits.seat_until_s`, `Recorder(egress=…)` and `SessionSummary.stop_reason` — stop seating at a deadline; a refused egress stops the hop and writes a stalled game `interrupted`.
 - (scraper) `contrai-scrape run` runs shifts — no browser outside `[schedule]`, egress checked per session, a raw log per session, exit 3 when a failure budget is spent. See [scraper docs](docs/scraper/index.md).
 - (scraper) `deploy/` — Docker Compose deployment where the scraper shares a WireGuard VPN container's network, so its only route is the tunnel. See [install guide](deploy/install.md).
+- (scraper) `[browser].screenshot_on_error` — a browser failure saves a PNG and the DOM beside the session's raw log. See [scraper docs](docs/scraper/index.md).
 
 ### Changed
 
@@ -58,7 +59,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) `contrai-scrape check-profile` reports a missing selector as a `FAIL` line naming its check, and reports the pledge the menu walk actually met.
 - (scraper) `contrai-scrape run` and `check-profile` no longer crash opening a real browser: the page's socket handler now survives Playwright's handler wrapping.
 - (engine) `contrai verify` no longer calls a round `suspect` when the record never states which side took the last trick; that check reads `partial`.
-- (scraper) A table that hides its panel rails mid-game no longer ends the session: the optional `[selectors].rail_show` toggle is clicked before each panel read.
+- (scraper) A panel control covered by a dialog no longer ends the session: every attempt reveals the rails again first. See [scraper docs](docs/scraper/index.md).
 - (scraper) The seating gate no longer refuses a table whose sides are right: a scoreboard column includes the marked belote, read through the new `[wire.fields].side_marked_belote`.
 - (engine) A record's `marked` now holds the figures a score sheet carries, multiplier included, and `contrai verify` compares them so — a doubled round no longer reads `suspect`.
 

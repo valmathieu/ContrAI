@@ -6,6 +6,7 @@ import json
 import os
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -77,22 +78,42 @@ class FakeEgress:
 
 
 class FakeSpectator:
+    """The browser half of a session, which may refuse to walk.
+
+    ``captures`` is shared with the test so a capture taken after the
+    context manager has closed is still visible to it.
+    """
+
+    def __init__(self, *, fail=None, captures=None):
+        self._fail = fail
+        self.captures = captures if captures is not None else []
+
     async def log_in(self):
         pass
 
     async def enter_variant(self):
-        pass
+        if self._fail is not None:
+            raise self._fail
+
+    async def capture(self, stem):
+        self.captures.append(stem)
+        return (stem.with_suffix(".png"), stem.with_suffix(".html"))
 
 
-def opener(opened, *, error=None):
-    """An ``open_spectator`` stand-in recording the headless flag it was given."""
+def opener(opened, *, error=None, walk_error=None, captures=None):
+    """An ``open_spectator`` stand-in recording the headless flag it was given.
+
+    ``error`` fails before the browser is yielded, as a launch does;
+    ``walk_error`` fails inside the session, which is the only shape that
+    leaves a page to photograph.
+    """
 
     @asynccontextmanager
     async def open_session(profile, *, headless, health):
         opened.append(headless)
         if error is not None:
             raise error
-        yield FakeSpectator(), object()
+        yield FakeSpectator(fail=walk_error, captures=captures), object()
 
     return open_session
 
@@ -139,12 +160,13 @@ def events(lines):
 
 
 def shift(profile, time, *, egress=None, recorders=None, opened=None, error=None,
-          lines=None, **kwargs):
+          lines=None, walk_error=None, captures=None, **kwargs):
     return Shift(
         profile,
         HealthLog(write=(lines if lines is not None else []).append, clock=time.now,
                   monotonic=time.monotonic),
-        open_session=opener(opened if opened is not None else [], error=error),
+        open_session=opener(opened if opened is not None else [], error=error,
+                            walk_error=walk_error, captures=captures),
         egress=egress or FakeEgress(OPEN),
         clock=time.now, monotonic=time.monotonic, sleep=time.sleep,
         recorder=recorders or Recorders(time), **kwargs,
@@ -276,6 +298,58 @@ class TestSessions:
         assert (events(lines).count("session_failed"), len(time.slept)) == (
             FAILURE_BUDGET, FAILURE_BUDGET - 1
         )
+
+    def test_a_browser_failure_photographs_the_page_beside_its_raw_log(self, profile):
+        # A step that fails names the profile key it was on and nothing else,
+        # and the browser is shut by the time the caller reads the error. The
+        # image and the DOM are the only account of what the page looked like.
+        time = FakeTime(NOON)
+        asking = dataclasses.replace(
+            profile, browser=dataclasses.replace(profile.browser, screenshot_on_error=True)
+        )
+        captures, lines = [], []
+        with pytest.raises(ShiftError):
+            asyncio.run(shift(asking, time, lines=lines, captures=captures,
+                              walk_error=BrowserError("[selectors].options_button")).run())
+        assert len(captures) == FAILURE_BUDGET
+        assert all(stem.suffix == "" for stem in captures)
+        assert events(lines).count("failure_captured") == FAILURE_BUDGET
+
+    def test_the_photograph_shares_the_stem_of_the_session_it_failed_in(self, profile):
+        time = FakeTime(NOON)
+        asking = dataclasses.replace(
+            profile, browser=dataclasses.replace(profile.browser, screenshot_on_error=True)
+        )
+        captures, lines = [], []
+        with pytest.raises(ShiftError):
+            asyncio.run(shift(asking, time, lines=lines, captures=captures,
+                              walk_error=BrowserError("[selectors].options_button")).run())
+        written = [json.loads(line) for line in lines]
+        files = next(e for e in written if e["event"] == "failure_captured")["files"]
+        assert [Path(name).stem for name in files] == [captures[0].name] * 2
+        assert sorted(Path(name).suffix for name in files) == [".html", ".png"]
+
+    def test_a_profile_that_asks_for_no_photograph_takes_none(self, profile):
+        # The fixture profile leaves it off, which is the shipped default.
+        time = FakeTime(NOON)
+        captures, lines = [], []
+        with pytest.raises(ShiftError):
+            asyncio.run(shift(profile, time, lines=lines, captures=captures,
+                              walk_error=BrowserError("[selectors].options_button")).run())
+        assert captures == []
+        assert "failure_captured" not in events(lines)
+
+    def test_a_session_that_never_opened_is_not_photographed(self, profile):
+        # A launch that fails yields no page, so there is nothing to ask.
+        time = FakeTime(NOON)
+        asking = dataclasses.replace(
+            profile, browser=dataclasses.replace(profile.browser, screenshot_on_error=True)
+        )
+        lines: list[str] = []
+        with pytest.raises(ShiftError):
+            asyncio.run(shift(asking, time, lines=lines,
+                              error=BrowserError("[selectors].login_start")).run())
+        assert "failure_captured" not in events(lines)
 
     def test_a_session_whose_frames_ended_counts_as_a_failure(self, profile):
         # A live frame source only ends when its browser is gone.

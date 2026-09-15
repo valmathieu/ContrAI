@@ -98,7 +98,7 @@ silently wrong data.
 | `[site]` | Where the site lives, and which language it answers in. |
 | `[account]` | The spectator account. Values may read `env:NAME` instead of holding the secret. |
 | `[browser]` | Headless or headed, slow-motion, screenshot-on-error. |
-| `[selectors]` | One entry per UI step; a list means "try these in order". `seat_element` is a template filled with a seat token; `scoreboard_cell` is looked up inside each scoreboard row; `options_id_element` and `options_state_element` inside each option row. `rail_show` is optional: it names the control that brings a table's collapsible panel rails back, filtered on visibility so it is clicked only while they are away. |
+| `[selectors]` | One entry per UI step; a list means "try these in order". `seat_element` is a template filled with a seat token; `scoreboard_cell` is looked up inside each scoreboard row; `options_id_element` and `options_state_element` inside each option row. `rail_show` is optional: it names the control that brings a table's collapsible panel rails back, filtered on visibility so it is clicked only while they are away, and it is clicked again before every attempt at a panel control. |
 | `[wire]` | How a frame is recognised, unwrapped and keyed. |
 | `[wire.events]` | The three event names the parser reacts to. |
 | `[wire.fields]` | Dotted paths, one per logical field the parser reads. The set of names is fixed. |
@@ -140,6 +140,21 @@ The walk follows the site's timing, not only its markup. It lets the landing pag
 probing for the first-visit tutorial, opens the address form through its own entry, and, because
 the first-use pledge can be drawn a moment after it was looked for, answers it and retries once
 when the spectator menu refuses a click.
+
+Panel controls get more than that, because they sit on rails the table slides away on its own.
+Playwright already retries a click for its whole timeout, so a control covered for a moment by one
+of the table's transient dialogs needs no help. What it cannot survive is the two together: the
+click waits on the covered control, the rails leave under it mid-wait, and the button it is still
+waiting for is now off-screen with no way to ask for it back. So a panel control is offered
+`PANEL_ATTEMPTS` shorter attempts instead of one long one, and `rail_show` is clicked again at the
+top of each — the reveal was never wrong, it was simply asked once, in front of a wait it could
+not reach into. Measured on 2026-09-16: the options button covered by a modal host while the rails
+were in, dead after 10 s; the same click landed 0.9 s after the rails were revealed a second time.
+
+When a browser step does fail, `[browser].screenshot_on_error` saves a PNG and the page's DOM
+beside that session's raw log. An error names the profile key it was on and nothing else, which
+says *which* selector stopped matching but never *why* — and the why is routinely something no
+selector can express: a dialog over the control, a rail that slid away, a font that did not load.
 
 The states, in order: reset the buffer and the stream, wait for a join snapshot, refuse a table
 that is not a tournament or is already `hop_after_rows` rounds old, refuse one whose options
