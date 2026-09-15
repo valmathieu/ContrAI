@@ -61,6 +61,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (engine) `contrai verify` no longer calls a round `suspect` when the record never states which side took the last trick; that check reads `partial`.
 - (scraper) A panel control covered by a dialog no longer ends the session: every attempt reveals the rails again first. See [scraper docs](docs/scraper/index.md).
 - (scraper) A table whose snapshot this profile cannot read is now hopped away from, not fatal; `check-profile` reports it as a failed line.
+- (scraper) A round whose declaring side took all eight tricks is recorded as an unannounced slam, not `none`.
 - (scraper) The seating gate no longer refuses a table whose sides are right: a scoreboard column includes the marked belote, read through the new `[wire.fields].side_marked_belote`.
 - (engine) A record's `marked` now holds the figures a score sheet carries, multiplier included, and `contrai verify` compares them so — a doubled round no longer reads `suspect`.
 

@@ -3,7 +3,19 @@
 import dataclasses
 
 import pytest
-from contrai_core import ContractBid, DoubleBid, PassBid, Position, RedoubleBid, SlamLevel, Suit, TeamSide, TurnDirection
+from contrai_core import (
+    Card,
+    ContractBid,
+    DoubleBid,
+    PassBid,
+    Position,
+    Rank,
+    RedoubleBid,
+    SlamLevel,
+    Suit,
+    TeamSide,
+    TurnDirection,
+)
 from contrai_data import (
     CardPlayed,
     EndReason,
@@ -12,10 +24,12 @@ from contrai_data import (
     Header,
     RoundDealt,
     RoundScored,
+    SlamOutcome,
     project,
 )
 
 from contrai_scraper import ParseError, WireStream, order_events, parse_session
+from contrai_scraper.parse.session import _slam, _swept_by
 
 
 def _comparable(events):
@@ -379,6 +393,83 @@ class TestSlams:
         scored = next(event for event in _parse(profile, synthesize(game)).events
                       if isinstance(event, RoundScored))
         assert scored.slam.value == "solo_slam"
+
+
+def _sweep_plays(*, winner_of_last=Position.WEST):
+    """Eight whole tricks, all but the last taken by West trumping in.
+
+    Not a legal deal and not meant to be: :func:`_swept_by` groups plays and
+    asks core who won each trick, so the only thing that has to be true here
+    is the shape. Three seats discard off-suit and West cuts with a spade,
+    which is a win under core's own rule rather than under this test's.
+    """
+
+    hearts, diamonds, clubs, spades = (
+        [Card(suit, rank) for rank in Rank]
+        for suit in (Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS, Suit.SPADES)
+    )
+    plays = []
+    for index in range(8):
+        last = index == 7
+        if last and winner_of_last is not Position.WEST:
+            # Nobody trumps, so the seat that led the only heart takes it.
+            trick = [(Position.NORTH, hearts[index]), (Position.EAST, diamonds[index]),
+                     (Position.SOUTH, clubs[index]), (Position.WEST, diamonds[0])]
+        else:
+            trick = [(Position.NORTH, hearts[index]), (Position.EAST, diamonds[index]),
+                     (Position.SOUTH, clubs[index]), (Position.WEST, spades[index])]
+        plays += [
+            CardPlayed(round=1, trick=index + 1, position=seat, card=card,
+                       derived=False, think_ms=None, ts="2026-09-16T00:00:00Z")
+            for seat, card in trick
+        ]
+    return plays
+
+
+class TestUnannouncedSlam:
+    def test_a_side_taking_every_trick_is_the_sweeping_side(self):
+        assert _swept_by(_sweep_plays(), Suit.SPADES) is TeamSide.EW
+
+    def test_a_shared_round_sweeps_for_nobody(self):
+        assert _swept_by(_sweep_plays(winner_of_last=Position.NORTH),
+                         Suit.SPADES) is None
+
+    def test_a_round_short_of_eight_tricks_sweeps_for_nobody(self):
+        # A game joined mid-round, or one the watchdog cut off.
+        plays = [play for play in _sweep_plays() if play.trick < 8]
+        assert _swept_by(plays, Suit.SPADES) is None
+
+    def test_a_trick_short_of_four_plays_sweeps_for_nobody(self):
+        plays = _sweep_plays()
+        assert _swept_by(plays[:-1], Suit.SPADES) is None
+
+    def test_a_declaring_side_that_swept_is_an_unannounced_slam(self):
+        # The engine writes UNANNOUNCED for exactly this round, and a record
+        # saying "none" is contradicted by its own plays — which is what the
+        # verifier caught live on 2026-09-16 (obs-3bb24810 round 4).
+        contract = ContractBid(player=Position.WEST, value=130, suit=Suit.SPADES)
+        assert _slam(contract, 1, _sweep_plays()) is SlamOutcome.UNANNOUNCED
+
+    def test_a_doubled_sweep_is_not_one(self):
+        # Recognised un-doubled only: a doubled sweep keeps the
+        # winner-takes-all shape, as the engine's scoring has it.
+        contract = ContractBid(player=Position.WEST, value=130, suit=Suit.SPADES)
+        assert _slam(contract, 2, _sweep_plays()) is SlamOutcome.NONE
+
+    def test_a_sweep_by_the_defence_is_not_the_declarer_s_slam(self):
+        contract = ContractBid(player=Position.NORTH, value=130, suit=Suit.SPADES)
+        assert _slam(contract, 1, _sweep_plays()) is SlamOutcome.NONE
+
+    def test_an_ordinary_round_stays_none(self):
+        contract = ContractBid(player=Position.WEST, value=130, suit=Suit.SPADES)
+        assert _slam(contract, 1,
+                     _sweep_plays(winner_of_last=Position.NORTH)) is SlamOutcome.NONE
+
+    def test_a_bid_slam_outranks_a_swept_one(self):
+        # The declarer announced it, so that is what the round was.
+        contract = ContractBid(player=Position.WEST, value=SlamLevel.SLAM,
+                               suit=Suit.SPADES)
+        assert _slam(contract, 1, _sweep_plays()) is SlamOutcome.SLAM
 
 
 class TestScoreRowWalk:

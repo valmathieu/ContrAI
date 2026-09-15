@@ -54,7 +54,7 @@ JSON whose payload is itself a JSON *string*. It is **mirrored** — a second co
 every event, so half of what arrives is a duplicate. And it is **interleaved with a keepalive
 that is not JSON at all**, which a parser assuming otherwise trips over roughly once a second.
 
-Three more shape the parser, and all three are cases where the wrong reading produces a record
+Four more shape the parser, and all four are cases where the wrong reading produces a record
 that is well-formed and wrong:
 
 - **The seat map is checked by rotation, not by name.** The observed tables turn clockwise,
@@ -68,6 +68,11 @@ that is well-formed and wrong:
 - **The join snapshot describes the last *completed* round.** The round in progress when the
   session joined is skipped, never reconstructed, so an observed game's hands are always
   `dealt_from_deck`.
+- **A sweep is a fact about the tricks, not about the bid.** A declaring side that takes all eight
+  tricks off a numeric, un-doubled contract has made an *unannounced* slam, and the record says so
+  — the round's plays are replayed through core's own trick-winner rule to decide it. Reading the
+  contract alone would write `none`, which the round's own plays contradict and which `contrai
+  verify` calls `suspect`.
 
 One thing the wire leaves out entirely is a **forced pass**. The table skips a seat whose only
 legal bid is a pass — the doubler's partner, the partner of a Slam bidder, everyone after a

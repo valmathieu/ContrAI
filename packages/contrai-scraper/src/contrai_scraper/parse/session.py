@@ -360,7 +360,7 @@ def _round(
         *last,
     ]
     events += _belotes(number, hands, contract.suit, score, ts)
-    scored = _round_scored(number, contract, bids, score, ts)
+    scored = _round_scored(number, contract, bids, score, [*plays, *last], ts)
     if scored is not None:
         events.append(scored)
     return events
@@ -468,6 +468,7 @@ def _round_scored(
     contract: ContractBid,
     bids: Sequence[BidMade],
     score: tuple[ScoreRow, Mapping[TeamSide, int] | None] | None,
+    plays: Sequence[CardPlayed],
     ts: str,
 ) -> RoundScored | None:
     """One round's score, or ``None`` when the wire never scored it."""
@@ -500,24 +501,85 @@ def _round_scored(
         # The last trick's bonus is folded into the row's card points rather
         # than stated, so which side took it is not recoverable.
         last_trick=None,
-        slam=_slam(contract),
+        slam=_slam(contract, row.contract.multiplier, plays),
         source=ScoreSource.SNAPSHOT,
         ts=ts,
     )
 
 
-def _slam(contract: ContractBid) -> SlamOutcome:
-    """Whether the contract itself was a slam.
+def _slam(
+    contract: ContractBid, multiplier: int, plays: Sequence[CardPlayed]
+) -> SlamOutcome:
+    """Which Slam, if any, the round was.
 
-    An *unannounced* sweep is not decided here: it is a fact about the tricks,
-    which the record's own projection re-derives.
+    A bid Slam outranks a swept one, as the engine's own recorder has it: the
+    declarer announced it, so that is what the round *was*, whatever the sweep
+    looked like afterwards.
+
+    An unannounced sweep is a fact about the tricks rather than about the bid,
+    and it is read here rather than left to the record's projection.
+    ``SlamOutcome.UNANNOUNCED`` means "all eight tricks taken without having
+    called it", so writing ``NONE`` for a swept round states something the
+    round's own plays contradict — and the verifier, which replays them, says
+    so. The engine recognises the sweep only off a numeric contract and only
+    un-doubled (§7.2), and that is mirrored here rather than re-decided.
+
+    Args:
+        contract: The auction's winning bid.
+        multiplier: What the score row says the round was multiplied by.
+        plays: Every play of the round, the rebuilt last trick included.
+
+    Returns:
+        The matching :class:`~contrai_data.SlamOutcome`.
     """
 
     if contract.value is SlamLevel.SLAM:
         return SlamOutcome.SLAM
     if contract.value is SlamLevel.SOLO_SLAM:
         return SlamOutcome.SOLO_SLAM
+    if multiplier == 1 and _swept_by(plays, contract.suit) is (
+        contract.player.team_side
+    ):
+        return SlamOutcome.UNANNOUNCED
     return SlamOutcome.NONE
+
+
+def _swept_by(
+    plays: Sequence[CardPlayed], trump: ContractSuit
+) -> TeamSide | None:
+    """Which side took all eight tricks, or ``None`` when neither did.
+
+    The winner rule is core's — the same :meth:`~contrai_core.TrickRecord.winner`
+    that :func:`_final_trick` leads with and that the record's projection
+    re-derives — so the three readings of one round cannot disagree.
+
+    Args:
+        plays: Every play of the round, the rebuilt last trick included.
+        trump: The contract's trump.
+
+    Returns:
+        The sweeping side, or ``None`` when the round was shared or when the
+        plays do not make eight whole tricks.
+    """
+
+    by_trick: dict[int, list[CardPlayed]] = {}
+    for play in plays:
+        by_trick.setdefault(play.trick, []).append(play)
+    if len(by_trick) != TRICKS_PER_ROUND:
+        return None
+    swept: TeamSide | None = None
+    for _, trick in sorted(by_trick.items()):
+        if len(trick) != len(Position):
+            return None
+        side = (
+            TrickRecord(ObservedPlay(play.position, play.card) for play in trick)
+            .winner(trump)
+            .position.team_side
+        )
+        if swept is not None and side is not swept:
+            return None
+        swept = side
+    return swept
 
 
 def _game_ended(
