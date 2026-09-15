@@ -99,6 +99,78 @@ class SessionResult:
     skipped_rounds: tuple[int, ...]
 
 
+def split_visits(
+    events: Iterable[WireEvent], profile: Profile
+) -> tuple[tuple[WireEvent, ...], ...]:
+    """One group of events per table visit, in arrival order.
+
+    A session's raw log holds every table the session looked at — two to
+    seven of them in the logs measured on 2026-09-16 — while
+    :func:`parse_session` assembles exactly one game out of whatever it is
+    handed. Giving it a whole log therefore merges tables: rounds whose
+    plays belong to another table are dropped as undealable, the record
+    takes whichever game id came first, and every snapshot's seat map is
+    folded into one. The live recorder never meets this, because it buffers
+    one table at a time and resets at every seat. This is that same cut,
+    made afterwards, which is what lets a parser fix reach games already
+    watched.
+
+    A join snapshot naming a table other than the one in progress opens a
+    visit; a snapshot naming the same table again — the mirrored socket's
+    copy, or a boundary re-read — stays in it. Everything else belongs to
+    the visit in progress, so a game-over flag lands with the game it ended.
+    Frames arriving before the first snapshot have no table to belong to and
+    are dropped.
+
+    Args:
+        events: The session's wire events, in **arrival** order. Not
+            ``order_events``' output: that files unclocked events after
+            clocked ones, which would collect every snapshot at the end and
+            lose the very sequence this reads.
+        profile: The loaded profile, for the join-snapshot name and the
+            table-id path.
+
+    Returns:
+        One tuple of events per visit, in the order the visits happened.
+    """
+
+    translator = Translator(profile)
+    join = profile.wire.events.join_snapshot
+    visits: list[list[WireEvent]] = []
+    current: str | None = None
+    for event in events:
+        if event.kind == join:
+            # Read through the profile's own path rather than the whole
+            # snapshot: a table this profile cannot parse still has to be
+            # separated from its neighbours, not raised over.
+            table = translator.field(event.data, "table_id")
+            if not visits or table != current:
+                visits.append([])
+                current = table
+        elif not visits:
+            continue
+        visits[-1].append(event)
+
+    # A visit is where a table's frames *arrive*, which is not quite where
+    # they belong: a table's last events can still be in flight when the hop
+    # lands, and during a fast sweep the rendered table runs a hop ahead of
+    # the stream. An in-game event says which game it is part of, so it is
+    # filed by that rather than by when it turned up — otherwise one game's
+    # rounds appear inside another's visit, colliding with its round numbers
+    # and costing both. Ordering is restored per visit by ``order_events``.
+    home: dict[str, int] = {}
+    for index, visit in enumerate(visits):
+        for event in visit:
+            if event.key is not None:
+                home.setdefault(event.key.game, index)
+    filed: list[list[WireEvent]] = [[] for _ in visits]
+    for index, visit in enumerate(visits):
+        for event in visit:
+            target = index if event.key is None else home[event.key.game]
+            filed[target].append(event)
+    return tuple(tuple(visit) for visit in filed)
+
+
 def parse_session(
     events: Iterable[WireEvent],
     profile: Profile,

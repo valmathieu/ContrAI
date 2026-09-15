@@ -85,6 +85,16 @@ The raw log is what makes all of this correctable. Frames are stored verbatim *b
 is interpreted, so a parser fix applies to games already watched — `contrai-scrape parse` is that
 re-run, and it is the same code path a live session takes.
 
+It is the same path only once the log is cut the way a live session cuts it. A session hops, so its
+log holds every table it looked at — two to twelve of them in the logs measured on 2026-09-16 —
+while the parser assembles exactly one game out of whatever it is handed. `split_visits` makes that
+cut first: a join snapshot naming a new table opens a visit, and an in-game event is filed by the
+game its own key names rather than by when it arrived, because a table's last frames can still be
+in flight when the hop lands. `parse` then writes one record per visit that held a game, and says
+how many visits a log carried. Without the cut a re-parse merged tables — rounds whose plays
+belonged elsewhere were dropped as undealable, records took whichever game id came first, and
+records appeared for games no recorder ever accepted.
+
 The join snapshot's running totals are read by the profile's team letters alone: the block holding
 them may carry other things beside them, such as the per-round rows. A mid-game join whose totals
 cannot be placed on a side is refused as a `ParseError`, because the record has to say what the

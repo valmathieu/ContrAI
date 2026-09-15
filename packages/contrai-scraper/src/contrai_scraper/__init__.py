@@ -89,7 +89,11 @@ from contrai_scraper.parse.live import (
     collect_rounds,
     play_events,
 )
-from contrai_scraper.parse.session import SessionResult, parse_session
+from contrai_scraper.parse.session import (
+    SessionResult,
+    parse_session,
+    split_visits,
+)
 from contrai_scraper.parse.snapshot import (
     PlayerInfo,
     RowContract,
@@ -228,6 +232,7 @@ __all__ = [
     "resolve_dealer",
     "restore_forced_passes",
     "route_device_from",
+    "split_visits",
     "timezone_named",
     "unwrap",
 ]

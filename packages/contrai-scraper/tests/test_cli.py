@@ -488,6 +488,81 @@ class TestParse:
                      str(profile_path), "--out", str(tmp_path)])
         assert (code, len(list((tmp_path / "games").glob("*.jsonl")))) == (0, 1)
 
+    def test_a_log_holding_two_tables_becomes_two_records(
+        self, tmp_path, profile_path, two_table_raw_log_path
+    ):
+        # A session hops, so its log carries every table it looked at.
+        # Parsing the whole log as one game merged them: rounds whose plays
+        # belonged to another table were dropped as undealable, and the
+        # record took whichever game id came first.
+        code = main(["parse", str(two_table_raw_log_path), "--profile",
+                     str(profile_path), "--out", str(tmp_path)])
+        written = sorted(p.stem for p in (tmp_path / "games").glob("*.jsonl"))
+        assert (code, written) == (0, ["obs-g1", "obs-g2"])
+
+    def test_each_of_those_records_keeps_its_own_rounds(
+        self, tmp_path, profile_path, two_table_raw_log_path
+    ):
+        main(["parse", str(two_table_raw_log_path), "--profile",
+              str(profile_path), "--out", str(tmp_path)])
+        for stem in ("obs-g1", "obs-g2"):
+            record = load_game((tmp_path / "games") / f"{stem}.jsonl")
+            assert record.complete is True
+
+    def test_a_visit_that_held_no_game_writes_no_record(
+        self, tmp_path, profile_path, source_game, synthesize, builders, capsys
+    ):
+        # Most visits are tables a gate refused seconds after arriving: they
+        # describe themselves and nothing else happens. A record is a game,
+        # so such a visit is counted and dropped, and the games after it are
+        # written as usual.
+        from contrai_scraper import RawFrame, RawLogWriter, raw_path
+
+        looked_at = builders.envelope(
+            "payload", "joinTable", builders.snapshot_payload(table_id="t0"),
+            frame_id="pre0",
+        )
+        path = raw_path(tmp_path / "corpus", "session-4")
+        with RawLogWriter(path) as log:
+            frames = [(looked_at, 0), *synthesize(source_game)]
+            for index, (text, socket) in enumerate(frames):
+                log.write_frame(
+                    RawFrame(socket=socket, direction="recv", at=index / 10,
+                             text=text)
+                )
+        code = main(["parse", str(path), "--profile", str(profile_path),
+                     "--out", str(tmp_path)])
+        assert (code, len(list((tmp_path / "games").glob("*.jsonl")))) == (0, 1)
+        assert "2 table visits, 1 with rounds" in capsys.readouterr().out
+
+    def test_a_visit_this_profile_cannot_read_does_not_cost_the_rest(
+        self, tmp_path, profile_path, source_game, synthesize, builders, capsys
+    ):
+        # The site runs variants whose contracts this ruleset cannot name.
+        # One such table in the middle of a sweep must not take the games
+        # around it down with it.
+        from contrai_scraper import RawFrame, RawLogWriter, raw_path
+
+        unreadable = builders.envelope(
+            "payload", "joinTable",
+            builders.snapshot_payload(
+                table_id="t9", rows=[builders.score_row(suit="everything")]
+            ),
+            frame_id="odd0",
+        )
+        path = raw_path(tmp_path / "corpus", "session-3")
+        with RawLogWriter(path) as log:
+            frames = [*synthesize(source_game), (unreadable, 0)]
+            for index, (text, socket) in enumerate(frames):
+                log.write_frame(
+                    RawFrame(socket=socket, direction="recv", at=index / 10,
+                             text=text)
+                )
+        code = main(["parse", str(path), "--profile", str(profile_path),
+                     "--out", str(tmp_path)])
+        assert (code, len(list((tmp_path / "games").glob("*.jsonl")))) == (0, 1)
+        assert "could not be read" in capsys.readouterr().out
+
     def test_a_log_that_parses_to_nothing_exits_one(
         self, tmp_path, profile_path, capsys
     ):

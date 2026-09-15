@@ -28,7 +28,15 @@ from contrai_data import (
     project,
 )
 
-from contrai_scraper import ParseError, WireStream, order_events, parse_session
+from contrai_scraper import (
+    EventKey,
+    ParseError,
+    WireEvent,
+    WireStream,
+    order_events,
+    parse_session,
+    split_visits,
+)
 from contrai_scraper.parse.session import _slam, _swept_by
 
 
@@ -470,6 +478,82 @@ class TestUnannouncedSlam:
         contract = ContractBid(player=Position.WEST, value=SlamLevel.SLAM,
                                suit=Suit.SPADES)
         assert _slam(contract, 1, _sweep_plays()) is SlamOutcome.SLAM
+
+
+def _snap(table, at=None):
+    """A join snapshot naming one table, with nothing else the split reads."""
+
+    return WireEvent(kind="joinTable", key=None, data={"table": {"id": table}},
+                     received_ms=at)
+
+
+def _played(game, round_, at=None):
+    """One in-game event, keyed to its game the way the wire keys it."""
+
+    return WireEvent(
+        kind=f"{game},{round_},0,0,tos,p1",
+        key=EventKey(game=game, round=round_, trick=0, position=0,
+                     verb="tos", player="p1"),
+        data={}, received_ms=at,
+    )
+
+
+def _lifecycle(at=None):
+    """A table update, which carries no key and no game of its own."""
+
+    return WireEvent(kind="updateTable", key=None, data={}, received_ms=at)
+
+
+class TestSplitVisits:
+    def test_two_tables_become_two_visits(self, profile):
+        events = [_snap("t1"), _played("g1", 1), _snap("t2"), _played("g2", 1)]
+        visits = split_visits(events, profile)
+        assert [len(visit) for visit in visits] == [2, 2]
+
+    def test_the_mirrored_copy_of_a_snapshot_stays_in_its_visit(self, profile):
+        # Both sockets carry every frame, so a table describes itself twice.
+        events = [_snap("t1"), _snap("t1"), _played("g1", 1)]
+        assert len(split_visits(events, profile)) == 1
+
+    def test_a_revisited_table_is_a_new_visit(self, profile):
+        # The same table later in the sweep is a different sitting, and its
+        # game may well be a different game.
+        events = [_snap("t1"), _played("g1", 1), _snap("t2"), _played("g2", 1),
+                  _snap("t1"), _played("g3", 1)]
+        assert len(split_visits(events, profile)) == 3
+
+    def test_frames_before_the_first_snapshot_are_dropped(self, profile):
+        # Nothing names the table they came from, so there is no visit to
+        # file them under.
+        events = [_played("g0", 1), _snap("t1"), _played("g1", 1)]
+        visits = split_visits(events, profile)
+        # The snapshot stays: it is what names the seats.
+        assert [len(visit) for visit in visits] == [2]
+        assert "g0" not in {event.key.game for event in visits[0] if event.key}
+
+    def test_an_events_own_game_decides_its_visit_not_its_arrival(self, profile):
+        # A table's last events can still be in flight when the hop lands.
+        # Filing them by arrival puts one game's rounds inside another's
+        # visit, where their round numbers collide with its own.
+        events = [_snap("t1"), _played("g1", 1),
+                  _snap("t2"), _played("g1", 2), _played("g2", 1)]
+        first, second = split_visits(events, profile)
+        assert [e.key.game for e in first if e.key] == ["g1", "g1"]
+        assert [e.key.game for e in second if e.key] == ["g2"]
+
+    def test_a_lifecycle_event_stays_with_the_visit_it_arrived_in(self, profile):
+        # It carries no game of its own, and the game it speaks about is the
+        # one being watched when it arrived.
+        events = [_snap("t1"), _played("g1", 1), _lifecycle(),
+                  _snap("t2"), _played("g2", 1)]
+        first, second = split_visits(events, profile)
+        assert [event.kind for event in first] == [
+            "joinTable", "g1,1,0,0,tos,p1", "updateTable"
+        ]
+        assert [event.kind for event in second] == ["joinTable", "g2,1,0,0,tos,p1"]
+
+    def test_a_log_with_no_snapshot_yields_no_visit(self, profile):
+        assert split_visits([_played("g1", 1)], profile) == ()
 
 
 class TestScoreRowWalk:

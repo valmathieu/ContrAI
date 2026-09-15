@@ -40,7 +40,11 @@ from contrai_scraper.exceptions import (
 )
 from contrai_scraper.frames import RawFrame, RawLogFrameSource
 from contrai_scraper.health import HealthLog
-from contrai_scraper.parse.session import SessionResult, parse_session
+from contrai_scraper.parse.session import (
+    SessionResult,
+    parse_session,
+    split_visits,
+)
 from contrai_scraper.parse.snapshot import Snapshot, read_snapshot
 from contrai_scraper.parse.translate import Translator
 from contrai_scraper.profile import Profile, load_profile
@@ -476,43 +480,54 @@ def _run_parse(args: argparse.Namespace) -> int:
     root = args.out or profile.output.root
     written = 0
     for log in logs:
-        try:
-            result = _parse_one(log, profile)
-        except ScraperError as error:
-            print(f"{log.name}: {error}")
-            continue
+        results, visits = _parse_log(log, profile)
+        print(f"{log.name}: {visits} table visits, {len(results)} with rounds")
+        for result in results:
+            rounds = _round_count(result.events)
+            header = result.events[0]
+            summary = f"  {header.game_id}, {rounds} rounds"
+            if result.skipped_rounds:
+                summary += (
+                    f", {len(result.skipped_rounds)} skipped "
+                    f"({', '.join(str(n) for n in result.skipped_rounds)})"
+                )
+            print(summary)
+            for note in result.notes:
+                print(f"    - {note}")
 
-        rounds = _round_count(result.events)
-        header = result.events[0]
-        summary = f"{log.name}: {header.game_id}, {rounds} rounds"
-        if result.skipped_rounds:
-            summary += (
-                f", {len(result.skipped_rounds)} skipped "
-                f"({', '.join(str(n) for n in result.skipped_rounds)})"
-            )
-        print(summary)
-        for note in result.notes:
-            print(f"  - {note}")
-
-        if args.dry_run:
+            if args.dry_run:
+                written += 1
+                continue
+            path = game_path(root, header.game_id)
+            with RecordWriter(path) as writer:
+                for event in result.events:
+                    writer.write(event)
+            print(f"    -> {path}")
             written += 1
-            continue
-        path = game_path(root, header.game_id)
-        with RecordWriter(path) as writer:
-            for event in result.events:
-                writer.write(event)
-        print(f"  -> {path}")
-        written += 1
 
     return 0 if written else 1
 
 
-def _parse_one(log: Path, profile: Profile) -> SessionResult:
-    """Replay one raw log through the whole pipeline.
+def _parse_log(log: Path, profile: Profile) -> tuple[list[SessionResult], int]:
+    """Replay one raw log, one record per table visit that held a game.
 
     A frame source is an async iterator, because the live one has to be —
     Playwright hands frames over through callbacks. Draining it here is the
     price of the replay and the live run being literally the same path.
+
+    The log is cut into visits before anything is parsed: it holds every
+    table the session looked at, and one game is what ``parse_session``
+    builds. A visit that yielded no round is not a game and gets no record —
+    most of them are tables a gate refused seconds after arriving — and a
+    visit this profile cannot read is reported rather than raised, so one
+    bad table does not cost the rest of the log.
+
+    Args:
+        log: The raw log to replay.
+        profile: The loaded profile.
+
+    Returns:
+        The records worth writing, and how many visits the log held.
     """
 
     frames = asyncio.run(_drain(RawLogFrameSource(log)))
@@ -522,7 +537,17 @@ def _parse_one(log: Path, profile: Profile) -> SessionResult:
         for frame in frames
         if (event := stream.ingest(frame.text, frame.socket)) is not None
     ]
-    return parse_session(order_events(events), profile)
+    visits = split_visits(events, profile)
+    results: list[SessionResult] = []
+    for visit in visits:
+        try:
+            result = parse_session(order_events(visit), profile)
+        except ScraperError as error:
+            print(f"  a visit could not be read: {error}")
+            continue
+        if _round_count(result.events):
+            results.append(result)
+    return results, len(visits)
 
 
 async def _drain(source: RawLogFrameSource) -> list[RawFrame]:

@@ -706,17 +706,18 @@ def source_game():
     )
 
 
-def _snapshot_of(seen_rounds, totals, round_index):
+def _snapshot_of(seen_rounds, totals, round_index, table="t1"):
     """A join snapshot carrying the rounds scored so far."""
 
-    payload = snapshot_payload(round_index=round_index, rows=seen_rounds,
-                               totals=totals)
+    payload = snapshot_payload(table_id=table, round_index=round_index,
+                               rows=seen_rounds, totals=totals)
     if round_index is None:
         del payload["state"]["round.g1"]
     return payload
 
 
-def synthesize_frames(events, *, game="g1", keepalive_every=5, sockets=(0, 1), silent=frozenset()):
+def synthesize_frames(events, *, game="g1", table="t1", frame_prefix="",
+                      keepalive_every=5, sockets=(0, 1), silent=frozenset()):
     """The raw frame texts a session would have produced for a record.
 
     Everything the parser has to undo is done here: the deal goes out as a
@@ -753,7 +754,8 @@ def synthesize_frames(events, *, game="g1", keepalive_every=5, sockets=(0, 1), s
     rows: list = []
     # The session opens on a snapshot that knows of no completed round: this
     # game is watched from its first deal.
-    texts.append(envelope("payload", "joinTable", _snapshot_of((), (0, 0), None),
+    texts.append(envelope("payload", "joinTable",
+                          _snapshot_of((), (0, 0), None, table),
                           frame_id="s0"))
 
     for number in sorted(by_round):
@@ -789,7 +791,7 @@ def synthesize_frames(events, *, game="g1", keepalive_every=5, sockets=(0, 1), s
                         _snapshot_of(tuple(rows),
                                      (event.totals[TeamSide.NS],
                                       event.totals[TeamSide.EW]),
-                                     number),
+                                     number, table),
                         frame_id=f"s{number}"))
 
     if ended is not None:
@@ -801,6 +803,13 @@ def synthesize_frames(events, *, game="g1", keepalive_every=5, sockets=(0, 1), s
         texts.append(envelope("payload", "updateTable", {flag: 1},
                               frame_id="end"))
 
+    if frame_prefix:
+        # A frame is de-duplicated on its own id, and a real table's ids are
+        # unique across a session. Two halves synthesized from one record
+        # would otherwise collide frame for frame, and the second would
+        # vanish into the de-duplicator rather than reaching the parser.
+        texts = [_prefixed_id(text, frame_prefix) for text in texts]
+
     paired: list[tuple[str, int]] = []
     for index, text in enumerate(texts):
         if keepalive_every and index and index % keepalive_every == 0:
@@ -808,6 +817,14 @@ def synthesize_frames(events, *, game="g1", keepalive_every=5, sockets=(0, 1), s
         for socket in sockets:
             paired.append((text, socket))
     return paired
+
+
+def _prefixed_id(text, prefix):
+    """The same frame under a distinct id."""
+
+    frame = json.loads(text)
+    frame["id"] = f"{prefix}{frame['id']}"
+    return json.dumps(frame)
 
 
 def _index_in_trick(round_events_, played):
@@ -950,6 +967,32 @@ def raw_log_path(tmp_path, source_game):
     path = raw_path(tmp_path / "corpus", "session-1")
     with RawLogWriter(path) as log:
         for index, (text, socket) in enumerate(synthesize_frames(source_game)):
+            log.write_frame(
+                RawFrame(socket=socket, direction="recv", at=index / 10, text=text)
+            )
+    return path
+
+
+@pytest.fixture
+def two_table_raw_log_path(tmp_path, source_game):
+    """One session's log holding two tables, the way every real one does.
+
+    A session hops, so its log carries every table it looked at. The two
+    halves name different tables and different games, which is exactly what
+    a re-parse has to cut apart before it parses anything.
+
+    Returns:
+        The log file.
+    """
+
+    from contrai_scraper import RawFrame, RawLogWriter, raw_path
+
+    first = synthesize_frames(source_game, game="g1")
+    second = synthesize_frames(source_game, game="g2", table="t2",
+                               frame_prefix="second-")
+    path = raw_path(tmp_path / "corpus", "session-2")
+    with RawLogWriter(path) as log:
+        for index, (text, socket) in enumerate([*first, *second]):
             log.write_frame(
                 RawFrame(socket=socket, direction="recv", at=index / 10, text=text)
             )
