@@ -340,11 +340,18 @@ class Recorder:
         if not _orientation_holds(snapshot, board.rows):
             # A record whose two sides are swapped is well formed and wrong
             # about who won every round, and nothing downstream can see it.
+            # The row counts travel with the pair: the two readings drifting
+            # apart is itself a cause of a mismatch, and without them a log
+            # line cannot say whether the numbers even describe one round.
+            index = _comparable_row(snapshot, board.rows)
             self._health.event(
                 "orientation_mismatch",
                 table=snapshot.table_id,
-                panel=list(board.rows[-1]),
-                wire=list(_wire_pair(snapshot.score_rows[-1])),
+                panel=list(board.rows[index]),
+                wire=list(_wire_pair(snapshot.score_rows[index])),
+                round=index + 1,
+                panel_rows=len(board.rows),
+                wire_rows=len(snapshot.score_rows),
             )
             self._rejected += 1
             self._health.counters.tables_rejected += 1
@@ -751,9 +758,35 @@ def _orientation_holds(
         that has just started looks like.
     """
 
-    if not snapshot.score_rows or not panel:
+    index = _comparable_row(snapshot, panel)
+    if index is None:
         return True
-    return tuple(panel[-1]) == _wire_pair(snapshot.score_rows[-1])
+    return tuple(panel[index]) == _wire_pair(snapshot.score_rows[index])
+
+
+def _comparable_row(
+    snapshot: Snapshot, panel: tuple[tuple[int, int], ...]
+) -> int | None:
+    """The newest round both readings describe, or ``None`` when neither has one.
+
+    The panel is opened a moment *after* the join snapshot arrives, and a
+    table can score a round in between. Holding each reading's last row
+    against the other would then compare two different rounds and refuse a
+    table whose sides line up perfectly — measured on 2026-09-16, where the
+    panel read two rows, ``280 12`` and ``267 35``, against a snapshot that
+    held only the first. Both lists run oldest first from the same opening
+    round, so the rounds they share are the prefix they share.
+
+    Args:
+        snapshot: The table's own account of the rounds scored so far.
+        panel: What the scoreboard showed, oldest first.
+
+    Returns:
+        The index to compare in both, or ``None`` when one of them is empty.
+    """
+
+    shared = min(len(snapshot.score_rows), len(panel))
+    return None if shared == 0 else shared - 1
 
 
 def _wire_pair(row: ScoreRow) -> tuple[int, int]:

@@ -171,6 +171,12 @@ not that the game finished. A table that plays nothing for `stale_after_s` is wr
 `abandoned`, and an interrupted process writes what it saw as `interrupted` — neither is visible
 to the wire, which is why `parse_session` takes an `end_reason` the caller can state.
 
+The orientation check compares the newest round *both* readings describe, not the last row of
+each. The panel is opened a moment after the join snapshot arrives, so the table can score a round
+in between; holding one reading's last row against the other's then compares two different rounds
+and refuses a table whose sides line up. The health line carries the round index and both row
+counts, so a mismatch says whether the numbers even describe the same round.
+
 A snapshot that will not parse is a rejection and not a failure. The site runs variants the
 `tournament` ruleset has no vocabulary for — all trump is the one that was met — and the options
 gate that refuses such a table runs *after* the snapshot is read, so a table we never wanted would

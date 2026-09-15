@@ -280,6 +280,67 @@ class TestGates:
         ]
         assert run_recorder(spectator, script, profile).tables_seated == 1
 
+    def test_a_panel_a_round_ahead_of_the_snapshot_still_seats(self, profile,
+                                                               builders):
+        # The panel is opened a moment after the snapshot arrives, so the
+        # table can score a round in between. Measured live on 2026-09-16: a
+        # panel reading "1 280 12 / 2 267 35" against a snapshot holding only
+        # round one, whose sides matched exactly — and the table was refused
+        # because the last row of each was held against the other.
+        spectator = FakeSpectator(
+            scoreboard=ScoreboardReading(rows=((80, 0), (14, 92)),
+                                         text="80 0\n14 92")
+        )
+        script = [snapshot_frame(builders, rows=[builders.score_row()],
+                                 round_index=1)]
+        assert run_recorder(spectator, script, profile).tables_seated == 1
+
+    def test_a_panel_a_round_behind_the_snapshot_still_seats(self, profile,
+                                                             builders):
+        # The same race the other way round.
+        spectator = FakeSpectator(
+            scoreboard=ScoreboardReading(rows=((80, 0),), text="80 0")
+        )
+        script = [
+            snapshot_frame(
+                builders,
+                rows=[builders.score_row(),
+                      builders.score_row(marked=((0, 0), (140, 0)))],
+                round_index=2,
+            )
+        ]
+        assert run_recorder(spectator, script, profile).tables_seated == 1
+
+    def test_a_shared_round_that_disagrees_still_refuses(self, profile, builders):
+        # Aligning the rows must not blunt the check: the round both readings
+        # do describe still has to agree.
+        spectator = FakeSpectator(
+            scoreboard=ScoreboardReading(rows=((0, 80), (14, 92)),
+                                         text="0 80\n14 92")
+        )
+        script = [snapshot_frame(builders, rows=[builders.score_row()],
+                                 round_index=1)]
+        assert run_recorder(spectator, script, profile).tables_seated == 0
+
+    def test_a_refused_orientation_names_the_round_and_both_row_counts(
+        self, profile, builders
+    ):
+        # Without them a log line cannot say whether the two numbers even
+        # describe the same round, which is what cost a day of guessing.
+        lines: list[str] = []
+        spectator = FakeSpectator(
+            scoreboard=ScoreboardReading(rows=((0, 80), (14, 92)),
+                                         text="0 80\n14 92")
+        )
+        run_recorder(spectator,
+                     [snapshot_frame(builders, rows=[builders.score_row()],
+                                     round_index=1)],
+                     profile, health=HealthLog(write=lines.append))
+        entry = next(json.loads(line) for line in lines
+                     if json.loads(line)["event"] == "orientation_mismatch")
+        assert (entry["round"], entry["panel_rows"], entry["wire_rows"]) == (1, 2, 1)
+        assert (entry["panel"], entry["wire"]) == ([0, 80], [80, 0])
+
     def test_an_unscored_game_skips_the_orientation_check(self, profile,
                                                           builders):
         # A game with no scored round has nothing to compare, and a panel
