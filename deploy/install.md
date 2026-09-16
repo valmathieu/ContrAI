@@ -121,6 +121,10 @@ rsync -a <host>:/var/lib/contrai/records/games/ records/games/
 uv run contrai verify records/games
 ```
 
+Records are plain JSONL, so any file transfer does instead of `rsync` when the host has no SSH —
+what matters is only that they arrive whole. Verification is always done off the host: nothing in
+`contrai verify` belongs in the deployment, and the image does not carry it.
+
 Exit codes, as the restart count shows them (`sudo docker compose -f deploy/compose.yml ps`):
 
 | Code | Meaning |
@@ -181,12 +185,35 @@ Raw logs are pruned automatically at every session start, once their last write 
 
 ## 8. Upgrading
 
-Update the tree, then rebuild and restart the scraper:
+Update the tree first, and note that the host may have nothing to pull *from*: §2's clone can come
+from a bundle, and a host administered through a console rather than SSH has no usable remote at
+all. An incremental bundle carries the new commits and nothing else, so it stays small enough for
+whatever file transfer the host does have:
+
+```bash
+git bundle create update.bundle <the host's commit>..<branch>   # on the laptop
+git bundle verify update.bundle                                 # on the host, once copied over
+git fetch ./update.bundle <branch>
+git merge --ff-only FETCH_HEAD
+```
+
+`git bundle verify` names the commit the bundle needs; if the host does not have it, bundle the
+whole branch instead, which is self-contained. `--ff-only` is deliberate: a host tree that has
+diverged should stop and be looked at rather than merged blind. Local edits to files the update
+does not touch survive the fast-forward, which is what keeps a deliberately pinned image tag in
+place.
+
+Then rebuild and restart the scraper:
 
 ```bash
 sudo docker compose -f deploy/compose.yml build scraper
 sudo docker compose -f deploy/compose.yml up -d scraper
 ```
+
+The image carries the code, so updating the tree changes nothing until `build` has run. Re-run
+`check-profile` (§4) whenever the update touches `profile.example.toml`: `[wire.fields]` must bind
+the parser's field names **exactly**, so a profile written against an older revision is refused
+outright rather than half-applied.
 
 A gluetun bump is `sudo docker compose -f deploy/compose.yml pull vpn` then `up -d`; Compose
 restarts the scraper with it (`depends_on.restart`).
