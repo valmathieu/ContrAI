@@ -59,10 +59,11 @@ class FrameSource(Protocol):
         """How many frames have already arrived and not yet been taken.
 
         A backlog is the reader running behind the page, which matters
-        because the site moves a spectator between tables on its own: a
-        snapshot with newer ones already queued behind it describes a table
-        the page has since left. Only a live source has one — a stored log
-        is history and is replayed in order.
+        because a hop moves the page in about a second while the gate that
+        asked for it spends seconds reading the DOM: a snapshot with newer
+        ones already queued behind it describes a table the page has since
+        left. Only a live source has one — a stored log is history and is
+        replayed in order.
         """
         ...
 
@@ -157,10 +158,10 @@ class PlaywrightFrameSource:
     def pending(self) -> int:
         """Frames already queued by the page and not yet taken.
 
-        The reader running behind the page is not a detail here: the site
-        moves a spectator between tables of its own accord, so a snapshot
-        with newer ones stacked behind it describes a table that has been
-        left.
+        The reader running behind the page is not a detail here: a hop is
+        answered in a fraction of the time the gate that asked for it
+        spends reading the DOM, so a snapshot with newer ones stacked behind
+        it describes a table that has been left.
 
         The end marker a closed source leaves in the queue is not a frame
         and is not counted: a reader that skipped ahead on it would be

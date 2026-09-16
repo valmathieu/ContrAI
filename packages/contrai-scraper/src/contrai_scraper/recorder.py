@@ -23,6 +23,15 @@ connections carry every frame, a snapshot already used to accept or reject a
 table is remembered across that reset, so its mirrored copy cannot be read as
 the next table's.
 
+**Frame identity is not enough to tell a table apart, though, so the table
+just left is remembered by name.** A hop does not empty the frame source, and
+a snapshot consumed while *watching* a table — the answer to a boundary or
+closing request — is never offered to a gate, so its mirrored copy is a first
+sighting at the next seat. Both leave a seat judging a table the page has
+already been moved off, which reads the page for one table and the wire for
+another. :meth:`Recorder._stale` is what refuses that, and it is keyed on the
+table's own id rather than on any frame's.
+
 The score for a round arrives one of two ways: the client can ask for table
 state without leaving, which answers on the socket as a fresh snapshot, and
 that is the fast path. The panel read behind it is evidence only — it goes to
@@ -114,7 +123,7 @@ class Recorder:
         "_monotonic", "_translator", "_iterator", "_stream", "_buffer",
         "_seen_snapshots", "_records", "_deadline", "_stopped", "_active",
         "_last_activity", "_seated", "_rejected", "_base", "_egress",
-        "_seat_deadline", "_stop_reason",
+        "_seat_deadline", "_stop_reason", "_left_table",
     )
 
     def __init__(
@@ -163,6 +172,7 @@ class Recorder:
         self._stream: WireStream | None = None
         self._buffer: list[WireEvent] = []
         self._seen_snapshots: set[str] = set()
+        self._left_table: str | None = None
         self._records: list[Path] = []
         self._deadline: float | None = None
         self._seat_deadline: float | None = None
@@ -273,6 +283,8 @@ class Recorder:
                 # in ``tables_rejected``, so a profile that has genuinely
                 # drifted still shows itself rather than hiding as a hop.
                 return await self._leave_unreadable(error)
+            if self._stale(snapshot):
+                continue
             snapshot, event, tail = await self._catch_up(snapshot, event)
             if self._stopped:
                 return None
@@ -282,21 +294,73 @@ class Recorder:
                 # now would be watched on time the shift no longer has.
                 self._stop(StopReason.WINDOW_CLOSED)
                 return None
+            # Remembered before the gate runs, not after: a table is left
+            # whether its gate accepted it or refused it, and the next seat
+            # has to know either way.
+            self._left_table = snapshot.table_id
             return snapshot, event, tail
+
+    def _stale(self, snapshot: Snapshot) -> bool:
+        """Whether a snapshot describes the table the page has just left.
+
+        A hop does not empty the frame source, and the site answers one in a
+        fraction of the time the gate's two DOM reads take. So the snapshot
+        waiting in the queue at the next seat routinely describes the table
+        just left, and judging it reads the page for one table and the wire
+        for another: of thirteen gates measured across the sessions of
+        2026-09-16 and 2026-09-17, ten were judging a table the page had
+        already been moved off, and every one of those snapshots had arrived
+        **before** the hop that preceded its gate.
+
+        The first such snapshot of a session is the one answering the closing
+        request of the game just recorded. The drain that reads it never
+        registers it as a first sighting, so its mirrored copy — still queued
+        on the other connection, and dropped by the raw log as a duplicate —
+        is a first sighting at the next seat, and the table whose game has
+        just been written is judged again. That is where the lag starts; from
+        there every gate hands one on to the next.
+
+        The rule is "not the one we just left", never "none seen before": the
+        pool is small enough that the same table comes round again within a
+        few hops, and refusing a table for having been visited would empty
+        the shift.
+
+        Args:
+            snapshot: The snapshot a seat is considering.
+
+        Returns:
+            Whether to keep waiting for another one. A table genuinely
+            re-offered twice running is refused until ``snapshot_timeout_s``
+            runs out, which leaves it as a ``seat_timeout`` and one more hop
+            — of the twenty table joins measured across the two sessions,
+            none re-offered a table immediately.
+        """
+
+        if snapshot.table_id is None or snapshot.table_id != self._left_table:
+            return False
+        self._health.event("stale_snapshot", table=snapshot.table_id)
+        return True
 
     async def _catch_up(
         self, snapshot: Snapshot, event: WireEvent
     ) -> tuple[Snapshot, WireEvent, list[WireEvent]]:
         """The newest table already described, and what has happened since.
 
-        The site moves a spectator between tables on its own, and the frames
-        say so before anything else does: measured on 2026-09-16, the page
-        was showing the *next* table while a gate was still reading the
-        panel of the one before it, six times out of six. Gating the first
-        snapshot off the queue therefore judges a table the page has left —
-        its options, its scoreboard and its seats all belong to somewhere
-        else — and seating on it starts a record whose events are somebody
-        else's.
+        A hop moves the page long before the reader hears about it. Measured
+        across 2026-09-16 and 2026-09-17: over twenty table joins the new
+        table described itself between 0.05 s and 0.23 s after the page
+        joined its room, while a gate and its hop together took 1.8 s to
+        7.2 s — two DOM panel reads against a quarter-second wire. Gating
+        the first snapshot off the queue therefore judges a table the page
+        has left: its options, its scoreboard and its seats all belong to
+        somewhere else, and seating on it starts a record whose events are
+        somebody else's.
+
+        Draining the queue is not by itself the answer — the snapshot that
+        matters has usually not arrived yet, which is why
+        :meth:`Recorder._stale` refuses the table just left by name instead.
+        What a drain adds is that a page which has run *several* tables
+        ahead is not followed one gate at a time.
 
         So a backlog is drained before anything is judged. Only what has
         *already* arrived is taken: this never waits, so a page that is
@@ -324,7 +388,7 @@ class Recorder:
                 tail.append(later)
                 continue
             try:
-                snapshot = read_snapshot(
+                newer = read_snapshot(
                     later.data, self._translator, at=later.received_ms
                 )
             except ParseError:
@@ -332,7 +396,13 @@ class Recorder:
                 # so — but this one cannot replace what we can read, so the
                 # older snapshot stands and its own gate decides.
                 continue
-            event, tail = later, []
+            if self._stale(newer):
+                # Newer on the wire is not newer on the page: a late word
+                # from the table just left arrives behind the snapshot of
+                # the table the page has moved to. Taking it would be the
+                # very swap this drain exists to prevent.
+                continue
+            snapshot, event, tail = newer, later, []
         return snapshot, event, tail
 
     async def _leave_unreadable(self, error: ParseError) -> None:

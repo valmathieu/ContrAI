@@ -64,7 +64,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) A round whose declaring side took all eight tricks is recorded as an unannounced slam, not `none`.
 - (scraper) The seating gate compares the round both readings share, so a panel that scored a round mid-check no longer refuses a good table.
 - (scraper) `contrai-scrape parse` writes one record per table visit, so re-parsing a session's log no longer merges the tables it hopped between. See [scraper docs](docs/scraper/index.md).
-- (scraper) The recorder gates the newest table the page has queued, so it no longer judges one table by another's panel. See [scraper docs](docs/scraper/index.md).
+- (scraper) The recorder gates the table the page is on: a snapshot naming the table just left is refused as `stale_snapshot`. See [scraper docs](docs/scraper/index.md).
 - (scraper) The seating gate no longer refuses a table whose sides are right: a scoreboard column includes the marked belote, read through the new `[wire.fields].side_marked_belote`.
 - (engine) A record's `marked` now holds the figures a score sheet carries, multiplier included, and `contrai verify` compares them so — a doubled round no longer reads `suspect`.
 

@@ -90,6 +90,17 @@ class FakeFrameSource:
     def pending(self):
         return max(0, self._backlog - self._taken)
 
+    def arrive(self, count):
+        """Say the next ``count`` frames are already waiting, from here on.
+
+        ``backlog`` says the page was ahead from the first frame. A callable
+        entry in the script calls this instead when a test needs the page to
+        run ahead part-way through — after a hop, say, rather than before
+        the session had started.
+        """
+
+        self._backlog = self._taken + count
+
     def __aiter__(self):
         return self
 
@@ -175,6 +186,21 @@ def records_in(profile):
     """Every record the recorder wrote under the profile's root."""
 
     return [load_game(path) for path in sorted((profile.output.root / "games").glob("*.jsonl"))]
+
+
+def _gated(lines):
+    """Every table a gate reached a verdict on, in order.
+
+    Both verdicts count: which tables were *looked at* is the question, and a
+    rejection is as much a gate as a seating.
+    """
+
+    verdicts = {"table_seated", "table_rejected"}
+    return [
+        entry.get("table")
+        for entry in (json.loads(line) for line in lines)
+        if entry["event"] in verdicts
+    ]
 
 
 class TestGates:
@@ -443,6 +469,28 @@ class TestCatchingUp:
             StopReason.SOURCE_ENDED, 0
         )
 
+    def test_a_newer_snapshot_of_the_table_just_left_is_not_taken(
+        self, profile, builders
+    ):
+        # Newest on the wire is not newest on the page: the backlog can hold
+        # a late word from the table already left, behind the one the page
+        # has moved to. Taking it would be the swap this drain exists to
+        # prevent, so the readable older snapshot stands.
+        lines: list[str] = []
+        # The page runs ahead only after the first table is refused, which is
+        # where a hop leaves it: the backlog the next seat drains is the two
+        # snapshots that followed the hop, not the whole session.
+        source = FakeFrameSource([
+            snapshot_frame(builders, frame_id="s0", table_id="t1",
+                           tournament=False),
+            lambda: source.arrive(2),
+            snapshot_frame(builders, frame_id="s1", table_id="t2"),
+            snapshot_frame(builders, frame_id="s2", table_id="t1"),
+        ])
+        run_recorder(FakeSpectator(), [], profile, source=source,
+                     health=HealthLog(write=lines.append))
+        assert _gated(lines) == ["t1", "t2"]
+
     def test_an_unreadable_newer_snapshot_leaves_the_readable_one_standing(
         self, profile, builders
     ):
@@ -507,6 +555,89 @@ class TestSeating:
         summary = run_recorder(spectator, script, profile)
         assert summary.tables_rejected == 1
 
+    def test_the_table_just_left_is_not_judged_again(self, profile, builders):
+        # A hop does not empty the frame queue. The snapshot still in it
+        # describes the table the page has just been moved off, and judging
+        # it costs the table the page is actually showing: measured over two
+        # sessions, ten of thirteen gates were reading a table that had been
+        # left, and every one of those snapshots had arrived *before* the hop
+        # that preceded its gate.
+        lines: list[str] = []
+        script = [
+            snapshot_frame(builders, frame_id="s0", table_id="t1",
+                           tournament=False),
+            snapshot_frame(builders, frame_id="s1", table_id="t1",
+                           tournament=False),
+            snapshot_frame(builders, frame_id="s2", table_id="t2"),
+        ]
+        run_recorder(FakeSpectator(), script, profile,
+                     health=HealthLog(write=lines.append))
+        assert _gated(lines) == ["t1", "t2"]
+
+    def test_the_table_just_recorded_is_not_seated_again(
+        self, profile, builders, session_frames, game_builders
+    ):
+        # Where the lag starts. The snapshot answering the closing request is
+        # read by the drain, which never registers it, so the mirrored copy
+        # still queued behind it is a first sighting at the next seat — and
+        # the table whose game has just been written is seated a second time.
+        ended = game_builders.game_events(
+            game_builders.round_events(1, *_ROUND_ONE),
+            reason=EndReason.TARGET_REACHED,
+        )
+        closing = snapshot_frame(builders, frame_id="sz", round_index=1,
+                                 rows=[builders.score_row()])
+        lines: list[str] = []
+        script = [
+            *session_frames(ended),
+            closing,
+            frame(closing.text, socket=1),
+            snapshot_frame(builders, frame_id="s2", table_id="t2"),
+        ]
+        run_recorder(FakeSpectator(), script, profile,
+                     health=HealthLog(write=lines.append))
+        assert _gated(lines) == ["t1", "t2"]
+
+    def test_a_snapshot_left_behind_is_logged(self, profile, builders):
+        # The refusal has to be visible: it is how a live run shows that the
+        # reader is behind the page, and how often.
+        lines: list[str] = []
+        script = [
+            snapshot_frame(builders, frame_id="s0", table_id="t1",
+                           tournament=False),
+            snapshot_frame(builders, frame_id="s1", table_id="t1",
+                           tournament=False),
+            snapshot_frame(builders, frame_id="s2", table_id="t2"),
+        ]
+        run_recorder(FakeSpectator(), script, profile,
+                     health=HealthLog(write=lines.append))
+        stale = [json.loads(line) for line in lines
+                 if json.loads(line)["event"] == "stale_snapshot"]
+        assert [entry["table"] for entry in stale] == ["t1"]
+
+    def test_a_table_offered_twice_running_is_given_up_on(
+        self, profile, builders
+    ):
+        # The rule is "not the one we just left", so a pool small enough to
+        # re-offer the same table immediately would wait for a snapshot that
+        # never comes. The seat timeout is what ends that wait, and it is the
+        # same one a table that never describes itself hits.
+        ticks = itertools.chain([0.0, 0.0], itertools.repeat(29.99))
+        spectator = FakeSpectator()
+        # Stalling, not ending: a table that keeps being offered keeps its
+        # socket open, so it is the wait that has to expire.
+        source = StallingFrameSource([
+            snapshot_frame(builders, frame_id="s0", table_id="t1",
+                           tournament=False),
+            snapshot_frame(builders, frame_id="s1", table_id="t1",
+                           tournament=False),
+        ])
+        summary = run_recorder(spectator, [], profile, source=source,
+                               monotonic=lambda: next(ticks))
+        assert (summary.tables_rejected, spectator.calls.count(("next_table",))) == (
+            1, 2
+        )
+
 
 class TestRecording:
     def test_a_watched_game_is_written_once(self, profile, session_frames,
@@ -527,8 +658,8 @@ class TestRecording:
         # snapshot. Keeping the first one seats four players from a table we
         # left — the record is complete, legal, and about the wrong people.
         # Script: reject-snapshot(table A) -> accept-snapshot(table B) -> play.
-        rejected = snapshot_frame(builders, tournament=False, account="a",
-                                  frame_id="sa")
+        rejected = snapshot_frame(builders, table_id="t0", tournament=False,
+                                  account="a", frame_id="sa")
         script = [rejected, *session_frames(source_game)]
         run_recorder(FakeSpectator(), script, profile)
         seats = records_in(profile)[0].seats

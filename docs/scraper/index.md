@@ -95,6 +95,14 @@ how many visits a log carried. Without the cut a re-parse merged tables — roun
 belonged elsewhere were dropped as undealable, records took whichever game id came first, and
 records appeared for games no recorder ever accepted.
 
+Two limits on "the same path" are worth knowing before a log is used as evidence. The cut belongs
+to `parse`: a live session buffers one table because it seats one table, so `Recorder._write`
+hands `parse_session` the buffer as it stands, and a seat that was one table behind the page
+merged two tables into one record before the seating rule below was in place. And the log is
+de-duplicated by frame identity and never reset, so the mirrored connection's copy of a frame is
+not in the file — a replay is faithful for the parser, which drops those copies anyway, but it
+cannot reproduce a fault whose trigger *is* a mirrored copy.
+
 The join snapshot's running totals are read by the profile's team letters alone: the block holding
 them may carry other things beside them, such as the per-round rows. A mid-game join whose totals
 cannot be placed on a side is refused as a `ParseError`, because the record has to say what the
@@ -171,15 +179,35 @@ beside that session's raw log. An error names the profile key it was on and noth
 says *which* selector stopped matching but never *why* — and the why is routinely something no
 selector can express: a dialog over the control, a rail that slid away, a font that did not load.
 
-The site moves a spectator between tables of its own accord, and the frames say so before anything
-else does: measured on 2026-09-16, the page was already showing the *next* table while a gate was
-still reading the panel of the one before it, six times out of six. So a snapshot is not judged
-until the reader has caught up — anything the page has **already** queued behind it is drained
-first, and the newest table is the one gated. It never waits, so a reader that is keeping up pays
-nothing; what arrived after that newest snapshot is handed to the buffer rather than dropped,
-because it is the beginning of the table about to be judged. Without this the gate reads one
-table's options and scoreboard against another's, and a seated record collects somebody else's
-events.
+A hop moves the page long before the reader hears about it, and a gate judging the wrong snapshot
+reads one table's options and scoreboard against another's. Measured across 2026-09-16 and
+2026-09-17: over twenty table joins the new table described itself between 0.05 s and 0.23 s after
+the page joined its room, while a gate and its hop together took 1.8 s to 7.2 s — two DOM panel
+reads against a quarter-second wire. So the snapshot waiting in the queue when a gate ends is
+routinely the one for the table just left: ten of thirteen gates across those two sessions were
+judging a table the page had already been moved off, and every one of those snapshots had arrived
+*before* the hop that preceded its gate. The site was never the one moving the spectator — the
+reader was behind its own clicks.
+
+The lag starts at a game boundary. The snapshot answering the closing request is read by the
+drain, which never offers it to a gate, so the mirrored copy still queued on the other connection
+is a first sighting at the next seat: the table whose game has just been written is judged again,
+and from there each gate hands the offset to the next. Both sessions show it — the first gate
+after each `game_recorded` judged the table just recorded.
+
+So the table just left is remembered by name, and a snapshot naming it is refused and logged as
+`stale_snapshot` instead of judged. Frame identity cannot do that job: at a boundary the stale
+snapshot is a copy of one already consumed, and at every later gate it is a table's own first and
+only snapshot. The rule is "not the one we just left", never "none seen before" — the pool is
+small enough that a table comes round again within a few hops — and a table genuinely re-offered
+twice running is left to `snapshot_timeout_s`, which ends as a `seat_timeout` and one more hop.
+None of the twenty joins measured re-offered a table immediately.
+
+Draining the queue is the other half of it, and not a substitute: anything the page has **already**
+queued is taken first, so a page several tables ahead is not followed one gate at a time, and the
+newest readable table that is not the one just left is the one gated. It never waits, so a reader
+that is keeping up pays nothing; what arrived after that newest snapshot is handed to the buffer
+rather than dropped, because it is the beginning of the table about to be judged.
 
 The states, in order: reset the buffer and the stream, wait for a join snapshot, refuse a table
 whose snapshot this profile cannot read, refuse one that is not a tournament or is already
