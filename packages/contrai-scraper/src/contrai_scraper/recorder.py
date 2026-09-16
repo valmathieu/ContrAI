@@ -767,11 +767,19 @@ class Recorder:
     # -- small readings --------------------------------------------------
 
     async def _read_panel(self) -> Any:
-        """Read the scoreboard panel and file its text as evidence."""
+        """Read the scoreboard panel and file its text as evidence.
+
+        Stamped with the frame source's clock *after* the read, not before:
+        the panel describes whatever the page held when it was opened, and
+        the gap between that stamp and the frames on either side of it in
+        the log is how far behind the page the reader was.
+        """
 
         board = await self._spectator.read_scoreboard()
         if self._raw is not None:
-            self._raw.write_panel(SCOREBOARD_PANEL, board.text)
+            self._raw.write_panel(
+                SCOREBOARD_PANEL, board.text, at=self._frames.elapsed
+            )
         return board
 
     def _says(self, event: WireEvent, field: str) -> bool:

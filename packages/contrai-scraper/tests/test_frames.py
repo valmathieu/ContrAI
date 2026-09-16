@@ -137,9 +137,10 @@ class TestPlaywrightFrameSource:
 
 class TestBacklog:
     def test_pending_counts_what_the_page_has_queued(self, profile):
-        # The reader running behind the page is not a detail: the site moves
-        # a spectator between tables of its own accord, so a snapshot with
-        # newer ones stacked behind it describes a table already left.
+        # The reader running behind the page is not a detail: a hop is
+        # answered in a fraction of the time the gate that asked for it
+        # spends reading the DOM, so a snapshot with newer ones stacked
+        # behind it describes a table already left.
         async def scenario():
             page = FakePage()
             source = PlaywrightFrameSource(page, profile.wire)
@@ -152,6 +153,27 @@ class TestBacklog:
             return queued, taken, source.pending
 
         assert drain(scenario) == (2, ["one", "two"], 0)
+
+
+class TestElapsed:
+    def test_the_clock_runs_on_while_the_reader_is_away(self, profile):
+        # The point of the property: a caller that spends time in the DOM is
+        # stamped on from the frame it last took, and that difference is how
+        # far behind the page it was. A frame's own stamp is taken when it
+        # arrives, so the two are comparable by construction.
+        async def scenario():
+            page = FakePage()
+            source = PlaywrightFrameSource(page, profile.wire)
+            page.open_socket("wss://example.invalid/sock/1").emit(
+                "framereceived", "one"
+            )
+            await source.aclose()
+            frame = await anext(source.__aiter__())
+            before = source.elapsed
+            await asyncio.sleep(0.01)
+            return frame.at <= before <= source.elapsed and before < source.elapsed
+
+        assert drain(scenario) is True
 
 
 class TestSocketCounting:

@@ -67,6 +67,19 @@ class FrameSource(Protocol):
         """
         ...
 
+    @property
+    def elapsed(self) -> float:
+        """The source's own clock, in the timebase :attr:`RawFrame.at` uses.
+
+        It exists so that a reading taken *away* from the socket — a DOM
+        panel — can be filed in the raw log against the frames it happened
+        between. Without it such a line carries no time at all, and the log
+        cannot answer when a panel was read relative to the snapshot it was
+        compared against. That gap is what made the seating lag of
+        2026-09-17 impossible to time offline.
+        """
+        ...
+
 
 class _Sentinel:
     """Marks the end of the queue; distinct from any frame."""
@@ -170,6 +183,18 @@ class PlaywrightFrameSource:
 
         return max(0, self._queue.qsize() - (1 if self._closed else 0))
 
+    @property
+    def elapsed(self) -> float:
+        """Seconds since the source was created — the clock frames are stamped on.
+
+        Read at the moment it is asked for, so a caller that has spent two
+        seconds in the DOM is stamped two seconds on from the frame it last
+        took. That difference is the measurement: it is how far behind the
+        page the reader was.
+        """
+
+        return time.perf_counter() - self._started
+
     def __aiter__(self) -> AsyncIterator[RawFrame]:
         return self
 
@@ -237,6 +262,20 @@ class RawLogFrameSource:
         """
 
         return 0
+
+    @property
+    def elapsed(self) -> float:
+        """Where the replay has reached, in the log's own timebase.
+
+        A replay has no wall clock of its own worth reporting — it runs as
+        fast as the pipeline will go — so the honest answer is the stamp of
+        the last frame handed out, and zero before the first. A re-parse
+        therefore files its readings against the same instants the live
+        session did, rather than against the speed of the machine re-reading
+        it.
+        """
+
+        return self._frames[self._index - 1].at if self._index else 0.0
 
     def __aiter__(self) -> AsyncIterator[RawFrame]:
         return self

@@ -90,6 +90,12 @@ class FakeFrameSource:
     def pending(self):
         return max(0, self._backlog - self._taken)
 
+    @property
+    def elapsed(self):
+        """One tick per frame taken, so a stamp is checkable without a clock."""
+
+        return float(self._taken)
+
     def arrive(self, count):
         """Say the next ``count`` frames are already waiting, from here on.
 
@@ -684,6 +690,22 @@ class TestRecording:
         panels = [line.text for line in read_raw_log(tmp_root / "session.jsonl")
                   if line.kind == "panel"]
         assert panels == ["the panel, verbatim"]
+
+    def test_a_panel_read_is_stamped_on_the_frames_own_clock(
+        self, profile, tmp_root, builders
+    ):
+        # Without a stamp a panel read has no time at all, and the log cannot
+        # say when it happened relative to the snapshot it was compared
+        # against — which is what made the seating lag untimeable offline.
+        # The fake ticks once per frame taken: one frame had been read.
+        spectator = FakeSpectator(
+            scoreboard=ScoreboardReading(rows=(), text="the panel, verbatim")
+        )
+        with RawLogWriter(tmp_root / "session.jsonl") as log:
+            run_recorder(spectator, [snapshot_frame(builders)], profile, raw=log)
+        stamps = [line.at for line in read_raw_log(tmp_root / "session.jsonl")
+                  if line.kind == "panel"]
+        assert stamps == [1.0]
 
 
 class TestBoundary:

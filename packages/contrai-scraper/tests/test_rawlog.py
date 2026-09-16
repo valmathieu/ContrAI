@@ -290,6 +290,25 @@ class TestReplay:
 
         assert RawLogFrameSource(path).pending == 0
 
+    def test_a_replay_reports_the_log_s_own_clock(self, tmp_path):
+        # A replay has no wall clock worth reporting — it runs as fast as the
+        # pipeline allows — so a reading filed during one is stamped with the
+        # last frame handed out, and zero before the first. That keeps a
+        # re-parse's readings on the instants the live session saw.
+        import asyncio
+
+        path = tmp_path / "s.jsonl"
+        with RawLogWriter(path) as log:
+            log.write_frame(frame("one"))
+
+        async def scenario():
+            source = RawLogFrameSource(path)
+            before = source.elapsed
+            await anext(source.__aiter__())
+            return before, source.elapsed
+
+        assert asyncio.run(scenario()) == (0.0, 1.5)
+
     def test_a_replayed_source_closes(self, tmp_path):
         import asyncio
 

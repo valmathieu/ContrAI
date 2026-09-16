@@ -39,6 +39,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) `contrai-scrape run` runs shifts — no browser outside `[schedule]`, egress checked per session, a raw log per session, exit 3 when a failure budget is spent. See [scraper docs](docs/scraper/index.md).
 - (scraper) `deploy/` — Docker Compose deployment where the scraper shares a WireGuard VPN container's network, so its only route is the tunnel. See [install guide](deploy/install.md).
 - (scraper) `[browser].screenshot_on_error` — a browser failure saves a PNG and the DOM beside the session's raw log. See [scraper docs](docs/scraper/index.md).
+- (scraper) `FrameSource.elapsed` — raw-log panel reads now carry `at`, so a DOM reading can be timed against the frames around it. See [scraper docs](docs/scraper/index.md).
 
 ### Changed
 

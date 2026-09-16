@@ -85,6 +85,14 @@ The raw log is what makes all of this correctable. Frames are stored verbatim *b
 is interpreted, so a parser fix applies to games already watched — `contrai-scrape parse` is that
 re-run, and it is the same code path a live session takes.
 
+A panel read is filed in that same timeline, and stamped with `FrameSource.elapsed` — the clock
+frames themselves are stamped on, so the two are comparable. It matters because a DOM reading is
+taken *away* from the socket: the gap between a panel's stamp and the frames on either side of it
+is how far behind the page the reader was when it looked, which is the one thing an unstamped line
+could never say. A replay reports the stamp of the last frame it handed out, so a re-parse files
+its readings on the instants the live session saw rather than on the speed of the machine
+re-reading it.
+
 It is the same path only once the log is cut the way a live session cuts it. A session hops, so its
 log holds every table it looked at — two to twelve of them in the logs measured on 2026-09-16 —
 while the parser assembles exactly one game out of whatever it is handed. `split_visits` makes that
