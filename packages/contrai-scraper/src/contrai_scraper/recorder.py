@@ -202,8 +202,8 @@ class Recorder:
                 seated = await self._seat()
                 if seated is None:
                     continue
-                snapshot, event = seated
-                if not await self._gate(snapshot, event):
+                snapshot, event, tail = seated
+                if not await self._gate(snapshot, event, tail):
                     await self._hop()
                     continue
                 await self._watch(snapshot)
@@ -221,7 +221,7 @@ class Recorder:
 
     # -- 1. seat ---------------------------------------------------------
 
-    async def _seat(self) -> tuple[Snapshot, WireEvent] | None:
+    async def _seat(self) -> tuple[Snapshot, WireEvent, list[WireEvent]] | None:
         """Wait for the join snapshot that describes wherever we landed.
 
         Returns:
@@ -273,13 +273,67 @@ class Recorder:
                 # in ``tables_rejected``, so a profile that has genuinely
                 # drifted still shows itself rather than hiding as a hop.
                 return await self._leave_unreadable(error)
+            snapshot, event, tail = await self._catch_up(snapshot, event)
+            if self._stopped:
+                return None
             if self._past_seat_deadline():
                 # The table described itself a moment too late: the window
                 # closed while the snapshot was on its way, and a table seated
                 # now would be watched on time the shift no longer has.
                 self._stop(StopReason.WINDOW_CLOSED)
                 return None
-            return snapshot, event
+            return snapshot, event, tail
+
+    async def _catch_up(
+        self, snapshot: Snapshot, event: WireEvent
+    ) -> tuple[Snapshot, WireEvent, list[WireEvent]]:
+        """The newest table already described, and what has happened since.
+
+        The site moves a spectator between tables on its own, and the frames
+        say so before anything else does: measured on 2026-09-16, the page
+        was showing the *next* table while a gate was still reading the
+        panel of the one before it, six times out of six. Gating the first
+        snapshot off the queue therefore judges a table the page has left —
+        its options, its scoreboard and its seats all belong to somewhere
+        else — and seating on it starts a record whose events are somebody
+        else's.
+
+        So a backlog is drained before anything is judged. Only what has
+        *already* arrived is taken: this never waits, so a page that is
+        keeping up costs nothing. Frames that followed the newest snapshot
+        are handed back rather than dropped, because they are the beginning
+        of the table about to be judged.
+
+        Args:
+            snapshot: The table the first queued snapshot described.
+            event: The event that carried it.
+
+        Returns:
+            The newest snapshot, its event, and the events that followed it.
+        """
+
+        tail: list[WireEvent] = []
+        while self._frames.pending:
+            pulled = await self._pull(self._profile.recorder.snapshot_timeout_s)
+            if pulled is None or self._stopped:
+                break
+            frame, later = pulled
+            if later is None:
+                continue
+            if later.kind != self._join_name or not self._first_sight(frame):
+                tail.append(later)
+                continue
+            try:
+                snapshot = read_snapshot(
+                    later.data, self._translator, at=later.received_ms
+                )
+            except ParseError:
+                # Unreadable is still newer, and the gate below is what says
+                # so — but this one cannot replace what we can read, so the
+                # older snapshot stands and its own gate decides.
+                continue
+            event, tail = later, []
+        return snapshot, event, tail
 
     async def _leave_unreadable(self, error: ParseError) -> None:
         """Leave a table whose snapshot this profile cannot read.
@@ -306,13 +360,18 @@ class Recorder:
 
     # -- 2 to 6. the gates -----------------------------------------------
 
-    async def _gate(self, snapshot: Snapshot, event: WireEvent) -> bool:
+    async def _gate(
+        self, snapshot: Snapshot, event: WireEvent, tail: list[WireEvent]
+    ) -> bool:
         """Decide whether this table is worth a game's worth of frames.
 
         Args:
             snapshot: What the table said when we sat down.
             event: The event that carried it, which becomes the buffer's
                 first entry once the table is accepted.
+            tail: Whatever arrived after it while the reader was catching
+                up, which is the start of this table's play and belongs in
+                the buffer behind the snapshot.
 
         Returns:
             Whether the table was taken.
@@ -360,7 +419,7 @@ class Recorder:
         self._seated += 1
         self._health.counters.tables_seated += 1
         self._health.event("table_seated", table=snapshot.table_id)
-        self._buffer = [event]
+        self._buffer = [event, *tail]
         return True
 
     def _reject(self, snapshot: Snapshot, reason: str, **fields: Any) -> bool:

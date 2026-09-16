@@ -278,6 +278,18 @@ class TestReplay:
 
         assert asyncio.run(scenario()) == [(0, "one"), (1, "two")]
 
+    def test_a_replayed_source_reports_no_backlog(self, tmp_path):
+        # A live source's backlog says the reader is behind the page, which
+        # is what makes it skip ahead. A stored log is history and is
+        # replayed in order, so reporting the rest of the file would drain
+        # the whole thing as though the page had moved on.
+        path = tmp_path / "s.jsonl"
+        with RawLogWriter(path) as log:
+            log.write_frame(frame("one"))
+            log.write_frame(frame("two"))
+
+        assert RawLogFrameSource(path).pending == 0
+
     def test_a_replayed_source_closes(self, tmp_path):
         import asyncio
 

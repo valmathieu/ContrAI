@@ -54,6 +54,18 @@ class FrameSource(Protocol):
 
     async def aclose(self) -> None: ...
 
+    @property
+    def pending(self) -> int:
+        """How many frames have already arrived and not yet been taken.
+
+        A backlog is the reader running behind the page, which matters
+        because the site moves a spectator between tables on its own: a
+        snapshot with newer ones already queued behind it describes a table
+        the page has since left. Only a live source has one — a stored log
+        is history and is replayed in order.
+        """
+        ...
+
 
 class _Sentinel:
     """Marks the end of the queue; distinct from any frame."""
@@ -141,6 +153,22 @@ class PlaywrightFrameSource:
             )
         )
 
+    @property
+    def pending(self) -> int:
+        """Frames already queued by the page and not yet taken.
+
+        The reader running behind the page is not a detail here: the site
+        moves a spectator between tables of its own accord, so a snapshot
+        with newer ones stacked behind it describes a table that has been
+        left.
+
+        The end marker a closed source leaves in the queue is not a frame
+        and is not counted: a reader that skipped ahead on it would be
+        skipping ahead on nothing.
+        """
+
+        return max(0, self._queue.qsize() - (1 if self._closed else 0))
+
     def __aiter__(self) -> AsyncIterator[RawFrame]:
         return self
 
@@ -198,6 +226,16 @@ class RawLogFrameSource:
         )
         self._index = 0
         self._closed = False
+
+    @property
+    def pending(self) -> int:
+        """Always none: a stored log is history, replayed in order.
+
+        Reporting the rest of the file would tell the reader it is behind,
+        and the whole log would be drained as though the page had moved on.
+        """
+
+        return 0
 
     def __aiter__(self) -> AsyncIterator[RawFrame]:
         return self

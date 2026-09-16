@@ -171,6 +171,16 @@ beside that session's raw log. An error names the profile key it was on and noth
 says *which* selector stopped matching but never *why* — and the why is routinely something no
 selector can express: a dialog over the control, a rail that slid away, a font that did not load.
 
+The site moves a spectator between tables of its own accord, and the frames say so before anything
+else does: measured on 2026-09-16, the page was already showing the *next* table while a gate was
+still reading the panel of the one before it, six times out of six. So a snapshot is not judged
+until the reader has caught up — anything the page has **already** queued behind it is drained
+first, and the newest table is the one gated. It never waits, so a reader that is keeping up pays
+nothing; what arrived after that newest snapshot is handed to the buffer rather than dropped,
+because it is the beginning of the table about to be judged. Without this the gate reads one
+table's options and scoreboard against another's, and a seated record collects somebody else's
+events.
+
 The states, in order: reset the buffer and the stream, wait for a join snapshot, refuse a table
 whose snapshot this profile cannot read, refuse one that is not a tournament or is already
 `hop_after_rows` rounds old, refuse one whose options

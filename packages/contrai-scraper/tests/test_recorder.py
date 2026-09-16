@@ -73,10 +73,22 @@ class FakeSpectator:
 
 
 class FakeFrameSource:
-    """A scripted frame source; a callable entry runs before the next frame."""
+    """A scripted frame source; a callable entry runs before the next frame.
 
-    def __init__(self, script):
+    ``backlog`` is how many of the script's frames count as *already
+    arrived* — the queue a live page leaves behind when the reader falls
+    behind it. It counts down as frames are taken, so a test can say "the
+    first three were already waiting" and nothing after them is.
+    """
+
+    def __init__(self, script, backlog=0):
         self._script = list(script)
+        self._backlog = backlog
+        self._taken = 0
+
+    @property
+    def pending(self):
+        return max(0, self._backlog - self._taken)
 
     def __aiter__(self):
         return self
@@ -87,6 +99,7 @@ class FakeFrameSource:
             if callable(item):
                 item()
                 continue
+            self._taken += 1
             return item
         raise StopAsyncIteration
 
@@ -101,8 +114,8 @@ class StallingFrameSource(FakeFrameSource):
     ends: a table nobody is playing at keeps its socket open.
     """
 
-    def __init__(self, script, stalls=1):
-        super().__init__(script)
+    def __init__(self, script, stalls=1, backlog=0):
+        super().__init__(script, backlog)
         self._stalls = stalls
 
     async def __anext__(self):
@@ -144,12 +157,13 @@ def snapshot_frame(builders, *, frame_id="s0", tournament=True, account="100",
     )
 
 
-def run_recorder(spectator, script, profile, health=None, source=None, **kwargs):
+def run_recorder(spectator, script, profile, health=None, source=None, backlog=0,
+                 **kwargs):
     """Drive one recorder over a scripted source and return its summary."""
 
     recorder = Recorder(
         spectator,
-        FakeFrameSource(script) if source is None else source,
+        FakeFrameSource(script, backlog) if source is None else source,
         profile,
         health if health is not None else HealthLog(write=lambda _: None),
         **kwargs,
@@ -350,6 +364,101 @@ class TestGates:
         )
         script = [snapshot_frame(builders, rows=(), round_index=None)]
         assert run_recorder(spectator, script, profile).tables_seated == 1
+
+
+class TestCatchingUp:
+    def test_the_newest_queued_table_is_the_one_gated(self, profile, builders):
+        # The site moves a spectator between tables on its own: measured on
+        # 2026-09-16, the page was already showing the next table while a
+        # gate was still reading the panel of the one before it, six times
+        # out of six. Gating the first snapshot off the queue judges a table
+        # the page has left.
+        lines: list[str] = []
+        script = [
+            snapshot_frame(builders, frame_id="s0", table_id="t1"),
+            snapshot_frame(builders, frame_id="s1", table_id="t2"),
+        ]
+        run_recorder(FakeSpectator(), script, profile, backlog=2,
+                     health=HealthLog(write=lines.append))
+        seated = [json.loads(line) for line in lines
+                  if json.loads(line)["event"] == "table_seated"]
+        assert [entry["table"] for entry in seated] == ["t2"]
+
+    def test_a_page_that_is_keeping_up_is_left_alone(self, profile, builders):
+        # No backlog, no catch-up: the common case must cost nothing and
+        # must not wait for a frame that is not there.
+        lines: list[str] = []
+        script = [
+            snapshot_frame(builders, frame_id="s0", table_id="t1"),
+            snapshot_frame(builders, frame_id="s1", table_id="t2"),
+        ]
+        run_recorder(FakeSpectator(), script, profile,
+                     health=HealthLog(write=lines.append))
+        seated = [json.loads(line) for line in lines
+                  if json.loads(line)["event"] == "table_seated"]
+        assert seated[0]["table"] == "t1"
+
+    def test_what_arrived_after_the_newest_snapshot_is_kept(self, profile,
+                                                            builders):
+        # Those frames are the start of the table about to be judged, and
+        # dropping them would cost the first round of the game recorded.
+        script = [
+            snapshot_frame(builders, frame_id="s0", table_id="t1"),
+            snapshot_frame(builders, frame_id="s1", table_id="t2"),
+            frame(builders.envelope("payload", "updateTable", {"over": 1},
+                                    frame_id="x1")),
+        ]
+        summary = run_recorder(FakeSpectator(), script, profile, backlog=3)
+        # The table said it had finished while the reader was still catching
+        # up. Dropped, that flag never reaches the watch loop, and the game
+        # is never closed as a record.
+        assert summary.games_recorded == 1
+
+    def test_a_keepalive_in_the_backlog_is_not_a_table(self, profile, builders):
+        # The socket talking, not the game. It is kept as part of the tail
+        # rather than mistaken for a newer table.
+        lines: list[str] = []
+        script = [
+            snapshot_frame(builders, frame_id="s0", table_id="t1"),
+            frame("tick"),
+            snapshot_frame(builders, frame_id="s1", table_id="t2"),
+        ]
+        run_recorder(FakeSpectator(), script, profile, backlog=3,
+                     health=HealthLog(write=lines.append))
+        seated = [json.loads(line) for line in lines
+                  if json.loads(line)["event"] == "table_seated"]
+        assert [entry["table"] for entry in seated] == ["t2"]
+
+    def test_a_source_that_ends_while_catching_up_stops_the_run(self, profile,
+                                                                 builders):
+        # The backlog says two frames are waiting and only one is: the
+        # browser went away mid-catch-up, which ends the session rather than
+        # seating on what was already read.
+        summary = run_recorder(
+            FakeSpectator(),
+            [snapshot_frame(builders, frame_id="s0", table_id="t1")],
+            profile, backlog=2,
+        )
+        assert (summary.stop_reason, summary.tables_seated) == (
+            StopReason.SOURCE_ENDED, 0
+        )
+
+    def test_an_unreadable_newer_snapshot_leaves_the_readable_one_standing(
+        self, profile, builders
+    ):
+        # A variant table queued behind a good one must not take it down:
+        # the older snapshot stands and its own gate decides.
+        lines: list[str] = []
+        script = [
+            snapshot_frame(builders, frame_id="s0", table_id="t1"),
+            snapshot_frame(builders, frame_id="s1", table_id="t2",
+                           rows=[builders.score_row(suit="everything")]),
+        ]
+        run_recorder(FakeSpectator(), script, profile, backlog=2,
+                     health=HealthLog(write=lines.append))
+        seated = [json.loads(line) for line in lines
+                  if json.loads(line)["event"] == "table_seated"]
+        assert [entry["table"] for entry in seated] == ["t1"]
 
 
 class TestSeating:

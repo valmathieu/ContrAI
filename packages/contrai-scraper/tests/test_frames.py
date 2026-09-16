@@ -135,6 +135,25 @@ class TestPlaywrightFrameSource:
         assert drain(scenario) == ["first"]
 
 
+class TestBacklog:
+    def test_pending_counts_what_the_page_has_queued(self, profile):
+        # The reader running behind the page is not a detail: the site moves
+        # a spectator between tables of its own accord, so a snapshot with
+        # newer ones stacked behind it describes a table already left.
+        async def scenario():
+            page = FakePage()
+            source = PlaywrightFrameSource(page, profile.wire)
+            socket = page.open_socket("wss://example.invalid/sock/1")
+            socket.emit("framereceived", "one")
+            socket.emit("framereceived", "two")
+            queued = source.pending
+            await source.aclose()
+            taken = [frame.text async for frame in source]
+            return queued, taken, source.pending
+
+        assert drain(scenario) == (2, ["one", "two"], 0)
+
+
 class TestSocketCounting:
     def test_an_opened_socket_is_counted_and_logged(self, profile):
         async def scenario():
