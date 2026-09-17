@@ -191,6 +191,9 @@ waiting for is now off-screen with no way to ask for it back. So a panel control
 top of each — the reveal was never wrong, it was simply asked once, in front of a wait it could
 not reach into. Measured on 2026-09-16: the options button covered by a modal host while the rails
 were in, dead after 10 s; the same click landed 0.9 s after the rails were revealed a second time.
+The table hop is one of these controls. It reads like a menu step and took the single-shot path
+until 9B's 24-hour run ended two sessions on it: a recorder that hops promptly finds the rails
+still out, and one that watches a table to its end does not.
 
 When a browser step does fail, `[browser].screenshot_on_error` saves a PNG and the page's DOM
 beside that session's raw log. An error names the profile key it was on and nothing else, which

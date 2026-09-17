@@ -69,6 +69,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) The recorder gates the table the page is on: a snapshot naming the table just left is refused as `stale_snapshot`. See [scraper docs](docs/scraper/index.md).
 - (scraper) The seating gate no longer refuses a table whose sides are right: a scoreboard column includes the marked belote, read through the new `[wire.fields].side_marked_belote`.
 - (engine) A record's `marked` now holds the figures a score sheet carries, multiplier included, and `contrai verify` compares them so — a doubled round no longer reads `suspect`.
+- (scraper) The table hop reveals the rails first, so a session that watches a table to its end no longer dies on the hop control.
 
 ## [0.4.0] - 2026-09-01
 

@@ -555,6 +555,29 @@ class TestRails:
         assert drain(scenario) == "1003"
         assert page.clicks == ["#rail-in:visible", "#seat-bottom", "#close"]
 
+    def test_the_hop_pulls_the_rail_back_too(self, profile):
+        # The hop control lives on a rail like every other panel button, and
+        # took the single-shot path until 9B's 24-hour run ended two sessions
+        # on it.
+        page = FakePage({"#next": ["Another table"], "#rail-in:visible": ["<"]})
+
+        async def scenario():
+            await Spectator(page, profile).next_table()
+
+        drain(scenario)
+        assert page.clicks == ["#rail-in:visible", "#next"]
+
+    def test_the_hop_control_is_retried_too(self, profile):
+        page = CoveredPanelPage(
+            {"#next": ["Another table"], "#rail-in:visible": ["<"]}, covered="#next"
+        )
+
+        async def scenario():
+            await Spectator(page, profile).next_table()
+
+        drain(scenario)
+        assert page.clicks == ["#rail-in:visible", "#next"]
+
 
 class TestCapture:
     def test_both_the_image_and_the_dom_are_written(self, profile, tmp_path):

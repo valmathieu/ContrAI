@@ -238,11 +238,16 @@ class Spectator:
     async def next_table(self) -> None:
         """Ask the server for another table.
 
+        The hop control sits on a rail, exactly like the panel buttons, so it
+        is reached the same way. A recorder that hops promptly mostly finds
+        the rails still out and escapes the difference; one that watches a
+        table to its end does not.
+
         Raises:
             BrowserError: If the table control is not there.
         """
 
-        await self._click("next_table")
+        await self._click_panel("next_table")
 
     async def read_tournament_marker(self) -> bool:
         """Whether the rendered marker names a tournament.
