@@ -31,6 +31,7 @@ skinparam note {
 actor "user" as U
 participant "main()\n(cli.py)" as M <<engine>>
 participant "RichView" as V <<engine>>
+participant "RecordingView\n(when recording)" as D <<engine>>
 participant "Game" as G <<engine>>
 participant "Round\n(per round)" as R <<engine>>
 
@@ -45,7 +46,8 @@ note right of V
   ruleset origin (+N changes), target score,
   trump choices, live round score — then
   dispatches: ""[p]"" preset picker, ""[f]"" setup
-  file, ""[l]"" live-score toggle, ""[Enter]"" deals.
+  file, ""[l]"" live-score toggle, ""[r]"" record
+  toggle, ""[Enter]"" deals.
   Each sub-screen returns a ""TableSetup"", which
   becomes the one the summary redraws.
 end note
@@ -55,6 +57,24 @@ note right of M
   The §9.7 interface aids never reach the model,
   so they are re-pointed on the view instead of
   being threaded into the ""Game"".
+end note
+
+M -> D : driver = _attach_recorder(view, record, setup)
+activate D
+note right of D
+  **""main()"" holds the wrapper, not the view.**
+  ""_attach_recorder"" returns a ""RecordingView""
+  around the real view when flag-or-knob says to
+  record, and the bare view otherwise — so every
+  arrow below that reads ""driver"" is the same
+  call whether or not this run records.
+  Because the wrapper is what ""main()"" drives, the
+  two hooks the CLI issues itself —
+  ""on~_round~_complete"" and ""show~_end~_game"" —
+  land in the record alongside the model's.
+  The landing screen above is the exception: it goes
+  to ""view"", never the driver. It is not part of a
+  game and has no place in a record.
 end note
 
 == New-game / rematch loop ==
@@ -68,23 +88,27 @@ loop while True
       strategies). TODO: a seat picker on the
       landing screen.
     end note
-    M -> V : attach(game, target_score=game.rules.target~_score)
+    M -> D : attach(game, target_score=game.rules.target~_score)
+    D -> D : open ""<root>/games/<game~_id>.jsonl""
+    D ->> V : attach(game, target~_score)
 
     == Round loop ==
 
     loop while not game.check_game_over().game_over
-        M -> G : manage_round(view=view)
+        M -> G : manage_round(view=driver)
         ref over G, R : **seq_round** — setup → bidding → 8 tricks → scoring
         G --> M : (mutates current_round / scores in place)
 
-        M -->> V : on_round_complete(game.current_round, game.scores)
+        M -->> D : on_round_complete(game.current_round, game.scores)
+        D -> D : write ""round~_scored""
+        D ->> V : on_round_complete(round, scores)
         note right of V
           Append a RoundSummary to ""history""
           for the end-game scoreboard.
         end note
 
         M -> G : status = check_game_over()
-        M -> V : show_round_recap(current_round, scores,\n              is_final=status.game_over,\n              is_tiebreaker=status.tied_teams is not None,\n              belote_gated=status.belote_gated)
+        M -> D : show_round_recap(current_round, scores,\n              is_final=status.game_over,\n              is_tiebreaker=status.tied_teams is not None,\n              belote_gated=status.belote_gated)
         note right of V
           Between-round recap (contract, made/failed,
           per-team round points, running totals). Blocks
@@ -103,7 +127,9 @@ loop while True
     == End-game routing ==
 
     M -> G : status = check_game_over()
-    M -> V : show_end_game(status)
+    M -> D : show_end_game(status)
+    D -> D : write ""game~_ended(target~_reached)"", close the file
+    D ->> V : show_end_game(status)
     note right of V
       Double-line winner banner + round-by-round
       table. Returns the user's choice.
@@ -114,9 +140,11 @@ loop while True
     alt choice == 'q'
         M ->x M : break  (leave the loop)
     else choice == 'n'  (new game)
+        M -> D : finish_recording(driver)
         M -> V : show_landing(setup)
         V --> M : setup  (re-opened on the one in play)
         M -> V : view.aids = setup.aids
+        M -> D : driver = _attach_recorder(view, record, setup)
     else choice == 'r'  (rematch)
         note right of M
           Same setup; a fresh ""_build_game""
@@ -125,15 +153,23 @@ loop while True
     end
 end
 
+M -> D : finally: finish_recording(driver)
+deactivate D
 deactivate V
 [<- M : return  (clean exit)
 
-note over M, V
+note over M, D
   ""KeyboardInterrupt"" / ""EOFError"" anywhere in the
   loop is caught at the top level and prints "Goodbye." —
   a Ctrl-C / Ctrl-D quits gracefully rather than dumping a
   traceback. ""main"" first reconfigures stdout/stderr to
   UTF-8 so the suit glyphs render on legacy Windows consoles.
+  The ""finally"" is what keeps an abandoned game honest: a
+  file still open is closed with ""game~_ended(interrupted)""
+  and the last running totals, so "why does this record
+  stop?" is a question the record itself answers. It is a
+  no-op when this run does not record, and idempotent when
+  ""show~_end~_game"" already closed the file.
 end note
 
 @enduml

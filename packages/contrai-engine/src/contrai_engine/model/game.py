@@ -6,7 +6,6 @@ This class manages the game state, players, teams, deck, and game logic.
 from __future__ import annotations
 
 import logging
-import random
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -18,6 +17,7 @@ from contrai_core.team import Team
 from contrai_core.team_side import TeamSide
 
 from ..debug_state import deal_lines, round_result_lines
+from .deal import DealSource, RandomDealSource
 from .player import Player
 from .round import Round
 
@@ -81,8 +81,16 @@ class Game:
         rules (RuleConfig): The table ruleset every round of this game is
             played under. Handed down to each :class:`Round`, and from
             there to the core play state and the round scorer.
+        deal_source (DealSource): Where each round's dealer and deck come
+            from. Defaults to :class:`~contrai_engine.model.deal.RandomDealSource`,
+            the drawn-then-rotated dealer and the cut pile.
     """
-    def __init__(self, players, rules: RuleConfig | None = None):
+    def __init__(
+        self,
+        players,
+        rules: RuleConfig | None = None,
+        deal_source: DealSource | None = None,
+    ):
         """
         Initialize a game with 4 players, one per seat.
         Teams are automatically created: North-South vs East-West.
@@ -113,6 +121,11 @@ class Game:
             rules (RuleConfig | None): The table ruleset to play under.
                 ``None`` (the default) means the §9 catalogue defaults,
                 which reproduces today's behaviour exactly.
+            deal_source (DealSource | None): Where each round's dealer
+                and deck come from. ``None`` (the default) means
+                :class:`~contrai_engine.model.deal.RandomDealSource`,
+                which reproduces today's behaviour exactly. A replay
+                passes a source that reads both off a record.
 
         Raises:
             InvalidPlayerCountError: If the number of players is not exactly 4.
@@ -192,26 +205,38 @@ class Game:
         # The table ruleset is game-level state: it is fixed when the
         # table sits down and every round inherits it unchanged.
         self.rules: RuleConfig = rules if rules is not None else RuleConfig()
+        # Where the dealer and the deal come from. Fixed for the game,
+        # like the ruleset: a table does not switch halfway from dealing
+        # its own cards to reading them off a file.
+        self.deal_source: DealSource = (
+            deal_source if deal_source is not None else RandomDealSource()
+        )
 
     def start_new_round(self):
         """
-        Starts a new round: shuffles or cuts, deals, resets contract and sets the next dealer.
+        Starts a new round: sets the next dealer, sources the deck, deals,
+        and resets the contract.
+
+        The dealer and the deck both come from :attr:`deal_source`, which
+        by default draws the first dealer and cuts the pile exactly as
+        before. The deck is sourced *after* the seats are ordered, because
+        a scripted source needs the seating to lay a recorded deal out in
+        deal order — and nothing between the two steps consumes
+        randomness, so a seeded game deals identically either way.
         """
         # Reset contract and set next dealer
         self.current_contract = None
         self.next_dealer()
 
-        # The collected pile is cut, not reshuffled, between rounds — the
-        # canonical rule (§4). The very first deal of a game has no pile
-        # to cut, so it always shuffles; a table running
-        # ``reshuffle_every_round`` shuffles before every deal instead.
-        if self.round_number == 0 or self.rules.reshuffle_every_round:
-            self.deck.shuffle()
-        else:
-            self.deck.cut()
-
         # Set players order for the round
         self.set_players_order()
+
+        # Source this round's deck. ``round_number`` is still the count of
+        # rounds already played, so it is the 0-based index of the round
+        # about to start — which is both what the default source reads to
+        # tell a first deal from a later one, and what a scripted source
+        # indexes its own rounds by.
+        self.deck = self.deal_source.next_deck(self)
 
         # Increment the round number
         self.round_number += 1
@@ -445,19 +470,18 @@ class Game:
         return self.scores[side] - credit >= target_score
 
     def next_dealer(self) -> None:
-        """Pass the deal to the next seat along, in the table's direction.
+        """Hand the deal to whoever :attr:`deal_source` names next.
 
-        The first round's dealer is drawn at random; every later round
-        hands the deal to the dealer's successor under
-        ``rules.turn_direction`` — to the dealer's right when play runs
-        anticlockwise (contree-domain.md §2, §4).
+        Under the default source that is the canonical rotation — the
+        first round's dealer drawn at random, every later one the
+        previous dealer's successor under ``rules.turn_direction``, i.e.
+        to the dealer's right when play runs anticlockwise
+        (contree-domain.md §2, §4). A replay's source reads the dealer
+        off the record instead, which is the one thing about a round a
+        rotation cannot reproduce.
         """
 
-        if self.dealer is None:
-            self.dealer = random.choice(self.players)
-        else:
-            successor = self.dealer.position.next_in(self.rules.turn_direction)
-            self.dealer = self.players_by_position[successor]
+        self.dealer = self.deal_source.next_dealer(self)
 
     def set_players_order(self) -> None:
         """Order the seats for this round, starting after the dealer.

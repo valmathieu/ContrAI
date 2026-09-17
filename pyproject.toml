@@ -6,9 +6,10 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "contrai-core[test]",
+    "contrai-data[test]",
     "contrai-engine[test]",
     "contrai-analyzer",
-    "contrai-scraper",
+    "contrai-scraper[test]",
 ]
 
 [dependency-groups]
@@ -28,6 +29,7 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 contrai-core = { workspace = true }
+contrai-data = { workspace = true }
 contrai-engine = { workspace = true }
 contrai-analyzer = { workspace = true }
 contrai-scraper = { workspace = true }
@@ -48,11 +50,12 @@ no-docstring-rgx = "^_|^test_|^Test"
 addopts = "--import-mode=importlib"
 
 [tool.coverage.run]
-# Measured by import name, not path: the workspace installs both packages
-# editable, so ``contrai_core``/``contrai_engine`` resolve wherever pytest is
-# invoked from. The analyzer and scraper are excluded — they have no suites
-# (see CONTRIBUTING.md "Tests"), and folding them in would drown the signal.
-source = ["contrai_core", "contrai_engine"]
+# Measured by import name, not path: the workspace installs every member
+# editable, so ``contrai_core``/``contrai_data``/``contrai_engine``/
+# ``contrai_scraper`` resolve wherever pytest is invoked from. The analyzer is
+# excluded — it has no suite (see CONTRIBUTING.md "Tests"), and folding it in
+# would drown the signal.
+source = ["contrai_core", "contrai_data", "contrai_engine", "contrai_scraper"]
 # Branch coverage, not just line coverage: a fully-executed ``if`` whose
 # ``else`` never runs is exactly the gap this is meant to surface.
 branch = true
@@ -60,9 +63,11 @@ omit = [
     # Pure re-export shims — every line is an ``import``/``__all__`` entry that
     # any test run trivially executes, so they only inflate the percentage.
     "*/contrai_core/__init__.py",
+    "*/contrai_data/__init__.py",
     "*/contrai_engine/__init__.py",
     "*/contrai_engine/view/__init__.py",
     "*/contrai_engine/view/screens/__init__.py",
+    "*/contrai_scraper/__init__.py",
 ]
 
 [tool.coverage.report]

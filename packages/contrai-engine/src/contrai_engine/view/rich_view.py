@@ -64,7 +64,12 @@ from contrai_engine.view.layout import (
     _panel_prompt,
     _two_column,
 )
-from contrai_engine.view.parsing import _parse_bid_input, _parse_card_input
+from contrai_engine.view.parsing import (
+    _parse_bid_input,
+    _parse_card_input,
+    _parse_replay_key,
+    _parse_round_pick,
+)
 from contrai_engine.view.screens.bidding import (
     _ai_bid_announcement,
     _bid_rejection_text,
@@ -100,6 +105,14 @@ from contrai_engine.view.screens.recap import (
     _contract_made,
     _panel_round_recap,
 )
+from contrai_engine.view.screens.replay import (
+    _panel_replay_summary,
+    _replay_deal_text,
+    _replay_step_prompt_text,
+    _replay_step_rejection_text,
+    _replay_summary_prompt_text,
+    _replay_summary_rejection_text,
+)
 from contrai_engine.view.screens.trick import (
     _ai_card_announcement,
     _card_prompt_text,
@@ -130,6 +143,7 @@ from rich.text import Text
 if TYPE_CHECKING:
     from contrai_engine.model.game import Game, GameOverStatus
     from contrai_engine.model.round import Round
+    from contrai_engine.replay.summary import ReplayRow
 
 # A dedicated logger name (rather than ``__name__``, which would be
 # "contrai_engine.view.rich_view") so the debug log file's narrative
@@ -341,7 +355,9 @@ class RichView:
         rules = rules_for(trump)
         trick_points = sum(rules.points(play.card) for play in plays)
         self._log(self._format_trick_won_log(winner, trick_points))
-        prompt_question = _trick_won_prompt_text(winner)
+        prompt_question = _trick_won_prompt_text(
+            winner, wait=not self.options.replay
+        )
         if self.options.autoplay:
             prompt_question = _autoplay_pause_text(prompt_question.plain)
         # State 3: full trick shown, winner highlighted, Press Enter.
@@ -500,21 +516,26 @@ class RichView:
                 belote_gated=belote_gated,
             )
         )
-        if is_final:
-            prompt_text = Text(
-                "Press [Enter] to see the final score…", style=FG
-            )
-        elif is_tiebreaker:
-            prompt_text = Text(
-                "Press [Enter] to deal the tiebreaker round…", style=FG
-            )
-        else:
-            prompt_text = Text(
-                "Press [Enter] to deal the next round…", style=FG
-            )
-        if self.options.autoplay:
-            prompt_text = _autoplay_pause_text(prompt_text.plain)
-        self.console.print(_panel_prompt(prompt_text, mandatory=False))
+        # Under replay the recap's own prompt is left off: it would
+        # invite a keystroke this method never reads (``_wait_or_pause``
+        # returns at once), and there is no next round to deal — the
+        # replay's step prompt, drawn underneath, owns the key.
+        if not self.options.replay:
+            if is_final:
+                prompt_text = Text(
+                    "Press [Enter] to see the final score…", style=FG
+                )
+            elif is_tiebreaker:
+                prompt_text = Text(
+                    "Press [Enter] to deal the tiebreaker round…", style=FG
+                )
+            else:
+                prompt_text = Text(
+                    "Press [Enter] to deal the next round…", style=FG
+                )
+            if self.options.autoplay:
+                prompt_text = _autoplay_pause_text(prompt_text.plain)
+            self.console.print(_panel_prompt(prompt_text, mandatory=False))
         self._wait_or_pause(GOLD, "CONTRAI_AUTOPLAY_RECAP_PAUSE", 2.5)
 
     def on_round_complete(self, round_: "Round", running_scores: dict) -> None:
@@ -623,16 +644,26 @@ class RichView:
             elif raw in ("l", "live"):
                 # The aid is the one setting the model never sees, so it is
                 # flipped here rather than routed through ``cycle_knob``.
+                # ``replace`` rather than a fresh ``TableAids``: rebuilding
+                # the object would reset every other aid to its default.
                 setup = dataclasses.replace(
                     setup,
-                    aids=TableAids(
-                        live_round_score=not setup.aids.live_round_score
+                    aids=dataclasses.replace(
+                        setup.aids,
+                        live_round_score=not setup.aids.live_round_score,
+                    ),
+                )
+            elif raw in ("r", "record"):
+                setup = dataclasses.replace(
+                    setup,
+                    aids=dataclasses.replace(
+                        setup.aids, record=not setup.aids.record
                     ),
                 )
             else:
                 notice = Text(
                     "✗ [Enter] to deal, or [p] preset · [f] load file · "
-                    "[k] knobs · [l] live score.",
+                    "[k] knobs · [l] live score · [r] record.",
                     style=RED,
                 )
 
@@ -845,6 +876,94 @@ class RichView:
             self.console.input(Text("  Press Enter…", style=DIM).markup)
 
     # ------------------------------------------------------------------
+    # Replay screens
+    # ------------------------------------------------------------------
+
+    def show_replay_summary(
+        self, rows: Sequence["ReplayRow"], game_id: str
+    ) -> Optional[int]:
+        """Show a recorded game's rounds and return the one to step.
+
+        Unlike :meth:`show_landing`, a blank answer is **not** the exit:
+        ``[q]`` is, and pressing Enter re-prompts. Closing a record by
+        reflex on a picker would be the wrong default.
+
+        Args:
+            rows: One row per recorded round, in file order.
+            game_id: The record's id, for the panel title.
+
+        Returns:
+            The record round number to replay, or ``None`` to leave.
+        """
+        steppable = [row.number for row in rows if row.steppable]
+        # As in ``show_landing``, a rejection rides inside the next
+        # frame's Prompt panel: the loop's ``console.clear()`` would push
+        # a standalone print up into scrollback where nobody would see it.
+        notice: Optional[Text] = None
+        while True:
+            self.console.clear()
+            self.console.print(_panel_replay_summary(rows, game_id))
+            self.console.print(
+                _panel_prompt(
+                    _replay_summary_prompt_text(rows),
+                    mandatory=False,
+                    notice=notice,
+                )
+            )
+            notice = None
+            raw = self._setup_input()
+            if raw in ("q", "quit"):
+                return None
+            pick = _parse_round_pick(raw, steppable)
+            if pick is None:
+                notice = _replay_summary_rejection_text(rows)
+                continue
+            return pick
+
+    def show_replay_deal(self, round_: "Round") -> None:
+        """Render a replayed round's opening frame: hands face up, no bids yet.
+
+        Args:
+            round_: The round just dealt.
+        """
+        self._render_in_game(
+            phase="bidding",
+            bidding_history=[],
+            prompt_question=_replay_deal_text(round_),
+        )
+
+    def show_replay_step(self, *, can_go_back: bool) -> str:
+        """Draw the step prompt under the current frame and read one key.
+
+        The console is deliberately not cleared: the frame above is the
+        action being stepped, and a rejected key re-prompts beneath it
+        rather than riding into the next frame's Prompt panel — there is
+        no next frame until the viewer asks for one.
+
+        Args:
+            can_go_back: Whether a previous stop exists, which decides
+                whether ``[p]`` is offered.
+
+        Returns:
+            One of ``"n"``, ``"t"``, ``"r"``, ``"p"``, ``"q"``.
+        """
+        while True:
+            self.console.print(
+                _panel_prompt(
+                    _replay_step_prompt_text(can_go_back=can_go_back),
+                    mandatory=False,
+                )
+            )
+            key = _parse_replay_key(
+                self._setup_input(), can_go_back=can_go_back
+            )
+            if key is not None:
+                return key
+            self.console.print(
+                _replay_step_rejection_text(can_go_back=can_go_back)
+            )
+
+    # ------------------------------------------------------------------
     # Top-level in-game render
     # ------------------------------------------------------------------
 
@@ -899,8 +1018,10 @@ class RichView:
         # Debug strip: every seat's hand face up, plus the still-in-play
         # summary. ``round_`` is only ever truthy when ``self.game`` is
         # set (it is derived from it above), so ``self.game.players`` is
-        # safe here without a separate None check.
-        if self.options.debug and round_:
+        # safe here without a separate None check. A replay shows the
+        # strip for the same reason debug does: nothing is hidden from a
+        # viewer watching a game that has already been played.
+        if (self.options.debug or self.options.replay) and round_:
             self.console.print(
                 _panel_debug_hands(
                     self.game.players,
@@ -965,20 +1086,31 @@ class RichView:
         Args:
             env_var: Environment variable name that overrides the delay.
             default: Delay in seconds to use when ``env_var`` is unset —
-                except under debug mode (:attr:`options`.debug), where
-                the default collapses to zero so an unattended debug
-                run races through with no artificial pacing. An
+                except under debug mode (:attr:`options`.debug) or
+                replay mode (:attr:`options`.replay), where the default
+                collapses to zero so an unattended debug run races
+                through with no artificial pacing and a replay steps at
+                the viewer's speed rather than the AI's. An
                 explicit ``env_var`` value still wins over that
                 zeroing, so pacing can be forced back on for observation.
         """
         time.sleep(
-            _resolve_delay(env_var, 0.0 if self.options.debug else default)
+            _resolve_delay(
+                env_var,
+                0.0
+                if self.options.debug or self.options.replay
+                else default,
+            )
         )
 
     def _wait_or_pause(
         self, prompt_style: str, env_var: str, default: float
     ) -> None:
         """Block for Enter, or take a timed autoplay pause instead.
+
+        Under replay this does neither: the replay's step prompt reads
+        the keystroke this method would discard, so waiting here would
+        swallow it.
 
         Under autoplay this delegates to :meth:`_pause`, so a Ctrl+C
         during the wait propagates uncaught (``time.sleep`` raises
@@ -997,8 +1129,15 @@ class RichView:
             env_var: Environment variable that overrides the autoplay
                 pause duration.
             default: Autoplay pause duration in seconds when ``env_var``
-                is unset.
+                is unset. Ignored under replay, which neither sleeps nor
+                reads here.
         """
+        # A replay's pacing belongs to its step prompt, which reads the
+        # key this would discard (``console.input``'s return value is
+        # thrown away below). Returning leaves the frame on screen for
+        # the step prompt to draw under.
+        if self.options.replay:
+            return
         if self.options.autoplay:
             self._pause(env_var, default)
             return

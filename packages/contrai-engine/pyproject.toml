@@ -1,10 +1,11 @@
 [project]
 name = "contrai-engine"
-version = "0.4.0"
+version = "0.5.0"
 description = "Add your description here"
 requires-python = ">=3.14"
 dependencies = [
   "contrai-core",
+  "contrai-data",
   "rich>=13",
   "pyfiglet>=1.0",
 ]

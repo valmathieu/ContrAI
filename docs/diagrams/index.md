@@ -16,6 +16,7 @@ Colour encodes **which package owns the element**, reused consistently across ev
 | Package              | Header fill | Body fill   | Border    |
 |----------------------|-------------|-------------|-----------|
 | `contrai-core`       | `#7AAEE3`   | `#E1F0FF`   | `#3D6FA5` |
+| `contrai-data`       | `#5FBFB5`   | `#E0F5F2`   | `#2E7D74` |
 | `contrai-engine`     | `#E89A4F`   | `#FFEFD9`   | `#B26A28` |
 | `contrai-analyzer`   | `#7AC178`   | `#E8F5E9`   | `#3F8C3D` |
 | `contrai-scraper`    | `#9B7FCC`   | `#EDE7F6`   | `#5E4495` |
@@ -52,11 +53,16 @@ mmdc      -i docs/diagrams/file.mmd -o docs/diagrams/file.png
 **PlantUML silently clips large PNGs at 4096 px** — no error, no warning, just a
 truncated image. `class_core.puml` and `class_engine.puml` both exceed it today,
 so render them with the limit raised, then check the result's pixel dimensions (a
-side landing at exactly 4096 means it was clipped):
+side landing at exactly the limit in force means it was clipped, so raise it and
+re-render until neither side does):
 
 ```bash
-PLANTUML_LIMIT_SIZE=8192 plantuml -tpng docs/diagrams/class_core.puml
+PLANTUML_LIMIT_SIZE=16384 plantuml -tpng docs/diagrams/class_core.puml    # 11807 x 3739
+PLANTUML_LIMIT_SIZE=16384 plantuml -tpng docs/diagrams/class_engine.puml  # 11531 x 5275
 ```
+
+`class_engine.puml` outgrew 8192 when the `replay/` package landed — a reminder
+that the limit is a property of the diagram on the day, not a constant to copy.
 
 Only the raster export is affected; the MkDocs site renders SVG and is not
 subject to the limit.
@@ -146,6 +152,7 @@ Each row links to the canonical `.puml` source, the rendered `.png` preview, and
 | Diagram                | Kind     | Scope                | Source                                | PNG preview                          | Embedded on                                                |
 |------------------------|----------|----------------------|---------------------------------------|--------------------------------------|------------------------------------------------------------|
 | `class_core.puml`      | Class    | contrai-core         | [source](class_core.puml)             | [png](class_core.png)                | [Core overview](../core/#class-structure)                  |
+| `class_data.puml`      | Class    | contrai-data         | [source](class_data.puml)             | [png](class_data.png)                | [Data overview](../data/#class-structure)                  |
 | `class_engine.puml`    | Class    | contrai-engine + MVC | [source](class_engine.puml)           | [png](class_engine.png)              | [Engine overview](../engine/#class-structure)              |
 | `class_analyzer.puml`  | Class    | contrai-analyzer     | [source](class_analyzer.puml)         | [png](class_analyzer.png)            | [Analyzer overview](../analyzer/#class-structure)          |
 | `class_workspace.puml` | Class    | Workspace overview   | [source](class_workspace.puml)        | [png](class_workspace.png)           | [Architecture](../architecture/#package-map)               |
@@ -154,5 +161,9 @@ Each row links to the canonical `.puml` source, the rendered `.png` preview, and
 | `seq_bidding.puml`     | Sequence | Bidding cycle zoom   | [source](seq_bidding.puml)            | [png](seq_bidding.png)               | [Engine — bidding cycle zoom](../engine/#round-lifecycle)  |
 | `seq_trick.puml`       | Sequence | Single trick zoom    | [source](seq_trick.puml)              | [png](seq_trick.png)                 | [Engine — single trick zoom](../engine/#round-lifecycle)   |
 | `flow_scoring.mmd`     | Flowchart| Round scoring tree   | [source](flow_scoring.mmd)            | [png](flow_scoring.png)              | [Engine — scoring](../engine/#scoring)                     |
-| `seq_scraper.puml`     | Sequence | contrai-scraper      | [source](seq_scraper.puml)            | [png](seq_scraper.png)               | [Scraper overview](../scraper/#current-flow-v1)            |
+| `seq_replay.puml`      | Sequence | Replay + verify a record | [source](seq_replay.puml)         | [png](seq_replay.png)                | [Engine — CLI](../engine/#cli)                             |
+| `seq_scraper.puml`     | Sequence | contrai-scraper      | [source](seq_scraper.puml)            | [png](seq_scraper.png)               | [Scraper — the table loop](../scraper/#the-table-loop)            |
 | `state_cli_screens.mmd`| State    | RichView screen flow | [source](state_cli_screens.mmd)       | [png](state_cli_screens.png)         | [Engine — CLI](../engine/#cli)                             |
+| `flow_wire.mmd`        | Flowchart| Scraper wire pipeline| [source](flow_wire.mmd)               | [png](flow_wire.png)                 | [Scraper — pipeline](../scraper/#pipeline)                 |
+| `state_scraper_shift.mmd` | State | Scraper shift loop | [source](state_scraper_shift.mmd) | [png](state_scraper_shift.png) | [Scraper — shifts](../scraper/#shifts) |
+| `deploy_scraper.mmd` | Deployment | Scraper on the homelab host | [source](deploy_scraper.mmd) | [png](deploy_scraper.png) | [Scraper — deployment](../scraper/#deployment) |

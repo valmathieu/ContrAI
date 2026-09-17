@@ -29,14 +29,17 @@ from real play.
 
 Fixture parameters are listed in cycle order starting from N
 (``north, west, south, east`` for any subset, in that order), with
-``four_players`` appended when team identity is needed (Double /
-Redouble legality, ``partner_bid``).
+``four_players`` appended when team identity is needed (``partner_bid``).
+The Double / Redouble tests append it too, although that legality reads
+each actor's side off its seat (``TestSidesAreReadThroughTheSeat``) and
+holds without teams.
 """
 
 import pytest
 
 from contrai_core import (
     CONTRACT_SUITS,
+    PRESETS,
     AllTrumpBelote,
     Auction,
     BasePlayer,
@@ -58,8 +61,8 @@ from contrai_core import (
 
 # ---------------------------------------------------------------------------
 # Fixtures: four real players + their N-S / E-W teams.
-# Auction rules compare team identity for Double / Redouble legality, so
-# we want real Team/BasePlayer instances rather than mocks.
+# ``partner_bid`` compares team identity, so we want real Team/BasePlayer
+# instances rather than mocks; Double / Redouble legality reads the seat.
 # ---------------------------------------------------------------------------
 
 
@@ -1465,3 +1468,146 @@ class TestSlamDoublingSwitches:
         rules = RuleConfig(slam_can_be_doubled=False)
         auction = self._slam_auction(north, SlamLevel.SLAM, rules)
         assert auction.is_legal(RedoubleBid(north)) is False
+
+
+# ---------------------------------------------------------------------------
+# Double / Redouble sides are read off the seat.
+# ---------------------------------------------------------------------------
+
+
+class TestSidesAreReadThroughTheSeat:
+    """Double / Redouble legality reads each actor's side off its seat.
+
+    A record's sealed auction names bare :class:`Position` values, which
+    carry no ``team``; a live auction names seated players. Reading the
+    side through the seat lets one rule answer both, and keeps a seated
+    player who was never handed a :class:`Team` from being refused a
+    legitimate double.
+    """
+
+    def test_a_seated_player_without_a_team_may_double_an_opponent(
+        self, north, west
+    ):
+        auction = Auction(bids=(ContractBid(north, 80, Suit.HEARTS),))
+        assert auction.is_legal(DoubleBid(west)) is True
+
+    def test_a_seated_player_without_a_team_may_not_double_its_partner(
+        self, north, west, south
+    ):
+        auction = Auction(
+            bids=(ContractBid(north, 80, Suit.HEARTS), PassBid(west))
+        )
+        assert auction.is_legal(DoubleBid(south)) is False
+
+    def test_a_seat_may_double_an_opposing_seat(self):
+        auction = Auction(bids=(ContractBid(Position.NORTH, 80, Suit.HEARTS),))
+        assert auction.is_legal(DoubleBid(Position.WEST)) is True
+
+    def test_a_seat_may_redouble_its_own_side_s_contract(self):
+        auction = Auction(
+            bids=(
+                ContractBid(Position.NORTH, 80, Suit.HEARTS),
+                DoubleBid(Position.WEST),
+            )
+        )
+        assert auction.is_legal(RedoubleBid(Position.SOUTH)) is True
+
+    def test_a_seat_may_not_redouble_the_other_side_s_contract(self):
+        auction = Auction(
+            bids=(
+                ContractBid(Position.NORTH, 80, Suit.HEARTS),
+                DoubleBid(Position.WEST),
+                PassBid(Position.SOUTH),
+            )
+        )
+        assert auction.is_legal(RedoubleBid(Position.EAST)) is False
+
+    def test_a_sealed_auction_lists_its_legal_bids(self):
+        # South may redouble the double on its partner's contract...
+        doubled = Auction(
+            bids=(
+                ContractBid(Position.NORTH, 80, Suit.HEARTS),
+                DoubleBid(Position.WEST),
+            )
+        )
+        assert doubled.legal_actions(Position.SOUTH) == (
+            PassBid(Position.SOUTH),
+            RedoubleBid(Position.SOUTH),
+        )
+        # ...while East, the doubler's partner, has nothing but a pass.
+        declined = doubled.apply(PassBid(Position.SOUTH))
+        assert declined.legal_actions(Position.EAST) == (PassBid(Position.EAST),)
+
+    def test_an_unseated_player_may_not_double(self, north):
+        # No seat, no side: the rule refuses rather than guessing that the
+        # bid came from the other one.
+        unseated = BasePlayer("Nobody", None)
+        auction = Auction(bids=(ContractBid(north, 80, Suit.HEARTS),))
+        assert auction.is_legal(DoubleBid(unseated)) is False
+
+    def test_an_unseated_player_may_not_redouble(self, north, west):
+        unseated = BasePlayer("Nobody", None)
+        auction = Auction(
+            bids=(ContractBid(north, 80, Suit.HEARTS), DoubleBid(west))
+        )
+        assert auction.is_legal(RedoubleBid(unseated)) is False
+
+
+# ---------------------------------------------------------------------------
+# §5.4 - three consecutive passes close an auction, doubled or not.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("rules", list(PRESETS.values()), ids=list(PRESETS))
+class TestADoubleDoesNotCloseTheAuction:
+    """§5.4: the auction ends on three consecutive passes, and only there.
+
+    An online table never transmits a pass from a seat with nothing else
+    to bid, so an auction read straight off its wire can look closed after
+    a double. It is not, under any preset: it closes once the passes it is
+    missing are put back. ``Auction`` never reads the turn direction, so
+    this module's anticlockwise histories serve a clockwise preset too.
+    """
+
+    def test_two_passes_after_a_double_leave_it_open(self, rules):
+        # West doubles North; South and North decline. That is the shape the
+        # wire leaves once East's forced pass is dropped - two passes, not
+        # three.
+        auction = Auction(
+            bids=(
+                ContractBid(Position.NORTH, 80, Suit.HEARTS),
+                DoubleBid(Position.WEST),
+                PassBid(Position.SOUTH),
+                PassBid(Position.NORTH),
+            ),
+            rules=rules,
+        )
+        assert auction.is_terminal() is False
+
+    def test_the_third_pass_after_a_double_closes_it(self, rules):
+        auction = Auction(
+            bids=(
+                ContractBid(Position.NORTH, 80, Suit.HEARTS),
+                DoubleBid(Position.WEST),
+                PassBid(Position.SOUTH),
+                PassBid(Position.EAST),
+                PassBid(Position.NORTH),
+            ),
+            rules=rules,
+        )
+        assert auction.is_terminal() is True
+
+    def test_a_redouble_stays_open_until_three_passes_follow(self, rules):
+        auction = Auction(
+            bids=(
+                ContractBid(Position.NORTH, 80, Suit.HEARTS),
+                DoubleBid(Position.WEST),
+                RedoubleBid(Position.SOUTH),
+            ),
+            rules=rules,
+        )
+        for seat in (Position.EAST, Position.NORTH):
+            assert auction.is_terminal() is False
+            auction = auction.apply(PassBid(seat))
+        assert auction.is_terminal() is False
+        assert auction.apply(PassBid(Position.WEST)).is_terminal() is True

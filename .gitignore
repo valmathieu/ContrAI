@@ -51,3 +51,19 @@ docs/plans/
 # One design doc per major feature branch, holding the architectural rationale
 # and the feature roadmap. Local by design - they track a branch, not the repo.
 *_DESIGN.md
+
+# ─── Scraper / engine local material ──────────────────────────────────────
+# The site profile (URL, credentials, selectors, wire vocabulary), the
+# pseudonym salt and map, and every game record or raw wire log written by
+# `contrai --record` or `contrai-scrape` stay on the machine that made them.
+profile.toml
+*.local.toml
+.env
+pseudonyms.json
+records/
+raw/
+# Deployment secrets live on the host under /etc/contrai; keep stray copies out.
+deploy/*.env
+deploy/wireguard/
+# Local `--rules` ruleset, kept on the machine that made it.
+table.toml

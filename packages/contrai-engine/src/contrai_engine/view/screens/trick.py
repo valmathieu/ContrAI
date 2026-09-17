@@ -672,14 +672,29 @@ def _ai_card_announcement(player: BasePlayer, card: Card) -> Text:
     return t
 
 
-def _trick_won_prompt_text(winner: BasePlayer) -> Text:
-    """Prompt line for the trick-won pause; says "You" for the human."""
+def _trick_won_prompt_text(
+    winner: BasePlayer, *, wait: bool = True
+) -> Text:
+    """Prompt line for the trick-won pause; says "You" for the human.
+
+    Args:
+        winner: The seat that took the trick.
+        wait: Whether the frame is about to block for Enter. A replay
+            does not — its step prompt is drawn underneath and owns the
+            key — so the invitation is left off rather than offered for
+            a keystroke nothing will read.
+
+    Returns:
+        The prompt line.
+    """
     t = Text()
     label = _position_short(winner.position)
     if winner.is_human:
-        t.append("You won the trick. ", style=f"bold {GOLD}")
-        t.append("Press [Enter] to continue…", style=FG)
+        t.append("You won the trick.", style=f"bold {GOLD}")
+        if wait:
+            t.append(" Press [Enter] to continue…", style=FG)
     else:
-        t.append(f"{label} won the trick. ", style=FG)
-        t.append("Press [Enter] to continue…", style=DIM)
+        t.append(f"{label} won the trick.", style=FG)
+        if wait:
+            t.append(" Press [Enter] to continue…", style=DIM)
     return t

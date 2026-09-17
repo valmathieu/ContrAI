@@ -51,7 +51,6 @@ if TYPE_CHECKING:
     from .contract import Contract, ObservedContract
     from .player import BasePlayer
     from .position import Position
-    from .team import Team
     from .types import ContractSuit, Suit
 
 
@@ -428,9 +427,13 @@ class PlayState:
 
         # Rule 4 — partner-master exemption. Applies only while the partner
         # is *currently* winning; a partner since over-trumped no longer
-        # shields the player from the trump obligation.
+        # shields the player from the trump obligation. Partnership is read
+        # off the seats, as the auction reads it for doubles, so a seated
+        # player who was never handed a ``Team`` is judged the same way.
         current_master = current_winner(list(trick), self._trump_suit)
-        if current_master is not None and current_master.team == player.team:
+        if current_master is not None and current_master.position.is_teammate(
+            player.position
+        ):
             return tuple(hand)
 
         # No trump suit at all, or the led suit is itself trump and we are
@@ -446,7 +449,7 @@ class PlayState:
 
         # Rule 3 — trump obligation. If an opponent has ruffed, beat them.
         highest_opponent_trump = _highest_opponent_trump(
-            trick, player.team, rules
+            trick, player.position.team_side, rules
         )
         if highest_opponent_trump is not None:
             higher_trumps = tuple(
@@ -890,14 +893,15 @@ def _higher_trumps_than_played(
 
 def _highest_opponent_trump(
     plays: tuple[Play, ...],
-    player_team: Team,
+    side: TeamSide,
     rules: TrumpRules,
 ) -> Optional[Card]:
-    """Return the highest trump an opponent of ``player_team`` has played.
+    """Return the highest trump a player off ``side`` has played.
 
     Args:
         plays: The plays of the current trick.
-        player_team: The team whose opponents' trumps we scan for.
+        side: The side whose opponents' trumps we scan for, read off the
+            acting player's seat.
         rules: The contract's trick rules; under the no-trump regime no
             card is trump, so the scan finds nothing.
 
@@ -907,7 +911,7 @@ def _highest_opponent_trump(
 
     highest = None
     for trick_player, card in plays:
-        if not rules.is_trump(card.suit) or trick_player.team == player_team:
+        if not rules.is_trump(card.suit) or trick_player.position.team_side is side:
             continue
         if highest is None or rules.rank_in_suit(card) > rules.rank_in_suit(
             highest
@@ -962,7 +966,7 @@ def _classify_violation(
     # discriminator is genuine trumpness — the card competes as a trump,
     # wherever the trick was led.
     highest_opponent_trump = _highest_opponent_trump(
-        trick, player.team, rules
+        trick, player.position.team_side, rules
     )
     if highest_opponent_trump is not None and rules.is_trump(card.suit):
         return PlayRuleViolation.MUST_OVERTRUMP

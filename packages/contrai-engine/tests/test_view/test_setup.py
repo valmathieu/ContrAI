@@ -107,8 +107,18 @@ class TestPanelTableSetup:
             )
         )
         assert "Live round score" in on
-        assert on.rstrip().endswith("on")
+        assert "Live round score  on" in on
+        assert "Live round score  off" in off
+
+    def test_summary_shows_the_record_row(self):
+        panel = _panel_table_setup(TableSetup(aids=TableAids(record=True)))
+        assert "Records" in _rows(panel)
+
+    def test_record_row_tracks_the_aid(self):
+        off = _rows(_panel_table_setup(TableSetup()))
+        on = _rows(_panel_table_setup(TableSetup(aids=TableAids(record=True))))
         assert off.rstrip().endswith("off")
+        assert on.rstrip().endswith("on")
 
     def test_panel_is_the_landing_width(self):
         assert _panel_table_setup(TableSetup()).width == WIDTH
@@ -154,7 +164,7 @@ class TestSetupPromptText:
 
     def test_offers_every_key(self):
         plain = _setup_prompt_text(TableSetup()).plain
-        for key in ("[Enter]", "[p]", "[f]", "[k]", "[l]"):
+        for key in ("[Enter]", "[p]", "[f]", "[k]", "[l]", "[r]"):
             assert key in plain
 
     def test_live_key_names_the_state_it_moves_to(self):
@@ -165,6 +175,13 @@ class TestSetupPromptText:
         ).plain
         assert "live score off" in on
         assert "live score on" in off
+
+    @pytest.mark.parametrize(
+        "record, wording", [(False, "record on"), (True, "record off")]
+    )
+    def test_prompt_names_the_state_the_key_moves_to(self, record, wording):
+        text = _setup_prompt_text(TableSetup(aids=TableAids(record=record)))
+        assert wording in text.plain
 
 
 class TestPresetPromptText:

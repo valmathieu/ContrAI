@@ -27,7 +27,9 @@ jobs:
       matrix:
         package:
           - contrai-core
+          - contrai-data
           - contrai-engine
+          - contrai-scraper
 
     steps:
       - name: Checkout

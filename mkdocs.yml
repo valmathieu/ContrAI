@@ -104,6 +104,9 @@ nav:
   - Core:
       - Overview: core/index.md
       - API reference: core/api.md
+  - Data:
+      - Overview: data/index.md
+      - API reference: data/api.md
   - Analyzer:
       - Overview: analyzer/index.md
       - API reference: analyzer/api.md

@@ -1,0 +1,251 @@
+# Copy to profile.toml (git-ignored) and fill in. Every value here is a
+# placeholder: this file is committed, and the target site is named nowhere in
+# the repository. Secrets may be written as "env:NAME" to read NAME from the
+# environment instead.
+
+# Where the site lives, and which language it answers in. The locale decides
+# which wording the word-shaped tokens below are written in.
+[site]
+url = "https://example.invalid/lobby"
+locale = "xx"
+
+# The spectator account. Both values may be indirected through the
+# environment ("env:CONTRAI_SCRAPER_EMAIL", "env:CONTRAI_SCRAPER_CODE"), which
+# keeps the account out of this file: one profile then serves any account.
+[account]
+email = "watcher@example.invalid"
+verification_code = "env:CONTRAI_SCRAPER_CODE"
+
+# How Playwright is driven. A headed, slowed-down browser makes a run
+# auditable; a headless one makes it unattended.
+[browser]
+headless = false
+slow_mo_ms = 500
+screenshot_on_error = true
+
+# One entry per UI step. A value may be a single selector or a list of
+# candidates, tried in order — the same step is not always spelled the same
+# way on every page.
+[selectors]
+dismiss_tutorial = "#placeholder-tutorial"
+# The site offers several ways in; the address form below appears only once
+# its e-mail entry is chosen. A list, because the entry may be labelled or
+# icon-only depending on the locale.
+login_start = ["#placeholder-email-entry", "#placeholder-email-entry-icon"]
+login_email = "#placeholder-email"
+login_continue = ["#placeholder-continue", "#placeholder-continue-icon"]
+code_input = "#placeholder-code"
+code_submit = "#placeholder-code-submit"
+mode_online = "#placeholder-online"
+mode_observe = "#placeholder-observe"
+variant = "#placeholder-variant"
+# Answered once per account, the first time it enters online mode; the dialog
+# blocks the spectator menu until it is.
+pledge_dialog = "#placeholder-pledge"
+pledge_accept = "#placeholder-pledge-ok"
+tournament_marker = "#placeholder-table-kind"
+tournament_marker_text = "placeholder"
+next_table = "#placeholder-next"
+# Optional. Some tables slide the rails holding their panel buttons off the
+# screen while a game runs; a button left there is in the DOM but out of reach,
+# and clicking it only burns its timeout. This is the site's own control for
+# bringing the rails back, and it is shown only while they are away — so filter
+# it on visibility and it says both whether to click and what. Leave the key
+# out where a table's controls never move.
+rail_show = "#placeholder-rail-in:visible"
+options_button = "#placeholder-options"
+# One row per table option. Inside a row, the id sits on one element and the
+# on/off state on another: options_id_attr is read off options_id_element, and
+# options_on_class is looked for in options_state_element's class list.
+# options_id_element and options_state_element each take one selector, not a
+# list of candidates.
+options_row = ".placeholder-option-row"
+options_id_element = ".placeholder-option-name"
+options_id_attr = "data-placeholder"
+options_state_element = ".placeholder-option-switch"
+options_on_class = "placeholder-on"
+panel_close = "#placeholder-close"
+# The score panel the boundary read falls back to when the wire cannot answer.
+scoreboard_button = "#placeholder-scoreboard"
+scoreboard_row = ".placeholder-score-row"
+scoreboard_cell = ".placeholder-score-cell"
+# Must carry a {seat} placeholder: it is filled with one of the seat tokens
+# named under [wire.tokens].seats.
+seat_element = "#placeholder-seat-{seat}"
+player_panel = ".placeholder-player-panel"
+player_id_title = ".placeholder-player-panel .placeholder-title"
+player_id_prefix = "placeholder "
+
+# How a socket frame is recognised, unwrapped and keyed. `deal_key_arity` is
+# how many parts a composite key has when it addresses a deal rather than a
+# play; `round_state_prefix` is what a per-round state container's key starts
+# with, since it is keyed by game id.
+[wire]
+socket_url_pattern = "^wss://example\\.invalid/sock/\\d+$"
+game_envelope_kind = "placeholder-kind"
+keepalive_frame = "placeholder-keepalive"
+key_fields = ["game", "round", "trick", "position", "verb", "player"]
+play_verb = "placeholder-play"
+bid_verb_prefix = "placeholder-bid:"
+deal_key_arity = 4
+round_state_prefix = "placeholder."
+# How the client asks for table state without leaving: an action name, the
+# prefix its room id carries, and the parameter naming the last frame seen.
+# Without that parameter the request is acknowledged and ignored.
+resume_action = "placeholder-resume"
+resume_room_prefix = "placeholder-room-"
+resume_param = "placeholderLastEvent"
+
+# The three event names the parser reacts to.
+[wire.events]
+join_snapshot = "placeholderJoin"
+table_update = "placeholderUpdate"
+counters = "placeholderCounters"
+
+# Dotted paths, each resolved relative to the payload it is looked up in: the
+# table/state names walk from a snapshot's root, the player names from one
+# player block, the row names from one score row, and think_ms / received_ms
+# from an event's metadata block. The set of *names* is fixed and spans both
+# halves of the scraper, so this table is written once. An unknown name is
+# refused; a missing one is refused.
+[wire.fields]
+table = "placeholder"
+table_id = "placeholder.id"
+is_tournament = "placeholder.kind"
+seats = "placeholder.seats"
+seat_id = "id"
+seat_placement = "spot"
+state = "placeholder"
+players = "placeholder.people"
+player_id = "id"
+player_name = "label"
+player_account = "account"
+player_level = "level"
+player_kind = "kind"
+team = "side.team"
+round_index = "n"
+dealer = "dealer"
+trump = "suit"
+deck_order = "beforeDeal"
+hands = "hands"
+tricks = "tricks"
+auction = "bids"
+scores = "score.rows"
+totals = "score.byTeam"
+row_status = "deal.status"
+row_value = "deal.value"
+row_suit = "deal.suit"
+row_multiplier = "deal.coefficient"
+# The row's declaring side and the side that won the round, as team letters.
+# Comparing them is how a row reads as made or failed; score_made below is
+# only consulted for a row that does not name both.
+row_declarer = "deal.declarer"
+row_winner = "deal.winner"
+side_taken = "done.points"
+side_belote = "done.belotes"
+side_marked_made = "marks.points"
+side_marked_announced = "marks.bid"
+# Belote as the sheet credited it, which is a component of its own: one
+# scoreboard column is the made points, the announced ones and this added up.
+side_marked_belote = "marks.belotes"
+bid_owner = "who"
+bid_suit = "colour"
+bid_value = "value"
+doubler = "doubled"
+redoubler = "redoubled"
+think_ms = "ms.value"
+turn_limit_ms = "ms.max"
+received_ms = "at"
+game_id = "game"
+ended = "over"
+left = "gone"
+spectators = "watchers"
+observable_tables = "tables"
+
+# The site's vocabulary, mapped onto core values. Keys are the site's tokens;
+# values are the canonical one-letter names — ranks 7 8 9 10 J Q K A, suits
+# S H D C, seats N W S E.
+#
+# The seat map is the one entry worth checking twice. It is a *placement* map:
+# write the core seat each on-screen position actually shows. Walking
+# seat_rotation through it must walk core's seats the way [rules].preset plays
+# (clockwise for `tournament`: N E S W). Crossing the two side seats walks the
+# other way, and the translator refuses the map.
+[wire.tokens]
+seats = { placeholder_a = "N", placeholder_b = "E", placeholder_c = "S", placeholder_d = "W" }
+seat_rotation = ["placeholder_a", "placeholder_b", "placeholder_c", "placeholder_d"]
+ranks = { p7 = "7", p8 = "8", p9 = "9", p10 = "10", pJ = "J", pQ = "Q", pK = "K", pA = "A" }
+suits = { pS = "S", pH = "H", pD = "D", pC = "C" }
+# The same four suits as the site spells them in prose rather than as glyphs.
+suit_words = { placeholder_spades = "S", placeholder_hearts = "H", placeholder_diamonds = "D", placeholder_clubs = "C" }
+team_letters = ["A", "B"]
+bid_slam = "PLACEHOLDER_SLAM"
+bid_solo_slam = "PLACEHOLDER_SOLO_SLAM"
+# Whether a pass is sent as a null rather than as a token of its own.
+pass_is_null = true
+# The status a made row carries, for a row that does not name both the
+# declarer and the winner.
+score_made = "placeholder-made"
+
+# The core preset the observed tables play under.
+[rules]
+preset = "tournament"
+
+# One line per table option the site exposes, keyed by its own option id, with
+# whether the observed tables have it switched on. The browser half refuses a
+# table whose options disagree with this block.
+[rules.options]
+placeholder_option_a = true
+placeholder_option_b = false
+
+# The per-table loop's own thresholds. These are policy, not site vocabulary.
+[recorder]
+# Skip a table whose game is already this many rounds old.
+hop_after_rows = 8
+# Give up on a table that has not played a card for this long.
+stale_after_s = 180
+# Seconds between health heartbeats.
+health_interval_s = 60
+# How long to wait for a join snapshot after being seated.
+snapshot_timeout_s = 30
+
+# When the scraper may watch. Ranges are local times in `timezone` and may
+# cross midnight ("22:00-02:00"); "00:00-24:00" is always. Outside every range
+# no browser is open and the process checks again every `idle_poll_minutes`.
+# A range that closes mid-game lets that game finish, for at most
+# `max_overrun_minutes`, when `finish_current_game` is on.
+[schedule]
+timezone = "Europe/Paris"
+active = ["08:00-23:30"]
+finish_current_game = true
+max_overrun_minutes = 30
+idle_poll_minutes = 5
+
+# Checked before any traffic reaches the site, and again before every hop:
+# the exit address must not be the home address, must be in the expected
+# country and — where a route table can be asked — the site's route must leave
+# through the tunnel. A failed check seats nothing. Never write the home
+# address here; name the environment variable that holds it.
+[egress]
+home_ip = "env:CONTRAI_HOME_IP"
+expected_country = "FR"
+# Any service answering with the caller's public address and country as JSON.
+probe_url = "https://ipinfo.io/json"
+probe_ip_field = "ip"
+probe_country_field = "country"
+# The tunnel device in the scraper's network namespace. Omit it where there is
+# no `ip` route table to ask, such as a desktop VPN on Windows.
+tunnel_interface = "tun0"
+
+# Where records and raw logs are written. Both roots resolve relative to this
+# file, so a profile moves with its data. Both roots name the same directory:
+# game_path appends games/ and raw_path appends raw/.
+[output]
+root = "./records"
+raw_root = "./records"
+raw_retention_days = 30
+
+# Inputs to the pseudonymisation step, which is not built yet. The salt may be
+# omitted entirely, or indirected through the environment.
+[privacy]
+pseudonym_salt = "env:CONTRAI_SCRAPER_SALT"

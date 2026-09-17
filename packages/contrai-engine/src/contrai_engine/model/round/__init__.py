@@ -8,7 +8,13 @@ to. This ``__init__`` re-exports the public names so external imports
 working byte-for-byte.
 """
 
-from .components import Mark, contract_components, marked_total, round_mark
+from .components import (
+    Mark,
+    contract_components,
+    marked_components,
+    marked_total,
+    round_mark,
+)
 from .round import Round
 from .scoring import RoundScore, UnannouncedSlam
 
@@ -18,6 +24,7 @@ __all__ = [
     "RoundScore",
     "UnannouncedSlam",
     "contract_components",
+    "marked_components",
     "marked_total",
     "round_mark",
 ]

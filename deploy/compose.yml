@@ -1,0 +1,51 @@
+# The scraper and the tunnel it is confined to. From the repository root:
+#   sudo docker compose -f deploy/compose.yml up -d --build
+# Private material lives on the host under /etc/contrai, never in this tree.
+name: contrai
+
+services:
+  vpn:
+    # The release the deployment was validated against; bump it deliberately,
+    # never by floating tag: https://github.com/qdm12/gluetun/releases
+    image: qmcgaw/gluetun:v3.41.3
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    env_file:
+      - /etc/contrai/vpn.env
+    volumes:
+      - /etc/contrai/wireguard/wg0.conf:/gluetun/wireguard/wg0.conf:ro
+    restart: unless-stopped
+    logging:
+      driver: journald
+      options:
+        tag: contrai-vpn
+
+  scraper:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: contrai-scraper:local
+    # No network of its own: the VPN container's, whose firewall lets traffic
+    # out only through the tunnel. When the tunnel is down there is no route.
+    network_mode: "service:vpn"
+    depends_on:
+      vpn:
+        condition: service_healthy
+        restart: true
+    init: true
+    # Chromium outgrows Docker's 64 MB /dev/shm. A sized one keeps the host's
+    # IPC namespace private, which `ipc: host` would not on a shared machine.
+    shm_size: "1gb"
+    stop_grace_period: 30s
+    env_file:
+      - /etc/contrai/contrai.env
+    volumes:
+      - /etc/contrai/profile.toml:/etc/contrai/profile.toml:ro
+      - /var/lib/contrai/records:/var/lib/contrai/records
+    restart: unless-stopped
+    logging:
+      driver: journald
+      options:
+        tag: contrai-scraper

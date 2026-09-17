@@ -1,8 +1,9 @@
 """Runtime options shared between the CLI and the view.
 
 ``DebugOptions`` is the single value object the three orthogonal debug
-flags (``--debug``, ``--seed``, ``--autoplay``) get parsed into.
-``TableAids`` is its §9.7 neighbour: the interface aids a table can
+flags (``--debug``, ``--seed``, ``--autoplay``) get parsed into, plus
+the ``replay`` mode the ``contrai replay`` subcommand builds its view
+with. ``TableAids`` is its §9.7 neighbour: the interface aids a table can
 switch on or off. Both are stdlib-only and importable from the CLI
 (which parses the flags) and the view (which reads them to decide, e.g.,
 whether to show face-up hands or the running round score) — but never
@@ -16,7 +17,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class DebugOptions:
-    """Parsed state of the engine's debug-mode CLI flags.
+    """Parsed state of the engine's debug-mode and replay switches.
 
     All fields default to "off", so ``DebugOptions()`` is the back-compat
     anchor: constructing one with no arguments reproduces today's
@@ -29,11 +30,16 @@ class DebugOptions:
         seed: The seed passed to ``random.seed`` at startup, or
             ``None`` when none was requested (in which case debug mode
             generates and records one).
+        replay: Whether the view is showing a recorded game rather than
+            driving a live one — every hand face up, no pacing, and no
+            waits of its own, because the replay's step prompt owns the
+            keystroke each wait would otherwise swallow.
     """
 
     debug: bool = False
     autoplay: bool = False
     seed: int | None = None
+    replay: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +58,10 @@ class TableAids:
     Attributes:
         live_round_score: Whether the in-game Round panel shows each
             side's running card points as the tricks are collected.
+        record: Whether the table writes each game it plays to a record
+            under ``$CONTRAI_HOME/records``. Off by default: a record is
+            a corpus entry, and nobody should start one by accident.
     """
 
     live_round_score: bool = True
+    record: bool = False

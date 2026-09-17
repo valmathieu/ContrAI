@@ -1,0 +1,57 @@
+---
+title: contrai-scraper — the wire pipeline (frames → record)
+---
+flowchart TD
+    %% ---------- Two entry points, one pipeline ----------
+    Live(["live session<br/>(browser half, step 4b)"]) --> PageSrc
+    Replay(["contrai-scrape parse RAW…"]) --> LogSrc
+
+    PageSrc["PlaywrightFrameSource<br/>attaches before navigation<br/>indexes the mirrored sockets"]
+    LogSrc["RawLogFrameSource<br/>replays a stored session"]
+
+    PageSrc --> RawFrames["RawFrame<br/>socket, direction, at, text"]
+    LogSrc --> RawFrames
+
+    %% ---------- Everything is stored before it is understood ----------
+    PageSrc -. "verbatim, before any parsing" .-> Log[("raw log<br/>contrai-raw/1 JSONL")]
+    Log --> LogSrc
+
+    %% ---------- The wire layer ----------
+    RawFrames --> Stream["WireStream.ingest<br/>drop the keepalive (not JSON)<br/>unwrap the double envelope<br/>drop the mirrored copy"]
+    Stream --> Ordered["order_events<br/>by the server clock"]
+    Ordered --> Events["WireEvent + EventKey<br/>game, round, trick, seat, verb, player"]
+
+    %% ---------- Vocabulary is data, structure is code ----------
+    Profile[/"profile.toml<br/>(git-ignored)"/] --> Translate
+    Translate["Translator<br/>tokens → core values<br/>asserts the seat rotation"]
+    Events --> Translate
+
+    %% ---------- Assembly ----------
+    Translate --> Snapshot["snapshot<br/>seats, players, score rows, totals"]
+    Translate --> LiveEv["live<br/>bids and plays, per round<br/>forced passes put back"]
+    Events -- "compressed blob" --> Lz["lzstring<br/>decompress the pre-deal deck"]
+    Lz --> Deal
+    Deal["deal<br/>3-2-3 hands, dealer,<br/>the forced eighth trick"]
+
+    Snapshot --> Session
+    LiveEv --> Session
+    Deal --> Session
+    Session["parse_session<br/>skip the joining round<br/>no score row → no round_scored"]
+
+    Session --> Record[("contrai-data record<br/>one JSONL per game")]
+    Record --> Verify(["contrai verify"])
+
+    %% ---------- palette ----------
+    classDef entry fill:#9B7FCC,stroke:#5E4495,stroke-width:2px,color:#FFFFFF;
+    classDef scraper fill:#EDE7F6,stroke:#5E4495,stroke-width:1px,color:#2E1F52;
+    classDef parse fill:#DCD2F0,stroke:#5E4495,stroke-width:2px,color:#2E1F52;
+    classDef data fill:#E0F5F2,stroke:#2E7D74,stroke-width:2px,color:#1F544E;
+    classDef config fill:#FFF3E0,stroke:#B26A28,stroke-width:1px,color:#5C3A14;
+    classDef future fill:#EEEEEE,stroke:#616161,stroke-width:1px,color:#424242,stroke-dasharray:4 3;
+
+    class Replay entry;
+    class Live future;
+    class PageSrc,LogSrc,RawFrames,Stream,Ordered,Events,Lz,Log scraper;
+    class Translate,Snapshot,LiveEv,Deal,Session parse;
+    class Record,Verify data;
+    class Profile config;

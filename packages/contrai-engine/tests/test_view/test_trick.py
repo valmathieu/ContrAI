@@ -734,3 +734,23 @@ class TestPromptTexts:
         north, *_ = four_players
         text = _trick_won_prompt_text(north).plain
         assert "N won the trick." in text
+
+    def test_trick_won_prompt_invites_enter_by_default(self, four_players):
+        north, *_ = four_players
+        assert "Press [Enter]" in _trick_won_prompt_text(north).plain
+
+    def test_trick_won_prompt_drops_the_invitation_when_nothing_waits(
+        self, four_players
+    ):
+        # A replay's step prompt is drawn underneath and owns the key, so
+        # the frame must not offer one nothing will read.
+        north, *_ = four_players
+        text = _trick_won_prompt_text(north, wait=False).plain
+        assert "N won the trick." in text
+        assert "Press [Enter]" not in text
+
+    def test_the_human_line_drops_it_too(self):
+        human = HumanPlayer("You", Position.SOUTH)
+        text = _trick_won_prompt_text(human, wait=False).plain
+        assert "You won the trick." in text
+        assert "Press [Enter]" not in text

@@ -15,6 +15,7 @@ from contrai_engine.model.round.components import (
     FLAT_FAILURE_PILE,
     Mark,
     contract_components,
+    marked_components,
     marked_total,
     round_mark,
 )
@@ -68,6 +69,32 @@ class TestNumericUndoubled:
         att, dfn = _components(made=False, attack_pile=48, defense_pile=114)
         assert marked_total(dfn, 1, CLASSIC) == 260
         assert marked_total(att, 1, CLASSIC) == 0
+
+
+class TestMarkedComponents:
+    """§7.2 — the two figures a score sheet carries, multiplier included."""
+
+    def test_the_default_table_multiplies_only_the_announced_component(self):
+        assert marked_components(Mark(160, 100), 2, CLASSIC) == (160, 200)
+
+    def test_a_table_doubling_the_whole_mark_multiplies_both(self):
+        assert marked_components(
+            Mark(160, 100), 2, RuleConfig.tournament()
+        ) == (320, 200)
+
+    def test_an_undoubled_round_writes_its_components_unchanged(self):
+        assert marked_components(Mark(192, 0), 1, CLASSIC) == (192, 0)
+
+    @pytest.mark.parametrize("multiplier", [1, 2, 4])
+    @pytest.mark.parametrize("rules", [CLASSIC, RuleConfig.tournament()])
+    def test_the_split_adds_up_to_the_marked_total(self, multiplier, rules):
+        # The reduction is linear in the components, which is what makes
+        # splitting it exact — both the recorder and the verifier lean on it.
+        mark = Mark(160, 100)
+
+        assert sum(marked_components(mark, multiplier, rules)) == marked_total(
+            mark, multiplier, rules
+        )
 
 
 class TestNumericDoubled:

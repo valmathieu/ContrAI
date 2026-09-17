@@ -3,10 +3,77 @@
 All notable changes to the ContrAI workspace are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-All four workspace packages (`contrai-core`, `contrai-engine`, `contrai-analyzer`,
+All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `contrai-analyzer`,
 `contrai-scraper`) are versioned in lockstep — a single version covers the whole workspace.
 
 ## [Unreleased]
+
+## [0.5.0] - 2026-09-17
+
+Observation release: a played game becomes a file. The new `contrai-data` package writes one append-only JSONL record per game, one event per line, and folds it back into rounds; the engine writes records as it plays (`contrai --record`), replays them through its own screens (`contrai replay`) and re-judges them against the real rules (`contrai verify`, per-round `verified` / `partial` / `suspect`); and the scraper is rebuilt around a local `profile.toml` — the v1 browser flow is gone, replaced by a `Spectator`/`Recorder` pair that watches tournament tables unattended on a schedule, behind a checked VPN egress, deployable as a Docker Compose service. The target site's name and DOM vocabulary leave the repository for good.
+
+### Added
+
+- (data) New `contrai-data` package — one append-only JSONL record per game, one event per line, shared by the engine and the scraper. See [data docs](docs/data/index.md).
+- (data) `load_game` / `project` — a record folds back into rounds with its contract, tricks and winners re-derived from `contrai-core`. See [data docs](docs/data/index.md).
+- (core) `RuleConfig.tournament()` / `PRESETS["tournament"]` — the observed tables' rule set, played clockwise; `contrai --preset tournament` plays it. See [core docs](docs/core/index.md).
+- (core) `Deck.stacked(hands)` — build a deck that deals four chosen hands, the inverse of `deal`'s 3-2-3 layout. See [core docs](docs/core/index.md).
+- (engine) `contrai --record [DIR]` / `--no-record` and a `record` table knob — the game you just played is written as a `contrai-data` record. See [engine docs](docs/engine/index.md).
+- (engine) `Game(players, deal_source=…)` — the dealer and the deal become a seam; `ScriptedDealSource` takes both off a record. Default unchanged. See [engine docs](docs/engine/index.md).
+- (engine) `ReplayController` — replays a record through the real engine, so every core rule fires as in a live game. See [engine docs](docs/engine/index.md).
+- (engine) Verify verdicts: `verified` / `partial` / `suspect` per round, five mismatch classes, written to `verdicts/<game_id>.json`. See [engine docs](docs/engine/index.md).
+- (engine) `verify_record(path)` — replays a record and reports illegal bids and plays, trick-winner, belote and score disagreements. See [engine docs](docs/engine/index.md).
+- (engine) `contrai verify PATH... [--json] [--out DIR] [--no-write]` — per-round verdict table, exit 1 on a suspect round. `contrai` gains subcommands; `play` is the default, so every existing invocation is unchanged. See [engine docs](docs/engine/index.md).
+- (engine) `contrai replay PATH [--round N]` — step a recorded game through the game's own screens, hands face up: `n` action, `t` trick, `r` round, `p` back, `q` out. See [engine docs](docs/engine/index.md).
+- (scraper) `load_profile` — the site's URL, credentials, selectors and wire vocabulary move into a local `profile.toml`; `profile.example.toml` ships the schema. See [scraper docs](docs/scraper/index.md).
+- (scraper) `contrai-scrape parse RAW... --profile P` — re-parse a raw wire log into a `contrai-data` record, restoring the forced passes the wire never sends. See [scraper docs](docs/scraper/index.md).
+- (scraper) Profile gains `login_start`, the pledge, option-row element, scoreboard and state-resume keys, score-row declarer and winner fields, and a `[recorder]` section. See [scraper docs](docs/scraper/index.md).
+- (scraper) `HealthLog` — one JSON line per transition plus a counter heartbeat, on stderr. See [scraper docs](docs/scraper/index.md).
+- (scraper) `parse_session(end_reason=…)` — a caller states how a game ended when the wire cannot, e.g. a watchdog's `abandoned`.
+- (scraper) `Spectator` — the profile-driven browser walk: login, the first-use pledge, the options and scoreboard panels, the table hop. See [scraper docs](docs/scraper/index.md).
+- (scraper) `Recorder` — seats at a tournament table, gates it, watches a whole game and writes one record per game. See [scraper docs](docs/scraper/index.md).
+- (scraper) `contrai-scrape run --profile P [--headless] [--max-games N] [--minutes N]` — watch tables unattended, one record per game. See [scraper docs](docs/scraper/index.md).
+- (scraper) `contrai-scrape check-profile P` — validate a profile against the live site before a shift starts.
+- (scraper) The health log counts and names every socket open and close, so a dropped connection shows in the heartbeat.
+- (scraper) Profile `[schedule]` — timezone-aware daily windows, midnight-crossing allowed, with an overrun cap for the game in hand. See [scraper docs](docs/scraper/index.md).
+- (scraper) Profile `[egress]` — exit address not home, expected country, route through the tunnel; `check-profile` checks it before opening a browser. See [scraper docs](docs/scraper/index.md).
+- (scraper) `[account].email` may read `env:NAME` like the verification code, so one profile can serve any account.
+- (scraper) `prune_raw_logs(root, retention_days)` — delete raw logs whose last write is older than the retention; `0` keeps them all.
+- (scraper) `RecorderLimits.seat_until_s`, `Recorder(egress=…)` and `SessionSummary.stop_reason` — stop seating at a deadline; a refused egress stops the hop and writes a stalled game `interrupted`.
+- (scraper) `contrai-scrape run` runs shifts — no browser outside `[schedule]`, egress checked per session, a raw log per session, exit 3 when a failure budget is spent. See [scraper docs](docs/scraper/index.md).
+- (scraper) `deploy/` — Docker Compose deployment where the scraper shares a WireGuard VPN container's network, so its only route is the tunnel. See [install guide](deploy/install.md).
+- (scraper) `[browser].screenshot_on_error` — a browser failure saves a PNG and the DOM beside the session's raw log. See [scraper docs](docs/scraper/index.md).
+- (scraper) `FrameSource.elapsed` — raw-log panel reads now carry `at`, so a DOM reading can be timed against the frames around it. See [scraper docs](docs/scraper/index.md).
+- (scraper) `check-profile` saves the page when a live check fails, under `<raw_root>/raw/`, and the failed line says where. See [scraper docs](docs/scraper/index.md).
+
+### Changed
+
+- The target site's name and DOM vocabulary are retired from every tracked file, including the shipped v0.1.0 scraper bullet; site specifics belong to local configuration only.
+
+### Removed
+
+- **BREAKING:** (scraper) The v1 browser flow — `config` / `session` / `observer` and their eleven exports. Use `Spectator` and `Recorder` with a profile.
+- (scraper) Profile keys `selectors.table_row` and `selectors.leave_table` — the server seats you, and the exit control is unrecoverable.
+- (scraper) `run.py`, the step-1 notebook and the two site screenshots under `docs/scraper/`.
+- (scraper) `jupyter` and `nest-asyncio` dependencies — neither was imported; `uv sync` installs less.
+
+### Fixed
+
+- (core) `Auction` judges double and redouble legality by seat, so a teamless seated player may double and a sealed `Position` auction lists its legal bids.
+- (core) `PlayState` reads partners and opponents off the seat, so card legality no longer depends on a player's `Team`.
+- (scraper) `contrai-scrape run` stopped by SIGTERM — a service or container stop — now writes the game in hand as `interrupted` instead of losing it.
+- (scraper) `contrai-scrape check-profile` reports a missing selector as a `FAIL` line naming its check, and reports the pledge the menu walk actually met.
+- (scraper) `contrai-scrape run` and `check-profile` no longer crash opening a real browser: the page's socket handler now survives Playwright's handler wrapping.
+- (engine) `contrai verify` no longer calls a round `suspect` when the record never states which side took the last trick; that check reads `partial`.
+- (scraper) A panel control covered by a dialog no longer ends the session: every attempt reveals the rails again first. See [scraper docs](docs/scraper/index.md).
+- (scraper) A table whose snapshot this profile cannot read is now hopped away from, not fatal; `check-profile` reports it as a failed line.
+- (scraper) A round whose declaring side took all eight tricks is recorded as an unannounced slam, not `none`.
+- (scraper) The seating gate compares the round both readings share, so a panel that scored a round mid-check no longer refuses a good table.
+- (scraper) `contrai-scrape parse` writes one record per table visit, so re-parsing a session's log no longer merges the tables it hopped between. See [scraper docs](docs/scraper/index.md).
+- (scraper) The recorder gates the table the page is on: a snapshot naming the table just left is refused as `stale_snapshot`. See [scraper docs](docs/scraper/index.md).
+- (scraper) The seating gate no longer refuses a table whose sides are right: a scoreboard column includes the marked belote, read through the new `[wire.fields].side_marked_belote`.
+- (engine) A record's `marked` now holds the figures a score sheet carries, multiplier included, and `contrai verify` compares them so — a doubled round no longer reads `suspect`.
+- (scraper) The table hop reveals the rails first, so a session that watches a table to its end no longer dies on the hop control.
 
 ## [0.4.0] - 2026-09-01
 
@@ -164,9 +231,10 @@ First playable release: a complete CLI Contrée engine backed by a shared domain
 - (engine) Playable CLI game engine — `Player`/`HumanPlayer`/`AiPlayer` over `BasePlayer`, `Game`/`Round` orchestration, an `Auction`-driven bidding flow, the expert `AiPlayer` bidding table (80–160) and card-play strategy (trump coverage, over-trump-when-led, partner-master trump conservation), and round scoring with the Belote/Rebelote bonus.
 - (engine) Rich terminal UI — round/trick panels, bidding-history and event-log views, the hand panel, and a round recap split into a factual Outcome table and rolled-up Scoring.
 - (analyzer) Streamlit opening-hand strength dashboard built on the suit-agnostic `SuitSlot` abstraction — hypergeometric distribution plots and a bidding truth-table.
-- (scraper) Playwright spectator-mode scraper v1 for `app.belote-rebelote.fr`: login, Online → Spectator → Contree → Tournament navigation, seat identification, and `#tour` round polling.
+- (scraper) Playwright spectator-mode scraper v1 for the target site: login, Online → Spectator → Contree → Tournament navigation, seat identification, and round-counter polling.
 
-[Unreleased]: https://github.com/valmathieu/ContrAI/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/valmathieu/ContrAI/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/valmathieu/ContrAI/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/valmathieu/ContrAI/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/valmathieu/ContrAI/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/valmathieu/ContrAI/compare/v0.1.0...v0.2.0

@@ -151,3 +151,94 @@ def test_deck_add_cards_method(deck):
 
     # Check that cards are added back
     assert len(deck.cards) == 32
+
+
+class TestStacked:
+    """``Deck.stacked`` — the inverse of ``deal``'s 3-2-3 layout.
+
+    The property that matters is the round trip: stacking a chosen deal
+    and then dealing it must hand every seat exactly the cards it was
+    given, in the order it was given them. Everything else is the guard
+    rails around a malformed deal.
+    """
+
+    @staticmethod
+    def _four_hands() -> list[list[Card]]:
+        """Four distinct 8-card hands, one whole suit per seat."""
+
+        return [
+            [Card(suit, rank) for rank in Rank]
+            for suit in Suit
+        ]
+
+    def test_dealing_a_stacked_deck_reproduces_the_hands(self):
+        hands = self._four_hands()
+        players = [DummyPlayer() for _ in range(4)]
+
+        Deck.stacked(hands).deal(players)
+
+        for player, hand in zip(players, hands):
+            assert list(player.hand.cards) == hand
+
+    def test_the_order_within_a_hand_is_preserved(self):
+        # The 3-2-3 batches are three disjoint slices, so a hand that
+        # came back re-ordered would mean the inversion mismatched them.
+        hands = self._four_hands()
+        hands[0] = list(reversed(hands[0]))
+        players = [DummyPlayer() for _ in range(4)]
+
+        Deck.stacked(hands).deal(players)
+
+        assert list(players[0].hand.cards) == hands[0]
+
+    def test_a_stacked_deck_holds_the_whole_pack(self):
+        deck = Deck.stacked(self._four_hands())
+
+        assert len(deck.cards) == 32
+        assert len(set(deck.cards)) == 32
+
+    def test_a_fresh_deck_stacks_onto_itself(self):
+        # Stacking the deal a plain deck produces must give that deal
+        # back — the inverse of an identity is an identity.
+        players = [DummyPlayer() for _ in range(4)]
+        Deck().deal(players)
+        dealt = [list(player.hand.cards) for player in players]
+
+        again = [DummyPlayer() for _ in range(4)]
+        Deck.stacked(dealt).deal(again)
+
+        assert [list(p.hand.cards) for p in again] == dealt
+
+    def test_too_few_hands_is_refused(self):
+        with pytest.raises(InvalidPlayerCountError) as excinfo:
+            Deck.stacked(self._four_hands()[:3])
+
+        assert excinfo.value.expected_count == 4
+        assert excinfo.value.actual_count == 3
+
+    def test_too_many_hands_is_refused(self):
+        hands = self._four_hands()
+        with pytest.raises(InvalidPlayerCountError):
+            Deck.stacked(hands + [hands[0]])
+
+    def test_a_short_hand_is_refused(self):
+        hands = self._four_hands()
+        hands[2] = hands[2][:7]
+
+        with pytest.raises(InvalidCardCountError) as excinfo:
+            Deck.stacked(hands)
+
+        assert excinfo.value.expected_count == 8
+        assert excinfo.value.actual_count == 7
+        assert "hand 2" in str(excinfo.value)
+
+    def test_a_repeated_card_is_refused(self):
+        hands = self._four_hands()
+        # Seat 1 is handed one of seat 0's cards.
+        hands[1][0] = hands[0][0]
+
+        with pytest.raises(InvalidCardCountError) as excinfo:
+            Deck.stacked(hands)
+
+        assert excinfo.value.expected_count == 32
+        assert excinfo.value.actual_count == 31

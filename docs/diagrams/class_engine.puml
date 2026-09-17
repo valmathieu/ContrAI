@@ -43,6 +43,35 @@ class RuleConfig <<from contrai-core>> #E1F0FF
 enum Suit       <<from contrai-core>> #E1F0FF
 class "ContractSuit" as p_contractsuit <<from contrai-core>> #E1F0FF
 
+' contrai-data boundary types, in that package's palette. Declared
+' explicitly so the relationship lines below do not auto-create them
+' in the engine's orange.
+class RecordWriter <<from contrai-data>> #E0F5F2 {
+    + path : Path <<property>>
+    + closed : bool <<property>>
+    --
+    + write(event: GameEvent) : None
+    + close() : None
+}
+class GameEvent   <<from contrai-data>> #E0F5F2
+class GameRecord  <<from contrai-data>> #E0F5F2 {
+    + ruleset : RuleConfig
+    + seats : Mapping<Position, Seat>
+    + rounds : tuple<RoundRecord>
+}
+class RoundRecord <<from contrai-data>> #E0F5F2 {
+    + number : int
+    + dealer : Position
+    + hands : Mapping<Position, tuple<Card>>
+    + auction : tuple<Bid<Position>>
+    + tricks : tuple<TrickRecord>
+    + score : RoundScored?
+    + complete : bool
+    --
+    + trick~_winners : tuple<Position> <<property>>
+}
+class RoundScored <<from contrai-data>> #E0F5F2
+
 ' =========================================================
 ' model/player/ — Player hierarchy + pluggable AI strategies
 ' =========================================================
@@ -244,8 +273,9 @@ package "model/game.py" as p_game {
         + scores : dict<TeamSide, int>
         + unconfirmed_belote : dict<TeamSide, int>
         + rules : RuleConfig
+        + deal_source : DealSource
         --
-        + __init__(players: list<Player>, rules=None)
+        + __init__(players: list<Player>, rules=None, deal_source=None)
         + start_new_round() : None
         + manage_round(view=None) : None
         + check_game_over() : GameOverStatus
@@ -318,6 +348,48 @@ package "model/game.py" as p_game {
       ""TeamSide"" — the same key
       ""final_scores"" uses, so a winner
       looks straight up in it.
+    end note
+}
+
+' =========================================================
+' model/deal.py — where a round's dealer and deck come from
+' =========================================================
+package "model/deal.py" as p_deal {
+    interface DealSource <<protocol>> #FFEFD9 {
+        + next~_dealer(game: Game) : Player
+        + next~_deck(game: Game) : Deck
+    }
+
+    class RandomDealSource #FFEFD9 {
+        + next~_dealer(game: Game) : Player
+        + next~_deck(game: Game) : Deck
+    }
+
+    note bottom of DealSource
+      **Two methods, not one, and the order is the reason.**
+      A scripted source needs the //seating// to lay a
+      recorded deal out in deal order, and the seating is
+      only known once the dealer is — so ""Game"" asks for
+      the dealer, orders the seats behind it, and only then
+      asks for the deck.
+      At both calls ""game.round~_number"" is the 0-based
+      index of the round about to start, which is what lets
+      a scripted source index its own list without a cursor
+      that could fall out of step.
+      The protocol and its default live in the //model//
+      because dealing is what a game does; ""replay/"" adds
+      only the implementation that reads a file.
+    end note
+
+    note bottom of RandomDealSource
+      Today's behaviour under a name — the first dealer
+      drawn at random, every later one the previous
+      dealer's successor under ""rules.turn~_direction"",
+      and the pile cut between rounds (shuffled before
+      the first, or every round at a table running
+      ""reshuffle~_every~_round""). The deck is ""game.deck""
+      mutated in place and handed back, so its identity
+      survives the round.
     end note
 }
 
@@ -566,6 +638,10 @@ package "view/ package" as p_view {
         + show_landing(selected: TableSetup?) : TableSetup
         + show_round_recap(round_, running_scores, *, is_final=False, is_tiebreaker=False, belote_gated=None) : None
         + show_end_game(status) : str <<'n' | 'r' | 'q'>>
+        ..  replay screens ..
+        + show_replay_summary(rows: Sequence<ReplayRow>, game_id: str) : int?
+        + show_replay_deal(round_) : None
+        + show_replay_step(*, can_go_back: bool) : str <<'n'|'t'|'r'|'p'|'q'>>
         ..  setup sub-screens (private) ..
         - _show_preset_picker(current) : TableSetup
         - _show_file_loader(current) : TableSetup
@@ -603,8 +679,10 @@ package "view/ package" as p_view {
 
     note right of RichView
       Stateful orchestrator (in ""rich_view.py"").
-      Six-screen UI: landing, bidding, mid-trick,
-      trick-won, round-recap, end-game. Per-round
+      Eight-screen UI: landing, bidding, mid-trick,
+      trick-won, round-recap, end-game, plus the two
+      a record is watched through — the replay picker
+      and the replay step prompt. Per-round
       summaries tracked here (""history"") so Game
       stays UI-free. A rolling 5-line ""event_log""
       is shown below the hand in every in-game
@@ -700,8 +778,9 @@ package "cli.py" as p_cli {
         + main() : None
         --
         - _build_parser() : ArgumentParser
-        - _parse_args(argv) : (DebugOptions, TableSetup)
+        - _parse_args(argv) : (DebugOptions, TableSetup, RecordRequest)
         - _build_game(autoplay, rules) : Game
+        - _attach_recorder(view, record, setup) : RichView | RecordingView
         --
         Drives landing → game loop →
         end-game; routes 'n' / 'r' / 'q'.
@@ -724,7 +803,371 @@ package "cli.py" as p_cli {
       What ""show~_landing"" hands back is what the
       ""Game"" is built from; its ""aids"" are re-pointed
       on the view, never threaded into the model.
+      ""--record [DIR]"" / ""--no-record"" are the second
+      mutually exclusive pair. ""main()"" drives the
+      ""RecordingView"" //wrapper//, not the view — which
+      is why ""on~_round~_complete"" and ""show~_end~_game""
+      reach a record at all — and re-resolves the
+      request after every landing screen, so the
+      ""[r]"" knob takes the next deal.
     end note
+}
+
+' =========================================================
+' recording.py — the one seam where the engine meets contrai-data
+' =========================================================
+package "recording.py" as p_recording {
+    class RecordingView <<view decorator>> #FFEFD9 {
+        - _record~_inner : Any
+        - _record~_root : Path
+        - _record~_preset : str
+        - _record~_writer : RecordWriter?
+        - _record~_round : int
+        - _record~_cards : int
+        - _record~_belotes : set<(Position, Suit)>
+        - _record~_totals : dict<TeamSide, int>?
+        .. transparency ..
+        + ~__getattr~__(name) : Any
+        + ~__setattr~__(name, value) : None
+        - _record~_forward(name, *args, **kwargs) : None
+        .. lifecycle ..
+        + attach(game, target~_score) : None
+        + close~_record(reason, *, status) : None
+        + show~_end~_game(status) : str
+        .. fact-carrying hooks ..
+        + on~_round~_dealt(round) : None
+        + on~_bid~_made(player, bid, history) : None
+        + on~_card~_played(player, card, plays) : None
+        + on~_belote~_announced(player, kind, suit, round) : None
+        + on~_round~_complete(round, running~_scores) : None
+        - _record~_score(round, running~_scores) : None
+    }
+
+    class RecordRequest <<dataclass, frozen>> #FFEFD9 {
+        + directory : Path | None | UNSET = UNSET
+        + disabled : bool = False
+        --
+        + resolve(aids: TableAids) : Path?
+    }
+
+    class "recording.py" as p_recording_fn <<module>> #FFEFD9 {
+        UNSET : Final<Any>
+        finish~_recording(view) : None
+        --
+        - _utc~_now() : str
+        - _generator() : str
+        - _ai~_level(player) : str
+        - _seat(player) : Seat
+        - _outcome(contract~_made: bool?) : RoundOutcome
+        - _slam(contract, score) : SlamOutcome
+    }
+
+    note bottom of RecordingView
+      **A decorator over the view, not a hook on the model.**
+      Every engine notification is ""hasattr""-guarded and
+      goes to exactly one duck-typed view, so wrapping that
+      view records a game with //no// call site changed —
+      and ""--autoplay"" records for the same reason a human
+      game does. Forwarding runs both ways: ""~__getattr~__""
+      passes reads down, ""~__setattr~__"" passes writes down
+      (""main()"" re-points ""view.aids"", which must reach
+      the real view), and only ""~_record~_"" names stay here.
+      Defining a hook makes the engine's guard pass whatever
+      sits underneath, so ""~_record~_forward"" re-asks the
+      question the engine no longer can.
+      **Three hooks are deliberately not intercepted** and
+      fall through: ""on~_all~_pass~_redeal"",
+      ""on~_contract~_established"" and ""on~_trick~_complete"".
+      Each carries a fact the format calls //derived// — an
+      all-pass is a deal plus four passes, a contract folds
+      out of the auction, a trick winner comes from
+      ""TrickRecord.winner"" — and a derived fact stored
+      twice can disagree with itself.
+      **No display name reaches a record**: an AI seat is
+      ""ai:<level>"", a human seat is ""human"", and ""id"" /
+      ""account"" stay null — those belong to a watched table.
+    end note
+
+    note bottom of RecordRequest
+      **Flag > knob > off.** Held apart from the resolved
+      root because the knob it defers to lives on the table
+      setup, which the landing screen can still change:
+      ""main()"" keeps the request and re-resolves it after
+      every landing, so ""[r]"" takes the next deal rather
+      than the next run. ""UNSET"" is what tells an //absent//
+      ""--record"" (defer to the knob) from a //bare// one
+      (the default root) — a plain ""None"" cannot.
+    end note
+
+    RecordRequest ..> TableAids : <<reads .record>>
+}
+
+' =========================================================
+' replay/ — drive the real engine from a record, and check it
+' =========================================================
+package "replay/ package" as p_replay {
+    class ScriptedDealSource #FFEFD9 {
+        + rounds : tuple<RoundRecord>
+        --
+        + next~_dealer(game: Game) : Player
+        + next~_deck(game: Game) : Deck
+        - ~_round(game: Game) : RoundRecord
+    }
+
+    class RecordedPlayer <<engine>> #FFEFD9 {
+        + script : RoundScript?
+        --
+        + choose~_bid(auction: Auction) : BidDecision
+        + choose~_card(observation) : CardDecision
+        - ~_due() : RoundScript
+    }
+
+    class RoundScript <<frozen dataclass>> #FFEFD9 {
+        + number : int
+        + bids : tuple<Bid<Position>>
+        + plays : tuple<ObservedPlay>
+        --
+        + {static} of(round: RoundRecord) : RoundScript
+        + bid~_at(ordinal: int, seat: Position) : Bid<Position>
+        + play~_at(index: int, seat: Position) : Card
+    }
+
+    class ReplayController #FFEFD9 {
+        + record : GameRecord
+        + rounds : tuple<RoundRecord>
+        + skipped : tuple<RoundRecord>
+        + players : list<RecordedPlayer>
+        + game : Game
+        --
+        + run() : None
+        + replay~_round(round: RoundRecord) : None
+        + clear~_hands() : None
+        - ~_notify(hook: str, *args) : None
+    }
+
+    class SteppingView <<view decorator>> #FFEFD9 {
+        + quiet : bool = True
+        - ~_inner : Any
+        - ~_resume~_at : int
+        - ~_mode : StepMode
+        --
+        + stops : int <<property>>
+        - ~__getattr~__(name) : Any <<forwards to inner>>
+        .. hooks that cross the quiet gate ..
+        + attach(game, target~_score) : None
+        + on~_round~_complete(round~_, running~_scores) : None
+        .. hooks that stop ..
+        + on~_round~_dealt(round~_) : None
+        + on~_bid~_made(player, bid, history) : None
+        + on~_card~_played(player, card, plays) : None
+        + on~_belote~_announced(player, kind, suit, round~_) : None
+        + on~_trick~_complete(plays, winner, round~_) : None
+        .. the gate ..
+        - ~_stop(*, trick~_end: bool = False) : None
+    }
+
+    enum StepMode #FFEFD9 {
+        ACTION
+        TRICK
+        ROUND
+    }
+
+    class ReplayInterrupt <<exception>> #FFEFD9 {
+        + resume~_at : int?
+    }
+
+    class ReplayRow <<frozen dataclass>> #FFEFD9 {
+        + number : int
+        + contract : ObservedContract?
+        + outcome : RoundOutcome?
+        + totals : dict<TeamSide, int>?
+        + verdict : Verdict?
+        + steppable : bool
+        --
+        + declarer~_side : TeamSide? <<property>>
+    }
+
+    class "summary.py" as p_summary_fn <<module>> #FFEFD9 {
+        replay~_rows(record: GameRecord, verdict: GameVerdict? = None) : tuple<ReplayRow>
+    }
+
+    class VerifyingObserver <<view stand-in>> #FFEFD9 {
+        + record : GameRecord
+        + rounds : list<RoundVerdict>
+        + notes : list<str>
+        .. driven by the verifier ..
+        + expect(round: RoundRecord) : None
+        + round~_failed(round, exc) : None
+        + round~_skipped(round) : None
+        + finish() : GameVerdict
+        .. engine hooks ..
+        + on~_contract~_established(round) : None
+        + on~_belote~_announced(player, kind, suit, round) : None
+        + on~_round~_complete(round, running~_scores) : None
+    }
+
+    enum Verdict #FFEFD9 {
+        VERIFIED
+        PARTIAL
+        SUSPECT
+    }
+
+    enum MismatchKind #FFEFD9 {
+        ILLEGAL~_BID
+        ILLEGAL~_PLAY
+        TRICK~_WINNER
+        BELOTE
+        SCORE
+    }
+
+    class Mismatch <<frozen dataclass>> #FFEFD9 {
+        + kind : MismatchKind
+        + detail : str
+        + position : str?
+        + trick : int?
+        + seq : int?
+        + expected : str?
+        + observed : str?
+    }
+
+    class RoundVerdict <<frozen dataclass>> #FFEFD9 {
+        + number : int
+        + verdict : Verdict
+        + mismatches : tuple<Mismatch>
+        + unchecked : tuple<str>
+        + replayed : bool = True
+        --
+        + {static} decide(number, mismatches, unchecked, *, replayed) : RoundVerdict
+    }
+
+    class GameVerdict <<frozen dataclass>> #FFEFD9 {
+        + game~_id : str
+        + source : str
+        + preset : str
+        + rounds : tuple<RoundVerdict>
+        + notes : tuple<str>
+        --
+        + verdict : Verdict <<property>>
+        + counts : dict<Verdict, int> <<property>>
+        + as~_json() : dict
+    }
+
+    class "verify.py" as p_verify_fn <<module>> #FFEFD9 {
+        verify~_game(record: GameRecord) : GameVerdict
+        verify~_record(path, *, out=None) : GameVerdict
+        default~_out~_root(path) : Path
+    }
+
+    class "verdict.py" as p_verdict_fn <<module>> #FFEFD9 {
+        verdicts~_dir(root) : Path
+        verdict~_path(root, game~_id) : Path
+        write~_verdict(root, verdict: GameVerdict) : Path
+    }
+
+    note bottom of RoundScript
+      **A bid is addressed by (seat, that seat's own count).**
+      **A card is addressed by its place in the round.**
+      The engine auto-applies a bid whenever a seat has one
+      legal action, //without consulting that seat//, so a
+      per-seat queue falls behind the first time it is
+      skipped — and a seat can be skipped and consulted
+      again in one auction: the partner of a Slam bidder
+      has only Pass until an opponent doubles.
+      Addressing by position in the auction fails the other
+      way: an observed table never transmits those forced
+      passes, so the record holds fewer bids than the
+      replayed auction. Only each seat's own subsequence is
+      shared, and both shifts move it identically.
+      Nothing is ever auto-//played//, so a card needs none
+      of this — and the seat check turns a turn-order
+      disagreement into an error instead of a silent swap,
+      which is exactly how a trick-winner divergence
+      surfaces.
+    end note
+
+    note bottom of ReplayController
+      **Through ""manage~_round"", never ""manage~_bidding"".**
+      Only ""manage~_round"" calls ""handle~_failed~_contract"",
+      which is what returns an all-pass round's cards to the
+      deck; a driver reaching past it would leave eight
+      cards in every hand and the next ""Deck.deal"" would
+      silently deal sixteen.
+      **Seats are built through ""Game""**, because coinche
+      legality compares ""Team"" by identity and only
+      ""Game.~__init~__"" hands both partners the same
+      instance — assembling players by hand would see every
+      double in a corpus refused.
+      A round the record left structurally unfinished is
+      listed in ""skipped"" and never replayed.
+    end note
+
+    note bottom of SteppingView
+      **The recorder's other mirror.** ""RecordingView"" wraps
+      a view and //writes// what it sees; this one wraps a view,
+      //forwards// what it sees, and then blocks on it.
+      **It stops after the action, not before it.** The pull
+      hooks the spec imagined (""request~_bid~_action"" /
+      ""request~_card~_action"") are reached only for a seat
+      whose ""is~_human"" is true, which a ""RecordedPlayer""
+      never is — and the push hooks frame the action better
+      anyway: each stop shows what just landed.
+      **Four stops per trick, not five.** The fourth card's
+      stop is skipped because ""on~_trick~_complete"" follows
+      immediately and its frame names the winner.
+      **Going back is a restart.** ""Round"" keeps only the
+      latest ""PlayState"", so there is no earlier frame to
+      return to; ""ReplayInterrupt.resume~_at"" says how many
+      stops the next attempt passes over in silence. That is
+      also how a round is picked, since ""ScriptedDealSource""
+      indexes on the game's round counter and cannot seek —
+      which is what ""quiet"" is for.
+    end note
+
+    note bottom of ReplayRow
+      **Joined on the record's own round number**, never
+      positionally: a record's numbers are its source's deal
+      count, so they may start above one and may skip, and a
+      positional join would sit permanently off by one with
+      nothing looking wrong.
+      Every round is listed, steppable or not — the round a
+      viewer is hunting is usually one the driver refuses.
+    end note
+
+    note bottom of VerifyingObserver
+      **The recorder's mirror.** It intercepts the same view
+      hooks and, instead of writing what it sees, checks it
+      against what the record claims — so no rule is
+      implemented a second time: legality is
+      ""Auction.apply"" / ""PlayState.apply"" raising, the
+      trick winner is ""TrickRecord.winner"" on both sides,
+      the score is ""score~_round"".
+      The round under check is **handed in** via ""expect"",
+      never looked up by number: ""Game.round~_number""
+      counts rounds //replayed// while a record's numbers
+      are its source's deal count, so one skipped round
+      would put every later comparison permanently off by
+      one with nothing looking wrong.
+    end note
+
+    note bottom of Verdict
+      **""partial"" is the interesting one.** It means every
+      check that ran passed, but one could not run for want
+      of something to check against — overwhelmingly a
+      round with no ""round~_scored"" event, which is the
+      //common// case in an observed game: a spectator sees
+      the cards long before a score sheet.
+      So a corpus gate reads "no round is suspect", not
+      "every round is verified". A game takes the **worst**
+      verdict among its rounds, so one bad round is never
+      averaged away by good ones.
+    end note
+
+    RoundVerdict "1" *-- "0..N" Mismatch : mismatches
+    GameVerdict "1" *-- "0..N" RoundVerdict : rounds
+    Mismatch --> MismatchKind : kind
+    RoundVerdict --> Verdict : verdict
+    RecordedPlayer --> RoundScript : script
+    p_verdict_fn ..> GameVerdict : <<writes it under verdicts/>>
 }
 
 ' =========================================================
@@ -768,6 +1211,7 @@ package "ruleset.py" as p_ruleset {
 
     class TableAids <<dataclass, frozen>> {
         + live~_round~_score : bool = True
+        + record : bool = False
     }
 
     class RulesetError <<ValueError>>
@@ -871,6 +1315,48 @@ Round ..> RichView : <<human input + hooks>>
 Cli ..> Game : <<owns game loop>>
 Cli ..> RichView : <<owns view + screens>>
 Cli ..> Ruleset : <<--rules / --preset>>
+Cli ..> RecordRequest : <<--record / --no-record>>
+Cli ..> RecordingView : <<wraps the view when recording>>
+RecordingView --> RichView : decorates
+RecordingView "1" o-- "0..1" RecordWriter : one open game
+RecordingView ..> GameEvent : <<builds>>
+
+' The deal-source seam: the model owns the protocol and the random
+' default, replay/ adds the one that reads a file.
+DealSource <|.. RandomDealSource
+DealSource <|.. ScriptedDealSource
+Game "1" o-- "1" DealSource : deal_source
+ScriptedDealSource --> RoundRecord : rounds
+ScriptedDealSource ..> Deck : <<Deck.stacked>>
+
+' The replay driver: four recorded seats through a real Game.
+Player <|-- RecordedPlayer
+ReplayController "1" *-- "4" RecordedPlayer : players
+ReplayController "1" *-- "1" Game : game
+ReplayController --> GameRecord : record
+ReplayController ..> ScriptedDealSource : <<builds>>
+ReplayController ..> RoundScript : <<scripts each round>>
+RoundScript ..> RoundRecord : <<RoundScript.of>>
+
+' Verification is replay with an observer in the view's place.
+ReplayController ..> VerifyingObserver : <<notifies as a view>>
+VerifyingObserver --> GameRecord : record
+VerifyingObserver ..> RoundScored : <<compares score_round against>>
+VerifyingObserver ..> GameVerdict : <<builds>>
+p_verify_fn ..> ReplayController : <<drives round by round>>
+Cli ..> p_verify_fn : <<verify PATH...>>
+
+' Stepping is replay with the keyboard in the view's place.
+ReplayController ..> SteppingView : <<notifies as a view>>
+SteppingView o-- "1" RichView : inner
+SteppingView --> StepMode : mode
+SteppingView ..> ReplayInterrupt : <<raises>>
+p_summary_fn ..> GameRecord : <<reads rounds>>
+p_summary_fn ..> GameVerdict : <<joins by round number>>
+p_summary_fn ..> ReplayRow : <<builds>>
+RichView ..> ReplayRow : <<renders the picker from>>
+Cli ..> p_summary_fn : <<replay PATH>>
+Cli ..> SteppingView : <<builds, one per attempt>>
 Ruleset ..> RuleConfig : <<builds / validates>>
 RichView "1" *-- "0..N" RoundSummary : history
 RichView ..> p_view_screens : <<composes + prints>>

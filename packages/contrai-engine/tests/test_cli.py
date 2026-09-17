@@ -17,18 +17,36 @@ Rich rendering or blocking input. The real wiring — that a genuine
 
 from __future__ import annotations
 
+import argparse
+import json
 import random
 import sys
+from pathlib import Path
 
 import pytest
 
 from contrai_core.position import Position
 from contrai_core.rule_config import PRESETS, RuleConfig
 from contrai_core.team_side import TeamSide
-from contrai_engine.cli import _apply_seed, _build_game, _parse_args, main
+from contrai_data import EndReason, GameEnded, read_events
+from contrai_engine import cli as cli_module
+from contrai_engine.cli import (
+    _apply_seed,
+    _build_game,
+    _normalise_argv,
+    _parse_args,
+    _parse_argv,
+    _record_paths,
+    _run_replay,
+    _run_verify,
+    main,
+)
 from contrai_engine.model.game import GameOverStatus
 from contrai_engine.model.player import AiPlayer, HumanPlayer
+from contrai_engine.model.round.components import Mark
+from contrai_engine.model.round.scoring import RoundScore
 from contrai_engine.options import DebugOptions, TableAids
+from contrai_engine.recording import RecordingView, RecordRequest
 from contrai_engine.ruleset import TableSetup, load_setup, save_setup, setup_path
 
 @pytest.fixture
@@ -78,27 +96,32 @@ class TestParseArgs:
     def test_no_flags_returns_all_off_defaults(self):
         """The back-compat anchor: an empty argv parses to the defaults."""
 
-        assert _parse_args([]) == (DebugOptions(), TableSetup())
+        assert _parse_args([]) == (DebugOptions(), TableSetup(), RecordRequest())
 
     def test_debug_flag_alone(self):
-        assert _parse_args(["--debug"]) == (DebugOptions(debug=True), TableSetup())
+        assert _parse_args(["--debug"]) == (
+            DebugOptions(debug=True), TableSetup(), RecordRequest(),
+        )
 
     def test_seed_flag_alone(self):
-        assert _parse_args(["--seed", "42"]) == (DebugOptions(seed=42), TableSetup())
+        assert _parse_args(["--seed", "42"]) == (
+            DebugOptions(seed=42), TableSetup(), RecordRequest(),
+        )
 
     def test_autoplay_flag_alone(self):
         assert _parse_args(["--autoplay"]) == (
-            DebugOptions(autoplay=True), TableSetup(),
+            DebugOptions(autoplay=True), TableSetup(), RecordRequest(),
         )
 
     def test_all_three_flags_combined(self):
         result = _parse_args(["--debug", "--seed", "7", "--autoplay"])
         assert result == (
             DebugOptions(debug=True, autoplay=True, seed=7), TableSetup(),
+            RecordRequest(),
         )
 
     def test_seed_value_is_coerced_to_int(self):
-        options, _ = _parse_args(["--seed", "123"])
+        options, _, _ = _parse_args(["--seed", "123"])
         assert options.seed == 123
         assert isinstance(options.seed, int)
 
@@ -110,7 +133,7 @@ class TestParseArgs:
 
     def test_preset_classic_resolves_to_the_defaults(self):
         assert _parse_args(["--preset", "classic"]) == (
-            DebugOptions(), TableSetup(origin="classic"),
+            DebugOptions(), TableSetup(origin="classic"), RecordRequest(),
         )
 
     def test_no_live_score_switches_the_aid_off(self):
@@ -126,7 +149,9 @@ class TestParseArgs:
     def test_no_live_score_is_independent_of_the_ruleset_flags(self):
         """The aid is a view setting, so it composes with any ruleset."""
 
-        options, setup = _parse_args(["--preset", "classic", "--no-live-score"])
+        options, setup, _ = _parse_args(
+            ["--preset", "classic", "--no-live-score"]
+        )
         assert (options, setup.rules) == (DebugOptions(), RuleConfig())
         assert setup.aids == TableAids(live_round_score=False)
 
@@ -385,6 +410,37 @@ class _RecordingView:
         return self._end_game_choices.pop(0)
 
 
+class _FakeRound:
+    """Scripted stand-in for ``Round``: a number and an all-pass score.
+
+    ``main`` only ever passes the round through to the view, but a
+    :class:`RecordingView` wrapped around that view reads a score line
+    off it — so the double carries the contractless one an all-pass
+    publishes, which is the simplest score a record will accept. It also
+    carries the table ruleset, which the recorder reads to write each
+    mark as the sheet would carry it; a real ``Round`` always has one.
+    """
+
+    contract = None
+    rules = RuleConfig()
+
+    def __init__(self, number: int) -> None:
+        self.round_number = number
+        self.round_score = RoundScore(
+            scores={side: 0 for side in TeamSide},
+            contract_made=None,
+            unannounced_slam=None,
+            marks={side: Mark(0, 0) for side in TeamSide},
+            belote_points={side: 0 for side in TeamSide},
+            card_points={side: 0 for side in TeamSide},
+            last_trick_side=None,
+            multiplier=1,
+        )
+
+    def __repr__(self) -> str:
+        return f"round-{self.round_number}"
+
+
 class _FakeGame:
     """Scripted stand-in for ``Game``: play N rounds, then be over.
 
@@ -406,12 +462,20 @@ class _FakeGame:
     ) -> None:
         self.rounds_to_play = rounds_to_play
         self.rounds_played = 0
-        self.current_round = "round-0"
+        self.current_round: object = _FakeRound(0)
         self.scores = {TeamSide.NS: 0, TeamSide.EW: 0}
         self.targets_checked: list[int] = []
+        # One entry per ``manage_round``: the object ``main`` actually
+        # drove. Whether that is the view or a wrapper around it is the
+        # whole question the recorder-wiring tests ask.
+        self.views_seen: list[object] = []
         self._tied_after = set(tied_after)
         self._belote_gated_after = set(belote_gated_after)
         self._raises = raises
+
+    #: Four real seats: ``RecordingView.attach`` reads a position and a
+    #: strategy pair off each one, and a record's seating is exactly that.
+    players = [AiPlayer(seat.value, position=seat) for seat in Position]
 
     rules: RuleConfig = RuleConfig()
     """The ruleset ``cli`` folds the landing pick onto; ``_make_game``
@@ -438,8 +502,9 @@ class _FakeGame:
 
     def manage_round(self, view: _RecordingView) -> None:
         view.events.append("manage_round")
+        self.views_seen.append(view)
         self.rounds_played += 1
-        self.current_round = f"round-{self.rounds_played}"
+        self.current_round = _FakeRound(self.rounds_played)
         if self._raises is not None:
             raise self._raises
 
@@ -684,10 +749,9 @@ class TestMain:
             "show_end_game",
         ]
         # Each recap sees the round that just finished, not a stale one.
-        assert [recap["round"] for recap in harness.view.recaps] == [
-            "round-1",
-            "round-2",
-        ]
+        assert [
+            recap["round"].round_number for recap in harness.view.recaps
+        ] == [1, 2]
 
     def test_round_completion_receives_the_running_scores(
         self, install_cli_doubles
@@ -700,7 +764,7 @@ class TestMain:
         main()
 
         round_, scores = harness.view.round_completions[0]
-        assert round_ == "round-1"
+        assert round_.round_number == 1
         assert scores is game.scores
 
     def test_end_game_receives_the_final_status(self, install_cli_doubles):
@@ -955,3 +1019,786 @@ class TestLastSetupPersistence:
 
         assert harness.view.landing_received == [TableSetup()]
         assert harness.rules_seen == [RuleConfig()]
+
+
+class TestRecordFlags:
+    """``--record`` / ``--no-record`` — the third thing ``_parse_args`` returns."""
+
+    def test_absent_by_default(self):
+        _, _, record = _parse_args([])
+        assert record == RecordRequest()
+        assert record.resolve(TableAids()) is None
+
+    def test_bare_flag_means_the_default_root(self, contrai_home):
+        _, _, record = _parse_args(["--record"])
+        assert record.resolve(TableAids()) == contrai_home / "records"
+
+    def test_flag_with_a_directory(self, tmp_path):
+        _, _, record = _parse_args(["--record", str(tmp_path)])
+        assert record.resolve(TableAids()) == tmp_path
+
+    def test_no_record_beats_the_knob(self):
+        _, _, record = _parse_args(["--no-record"])
+        assert record.resolve(TableAids(record=True)) is None
+
+    def test_the_knob_decides_when_no_flag_is_given(self, contrai_home):
+        _, _, record = _parse_args([])
+        assert record.resolve(TableAids(record=True)) == contrai_home / "records"
+
+    def test_the_two_flags_are_mutually_exclusive(self):
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_args(["--record", "--no-record"])
+        assert excinfo.value.code == 2
+
+    def test_the_flag_composes_with_the_ruleset_flags(self, tmp_path):
+        options, setup, record = _parse_args(
+            ["--preset", "classic", "--record", str(tmp_path)]
+        )
+        assert (options, setup.rules) == (DebugOptions(), RuleConfig())
+        assert record.resolve(TableAids()) == tmp_path
+
+
+def _games_under(root):
+    """Every record file under a records root, newest name last."""
+    return sorted((root / "games").glob("*.jsonl"))
+
+
+class TestRecorderWiring:
+    """``main`` holds the wrapper, so the CLI's own hooks are recorded too."""
+
+    def test_main_does_not_wrap_the_view_by_default(self, install_cli_doubles):
+        game = _FakeGame(rounds_to_play=1)
+        harness = install_cli_doubles(games=[game], end_game_choices=["q"])
+
+        main()
+
+        assert game.views_seen == [harness.view]
+
+    def test_main_wraps_the_view_when_recording(
+        self, install_cli_doubles, tmp_path
+    ):
+        game = _FakeGame(rounds_to_play=1)
+        harness = install_cli_doubles(
+            games=[game],
+            end_game_choices=["q"],
+            argv=("contrai", "--record", str(tmp_path)),
+        )
+
+        main()
+
+        (driver,) = game.views_seen
+        assert isinstance(driver, RecordingView)
+        assert driver._record_inner is harness.view
+        # The real view still saw every hook the CLI issues.
+        assert harness.view.events == [
+            "show_landing",
+            "attach",
+            "manage_round",
+            "on_round_complete",
+            "show_round_recap",
+            "show_end_game",
+        ]
+        assert len(_games_under(tmp_path)) == 1
+
+    def test_the_landing_screen_is_not_recorded(
+        self, install_cli_doubles, tmp_path
+    ):
+        """``show_landing`` goes to the real view: it is not part of a game."""
+        harness = install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            end_game_choices=["q"],
+            argv=("contrai", "--record", str(tmp_path)),
+        )
+
+        main()
+
+        assert harness.view.events[0] == "show_landing"
+        assert harness.view.landing_received == [TableSetup()]
+
+    def test_no_record_writes_nothing(self, install_cli_doubles, contrai_home):
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            landing_setups=[TableSetup(aids=TableAids(record=True))],
+            end_game_choices=["q"],
+            argv=("contrai", "--no-record"),
+        )
+
+        main()
+
+        assert not (contrai_home / "records").exists()
+
+    def test_the_knob_alone_switches_recording_on(
+        self, install_cli_doubles, contrai_home
+    ):
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            landing_setups=[TableSetup(aids=TableAids(record=True))],
+            end_game_choices=["q"],
+        )
+
+        main()
+
+        assert len(_games_under(contrai_home / "records")) == 1
+
+    def test_the_recorder_is_rebuilt_after_a_new_game(
+        self, install_cli_doubles, contrai_home
+    ):
+        """Toggling the knob on the landing screen takes the next deal."""
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1), _FakeGame(rounds_to_play=1)],
+            landing_setups=[
+                TableSetup(),
+                TableSetup(aids=TableAids(record=True)),
+            ],
+            end_game_choices=["n", "q"],
+        )
+
+        main()
+
+        # The first game did not record; the second did.
+        assert len(_games_under(contrai_home / "records")) == 1
+
+    def test_a_rematch_opens_a_second_record(
+        self, install_cli_doubles, tmp_path
+    ):
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1), _FakeGame(rounds_to_play=1)],
+            end_game_choices=["r", "q"],
+            argv=("contrai", "--record", str(tmp_path)),
+        )
+
+        main()
+
+        assert len(_games_under(tmp_path)) == 2
+
+    def test_an_interrupt_closes_the_record(self, install_cli_doubles, tmp_path):
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1, raises=KeyboardInterrupt())],
+            argv=("contrai", "--record", str(tmp_path)),
+        )
+
+        main()  # must not propagate
+
+        (path,) = _games_under(tmp_path)
+        ended = [
+            event
+            for event in read_events(path).events
+            if isinstance(event, GameEnded)
+        ]
+        assert [event.reason for event in ended] == [EndReason.INTERRUPTED]
+
+    def test_quitting_leaves_no_second_game_ended(
+        self, install_cli_doubles, tmp_path
+    ):
+        install_cli_doubles(
+            games=[_FakeGame(rounds_to_play=1)],
+            end_game_choices=["q"],
+            argv=("contrai", "--record", str(tmp_path)),
+        )
+
+        main()
+
+        (path,) = _games_under(tmp_path)
+        ended = [
+            event
+            for event in read_events(path).events
+            if isinstance(event, GameEnded)
+        ]
+        assert [event.reason for event in ended] == [EndReason.TARGET_REACHED]
+
+
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
+
+
+class TestNormaliseArgv:
+    """``play`` is inserted when the arguments do not name a subcommand.
+
+    Which is the whole compatibility story: every invocation that worked
+    before subcommands existed is one with the word left out.
+    """
+
+    def test_nothing_becomes_play(self):
+        assert _normalise_argv([]) == ["play"]
+
+    def test_flags_become_play_flags(self):
+        assert _normalise_argv(["--autoplay", "--seed", "7"]) == [
+            "play",
+            "--autoplay",
+            "--seed",
+            "7",
+        ]
+
+    def test_a_named_subcommand_is_left_alone(self):
+        assert _normalise_argv(["verify", "a.jsonl"]) == ["verify", "a.jsonl"]
+
+    def test_play_written_out_is_left_alone(self):
+        assert _normalise_argv(["play", "--debug"]) == ["play", "--debug"]
+
+    def test_it_does_not_mutate_its_argument(self):
+        argv = ["--debug"]
+
+        _normalise_argv(argv)
+
+        assert argv == ["--debug"]
+
+
+class TestParseArgvResolvesSysArgv:
+    """``sys.argv`` is resolved *before* normalising, never after."""
+
+    def test_no_argv_reads_sys_argv_and_normalises_it(self, monkeypatch):
+        # ``main`` calls ``_parse_argv()`` with nothing. Normalising only
+        # an explicitly passed list would leave this path un-normalised,
+        # and ``contrai --autoplay`` would exit 2.
+        monkeypatch.setattr(sys, "argv", ["contrai", "--autoplay"])
+
+        args, _ = _parse_argv()
+
+        assert args.command == "play"
+        assert args.autoplay is True
+
+    def test_a_bare_invocation_still_names_the_play_command(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["contrai"])
+
+        args, _ = _parse_argv()
+
+        assert args.command == "play"
+        assert args.debug is False
+
+    def test_a_verify_invocation_is_recognised(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["contrai", "verify", "a.jsonl"])
+
+        args, _ = _parse_argv()
+
+        assert args.command == "verify"
+        assert args.paths == [Path("a.jsonl")]
+
+    def test_the_play_subparser_comes_back_for_error_reporting(self):
+        # A bad ``--rules`` must print ``usage: contrai play …`` rather
+        # than top-level usage, which names none of the flags typed.
+        _, play = _parse_argv([])
+
+        assert play.prog == "contrai play"
+
+
+class TestVerifyArguments:
+    def test_paths_are_required(self, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_argv(["verify"])
+
+        assert excinfo.value.code == 2
+
+    def test_several_paths_are_accepted(self):
+        args, _ = _parse_argv(["verify", "a.jsonl", "b.jsonl"])
+
+        assert args.paths == [Path("a.jsonl"), Path("b.jsonl")]
+
+    def test_json_and_out_default_off(self):
+        args, _ = _parse_argv(["verify", "a.jsonl"])
+
+        assert args.json is False
+        assert args.out is None
+        assert args.no_write is False
+
+    def test_out_takes_a_directory(self, tmp_path):
+        args, _ = _parse_argv(["verify", "a.jsonl", "--out", str(tmp_path)])
+
+        assert args.out == tmp_path
+
+    def test_a_bare_record_path_points_at_verify(self, capsys):
+        # Without the hint this normalises to ``play a.jsonl`` and
+        # argparse reports an unrecognised argument, which is true and
+        # useless.
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_argv(["some-game.jsonl"])
+
+        assert excinfo.value.code == 2
+        assert "contrai verify some-game.jsonl" in capsys.readouterr().err
+
+    def test_an_existing_file_points_at_verify_too(self, tmp_path, capsys):
+        record = tmp_path / "record"
+        record.write_text("", encoding="utf-8")
+
+        with pytest.raises(SystemExit):
+            _parse_argv([str(record)])
+
+        assert "contrai verify" in capsys.readouterr().err
+
+    def test_an_ordinary_bad_flag_is_untouched(self, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_argv(["--nope"])
+
+        assert excinfo.value.code == 2
+        assert "contrai verify" not in capsys.readouterr().err
+
+
+class TestReplayArguments:
+    def test_a_replay_invocation_is_left_alone(self):
+        assert _normalise_argv(["replay", "a.jsonl"]) == [
+            "replay",
+            "a.jsonl",
+        ]
+
+    def test_a_replay_invocation_is_recognised(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["contrai", "replay", "a.jsonl"])
+
+        args, _ = _parse_argv()
+
+        assert args.command == "replay"
+        assert args.path == Path("a.jsonl")
+        assert args.round is None
+
+    def test_round_takes_a_number(self, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv", ["contrai", "replay", "a.jsonl", "--round", "9"]
+        )
+
+        args, _ = _parse_argv()
+
+        assert args.round == 9
+
+    def test_the_path_is_required(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["contrai", "replay"])
+
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_argv()
+
+        assert excinfo.value.code == 2
+
+    def test_the_bare_record_hint_names_replay_too(self, capsys, tmp_path):
+        record = tmp_path / "some-game.jsonl"
+        record.write_text("", encoding="utf-8")
+
+        with pytest.raises(SystemExit):
+            _parse_argv([str(record)])
+
+        err = capsys.readouterr().err
+        assert "contrai verify" in err
+        assert "contrai replay" in err
+
+
+class TestRecordPaths:
+    def test_a_file_stands_for_itself(self, tmp_path):
+        record = tmp_path / "a.jsonl"
+        record.write_text("", encoding="utf-8")
+
+        assert _record_paths([record]) == [record]
+
+    def test_a_directory_stands_for_the_records_in_it(self, tmp_path):
+        first = tmp_path / "a.jsonl"
+        second = tmp_path / "b.jsonl"
+        for path in (first, second):
+            path.write_text("", encoding="utf-8")
+
+        assert _record_paths([tmp_path]) == [first, second]
+
+    def test_a_records_root_reaches_its_games_directory(self, tmp_path):
+        games = tmp_path / "games"
+        games.mkdir()
+        record = games / "a.jsonl"
+        record.write_text("", encoding="utf-8")
+
+        assert _record_paths([tmp_path]) == [record]
+
+    def test_the_same_record_named_twice_is_verified_once(self, tmp_path):
+        record = tmp_path / "a.jsonl"
+        record.write_text("", encoding="utf-8")
+
+        assert _record_paths([record, tmp_path]) == [record]
+
+    def test_a_missing_path_is_kept_so_the_error_names_it(self, tmp_path):
+        missing = tmp_path / "nope.jsonl"
+
+        assert _record_paths([missing]) == [missing]
+
+
+class TestRunVerify:
+    """``_run_verify`` — the report, the files it writes, the exit code."""
+
+    @staticmethod
+    def _args(paths, **overrides):
+        """The ``verify`` namespace, with every flag off unless overridden."""
+
+        fields = {"json": False, "out": None, "no_write": False}
+        fields.update(overrides)
+        return argparse.Namespace(paths=list(paths), **fields)
+
+    @pytest.fixture
+    def record_root(self, tmp_path):
+        """A records root holding one clean 4-AI game."""
+
+        from tests.test_replay.conftest import play_and_record
+
+        play_and_record(tmp_path, seed=1)
+        return tmp_path
+
+    def test_a_clean_record_exits_zero(self, record_root, capsys):
+        code = _run_verify(self._args([record_root]))
+
+        assert code == 0
+        assert "verified" in capsys.readouterr().out
+
+    def test_it_writes_the_verdict_beside_games(self, record_root):
+        _run_verify(self._args([record_root]))
+
+        assert list((record_root / "verdicts").glob("*.json"))
+
+    def test_no_write_writes_nothing(self, record_root):
+        _run_verify(self._args([record_root], no_write=True))
+
+        assert not (record_root / "verdicts").exists()
+
+    def test_out_redirects_the_verdict(self, record_root, tmp_path):
+        elsewhere = tmp_path / "elsewhere"
+
+        _run_verify(self._args([record_root], out=elsewhere))
+
+        assert list((elsewhere / "verdicts").glob("*.json"))
+        assert not (record_root / "verdicts").exists()
+
+    def test_json_prints_a_list_of_verdicts(self, record_root, capsys):
+        _run_verify(self._args([record_root], json=True, no_write=True))
+
+        payload = json.loads(capsys.readouterr().out)
+        assert len(payload) == 1
+        assert payload[0]["verdict"] == "verified"
+
+    def test_a_suspect_record_exits_one(self, record_root, capsys, monkeypatch):
+        from contrai_engine.replay.verdict import (
+            GameVerdict,
+            Mismatch,
+            MismatchKind,
+            RoundVerdict,
+        )
+
+        def _suspect(path, out=None):
+            return GameVerdict(
+                game_id="engine-test",
+                source="engine",
+                preset="classic",
+                rounds=(
+                    RoundVerdict.decide(
+                        1,
+                        mismatches=(
+                            Mismatch(
+                                kind=MismatchKind.SCORE,
+                                detail="the marked points differ",
+                                position="North",
+                                expected="10",
+                                observed="20",
+                            ),
+                        ),
+                    ),
+                ),
+            )
+
+        monkeypatch.setattr(cli_module, "verify_record", _suspect)
+
+        code = _run_verify(self._args([record_root], no_write=True))
+
+        out = capsys.readouterr().out
+        assert code == 1
+        assert "suspect" in out
+        assert "the marked points differ" in out
+        assert "engine: 10" in out and "record: 20" in out
+
+    def test_an_unreadable_record_exits_one_and_names_it(
+        self, tmp_path, capsys
+    ):
+        broken = tmp_path / "broken.jsonl"
+        broken.write_text("not json at all\n", encoding="utf-8")
+
+        code = _run_verify(self._args([broken]))
+
+        assert code == 1
+        assert "broken.jsonl" in capsys.readouterr().err
+
+    def test_no_records_found_exits_one(self, tmp_path, capsys):
+        code = _run_verify(self._args([tmp_path]))
+
+        assert code == 1
+        assert "no records found" in capsys.readouterr().err
+
+
+class TestRunReplay:
+    """``_run_replay`` against a real record and a scripted view."""
+
+    @staticmethod
+    def _args(path, **overrides):
+        """The ``replay`` namespace, with every flag off unless overridden."""
+
+        fields = {"round": None}
+        fields.update(overrides)
+        return argparse.Namespace(path=Path(path), **fields)
+
+    @pytest.fixture
+    def record_path(self, tmp_path):
+        """One clean 4-AI game, written as a record."""
+
+        from tests.test_replay.conftest import play_and_record
+
+        play_and_record(tmp_path, seed=1, rounds=3)
+        (path,) = (tmp_path / "games").glob("*.jsonl")
+        return path
+
+    @staticmethod
+    def _view(picks, keys):
+        """A view scripting the picker's answers and the step keys."""
+
+        class _ReplayView:
+            def __init__(self):
+                self.options = None
+                self.console = _RecordingConsole()
+                self.summaries: list[tuple] = []
+                self.recaps = 0
+                self.steps = 0
+                self._picks = list(picks)
+                self._keys = list(keys)
+
+            def attach(self, game, target_score):
+                pass
+
+            def on_round_dealt(self, round_):
+                pass
+
+            def on_bid_made(self, player, bid, history):
+                pass
+
+            def on_card_played(self, player, card, plays):
+                pass
+
+            def on_belote_announced(self, player, kind, suit, round_):
+                pass
+
+            def on_trick_complete(self, plays, winner, round_):
+                pass
+
+            def on_round_complete(self, round_, running_scores):
+                pass
+
+            def show_replay_deal(self, round_):
+                pass
+
+            def show_round_recap(self, round_, scores, **kwargs):
+                self.recaps += 1
+
+            def show_replay_summary(self, rows, game_id):
+                self.summaries.append((tuple(rows), game_id))
+                return self._picks.pop(0) if self._picks else None
+
+            def show_replay_step(self, *, can_go_back):
+                self.steps += 1
+                return self._keys.pop(0) if self._keys else "r"
+
+        return _ReplayView()
+
+    def test_quitting_the_picker_exits_zero(self, record_path, monkeypatch):
+        view = self._view([None], [])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        assert len(view.summaries) == 1
+
+    def test_the_picker_lists_every_recorded_round(
+        self, record_path, monkeypatch
+    ):
+        view = self._view([None], [])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        _run_replay(self._args(record_path))
+
+        (rows, _), = view.summaries
+        assert len(rows) == 3
+        assert all(row.verdict is not None for row in rows)
+
+    def test_stepping_a_round_reaches_its_recap(
+        self, record_path, monkeypatch
+    ):
+        # 'r' runs the round out, then the picker is answered with quit.
+        view = self._view([1, None], ["r"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        assert view.recaps == 1
+
+    def test_stepping_a_later_round_replays_the_earlier_ones_in_silence(
+        self, record_path, monkeypatch
+    ):
+        # Round 3 is reached by replaying 1 and 2 quietly: one recap, and
+        # no deal frame for the rounds nobody asked to watch.
+        view = self._view([3, None], ["r"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        assert view.recaps == 1
+
+    def test_the_view_is_built_in_replay_mode(
+        self, record_path, monkeypatch
+    ):
+        seen: list[DebugOptions] = []
+        view = self._view([None], [])
+
+        def _make_view(options=None, aids=None):
+            seen.append(options)
+            return view
+
+        monkeypatch.setattr(cli_module, "RichView", _make_view)
+
+        _run_replay(self._args(record_path))
+
+        assert seen[0].replay is True
+
+    def test_round_opens_straight_on_that_round(
+        self, record_path, monkeypatch
+    ):
+        view = self._view([None], ["r"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path, round=1)) == 0
+        # The round ran before the picker was ever shown.
+        assert view.recaps == 1
+
+    def test_leaving_a_round_returns_to_the_picker(
+        self, record_path, monkeypatch
+    ):
+        # 'q' at the round's first stop unwinds to the picker, which is
+        # then answered with quit.
+        view = self._view([1, None], ["q"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        assert view.recaps == 0
+        assert len(view.summaries) == 2
+
+    def test_going_back_replays_the_round_from_its_deal(
+        self, record_path, monkeypatch
+    ):
+        # Two actions, then back, then run out: the round is replayed a
+        # second time and still reaches exactly one recap.
+        view = self._view([1, None], ["n", "n", "p", "r"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        assert view.recaps == 1
+
+    def test_going_back_from_the_recap_re_enters_the_round(
+        self, record_path, monkeypatch
+    ):
+        # 'r' to the recap, 'p' at the recap prompt, then 'r' again: two
+        # recaps, because the round was walked to its end twice.
+        view = self._view([1, None], ["r", "p", "r"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        assert view.recaps == 2
+
+    def test_an_unknown_round_exits_one(
+        self, record_path, monkeypatch, capsys
+    ):
+        view = self._view([None], [])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path, round=99)) == 1
+        assert "99" in capsys.readouterr().err
+
+    def test_an_unreadable_record_exits_one(self, tmp_path, capsys):
+        missing = tmp_path / "nope.jsonl"
+
+        assert _run_replay(self._args(missing)) == 1
+        assert "cannot be read" in capsys.readouterr().err
+
+    def test_an_interrupt_exits_zero(self, record_path, monkeypatch):
+        class _Interrupting:
+            options = None
+            console = _RecordingConsole()
+
+            def show_replay_summary(self, rows, game_id):
+                raise KeyboardInterrupt
+
+        monkeypatch.setattr(
+            cli_module, "RichView", lambda *a, **k: _Interrupting()
+        )
+
+        assert _run_replay(self._args(record_path)) == 0
+
+
+class TestMainDispatch:
+    def test_the_streams_are_utf8_before_verify_writes_anything(
+        self, monkeypatch
+    ):
+        # A card renders as ``K♠``, and ``verify`` prints one when it
+        # reports a belote mismatch — so the fix-up has to run *before*
+        # the subcommand dispatch, not inside the game path. On a cp1252
+        # console the alternative is not mojibake, it is
+        # UnicodeEncodeError.
+        out, err = _ReconfigurableStream(), _ReconfigurableStream()
+        monkeypatch.setattr(sys, "stdout", out)
+        monkeypatch.setattr(sys, "stderr", err)
+        monkeypatch.setattr(sys, "argv", ["contrai", "verify", "a.jsonl"])
+        seen: list[list[str | None]] = []
+
+        def _record_then_exit(args):
+            seen.append(list(out.encodings))
+            return 0
+
+        monkeypatch.setattr(cli_module, "_run_verify", _record_then_exit)
+
+        with pytest.raises(SystemExit):
+            main()
+
+        assert seen == [["utf-8"]]
+        assert err.encodings == ["utf-8"]
+
+    def test_a_stream_that_refuses_does_not_stop_the_run(self, monkeypatch):
+        monkeypatch.setattr(sys, "stdout", _RaisingStream())
+        monkeypatch.setattr(sys, "stderr", _PlainStream())
+        monkeypatch.setattr(sys, "argv", ["contrai", "verify", "a.jsonl"])
+        monkeypatch.setattr(cli_module, "_run_verify", lambda args: 0)
+
+        with pytest.raises(SystemExit) as excinfo:
+            main()
+
+        assert excinfo.value.code == 0
+
+    def test_verify_exits_with_its_own_code(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["contrai", "verify", "a.jsonl"])
+        monkeypatch.setattr(cli_module, "_run_verify", lambda args: 3)
+
+        with pytest.raises(SystemExit) as excinfo:
+            main()
+
+        assert excinfo.value.code == 3
+
+    def test_verify_never_reaches_the_game_loop(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["contrai", "verify", "a.jsonl"])
+        monkeypatch.setattr(cli_module, "_run_verify", lambda args: 0)
+        monkeypatch.setattr(
+            cli_module,
+            "RichView",
+            lambda *a, **k: pytest.fail("verify must not build a view"),
+        )
+
+        with pytest.raises(SystemExit):
+            main()
+
+    def test_replay_exits_with_its_own_code(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["contrai", "replay", "a.jsonl"])
+        monkeypatch.setattr(cli_module, "_run_replay", lambda args: 4)
+
+        with pytest.raises(SystemExit) as excinfo:
+            main()
+
+        assert excinfo.value.code == 4
+
+    def test_replay_never_reaches_the_game_loop(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["contrai", "replay", "a.jsonl"])
+        monkeypatch.setattr(cli_module, "_run_replay", lambda args: 0)
+        monkeypatch.setattr(
+            cli_module,
+            "_build_game",
+            lambda *a, **k: pytest.fail("replay must not build a game"),
+        )
+
+        with pytest.raises(SystemExit):
+            main()
