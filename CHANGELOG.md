@@ -8,6 +8,10 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-17
+
+Observation release: a played game becomes a file. The new `contrai-data` package writes one append-only JSONL record per game, one event per line, and folds it back into rounds; the engine writes records as it plays (`contrai --record`), replays them through its own screens (`contrai replay`) and re-judges them against the real rules (`contrai verify`, per-round `verified` / `partial` / `suspect`); and the scraper is rebuilt around a local `profile.toml` — the v1 browser flow is gone, replaced by a `Spectator`/`Recorder` pair that watches tournament tables unattended on a schedule, behind a checked VPN egress, deployable as a Docker Compose service. The target site's name and DOM vocabulary leave the repository for good.
+
 ### Added
 
 - (data) New `contrai-data` package — one append-only JSONL record per game, one event per line, shared by the engine and the scraper. See [data docs](docs/data/index.md).
@@ -229,7 +233,8 @@ First playable release: a complete CLI Contrée engine backed by a shared domain
 - (analyzer) Streamlit opening-hand strength dashboard built on the suit-agnostic `SuitSlot` abstraction — hypergeometric distribution plots and a bidding truth-table.
 - (scraper) Playwright spectator-mode scraper v1 for the target site: login, Online → Spectator → Contree → Tournament navigation, seat identification, and round-counter polling.
 
-[Unreleased]: https://github.com/valmathieu/ContrAI/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/valmathieu/ContrAI/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/valmathieu/ContrAI/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/valmathieu/ContrAI/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/valmathieu/ContrAI/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/valmathieu/ContrAI/compare/v0.1.0...v0.2.0
