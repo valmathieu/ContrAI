@@ -48,6 +48,7 @@ from contrai_scraper.parse.session import (
 from contrai_scraper.parse.snapshot import Snapshot, read_snapshot
 from contrai_scraper.parse.translate import Translator
 from contrai_scraper.profile import Profile, load_profile
+from contrai_scraper.rawlog import new_session_id, raw_dir
 from contrai_scraper.recorder import (
     RecorderLimits,
     # The same two helpers the recorder gates a table with. Imported rather
@@ -391,8 +392,48 @@ async def _live_checks(
         # A snapshot the profile cannot read is as much a profile fault as a
         # selector that stopped matching, and this command exists to name the
         # key that broke rather than to print a traceback over it.
-        results.append((step, False, str(error)))
+        detail = str(error)
+        evidence = await _capture_failure(spectator, profile)
+        results.append((step, False, f"{detail} — {evidence}" if evidence else detail))
     return results
+
+
+async def _capture_failure(spectator: Any, profile: Profile) -> str:
+    """Save the page a failed live check was looking at.
+
+    The failed line names the profile key that stopped matching, which says
+    *which* selector broke and never *why*. On a host reached through a
+    console there is no second chance to look: the browser is gone by the
+    time the line is read, and the walk cannot be repeated by hand. So the
+    page is kept, exactly as ``run`` keeps it — the same
+    ``[browser].screenshot_on_error`` switch, the same two files, written
+    under the profile's raw root where a session's own evidence already
+    lands.
+
+    Args:
+        spectator: The browser half, still open on the failing page.
+        profile: The loaded profile.
+
+    Returns:
+        A phrase naming the files, for the failed line to carry, or the
+        empty string when the profile does not ask for them or nothing
+        could be written. A diagnosis never replaces the failure it was
+        taken for, so this reports nothing rather than raising.
+    """
+
+    if not profile.browser.screenshot_on_error:
+        return ""
+    directory = raw_dir(profile.output.raw_root)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # An unwritable raw root is worth knowing about, but not here: the
+        # line this decorates is already reporting a failure of its own.
+        return ""
+    saved = await spectator.capture(directory / f"check-profile-{new_session_id()}")
+    if not saved:
+        return ""
+    return f"page saved to {', '.join(str(path) for path in saved)}"
 
 
 async def _first_snapshot(frames: Any, profile: Profile) -> WireEvent | None:

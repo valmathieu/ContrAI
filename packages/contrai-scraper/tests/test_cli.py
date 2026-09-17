@@ -1,6 +1,7 @@
 """Pins the CLI: dispatch, the limits, the profile check, what parse writes."""
 
 import asyncio
+import re
 import signal
 import sys
 
@@ -269,11 +270,20 @@ class TestCheckProfileEgress:
 class FakeWalk:
     """A spectator whose walk and panels are scripted; a named step may raise."""
 
-    def __init__(self, *, pledge=False, fail=None, marker=True, ids=None):
+    def __init__(self, *, pledge=False, fail=None, marker=True, ids=None,
+                 saved=None):
         self._pledge = pledge
         self._fail = fail or {}
         self._marker = marker
         self._ids = ids or {}
+        self._saved = saved
+        self.captured = []
+
+    async def capture(self, stem):
+        """Record the stem asked for, and answer with the scripted files."""
+
+        self.captured.append(stem)
+        return tuple(stem.with_suffix(suffix) for suffix in self._saved or ())
 
     def _step(self, name):
         if name in self._fail:
@@ -396,6 +406,78 @@ class TestLiveChecks:
         results = asyncio.run(_live_checks(walk, Frames(_join_frame(builders)), profile))
         passed = {name: ok for name, ok, _ in results}
         assert passed["panel ids equal the wire's accounts"] is False
+
+
+def _capturing_profile(profile_text, tmp_path, root):
+    """The fixture profile with failure capture on and its roots in ``root``."""
+
+    from contrai_scraper import load_profile
+
+    text = re.sub(
+        r'(?m)^raw_root = .*$', f'raw_root = "{root.as_posix()}"',
+        re.sub(
+            r'(?m)^root = .*$', f'root = "{root.as_posix()}"',
+            profile_text.replace(
+                "screenshot_on_error = false", "screenshot_on_error = true"
+            ),
+        ),
+    )
+    path = tmp_path / "capturing-profile.toml"
+    path.write_text(text, encoding="utf-8")
+    return load_profile(path)
+
+
+class TestCheckProfileCapture:
+    """What a failed live check leaves behind to be looked at."""
+
+    def test_a_failed_check_saves_the_page_and_says_where(
+        self, profile_text, tmp_path, tmp_root
+    ):
+        # The failed line names the key that stopped matching and never why.
+        # On a host reached through a console the browser is gone by the time
+        # the line is read, so the page has to be kept at the moment it broke.
+        message = "[selectors].login_email matched no field to type into"
+        walk = FakeWalk(fail={"log_in": message}, saved=[".png", ".html"])
+        profile = _capturing_profile(profile_text, tmp_path, tmp_root)
+        results = asyncio.run(_live_checks(walk, Frames(), profile))
+        step, passed, detail = results[0]
+        assert (step, passed) == ("login", False)
+        assert message in detail and "page saved to" in detail
+        assert detail.count(".png") == 1 and detail.count(".html") == 1
+        # Beside a session's own evidence, not in some directory of its own.
+        assert walk.captured[0].parent == tmp_root / "raw"
+
+    def test_the_page_is_not_saved_when_the_profile_does_not_ask(self, profile):
+        # The fixture profile leaves the switch off, which is the default a
+        # deployment opts out of rather than into.
+        message = "[selectors].login_start matched nothing that could be clicked"
+        walk = FakeWalk(fail={"log_in": message}, saved=[".png"])
+        results = asyncio.run(_live_checks(walk, Frames(), profile))
+        assert (results, walk.captured) == ([("login", False, message)], [])
+
+    def test_a_capture_that_writes_nothing_leaves_the_line_alone(
+        self, profile_text, tmp_path, tmp_root
+    ):
+        # A screenshot of a page that has already gone can fail, and a
+        # diagnosis must never replace the failure it was taken for.
+        message = "[selectors].login_email matched no field to type into"
+        walk = FakeWalk(fail={"log_in": message})
+        profile = _capturing_profile(profile_text, tmp_path, tmp_root)
+        results = asyncio.run(_live_checks(walk, Frames(), profile))
+        assert results == [("login", False, message)]
+
+    def test_an_unwritable_raw_root_does_not_replace_the_failure(
+        self, profile_text, tmp_path
+    ):
+        # Worth knowing about, but not here: the line it would decorate is
+        # already reporting a failure of its own.
+        blocked = tmp_path / "a-file-not-a-directory"
+        blocked.write_text("", encoding="utf-8")
+        message = "[selectors].login_email matched no field to type into"
+        walk = FakeWalk(fail={"log_in": message}, saved=[".png"])
+        profile = _capturing_profile(profile_text, tmp_path, blocked)
+        results = asyncio.run(_live_checks(walk, Frames(), profile))
+        assert (results, walk.captured) == ([("login", False, message)], [])
 
 
 class TestOrientationCheck:

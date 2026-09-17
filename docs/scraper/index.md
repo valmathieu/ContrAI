@@ -187,6 +187,13 @@ beside that session's raw log. An error names the profile key it was on and noth
 says *which* selector stopped matching but never *why* — and the why is routinely something no
 selector can express: a dialog over the control, a rail that slid away, a font that did not load.
 
+`check-profile` keeps the same evidence, under `<raw_root>/raw/check-profile-<id>.png` and `.html`,
+and the failed line says where. It matters more there than in a run: `check-profile` is what is
+reached for when a deployment will not start, often on a host administered through a console, where
+the browser is gone by the time the line is read and the walk cannot be repeated by hand. The line
+itself is never replaced by the diagnosis — an unwritable raw root or a page that has already gone
+leaves the failure reported exactly as it was.
+
 A hop moves the page long before the reader hears about it, and a gate judging the wrong snapshot
 reads one table's options and scoreboard against another's. Measured across 2026-09-16 and
 2026-09-17: over twenty table joins the new table described itself between 0.05 s and 0.23 s after
