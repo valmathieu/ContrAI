@@ -172,6 +172,16 @@ probing for the first-visit tutorial, opens the address form through its own ent
 the first-use pledge can be drawn a moment after it was looked for, answers it and retries once
 when the spectator menu refuses a click.
 
+**A selector that matches translated text is a latent fault, and it fires the first time the site
+is reached from somewhere else.** The site chooses the interface language for the visitor, so the
+same login page that renders in French to one exit renders in English to another — measured on
+2026-09-18, when a deployment behind a Swiss exit could not find a field the laptop had been
+typing into for days, because the profile matched that field by its French placeholder alone. The
+DOM had it all along, under a different word. Prefer a stable attribute, an id, or the site's own
+i18n key, all of which survive the change; where a text match really is the only handle, give it a
+locale-independent alternative, because `[selectors]` takes a **list** and tries each in turn. The
+entry beside it was already written that way and walked straight through the same page.
+
 Panel controls get more than that, because they sit on rails the table slides away on its own.
 Playwright already retries a click for its whole timeout, so a control covered for a moment by one
 of the table's transient dialogs needs no help. What it cannot survive is the two together: the
