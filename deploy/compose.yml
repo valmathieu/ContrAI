@@ -5,9 +5,9 @@ name: contrai
 
 services:
   vpn:
-    # Replace with the exact current v3.x.y release before the first run,
-    # and bump it deliberately: https://github.com/qdm12/gluetun/releases
-    image: qmcgaw/gluetun:v3
+    # The release the deployment was validated against; bump it deliberately,
+    # never by floating tag: https://github.com/qdm12/gluetun/releases
+    image: qmcgaw/gluetun:v3.41.3
     cap_add:
       - NET_ADMIN
     devices:

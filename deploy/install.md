@@ -29,8 +29,11 @@ Nothing else on the host is rerouted: every other service keeps its own routes.
 - Debian 13 with Docker Engine and the Compose plugin **2.17 or later** (`depends_on.restart`
   needs it): `docker compose version`.
 - `jq` and `tcpdump`: `sudo apt install jq tcpdump`.
-- A WireGuard `.conf` from the VPN provider, for a **French** server, whose `Endpoint` is an **IP
-  address** rather than a host name — gluetun raises its firewall before any name can be resolved.
+- A WireGuard `.conf` from the VPN provider, for a server in whichever country you will set as
+  `[egress].expected_country`, and whose `Endpoint` is an **IP address** rather than a host name —
+  gluetun raises its firewall before any name can be resolved. Keep the provider's fixed endpoint
+  rather than a provider integration that picks its own server: a server that reconnects elsewhere
+  invalidates the outage test in §6 and moves the address the gate expects.
 - The repository tree on the host. Nothing is pushed from a development session, so either clone
   after pushing, or bundle it on the laptop and clone the bundle on the host:
 
@@ -143,8 +146,13 @@ VPN exit, never the home address:
 
 ```bash
 sudo docker compose -f deploy/compose.yml run --rm --entrypoint /opt/contrai/venv/bin/python scraper \
-  -c "import urllib.request; print(urllib.request.urlopen('https://ipinfo.io/json', timeout=10).read().decode())"
+  -c "import tomllib, urllib.request as u; \
+url = tomllib.load(open('/etc/contrai/profile.toml','rb'))['egress']['probe_url']; \
+print(u.urlopen(url, timeout=10).read().decode())"
 ```
+
+It asks the same service the gate asks, taken from the profile, so this check and the gate can
+never disagree about which echo service is in use — see §10 on choosing one.
 
 **The gate refuses home.** Run the check once with the home address set to the exit address just
 printed (`-e` overrides the env file for this one run; Compose's `--env-file` flag would only feed
@@ -235,3 +243,66 @@ xvfb-run -a /opt/contrai/venv/bin/contrai-scrape run --profile /etc/contrai/prof
   on none of them.
 - Chromium runs without its sandbox in the container, as Playwright's image does by default. A
   seccomp profile is a hardening follow-up.
+- The echo service is a dependency of the gate, and a free-tier exit is shared with many other
+  users. A service that rate-limits per address answers `429` to all of them, which the gate reads
+  as `probe_failed` and refuses — correctly, but for the wrong reason, and six refusals in a row
+  end the process. Pick a service that returns the address and the country as plain JSON and does
+  not meter per address; `[egress].probe_url` with `probe_ip_field` and `probe_country_field` makes
+  the change a config edit, not a code change.
+
+## 11. Validation (2026-09-20)
+
+Measured end to end on the target host — Debian 13, Docker Engine 29.8.0, Compose v5, reached
+through a web console rather than SSH — with the scraper sharing a WireGuard sidecar's network
+behind a free-tier exit in a country other than the operator's. Every figure below was read from
+the journal or from `contrai verify`. No address, host name or site string is recorded here.
+
+| Check | Result |
+| --- | --- |
+| Profile on a laptop, headed, through a desktop VPN | `check-profile` all eleven lines `ok`. A two-game run ended on `max_games`: 2 games, 15 rounds, 26 min, 10 table visits, 8 rejected, no session failure |
+| V1 — `check-profile` in the container, headless | All eleven lines `ok`, exit 0. The egress line showed the expected country and `route tun0`; the marker line proves the image's colour-emoji font |
+| V2 — one hour of the service | 1 h 29 m: 8 games, 41 rounds (**27.6 rounds/h**), 8 tables seated, **2 sockets opened, 0 closed**, 0 restarts |
+| V3 — the gate refuses the home address | `FAIL … exit_is_home`, exit 1. No browser opened, and the refusal line carries no address |
+| V4 — a tunnel outage under a live game | **0 packets** on the WAN capture. Detail below |
+| V5 — 24 hours unattended | 117 games, 604 rounds, **0 restarts**. Detail below |
+
+**V4 — the outage.** The VPN endpoint was dropped in the host's `DOCKER-USER` chain while a game
+was being watched, with a capture running on the WAN interface filtered to the site's addresses.
+A control capture on a neutral address first proved the interface and the filter, so the zero
+below is a real zero and not a mis-aimed capture.
+
+| Measure | Result |
+| --- | --- |
+| Drop → `egress_blocked` | 203 s (`[recorder].stale_after_s` plus the probe timeout) |
+| The game in hand | written with `ended.reason = interrupted` |
+| **Packets to the site on the WAN** | **0** |
+| Rule removed → `egress_ok` | 79 s — bounded by the poll, not by the tunnel: gluetun reconnected unaided |
+| → next `table_seated` | 116 s |
+| The blocked-poll ladder | `attempt` 1 … 6, spaced 5 min 20 s (a 5 min poll plus the probe timeout) |
+| Budget spent → exit 3 → fresh container polling | 21 s |
+| One full block cycle | 27 min; 12 cycles observed over ≈14 h of held outage |
+| Window close → `schedule_idle` | +1 min 43 s, with `next_opening` exact |
+| Window open → `schedule_resume` | +1 min 49 s |
+
+**V5 — 24 hours unattended.** No intervention. 25 h 12 m elapsed, of which 6 h 50 m was scheduled
+idle, leaving **18 h 22 m** of active watching.
+
+| Measure | Result |
+| --- | --- |
+| Restarts | **0** |
+| Games / rounds | **117 / 604** → **32.9 rounds/h** active |
+| Tables seated / rejected | 118 / 64 — 59 not a tournament, 4 unreadable snapshot, 1 too far along |
+| Orientation mismatches | **0** |
+| Stale-snapshot refusals | 142 over ≈210 hops — under one per hop, as designed |
+| Sockets opened / closed | **8 / 0** — two per session, **no reconnect in 18 active hours** |
+| Failed score reads | 0 |
+| Unexplained heartbeat gaps over 180 s | **0**, across 1064 timeline lines |
+| Session failures | 2, both on the table-hop control, against a budget of 3; the shift recovered unaided and the fault is fixed |
+
+`contrai verify` over the 135 records the host had accumulated: **129 `partial`, 6 `suspect`**;
+685 rounds, **679 `partial`, 6 `suspect`**. A `partial` round is one where every comparable field
+agreed — `verified` is unreachable for an observed record, because the table folds the last-trick
+bonus into the row's card points and never names the side that took it, which the verifier records
+as unchecked rather than as a fault. The six suspects are all disagreements about how a sweep or a
+tied round is *scored*, not capture faults: the wire data matched the replay in every other
+respect.
