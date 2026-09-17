@@ -1,0 +1,38 @@
+---
+title: contrai-scraper — deployment on a shared homelab host (Compose, VPN sidecar)
+---
+flowchart LR
+    subgraph Host["Debian 13 host, shared with the homelab"]
+        direction TB
+        subgraph Netns["one network namespace, owned by the vpn container"]
+            direction TB
+            Scraper["scraper container<br/>contrai-scrape run · headless Chromium<br/>uid 10001 · egress gate before each session and hop"]
+            Vpn["vpn container · gluetun<br/>WireGuard tun0 · firewall kill switch<br/>DNS over TLS inside the tunnel"]
+            Scraper -- "its only route: tun0" --> Vpn
+        end
+        Etc[/"/etc/contrai<br/>profile.toml · env files · wg0.conf"/]
+        Records[("/var/lib/contrai/records<br/>games/ · raw/ · verdicts/")]
+        Homelab["Nextcloud · Vikunja · Cockpit · Tailscale<br/>untouched, on their own routes"]
+        Etc -. "read-only mounts" .-> Scraper
+        Etc -. "wg0.conf" .-> Vpn
+        Scraper --> Records
+    end
+
+    Vpn == "encrypted UDP, to the VPN endpoint only" ==> Wan(["home WAN"])
+    Homelab --> Wan
+    Wan ==> Exit(["VPN exit, France"])
+    Exit ==> Site(["the target site"])
+    Laptop(["dev laptop"]) -. "SSH or Tailscale: records, logs" .-> Records
+
+    %% ---------- palette ----------
+    classDef scraper fill:#EDE7F6,stroke:#5E4495,stroke-width:2px,color:#2E1F52;
+    classDef data fill:#E0F5F2,stroke:#2E7D74,stroke-width:2px,color:#1F544E;
+    classDef config fill:#FFF3E0,stroke:#B26A28,stroke-width:1px,color:#5C3A14;
+    classDef external fill:#EEEEEE,stroke:#616161,stroke-width:1px,color:#424242;
+    classDef tunnel fill:#DCD2F0,stroke:#5E4495,stroke-width:2px,color:#2E1F52;
+
+    class Scraper scraper;
+    class Vpn,Exit tunnel;
+    class Records data;
+    class Etc config;
+    class Homelab,Wan,Site,Laptop external;

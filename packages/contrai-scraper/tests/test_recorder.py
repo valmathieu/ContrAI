@@ -10,6 +10,8 @@ from contrai_core import Position, Suit, TeamSide
 from contrai_data import EndReason, load_game
 
 from contrai_scraper import (
+    EgressReading,
+    EgressRefusal,
     HealthLog,
     OptionsReading,
     RawFrame,
@@ -17,8 +19,26 @@ from contrai_scraper import (
     Recorder,
     RecorderLimits,
     ScoreboardReading,
+    StopReason,
     read_raw_log,
 )
+
+#: A working tunnel, and one that is not.
+OPEN = EgressReading(refusal=None, exit_ip="203.0.113.7", country="XX", route_device="tun0")
+BLOCKED = EgressReading(refusal=EgressRefusal.PROBE_FAILED, exit_ip=None, country=None,
+                        route_device=None)
+
+
+class FakeEgress:
+    """Answers every check with one reading, and counts the checks."""
+
+    def __init__(self, reading):
+        self.reading = reading
+        self.calls = 0
+
+    async def check(self):
+        self.calls += 1
+        return self.reading
 
 
 class FakeSpectator:
@@ -53,10 +73,39 @@ class FakeSpectator:
 
 
 class FakeFrameSource:
-    """A scripted frame source; a callable entry runs before the next frame."""
+    """A scripted frame source; a callable entry runs before the next frame.
 
-    def __init__(self, script):
+    ``backlog`` is how many of the script's frames count as *already
+    arrived* — the queue a live page leaves behind when the reader falls
+    behind it. It counts down as frames are taken, so a test can say "the
+    first three were already waiting" and nothing after them is.
+    """
+
+    def __init__(self, script, backlog=0):
         self._script = list(script)
+        self._backlog = backlog
+        self._taken = 0
+
+    @property
+    def pending(self):
+        return max(0, self._backlog - self._taken)
+
+    @property
+    def elapsed(self):
+        """One tick per frame taken, so a stamp is checkable without a clock."""
+
+        return float(self._taken)
+
+    def arrive(self, count):
+        """Say the next ``count`` frames are already waiting, from here on.
+
+        ``backlog`` says the page was ahead from the first frame. A callable
+        entry in the script calls this instead when a test needs the page to
+        run ahead part-way through — after a hop, say, rather than before
+        the session had started.
+        """
+
+        self._backlog = self._taken + count
 
     def __aiter__(self):
         return self
@@ -67,6 +116,7 @@ class FakeFrameSource:
             if callable(item):
                 item()
                 continue
+            self._taken += 1
             return item
         raise StopAsyncIteration
 
@@ -81,8 +131,8 @@ class StallingFrameSource(FakeFrameSource):
     ends: a table nobody is playing at keeps its socket open.
     """
 
-    def __init__(self, script, stalls=1):
-        super().__init__(script)
+    def __init__(self, script, stalls=1, backlog=0):
+        super().__init__(script, backlog)
         self._stalls = stalls
 
     async def __anext__(self):
@@ -124,12 +174,13 @@ def snapshot_frame(builders, *, frame_id="s0", tournament=True, account="100",
     )
 
 
-def run_recorder(spectator, script, profile, health=None, source=None, **kwargs):
+def run_recorder(spectator, script, profile, health=None, source=None, backlog=0,
+                 **kwargs):
     """Drive one recorder over a scripted source and return its summary."""
 
     recorder = Recorder(
         spectator,
-        FakeFrameSource(script) if source is None else source,
+        FakeFrameSource(script, backlog) if source is None else source,
         profile,
         health if health is not None else HealthLog(write=lambda _: None),
         **kwargs,
@@ -141,6 +192,21 @@ def records_in(profile):
     """Every record the recorder wrote under the profile's root."""
 
     return [load_game(path) for path in sorted((profile.output.root / "games").glob("*.jsonl"))]
+
+
+def _gated(lines):
+    """Every table a gate reached a verdict on, in order.
+
+    Both verdicts count: which tables were *looked at* is the question, and a
+    rejection is as much a gate as a seating.
+    """
+
+    verdicts = {"table_seated", "table_rejected"}
+    return [
+        entry.get("table")
+        for entry in (json.loads(line) for line in lines)
+        if entry["event"] in verdicts
+    ]
 
 
 class TestGates:
@@ -163,6 +229,53 @@ class TestGates:
         assert (spectator.calls, summary.tables_rejected) == (
             [("next_table",)], 1
         )
+
+    def test_a_table_this_profile_cannot_read_is_left_rather_than_fatal(
+        self, profile, builders
+    ):
+        # The site runs variants whose contracts the tournament ruleset has no
+        # name for — all trump is the one that was met live. The options gate
+        # that refuses such a table runs *after* the snapshot is read, so an
+        # unreadable row would otherwise end the session and spend a slot of
+        # the shift's failure budget rather than costing one hop.
+        spectator = FakeSpectator()
+        script = [snapshot_frame(builders,
+                                 rows=[builders.score_row(suit="everything")])]
+        summary = run_recorder(spectator, script, profile)
+        assert (spectator.calls, summary.tables_rejected) == (
+            [("next_table",)], 1
+        )
+
+    def test_an_unreadable_table_logs_what_it_could_not_read(
+        self, profile, builders
+    ):
+        # Hopping must not hide a profile that has genuinely drifted, so the
+        # refused token travels into the health line.
+        lines: list[str] = []
+        health = HealthLog(write=lines.append)
+        run_recorder(FakeSpectator(),
+                     [snapshot_frame(builders,
+                                     rows=[builders.score_row(suit="everything")])],
+                     profile, health=health)
+        rejected = [json.loads(line) for line in lines
+                    if json.loads(line)["event"] == "table_rejected"]
+        assert [entry["reason"] for entry in rejected] == ["unreadable_snapshot"]
+        assert "everything" in rejected[0]["error"]
+        assert health.counters.tables_rejected == 1
+
+    def test_an_unreadable_table_is_followed_by_a_readable_one(
+        self, profile, builders
+    ):
+        # The hop has to leave the loop able to seat: a rejected table resets
+        # the buffer the way every other rejection does.
+        spectator = FakeSpectator()
+        script = [
+            snapshot_frame(builders, frame_id="s0",
+                           rows=[builders.score_row(suit="everything")]),
+            snapshot_frame(builders, frame_id="s1", table_id="t2"),
+        ]
+        summary = run_recorder(spectator, script, profile)
+        assert (summary.tables_rejected, summary.tables_seated) == (1, 1)
 
     def test_an_options_mismatch_aborts_the_table(self, profile, builders):
         spectator = FakeSpectator(
@@ -196,6 +309,84 @@ class TestGates:
                                  round_index=1)]
         assert run_recorder(spectator, script, profile).tables_seated == 1
 
+    def test_a_marked_belote_counts_toward_the_panel_column(self, profile,
+                                                            builders):
+        # The panel's column is the whole marked total, belote included. A
+        # table where either side had marked one was refused as though its
+        # sides were swapped, which is roughly a fifth of rounds (9A).
+        spectator = FakeSpectator(
+            scoreboard=ScoreboardReading(rows=((100, 0),), text="100 0")
+        )
+        script = [
+            snapshot_frame(
+                builders,
+                rows=[builders.score_row(belote=(20, 0), marked_belote=(20, 0))],
+                round_index=1,
+            )
+        ]
+        assert run_recorder(spectator, script, profile).tables_seated == 1
+
+    def test_a_panel_a_round_ahead_of_the_snapshot_still_seats(self, profile,
+                                                               builders):
+        # The panel is opened a moment after the snapshot arrives, so the
+        # table can score a round in between. Measured live on 2026-09-16: a
+        # panel reading "1 280 12 / 2 267 35" against a snapshot holding only
+        # round one, whose sides matched exactly — and the table was refused
+        # because the last row of each was held against the other.
+        spectator = FakeSpectator(
+            scoreboard=ScoreboardReading(rows=((80, 0), (14, 92)),
+                                         text="80 0\n14 92")
+        )
+        script = [snapshot_frame(builders, rows=[builders.score_row()],
+                                 round_index=1)]
+        assert run_recorder(spectator, script, profile).tables_seated == 1
+
+    def test_a_panel_a_round_behind_the_snapshot_still_seats(self, profile,
+                                                             builders):
+        # The same race the other way round.
+        spectator = FakeSpectator(
+            scoreboard=ScoreboardReading(rows=((80, 0),), text="80 0")
+        )
+        script = [
+            snapshot_frame(
+                builders,
+                rows=[builders.score_row(),
+                      builders.score_row(marked=((0, 0), (140, 0)))],
+                round_index=2,
+            )
+        ]
+        assert run_recorder(spectator, script, profile).tables_seated == 1
+
+    def test_a_shared_round_that_disagrees_still_refuses(self, profile, builders):
+        # Aligning the rows must not blunt the check: the round both readings
+        # do describe still has to agree.
+        spectator = FakeSpectator(
+            scoreboard=ScoreboardReading(rows=((0, 80), (14, 92)),
+                                         text="0 80\n14 92")
+        )
+        script = [snapshot_frame(builders, rows=[builders.score_row()],
+                                 round_index=1)]
+        assert run_recorder(spectator, script, profile).tables_seated == 0
+
+    def test_a_refused_orientation_names_the_round_and_both_row_counts(
+        self, profile, builders
+    ):
+        # Without them a log line cannot say whether the two numbers even
+        # describe the same round, which is what cost a day of guessing.
+        lines: list[str] = []
+        spectator = FakeSpectator(
+            scoreboard=ScoreboardReading(rows=((0, 80), (14, 92)),
+                                         text="0 80\n14 92")
+        )
+        run_recorder(spectator,
+                     [snapshot_frame(builders, rows=[builders.score_row()],
+                                     round_index=1)],
+                     profile, health=HealthLog(write=lines.append))
+        entry = next(json.loads(line) for line in lines
+                     if json.loads(line)["event"] == "orientation_mismatch")
+        assert (entry["round"], entry["panel_rows"], entry["wire_rows"]) == (1, 2, 1)
+        assert (entry["panel"], entry["wire"]) == ([0, 80], [80, 0])
+
     def test_an_unscored_game_skips_the_orientation_check(self, profile,
                                                           builders):
         # A game with no scored round has nothing to compare, and a panel
@@ -205,6 +396,123 @@ class TestGates:
         )
         script = [snapshot_frame(builders, rows=(), round_index=None)]
         assert run_recorder(spectator, script, profile).tables_seated == 1
+
+
+class TestCatchingUp:
+    def test_the_newest_queued_table_is_the_one_gated(self, profile, builders):
+        # The site moves a spectator between tables on its own: measured on
+        # 2026-09-16, the page was already showing the next table while a
+        # gate was still reading the panel of the one before it, six times
+        # out of six. Gating the first snapshot off the queue judges a table
+        # the page has left.
+        lines: list[str] = []
+        script = [
+            snapshot_frame(builders, frame_id="s0", table_id="t1"),
+            snapshot_frame(builders, frame_id="s1", table_id="t2"),
+        ]
+        run_recorder(FakeSpectator(), script, profile, backlog=2,
+                     health=HealthLog(write=lines.append))
+        seated = [json.loads(line) for line in lines
+                  if json.loads(line)["event"] == "table_seated"]
+        assert [entry["table"] for entry in seated] == ["t2"]
+
+    def test_a_page_that_is_keeping_up_is_left_alone(self, profile, builders):
+        # No backlog, no catch-up: the common case must cost nothing and
+        # must not wait for a frame that is not there.
+        lines: list[str] = []
+        script = [
+            snapshot_frame(builders, frame_id="s0", table_id="t1"),
+            snapshot_frame(builders, frame_id="s1", table_id="t2"),
+        ]
+        run_recorder(FakeSpectator(), script, profile,
+                     health=HealthLog(write=lines.append))
+        seated = [json.loads(line) for line in lines
+                  if json.loads(line)["event"] == "table_seated"]
+        assert seated[0]["table"] == "t1"
+
+    def test_what_arrived_after_the_newest_snapshot_is_kept(self, profile,
+                                                            builders):
+        # Those frames are the start of the table about to be judged, and
+        # dropping them would cost the first round of the game recorded.
+        script = [
+            snapshot_frame(builders, frame_id="s0", table_id="t1"),
+            snapshot_frame(builders, frame_id="s1", table_id="t2"),
+            frame(builders.envelope("payload", "updateTable", {"over": 1},
+                                    frame_id="x1")),
+        ]
+        summary = run_recorder(FakeSpectator(), script, profile, backlog=3)
+        # The table said it had finished while the reader was still catching
+        # up. Dropped, that flag never reaches the watch loop, and the game
+        # is never closed as a record.
+        assert summary.games_recorded == 1
+
+    def test_a_keepalive_in_the_backlog_is_not_a_table(self, profile, builders):
+        # The socket talking, not the game. It is kept as part of the tail
+        # rather than mistaken for a newer table.
+        lines: list[str] = []
+        script = [
+            snapshot_frame(builders, frame_id="s0", table_id="t1"),
+            frame("tick"),
+            snapshot_frame(builders, frame_id="s1", table_id="t2"),
+        ]
+        run_recorder(FakeSpectator(), script, profile, backlog=3,
+                     health=HealthLog(write=lines.append))
+        seated = [json.loads(line) for line in lines
+                  if json.loads(line)["event"] == "table_seated"]
+        assert [entry["table"] for entry in seated] == ["t2"]
+
+    def test_a_source_that_ends_while_catching_up_stops_the_run(self, profile,
+                                                                 builders):
+        # The backlog says two frames are waiting and only one is: the
+        # browser went away mid-catch-up, which ends the session rather than
+        # seating on what was already read.
+        summary = run_recorder(
+            FakeSpectator(),
+            [snapshot_frame(builders, frame_id="s0", table_id="t1")],
+            profile, backlog=2,
+        )
+        assert (summary.stop_reason, summary.tables_seated) == (
+            StopReason.SOURCE_ENDED, 0
+        )
+
+    def test_a_newer_snapshot_of_the_table_just_left_is_not_taken(
+        self, profile, builders
+    ):
+        # Newest on the wire is not newest on the page: the backlog can hold
+        # a late word from the table already left, behind the one the page
+        # has moved to. Taking it would be the swap this drain exists to
+        # prevent, so the readable older snapshot stands.
+        lines: list[str] = []
+        # The page runs ahead only after the first table is refused, which is
+        # where a hop leaves it: the backlog the next seat drains is the two
+        # snapshots that followed the hop, not the whole session.
+        source = FakeFrameSource([
+            snapshot_frame(builders, frame_id="s0", table_id="t1",
+                           tournament=False),
+            lambda: source.arrive(2),
+            snapshot_frame(builders, frame_id="s1", table_id="t2"),
+            snapshot_frame(builders, frame_id="s2", table_id="t1"),
+        ])
+        run_recorder(FakeSpectator(), [], profile, source=source,
+                     health=HealthLog(write=lines.append))
+        assert _gated(lines) == ["t1", "t2"]
+
+    def test_an_unreadable_newer_snapshot_leaves_the_readable_one_standing(
+        self, profile, builders
+    ):
+        # A variant table queued behind a good one must not take it down:
+        # the older snapshot stands and its own gate decides.
+        lines: list[str] = []
+        script = [
+            snapshot_frame(builders, frame_id="s0", table_id="t1"),
+            snapshot_frame(builders, frame_id="s1", table_id="t2",
+                           rows=[builders.score_row(suit="everything")]),
+        ]
+        run_recorder(FakeSpectator(), script, profile, backlog=2,
+                     health=HealthLog(write=lines.append))
+        seated = [json.loads(line) for line in lines
+                  if json.loads(line)["event"] == "table_seated"]
+        assert [entry["table"] for entry in seated] == ["t1"]
 
 
 class TestSeating:
@@ -253,6 +561,89 @@ class TestSeating:
         summary = run_recorder(spectator, script, profile)
         assert summary.tables_rejected == 1
 
+    def test_the_table_just_left_is_not_judged_again(self, profile, builders):
+        # A hop does not empty the frame queue. The snapshot still in it
+        # describes the table the page has just been moved off, and judging
+        # it costs the table the page is actually showing: measured over two
+        # sessions, ten of thirteen gates were reading a table that had been
+        # left, and every one of those snapshots had arrived *before* the hop
+        # that preceded its gate.
+        lines: list[str] = []
+        script = [
+            snapshot_frame(builders, frame_id="s0", table_id="t1",
+                           tournament=False),
+            snapshot_frame(builders, frame_id="s1", table_id="t1",
+                           tournament=False),
+            snapshot_frame(builders, frame_id="s2", table_id="t2"),
+        ]
+        run_recorder(FakeSpectator(), script, profile,
+                     health=HealthLog(write=lines.append))
+        assert _gated(lines) == ["t1", "t2"]
+
+    def test_the_table_just_recorded_is_not_seated_again(
+        self, profile, builders, session_frames, game_builders
+    ):
+        # Where the lag starts. The snapshot answering the closing request is
+        # read by the drain, which never registers it, so the mirrored copy
+        # still queued behind it is a first sighting at the next seat — and
+        # the table whose game has just been written is seated a second time.
+        ended = game_builders.game_events(
+            game_builders.round_events(1, *_ROUND_ONE),
+            reason=EndReason.TARGET_REACHED,
+        )
+        closing = snapshot_frame(builders, frame_id="sz", round_index=1,
+                                 rows=[builders.score_row()])
+        lines: list[str] = []
+        script = [
+            *session_frames(ended),
+            closing,
+            frame(closing.text, socket=1),
+            snapshot_frame(builders, frame_id="s2", table_id="t2"),
+        ]
+        run_recorder(FakeSpectator(), script, profile,
+                     health=HealthLog(write=lines.append))
+        assert _gated(lines) == ["t1", "t2"]
+
+    def test_a_snapshot_left_behind_is_logged(self, profile, builders):
+        # The refusal has to be visible: it is how a live run shows that the
+        # reader is behind the page, and how often.
+        lines: list[str] = []
+        script = [
+            snapshot_frame(builders, frame_id="s0", table_id="t1",
+                           tournament=False),
+            snapshot_frame(builders, frame_id="s1", table_id="t1",
+                           tournament=False),
+            snapshot_frame(builders, frame_id="s2", table_id="t2"),
+        ]
+        run_recorder(FakeSpectator(), script, profile,
+                     health=HealthLog(write=lines.append))
+        stale = [json.loads(line) for line in lines
+                 if json.loads(line)["event"] == "stale_snapshot"]
+        assert [entry["table"] for entry in stale] == ["t1"]
+
+    def test_a_table_offered_twice_running_is_given_up_on(
+        self, profile, builders
+    ):
+        # The rule is "not the one we just left", so a pool small enough to
+        # re-offer the same table immediately would wait for a snapshot that
+        # never comes. The seat timeout is what ends that wait, and it is the
+        # same one a table that never describes itself hits.
+        ticks = itertools.chain([0.0, 0.0], itertools.repeat(29.99))
+        spectator = FakeSpectator()
+        # Stalling, not ending: a table that keeps being offered keeps its
+        # socket open, so it is the wait that has to expire.
+        source = StallingFrameSource([
+            snapshot_frame(builders, frame_id="s0", table_id="t1",
+                           tournament=False),
+            snapshot_frame(builders, frame_id="s1", table_id="t1",
+                           tournament=False),
+        ])
+        summary = run_recorder(spectator, [], profile, source=source,
+                               monotonic=lambda: next(ticks))
+        assert (summary.tables_rejected, spectator.calls.count(("next_table",))) == (
+            1, 2
+        )
+
 
 class TestRecording:
     def test_a_watched_game_is_written_once(self, profile, session_frames,
@@ -273,8 +664,8 @@ class TestRecording:
         # snapshot. Keeping the first one seats four players from a table we
         # left — the record is complete, legal, and about the wrong people.
         # Script: reject-snapshot(table A) -> accept-snapshot(table B) -> play.
-        rejected = snapshot_frame(builders, tournament=False, account="a",
-                                  frame_id="sa")
+        rejected = snapshot_frame(builders, table_id="t0", tournament=False,
+                                  account="a", frame_id="sa")
         script = [rejected, *session_frames(source_game)]
         run_recorder(FakeSpectator(), script, profile)
         seats = records_in(profile)[0].seats
@@ -299,6 +690,22 @@ class TestRecording:
         panels = [line.text for line in read_raw_log(tmp_root / "session.jsonl")
                   if line.kind == "panel"]
         assert panels == ["the panel, verbatim"]
+
+    def test_a_panel_read_is_stamped_on_the_frames_own_clock(
+        self, profile, tmp_root, builders
+    ):
+        # Without a stamp a panel read has no time at all, and the log cannot
+        # say when it happened relative to the snapshot it was compared
+        # against — which is what made the seating lag untimeable offline.
+        # The fake ticks once per frame taken: one frame had been read.
+        spectator = FakeSpectator(
+            scoreboard=ScoreboardReading(rows=(), text="the panel, verbatim")
+        )
+        with RawLogWriter(tmp_root / "session.jsonl") as log:
+            run_recorder(spectator, [snapshot_frame(builders)], profile, raw=log)
+        stamps = [line.at for line in read_raw_log(tmp_root / "session.jsonl")
+                  if line.kind == "panel"]
+        assert stamps == [1.0]
 
 
 class TestBoundary:
@@ -354,16 +761,174 @@ class TestBoundary:
         assert health.counters.score_reads_failed == 1
 
 
+class TestShiftTerms:
+    def test_no_table_is_seated_once_the_seat_deadline_has_passed(self, profile, builders):
+        spectator = FakeSpectator()
+        summary = run_recorder(spectator, [snapshot_frame(builders)], profile,
+                               limits=RecorderLimits(seat_until_s=0.0))
+        assert (summary.tables_seated, summary.stop_reason, spectator.calls) == (
+            0, StopReason.WINDOW_CLOSED, []
+        )
+
+    def test_a_wait_that_outlasts_the_seat_deadline_seats_nothing(self, profile, builders):
+        # The window closes while the seat is still waiting for a snapshot:
+        # the next frame, whatever it is, ends the wait rather than the table.
+        clock = [0.0]
+        spectator = FakeSpectator()
+        script = [lambda: clock.__setitem__(0, 601.0), frame("tick"),
+                  snapshot_frame(builders)]
+        summary = run_recorder(spectator, script, profile,
+                               limits=RecorderLimits(seat_until_s=600.0),
+                               monotonic=lambda: clock[0])
+        assert (summary.tables_seated, summary.stop_reason, spectator.calls) == (
+            0, StopReason.WINDOW_CLOSED, []
+        )
+
+    def test_a_snapshot_arriving_after_the_seat_deadline_is_not_seated(self, profile, builders):
+        clock = [0.0]
+        spectator = FakeSpectator()
+        script = [lambda: clock.__setitem__(0, 601.0), snapshot_frame(builders)]
+        summary = run_recorder(spectator, script, profile,
+                               limits=RecorderLimits(seat_until_s=600.0),
+                               monotonic=lambda: clock[0])
+        assert (summary.tables_seated, summary.stop_reason, spectator.calls) == (
+            0, StopReason.WINDOW_CLOSED, []
+        )
+
+    def test_the_game_in_hand_carries_on_past_the_seat_deadline(
+        self, profile, session_frames, game_builders
+    ):
+        # The seat deadline is the window's close; the game already being
+        # watched is worth finishing, so only the next table is refused.
+        clock = [0.0]
+        spectator = FakeSpectator()
+        ended = game_builders.game_events(
+            game_builders.round_events(1, *_ROUND_ONE),
+            reason=EndReason.TARGET_REACHED,
+        )
+        frames = session_frames(ended)
+        # After the join snapshot and its mirror: the table is already seated.
+        script = [*frames[:2], lambda: clock.__setitem__(0, 601.0), *frames[2:]]
+        summary = run_recorder(spectator, script, profile,
+                               limits=RecorderLimits(seat_until_s=600.0),
+                               monotonic=lambda: clock[0])
+        assert (summary.games_recorded, records_in(profile)[0].ended.reason,
+                ("next_table",) in spectator.calls) == (1, EndReason.TARGET_REACHED, False)
+
+    def test_a_finished_run_asks_for_no_further_table(
+        self, profile, builders, session_frames, game_builders
+    ):
+        # A hop is traffic to the site; after the last game it buys nothing.
+        spectator = FakeSpectator()
+        ended = game_builders.game_events(
+            game_builders.round_events(1, *_ROUND_ONE),
+            reason=EndReason.TARGET_REACHED,
+        )
+        closing = snapshot_frame(builders, frame_id="sz", round_index=1,
+                                 rows=[builders.score_row()])
+        summary = run_recorder(spectator, [*session_frames(ended), closing], profile,
+                               limits=RecorderLimits(max_games=1))
+        assert (("next_table",) in spectator.calls, summary.stop_reason) == (
+            False, StopReason.MAX_GAMES
+        )
+
+    def test_a_time_limit_is_reported_as_such(self, profile, session_frames, source_game):
+        clock = [0.0]
+        script = [
+            *session_frames(source_game),
+            lambda: clock.__setitem__(0, 9999.0),
+            frame("tick"),
+        ]
+        summary = run_recorder(FakeSpectator(), script, profile,
+                               limits=RecorderLimits(max_seconds=60.0),
+                               monotonic=lambda: clock[0])
+        assert summary.stop_reason is StopReason.TIME_LIMIT
+
+    def test_a_run_whose_time_is_already_spent_reports_the_time_limit(self, profile, builders):
+        summary = run_recorder(FakeSpectator(), [snapshot_frame(builders)], profile,
+                               limits=RecorderLimits(max_seconds=0.0))
+        assert (summary.tables_seated, summary.stop_reason) == (0, StopReason.TIME_LIMIT)
+
+    def test_a_second_stop_keeps_the_first_reason(self, profile):
+        # The cause is what a shift acts on: a refused egress that then also
+        # ran the frames dry must still be reported as the egress.
+        recorder = Recorder(FakeSpectator(), FakeFrameSource([]), profile,
+                            HealthLog(write=lambda _: None))
+        recorder._stop(StopReason.EGRESS_BLOCKED)
+        recorder._stop(StopReason.SOURCE_ENDED)
+        assert asyncio.run(recorder.run()).stop_reason is StopReason.EGRESS_BLOCKED
+
+
+class TestEgressAtTheHop:
+    def test_a_blocked_egress_stops_the_hop(self, profile, builders):
+        lines: list[str] = []
+        spectator = FakeSpectator()
+        summary = run_recorder(spectator, [snapshot_frame(builders, tournament=False)], profile,
+                               health=HealthLog(write=lines.append), egress=FakeEgress(BLOCKED))
+        events = [json.loads(line)["event"] for line in lines]
+        assert (spectator.calls, summary.stop_reason, "egress_blocked" in events) == (
+            [], StopReason.EGRESS_BLOCKED, True
+        )
+
+    def test_an_open_egress_lets_the_hop_through(self, profile, builders):
+        spectator = FakeSpectator()
+        egress = FakeEgress(OPEN)
+        run_recorder(spectator, [snapshot_frame(builders, tournament=False)], profile,
+                     egress=egress)
+        assert (spectator.calls, egress.calls) == ([("next_table",)], 1)
+
+    def test_a_quiet_table_behind_a_blocked_egress_is_interrupted(
+        self, profile, session_frames, source_game
+    ):
+        # Silence behind a dead tunnel is not a table breaking up: writing
+        # `abandoned` would blame the players for our network.
+        clock = [0.0]
+        spectator = FakeSpectator()
+        script = [
+            *session_frames(source_game),
+            lambda: clock.__setitem__(0, 9999.0),
+            frame("tick"),
+        ]
+        summary = run_recorder(spectator, script, profile, monotonic=lambda: clock[0],
+                               egress=FakeEgress(BLOCKED))
+        assert (records_in(profile)[0].ended.reason, ("next_table",) in spectator.calls,
+                summary.stop_reason) == (EndReason.INTERRUPTED, False,
+                                         StopReason.EGRESS_BLOCKED)
+
+    def test_a_quiet_table_behind_an_open_egress_is_abandoned_with_one_check(
+        self, profile, session_frames, source_game
+    ):
+        # The check that cleared the table as stale also clears the hop:
+        # a stale table costs one probe, not two.
+        clock = [0.0]
+        egress = FakeEgress(OPEN)
+        script = [
+            *session_frames(source_game),
+            lambda: clock.__setitem__(0, 9999.0),
+            frame("tick"),
+        ]
+        run_recorder(FakeSpectator(), script, profile, monotonic=lambda: clock[0],
+                     egress=egress)
+        assert (records_in(profile)[0].ended.reason, egress.calls) == (
+            EndReason.ABANDONED, 1
+        )
+
+
 class TestEnding:
     def test_the_game_over_flag_ends_the_record_and_hops(
-        self, profile, session_frames, game_builders
+        self, profile, builders, session_frames, game_builders
     ):
         spectator = FakeSpectator()
         ended = game_builders.game_events(
             game_builders.round_events(1, *_ROUND_ONE),
             reason=EndReason.TARGET_REACHED,
         )
-        run_recorder(spectator, session_frames(ended), profile)
+        # The table answers the closing request, so the session is still live
+        # when it asks for the next table. A source that simply ran dry would
+        # mean the browser is gone, and a hop is not asked of a dead session.
+        closing = snapshot_frame(builders, frame_id="sz", round_index=1,
+                                 rows=[builders.score_row()])
+        run_recorder(spectator, [*session_frames(ended), closing], profile)
         record = records_in(profile)[0]
         assert (record.ended.reason, ("next_table",) in spectator.calls) == (
             EndReason.TARGET_REACHED,

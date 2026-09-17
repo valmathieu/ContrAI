@@ -10,7 +10,8 @@ url = "https://example.invalid/lobby"
 locale = "xx"
 
 # The spectator account. Both values may be indirected through the
-# environment; the verification code almost always should be.
+# environment ("env:CONTRAI_SCRAPER_EMAIL", "env:CONTRAI_SCRAPER_CODE"), which
+# keeps the account out of this file: one profile then serves any account.
 [account]
 email = "watcher@example.invalid"
 verification_code = "env:CONTRAI_SCRAPER_CODE"
@@ -45,6 +46,13 @@ pledge_accept = "#placeholder-pledge-ok"
 tournament_marker = "#placeholder-table-kind"
 tournament_marker_text = "placeholder"
 next_table = "#placeholder-next"
+# Optional. Some tables slide the rails holding their panel buttons off the
+# screen while a game runs; a button left there is in the DOM but out of reach,
+# and clicking it only burns its timeout. This is the site's own control for
+# bringing the rails back, and it is shown only while they are away — so filter
+# it on visibility and it says both whether to click and what. Leave the key
+# out where a table's controls never move.
+rail_show = "#placeholder-rail-in:visible"
 options_button = "#placeholder-options"
 # One row per table option. Inside a row, the id sits on one element and the
 # on/off state on another: options_id_attr is read off options_id_element, and
@@ -137,6 +145,9 @@ side_taken = "done.points"
 side_belote = "done.belotes"
 side_marked_made = "marks.points"
 side_marked_announced = "marks.bid"
+# Belote as the sheet credited it, which is a component of its own: one
+# scoreboard column is the made points, the announced ones and this added up.
+side_marked_belote = "marks.belotes"
 bid_owner = "who"
 bid_suit = "colour"
 bid_value = "value"
@@ -197,6 +208,34 @@ stale_after_s = 180
 health_interval_s = 60
 # How long to wait for a join snapshot after being seated.
 snapshot_timeout_s = 30
+
+# When the scraper may watch. Ranges are local times in `timezone` and may
+# cross midnight ("22:00-02:00"); "00:00-24:00" is always. Outside every range
+# no browser is open and the process checks again every `idle_poll_minutes`.
+# A range that closes mid-game lets that game finish, for at most
+# `max_overrun_minutes`, when `finish_current_game` is on.
+[schedule]
+timezone = "Europe/Paris"
+active = ["08:00-23:30"]
+finish_current_game = true
+max_overrun_minutes = 30
+idle_poll_minutes = 5
+
+# Checked before any traffic reaches the site, and again before every hop:
+# the exit address must not be the home address, must be in the expected
+# country and — where a route table can be asked — the site's route must leave
+# through the tunnel. A failed check seats nothing. Never write the home
+# address here; name the environment variable that holds it.
+[egress]
+home_ip = "env:CONTRAI_HOME_IP"
+expected_country = "FR"
+# Any service answering with the caller's public address and country as JSON.
+probe_url = "https://ipinfo.io/json"
+probe_ip_field = "ip"
+probe_country_field = "country"
+# The tunnel device in the scraper's network namespace. Omit it where there is
+# no `ip` route table to ask, such as a desktop VPN on Windows.
+tunnel_interface = "tun0"
 
 # Where records and raw logs are written. Both roots resolve relative to this
 # file, so a profile moves with its data. Both roots name the same directory:

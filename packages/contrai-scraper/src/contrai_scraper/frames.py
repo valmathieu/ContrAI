@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from .health import HealthLog
 from .profile import WireSection
 from .rawlog import FRAME, read_raw_log
 
@@ -53,6 +54,32 @@ class FrameSource(Protocol):
 
     async def aclose(self) -> None: ...
 
+    @property
+    def pending(self) -> int:
+        """How many frames have already arrived and not yet been taken.
+
+        A backlog is the reader running behind the page, which matters
+        because a hop moves the page in about a second while the gate that
+        asked for it spends seconds reading the DOM: a snapshot with newer
+        ones already queued behind it describes a table the page has since
+        left. Only a live source has one — a stored log is history and is
+        replayed in order.
+        """
+        ...
+
+    @property
+    def elapsed(self) -> float:
+        """The source's own clock, in the timebase :attr:`RawFrame.at` uses.
+
+        It exists so that a reading taken *away* from the socket — a DOM
+        panel — can be filed in the raw log against the frames it happened
+        between. Without it such a line carries no time at all, and the log
+        cannot answer when a panel was read relative to the snapshot it was
+        compared against. That gap is what made the seating lag of
+        2026-09-17 impossible to time offline.
+        """
+        ...
+
 
 class _Sentinel:
     """Marks the end of the queue; distinct from any frame."""
@@ -70,15 +97,21 @@ class PlaywrightFrameSource:
     that is the only description of the table's opening state.
     """
 
-    __slots__ = ("_wire", "_queue", "_started", "_sockets", "_closed")
+    __slots__ = ("_wire", "_queue", "_started", "_sockets", "_closed", "_health")
 
-    def __init__(self, page: Any, wire: WireSection) -> None:
+    def __init__(
+        self, page: Any, wire: WireSection, *, health: HealthLog | None = None
+    ) -> None:
         """Attach to a page.
 
         Args:
             page: A Playwright page, or anything with the same ``on`` surface.
             wire: The profile's wire section, which knows which socket URLs
                 belong to the game.
+            health: The session's log, when the caller keeps one. The source
+                counts through it rather than keeping a tally of its own: a
+                shift opens one source per window, and these counters are the
+                ones documented as never resetting.
         """
 
         self._wire = wire
@@ -86,7 +119,12 @@ class PlaywrightFrameSource:
         self._started = time.perf_counter()
         self._sockets = 0
         self._closed = False
-        page.on("websocket", self._attach)
+        self._health = health
+        # A function, never the bound method: Playwright caches the wrapper it
+        # builds as an attribute of a bound method's instance, and a slotted
+        # instance has nowhere to put it. On a function the cache lands on the
+        # function object — which is also why the lambdas in _attach work.
+        page.on("websocket", lambda socket: self._attach(socket))
 
     def _attach(self, socket: Any) -> None:
         """Index a newly opened socket and listen to it, if it is ours."""
@@ -95,8 +133,21 @@ class PlaywrightFrameSource:
             return
         index = self._sockets
         self._sockets += 1
+        if self._health is not None:
+            # A dropped connection is invisible in the frames themselves — the
+            # mirror carries on — so every open and close is said out loud.
+            self._health.counters.sockets_opened += 1
+            self._health.event("socket_opened", socket=index)
         socket.on("framereceived", lambda payload: self._push(index, RECEIVED, payload))
         socket.on("framesent", lambda payload: self._push(index, SENT, payload))
+        socket.on("close", lambda *_: self._closed_socket(index))
+
+    def _closed_socket(self, index: int) -> None:
+        """Count and log one socket closing. Runs inside Playwright's callback."""
+
+        if self._health is not None:
+            self._health.counters.sockets_closed += 1
+            self._health.event("socket_closed", socket=index)
 
     def _push(self, socket: int, direction: str, payload: str | bytes) -> None:
         """Queue one frame. Runs inside Playwright's callback, so it must not
@@ -115,6 +166,34 @@ class PlaywrightFrameSource:
                 text=text,
             )
         )
+
+    @property
+    def pending(self) -> int:
+        """Frames already queued by the page and not yet taken.
+
+        The reader running behind the page is not a detail here: a hop is
+        answered in a fraction of the time the gate that asked for it
+        spends reading the DOM, so a snapshot with newer ones stacked behind
+        it describes a table that has been left.
+
+        The end marker a closed source leaves in the queue is not a frame
+        and is not counted: a reader that skipped ahead on it would be
+        skipping ahead on nothing.
+        """
+
+        return max(0, self._queue.qsize() - (1 if self._closed else 0))
+
+    @property
+    def elapsed(self) -> float:
+        """Seconds since the source was created — the clock frames are stamped on.
+
+        Read at the moment it is asked for, so a caller that has spent two
+        seconds in the DOM is stamped two seconds on from the frame it last
+        took. That difference is the measurement: it is how far behind the
+        page the reader was.
+        """
+
+        return time.perf_counter() - self._started
 
     def __aiter__(self) -> AsyncIterator[RawFrame]:
         return self
@@ -173,6 +252,30 @@ class RawLogFrameSource:
         )
         self._index = 0
         self._closed = False
+
+    @property
+    def pending(self) -> int:
+        """Always none: a stored log is history, replayed in order.
+
+        Reporting the rest of the file would tell the reader it is behind,
+        and the whole log would be drained as though the page had moved on.
+        """
+
+        return 0
+
+    @property
+    def elapsed(self) -> float:
+        """Where the replay has reached, in the log's own timebase.
+
+        A replay has no wall clock of its own worth reporting — it runs as
+        fast as the pipeline will go — so the honest answer is the stamp of
+        the last frame handed out, and zero before the first. A re-parse
+        therefore files its readings against the same instants the live
+        session did, rather than against the speed of the machine re-reading
+        it.
+        """
+
+        return self._frames[self._index - 1].at if self._index else 0.0
 
     def __aiter__(self) -> AsyncIterator[RawFrame]:
         return self

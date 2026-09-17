@@ -1,0 +1,23 @@
+# The image needs the lock, the workspace manifests and three packages' code.
+# Nothing else enters the build context: an allow-list, then the exclusions
+# that must win even inside an allowed directory (later lines take precedence).
+**
+!.python-version
+!pyproject.toml
+!uv.lock
+!packages/*/pyproject.toml
+!packages/*/README.md
+!packages/contrai-core/src
+!packages/contrai-core/src/**
+!packages/contrai-data/src
+!packages/contrai-data/src/**
+!packages/contrai-scraper/src
+!packages/contrai-scraper/src/**
+**/__pycache__
+**/*.egg-info
+**/profile.toml
+**/*.local.toml
+**/.env
+**/*.env
+**/records
+**/raw

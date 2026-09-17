@@ -451,6 +451,7 @@ dependencies = [
     { name = "contrai-core" },
     { name = "contrai-data" },
     { name = "playwright" },
+    { name = "tzdata" },
 ]
 
 [package.optional-dependencies]
@@ -466,6 +467,7 @@ requires-dist = [
     { name = "playwright", specifier = ">=1.57.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.4" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.0" },
+    { name = "tzdata", specifier = ">=2026.2" },
 ]
 provides-extras = ["test"]
 

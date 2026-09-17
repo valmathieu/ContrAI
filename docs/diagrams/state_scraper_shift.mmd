@@ -1,0 +1,47 @@
+---
+title: contrai-scraper — a shift (Shift.run)
+---
+stateDiagram-v2
+    direction TB
+
+    [*] --> Schedule : contrai-scrape run
+
+    Schedule : <b>schedule gate</b><br/>is_active(now) in [schedule].timezone
+    Idle : <b>idle</b><br/>no browser open<br/>schedule_idle logged once, with the next opening
+    Egress : <b>egress gate</b><br/>exit address is not home · expected country<br/>route through the tunnel device
+    Blocked : <b>egress_blocked</b><br/>nothing sent to the site
+    Session : <b>session</b><br/>prune old raw logs · a fresh raw log<br/>open the browser · log in · enter the variant
+    Watching : <b>Recorder.run</b><br/>seat · gate · watch · write · hop<br/>egress re-checked before every hop<br/>and when a table goes quiet
+    Failed : <b>session_failed</b><br/>a browser error, or frames that ended
+    Handback : <b>exit 3</b><br/>a budget is spent<br/>the container is restarted
+
+    Schedule --> Idle : outside every range
+    Idle --> Schedule : after idle_poll_minutes
+    Schedule --> Egress : inside a range<br/>(schedule_resume after an idle)
+    Egress --> Blocked : a check refuses
+    Blocked --> Schedule : after idle_poll_minutes
+    Blocked --> Handback : 6 refusals in a row
+    Egress --> Session : egress_ok
+    Session --> Watching
+    Session --> Failed : raises
+    Watching --> Failed : raises, or SOURCE_ENDED
+    Failed --> Schedule : after idle_poll_minutes
+    Failed --> Handback : 3 failures in a row
+    Watching --> Schedule : window closed (plus overrun)<br/>or egress blocked mid-session
+    Watching --> [*] : --max-games or --minutes reached
+
+    note right of Watching
+        SIGTERM, in any state, cancels the run:
+        the game in hand is written as interrupted
+        and the process exits 130.
+    end note
+
+    classDef gate fill:#DCD2F0,stroke:#5E4495,stroke-width:2px,color:#2E1F52
+    classDef work fill:#EDE7F6,stroke:#5E4495,stroke-width:1px,color:#2E1F52
+    classDef rest fill:#EEEEEE,stroke:#616161,stroke-width:1px,color:#424242
+    classDef fault fill:#FDECEA,stroke:#B3261E,stroke-width:2px,color:#5F1410
+
+    class Schedule,Egress gate
+    class Session,Watching work
+    class Idle rest
+    class Blocked,Failed,Handback fault

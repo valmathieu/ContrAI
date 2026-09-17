@@ -43,6 +43,8 @@ class Counters:
     score_reads_wire: int = 0
     score_reads_panel: int = 0
     score_reads_failed: int = 0
+    sockets_opened: int = 0
+    sockets_closed: int = 0
 
     def as_dict(self) -> dict[str, int]:
         """Every counter, by name.

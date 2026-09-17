@@ -25,3 +25,7 @@ class WireError(ScraperError, ValueError):
 
 class ParseError(ScraperError, ValueError):
     """An observed game could not be turned into a record."""
+
+
+class ShiftError(ScraperError, RuntimeError):
+    """A shift spent a failure budget; only a fresh process can help."""

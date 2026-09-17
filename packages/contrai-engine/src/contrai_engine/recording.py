@@ -60,6 +60,7 @@ from contrai_data import (
 )
 
 from .model.player.levels import AI_LEVELS
+from .model.round import marked_components
 from .options import TableAids
 
 logger = logging.getLogger(__name__)
@@ -536,7 +537,13 @@ class RecordingView:
                 announcements={side: 0 for side in TeamSide},
                 carried_over={side: 0 for side in TeamSide},
                 marked={
-                    side: SideMark(made=mark.made, announced=mark.announced)
+                    # What the sheet would carry, multiplier included: the
+                    # scorer works in components, a record states the figures.
+                    side: SideMark(
+                        *marked_components(
+                            mark, score.multiplier, round_.rules
+                        )
+                    )
                     for side, mark in score.marks.items()
                 },
                 totals=dict(running_scores),

@@ -33,6 +33,9 @@ The importable package lives under `src/contrai_scraper/`:
 | `parse/` | `translate`, `deal`, `snapshot`, `live`, `session` — wire events → a record. |
 | `browser` | `Spectator` — the only module that touches a page: login, the walk, the hop, the two panels. |
 | `recorder` | `Recorder` — the table loop: seat, gate, watch, write, hop. Imports no Playwright. |
+| `schedule` | `Schedule` — daily ranges in a named timezone; answers "is it open now" and "when does that change". |
+| `egress` | `EgressGate` — exit address, country and route device, checked before the site is touched. |
+| `shift` | `Shift` — the outer loop: schedule gate, egress gate, one browser session and raw log per window, failure budgets. |
 | `health` | `HealthLog` and `Counters` — one JSON line per transition, on stderr. |
 | `cli` | `contrai-scrape`: `run` (the default), `check-profile` and `parse`. |
 
@@ -49,14 +52,20 @@ uv run contrai-scrape parse RAW... --profile profile.toml     # re-parse stored 
 `run` takes `--max-games N` and `--minutes N`, and `--headless` / `--headed` override
 `[browser].headless` — headed with a slow-motion delay makes a run auditable, headless makes it
 unattended. `check-profile` walks the site once and prints one line per check, exiting 1 on any
-failure, so it can gate a shift before it starts. `parse` needs no browser at all: it replays a
+failure, so it can gate a shift before it starts. It checks the egress first and opens no browser
+when it is refused. `parse` needs no browser at all: it replays a
 raw log through the same pipeline a live session uses and writes a `contrai-data` record per
 game, which `contrai verify` then checks.
+
+`run` now runs shifts — no browser outside `[schedule]`, the egress checked before each session,
+exit code 3 when a failure budget is spent; see the [scraper docs](../../docs/scraper/index.md).
 
 ## Status
 
 Both halves are in place: the profile, the raw log, the wire parser, the profile-driven browser
-walk, the table loop and the health log. What is left is multi-table orchestration, the raw-log
-retention sweep, and pseudonymisation — records currently carry raw ids, names and account
-fields, which makes them personal data and local-only. See the
+walk, the table loop, the health log, and shifts with their schedule and egress gates. What is left
+is multi-table orchestration and pseudonymisation — records currently carry raw ids, names and
+account fields, which makes them personal data and local-only. See the
 [scraper docs](../../docs/scraper/index.md).
+
+Deployment: `deploy/` (Docker Compose, VPN sidecar), see `deploy/install.md`.

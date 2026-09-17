@@ -30,6 +30,17 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) `Recorder` — seats at a tournament table, gates it, watches a whole game and writes one record per game. See [scraper docs](docs/scraper/index.md).
 - (scraper) `contrai-scrape run --profile P [--headless] [--max-games N] [--minutes N]` — watch tables unattended, one record per game. See [scraper docs](docs/scraper/index.md).
 - (scraper) `contrai-scrape check-profile P` — validate a profile against the live site before a shift starts.
+- (scraper) The health log counts and names every socket open and close, so a dropped connection shows in the heartbeat.
+- (scraper) Profile `[schedule]` — timezone-aware daily windows, midnight-crossing allowed, with an overrun cap for the game in hand. See [scraper docs](docs/scraper/index.md).
+- (scraper) Profile `[egress]` — exit address not home, expected country, route through the tunnel; `check-profile` checks it before opening a browser. See [scraper docs](docs/scraper/index.md).
+- (scraper) `[account].email` may read `env:NAME` like the verification code, so one profile can serve any account.
+- (scraper) `prune_raw_logs(root, retention_days)` — delete raw logs whose last write is older than the retention; `0` keeps them all.
+- (scraper) `RecorderLimits.seat_until_s`, `Recorder(egress=…)` and `SessionSummary.stop_reason` — stop seating at a deadline; a refused egress stops the hop and writes a stalled game `interrupted`.
+- (scraper) `contrai-scrape run` runs shifts — no browser outside `[schedule]`, egress checked per session, a raw log per session, exit 3 when a failure budget is spent. See [scraper docs](docs/scraper/index.md).
+- (scraper) `deploy/` — Docker Compose deployment where the scraper shares a WireGuard VPN container's network, so its only route is the tunnel. See [install guide](deploy/install.md).
+- (scraper) `[browser].screenshot_on_error` — a browser failure saves a PNG and the DOM beside the session's raw log. See [scraper docs](docs/scraper/index.md).
+- (scraper) `FrameSource.elapsed` — raw-log panel reads now carry `at`, so a DOM reading can be timed against the frames around it. See [scraper docs](docs/scraper/index.md).
+- (scraper) `check-profile` saves the page when a live check fails, under `<raw_root>/raw/`, and the failed line says where. See [scraper docs](docs/scraper/index.md).
 
 ### Changed
 
@@ -46,6 +57,19 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 - (core) `Auction` judges double and redouble legality by seat, so a teamless seated player may double and a sealed `Position` auction lists its legal bids.
 - (core) `PlayState` reads partners and opponents off the seat, so card legality no longer depends on a player's `Team`.
+- (scraper) `contrai-scrape run` stopped by SIGTERM — a service or container stop — now writes the game in hand as `interrupted` instead of losing it.
+- (scraper) `contrai-scrape check-profile` reports a missing selector as a `FAIL` line naming its check, and reports the pledge the menu walk actually met.
+- (scraper) `contrai-scrape run` and `check-profile` no longer crash opening a real browser: the page's socket handler now survives Playwright's handler wrapping.
+- (engine) `contrai verify` no longer calls a round `suspect` when the record never states which side took the last trick; that check reads `partial`.
+- (scraper) A panel control covered by a dialog no longer ends the session: every attempt reveals the rails again first. See [scraper docs](docs/scraper/index.md).
+- (scraper) A table whose snapshot this profile cannot read is now hopped away from, not fatal; `check-profile` reports it as a failed line.
+- (scraper) A round whose declaring side took all eight tricks is recorded as an unannounced slam, not `none`.
+- (scraper) The seating gate compares the round both readings share, so a panel that scored a round mid-check no longer refuses a good table.
+- (scraper) `contrai-scrape parse` writes one record per table visit, so re-parsing a session's log no longer merges the tables it hopped between. See [scraper docs](docs/scraper/index.md).
+- (scraper) The recorder gates the table the page is on: a snapshot naming the table just left is refused as `stale_snapshot`. See [scraper docs](docs/scraper/index.md).
+- (scraper) The seating gate no longer refuses a table whose sides are right: a scoreboard column includes the marked belote, read through the new `[wire.fields].side_marked_belote`.
+- (engine) A record's `marked` now holds the figures a score sheet carries, multiplier included, and `contrai verify` compares them so — a doubled round no longer reads `suspect`.
+- (scraper) The table hop reveals the rails first, so a session that watches a table to its end no longer dies on the hop control.
 
 ## [0.4.0] - 2026-09-01
 

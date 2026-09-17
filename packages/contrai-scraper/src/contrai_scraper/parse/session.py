@@ -99,6 +99,78 @@ class SessionResult:
     skipped_rounds: tuple[int, ...]
 
 
+def split_visits(
+    events: Iterable[WireEvent], profile: Profile
+) -> tuple[tuple[WireEvent, ...], ...]:
+    """One group of events per table visit, in arrival order.
+
+    A session's raw log holds every table the session looked at — two to
+    seven of them in the logs measured on 2026-09-16 — while
+    :func:`parse_session` assembles exactly one game out of whatever it is
+    handed. Giving it a whole log therefore merges tables: rounds whose
+    plays belong to another table are dropped as undealable, the record
+    takes whichever game id came first, and every snapshot's seat map is
+    folded into one. The live recorder never meets this, because it buffers
+    one table at a time and resets at every seat. This is that same cut,
+    made afterwards, which is what lets a parser fix reach games already
+    watched.
+
+    A join snapshot naming a table other than the one in progress opens a
+    visit; a snapshot naming the same table again — the mirrored socket's
+    copy, or a boundary re-read — stays in it. Everything else belongs to
+    the visit in progress, so a game-over flag lands with the game it ended.
+    Frames arriving before the first snapshot have no table to belong to and
+    are dropped.
+
+    Args:
+        events: The session's wire events, in **arrival** order. Not
+            ``order_events``' output: that files unclocked events after
+            clocked ones, which would collect every snapshot at the end and
+            lose the very sequence this reads.
+        profile: The loaded profile, for the join-snapshot name and the
+            table-id path.
+
+    Returns:
+        One tuple of events per visit, in the order the visits happened.
+    """
+
+    translator = Translator(profile)
+    join = profile.wire.events.join_snapshot
+    visits: list[list[WireEvent]] = []
+    current: str | None = None
+    for event in events:
+        if event.kind == join:
+            # Read through the profile's own path rather than the whole
+            # snapshot: a table this profile cannot parse still has to be
+            # separated from its neighbours, not raised over.
+            table = translator.field(event.data, "table_id")
+            if not visits or table != current:
+                visits.append([])
+                current = table
+        elif not visits:
+            continue
+        visits[-1].append(event)
+
+    # A visit is where a table's frames *arrive*, which is not quite where
+    # they belong: a table's last events can still be in flight when the hop
+    # lands, and during a fast sweep the rendered table runs a hop ahead of
+    # the stream. An in-game event says which game it is part of, so it is
+    # filed by that rather than by when it turned up — otherwise one game's
+    # rounds appear inside another's visit, colliding with its round numbers
+    # and costing both. Ordering is restored per visit by ``order_events``.
+    home: dict[str, int] = {}
+    for index, visit in enumerate(visits):
+        for event in visit:
+            if event.key is not None:
+                home.setdefault(event.key.game, index)
+    filed: list[list[WireEvent]] = [[] for _ in visits]
+    for index, visit in enumerate(visits):
+        for event in visit:
+            target = index if event.key is None else home[event.key.game]
+            filed[target].append(event)
+    return tuple(tuple(visit) for visit in filed)
+
+
 def parse_session(
     events: Iterable[WireEvent],
     profile: Profile,
@@ -360,7 +432,7 @@ def _round(
         *last,
     ]
     events += _belotes(number, hands, contract.suit, score, ts)
-    scored = _round_scored(number, contract, bids, score, ts)
+    scored = _round_scored(number, contract, bids, score, [*plays, *last], ts)
     if scored is not None:
         events.append(scored)
     return events
@@ -468,6 +540,7 @@ def _round_scored(
     contract: ContractBid,
     bids: Sequence[BidMade],
     score: tuple[ScoreRow, Mapping[TeamSide, int] | None] | None,
+    plays: Sequence[CardPlayed],
     ts: str,
 ) -> RoundScored | None:
     """One round's score, or ``None`` when the wire never scored it."""
@@ -500,24 +573,85 @@ def _round_scored(
         # The last trick's bonus is folded into the row's card points rather
         # than stated, so which side took it is not recoverable.
         last_trick=None,
-        slam=_slam(contract),
+        slam=_slam(contract, row.contract.multiplier, plays),
         source=ScoreSource.SNAPSHOT,
         ts=ts,
     )
 
 
-def _slam(contract: ContractBid) -> SlamOutcome:
-    """Whether the contract itself was a slam.
+def _slam(
+    contract: ContractBid, multiplier: int, plays: Sequence[CardPlayed]
+) -> SlamOutcome:
+    """Which Slam, if any, the round was.
 
-    An *unannounced* sweep is not decided here: it is a fact about the tricks,
-    which the record's own projection re-derives.
+    A bid Slam outranks a swept one, as the engine's own recorder has it: the
+    declarer announced it, so that is what the round *was*, whatever the sweep
+    looked like afterwards.
+
+    An unannounced sweep is a fact about the tricks rather than about the bid,
+    and it is read here rather than left to the record's projection.
+    ``SlamOutcome.UNANNOUNCED`` means "all eight tricks taken without having
+    called it", so writing ``NONE`` for a swept round states something the
+    round's own plays contradict — and the verifier, which replays them, says
+    so. The engine recognises the sweep only off a numeric contract and only
+    un-doubled (§7.2), and that is mirrored here rather than re-decided.
+
+    Args:
+        contract: The auction's winning bid.
+        multiplier: What the score row says the round was multiplied by.
+        plays: Every play of the round, the rebuilt last trick included.
+
+    Returns:
+        The matching :class:`~contrai_data.SlamOutcome`.
     """
 
     if contract.value is SlamLevel.SLAM:
         return SlamOutcome.SLAM
     if contract.value is SlamLevel.SOLO_SLAM:
         return SlamOutcome.SOLO_SLAM
+    if multiplier == 1 and _swept_by(plays, contract.suit) is (
+        contract.player.team_side
+    ):
+        return SlamOutcome.UNANNOUNCED
     return SlamOutcome.NONE
+
+
+def _swept_by(
+    plays: Sequence[CardPlayed], trump: ContractSuit
+) -> TeamSide | None:
+    """Which side took all eight tricks, or ``None`` when neither did.
+
+    The winner rule is core's — the same :meth:`~contrai_core.TrickRecord.winner`
+    that :func:`_final_trick` leads with and that the record's projection
+    re-derives — so the three readings of one round cannot disagree.
+
+    Args:
+        plays: Every play of the round, the rebuilt last trick included.
+        trump: The contract's trump.
+
+    Returns:
+        The sweeping side, or ``None`` when the round was shared or when the
+        plays do not make eight whole tricks.
+    """
+
+    by_trick: dict[int, list[CardPlayed]] = {}
+    for play in plays:
+        by_trick.setdefault(play.trick, []).append(play)
+    if len(by_trick) != TRICKS_PER_ROUND:
+        return None
+    swept: TeamSide | None = None
+    for _, trick in sorted(by_trick.items()):
+        if len(trick) != len(Position):
+            return None
+        side = (
+            TrickRecord(ObservedPlay(play.position, play.card) for play in trick)
+            .winner(trump)
+            .position.team_side
+        )
+        if swept is not None and side is not swept:
+            return None
+        swept = side
+    return swept
 
 
 def _game_ended(

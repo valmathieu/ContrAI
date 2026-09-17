@@ -8,6 +8,7 @@ dependencies = [
     "contrai-core",
     "contrai-data",
     "playwright>=1.57.0",
+    "tzdata>=2026.2",
 ]
 
 [project.optional-dependencies]

@@ -152,6 +152,38 @@ def marked_total(mark: Mark, multiplier: int, rules: RuleConfig) -> int:
     return mark.made * multiplier
 
 
+def marked_components(
+    mark: Mark, multiplier: int, rules: RuleConfig
+) -> tuple[int, int]:
+    """One side's two components as a score sheet writes them down.
+
+    A :class:`Mark` carries the §7.2 components *before* the multiplier,
+    which is what the scorer works in. A score sheet — and therefore a
+    record of one — carries what was actually written, with a doubled
+    round's figures already doubled.
+
+    Where the multiplier bites is the table's own convention, so each
+    component is reduced by :func:`marked_total` on its own. That
+    reduction is linear in the components, so splitting it is exact:
+    ``marked_total(Mark(a, 0)) + marked_total(Mark(0, b))`` is always
+    ``marked_total(Mark(a, b))``.
+
+    Args:
+        mark: The side's components, from :func:`contract_components`.
+        multiplier: 1, 2 or 4.
+        rules: The table ruleset.
+
+    Returns:
+        ``(made, announced)`` as the sheet would carry them, before
+        belote and before rounding.
+    """
+
+    return (
+        marked_total(Mark(mark.made, 0), multiplier, rules),
+        marked_total(Mark(0, mark.announced), multiplier, rules),
+    )
+
+
 def round_mark(value: int, rounding: Rounding) -> int:
     """Round one side's mark to the table's step (§7.4).
 

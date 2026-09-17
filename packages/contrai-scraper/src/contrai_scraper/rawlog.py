@@ -122,6 +122,49 @@ def new_session_id(
     return f"{stamp}-{entropy or secrets.token_hex(3)}"
 
 
+#: Seconds in a day, for retention arithmetic.
+_DAY_S = 86_400
+
+
+def prune_raw_logs(
+    root: Path | str, retention_days: int, *, now: datetime | None = None
+) -> tuple[Path, ...]:
+    """Delete raw logs last written more than ``retention_days`` ago.
+
+    Records are kept forever; raw logs are the re-parse source for recent
+    sessions and grow twice as fast, so they age out. Age is the last write,
+    not the session's start: a session still being written is never old.
+
+    Args:
+        root: The profile's raw root.
+        retention_days: Days a log is kept after its last write; ``0`` keeps
+            every log.
+        now: The instant to judge against; defaults to now, in UTC.
+
+    Returns:
+        The deleted files, in name order.
+    """
+
+    directory = raw_dir(root)
+    if retention_days <= 0 or not directory.is_dir():
+        return ()
+    cutoff = (now or datetime.now(UTC)).timestamp() - retention_days * _DAY_S
+    removed: list[Path] = []
+    for path in sorted(directory.glob("*.jsonl")):
+        # Two processes may prune one directory — a second container, or a
+        # laptop run pointed at the same tree — so a log can vanish between
+        # the listing and the delete. Gone is what pruning wanted: skip it
+        # rather than fail the session that happened to lose the race.
+        try:
+            if path.stat().st_mtime >= cutoff:
+                continue
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        removed.append(path)
+    return tuple(removed)
+
+
 class RawLogWriter:
     """Appends lines to one session's raw log, flushing each.
 

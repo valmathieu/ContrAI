@@ -416,10 +416,13 @@ class _FakeRound:
     ``main`` only ever passes the round through to the view, but a
     :class:`RecordingView` wrapped around that view reads a score line
     off it — so the double carries the contractless one an all-pass
-    publishes, which is the simplest score a record will accept.
+    publishes, which is the simplest score a record will accept. It also
+    carries the table ruleset, which the recorder reads to write each
+    mark as the sheet would carry it; a real ``Round`` always has one.
     """
 
     contract = None
+    rules = RuleConfig()
 
     def __init__(self, number: int) -> None:
         self.round_number = number

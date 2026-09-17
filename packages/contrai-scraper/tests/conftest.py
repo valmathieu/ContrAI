@@ -116,6 +116,7 @@ pledge_accept = "#pledge-ok"
 tournament_marker = "#table-kind"
 tournament_marker_text = "cup"
 next_table = "#next"
+rail_show = "#rail-in:visible"
 options_button = "#options"
 options_row = ".option-row"
 options_id_element = ".option-name"
@@ -190,6 +191,7 @@ side_taken = "done.points"
 side_belote = "done.belotes"
 side_marked_made = "marks.points"
 side_marked_announced = "marks.bid"
+side_marked_belote = "marks.belotes"
 bid_owner = "who"
 bid_suit = "colour"
 bid_value = "level"
@@ -228,6 +230,20 @@ hop_after_rows = 8
 stale_after_s = 180
 health_interval_s = 60
 snapshot_timeout_s = 30
+
+[schedule]
+timezone = "Europe/Paris"
+active = ["00:00-24:00"]
+finish_current_game = true
+max_overrun_minutes = 30
+idle_poll_minutes = 5
+
+[egress]
+home_ip = "198.51.100.1"
+expected_country = "XX"
+probe_url = "https://probe.invalid/ip.json"
+probe_ip_field = "addr"
+probe_country_field = "land"
 
 [output]
 # Both roots name the same directory: game_path appends games/ and raw_path
@@ -339,11 +355,15 @@ def snapshot_payload(*, table_id="t1", round_index=2, rows=(), totals=(40, 60)) 
 
 
 def score_row(*, made=True, value=80, suit="wood", multiplier=1, declarer="X",
-              taken=(90, 72), belote=(0, 0), marked=((80, 0), (0, 0))) -> dict:
+              taken=(90, 72), belote=(0, 0), marked=((80, 0), (0, 0)),
+              marked_belote=(0, 0)) -> dict:
     """One row of the per-round breakdown, keyed by team letter.
 
     The row names the declaring side and the side that won the round; the
     winner is the declarer when ``made`` and the other letter otherwise.
+    ``belote`` is what each side *held*; ``marked_belote`` is what the sheet
+    credited it — a component of its own, beside the made and announced
+    points.
     """
 
     defence = "Y" if declarer == "X" else "X"
@@ -352,9 +372,11 @@ def score_row(*, made=True, value=80, suit="wood", multiplier=1, declarer="X",
                  "suit": suit, "coeff": multiplier,
                  "taker": declarer, "winner": declarer if made else defence},
         "X": {"done": {"points": taken[0], "belotes": belote[0]},
-              "marks": {"points": marked[0][0], "bid": marked[0][1]}},
+              "marks": {"points": marked[0][0], "bid": marked[0][1],
+                        "belotes": marked_belote[0]}},
         "Y": {"done": {"points": taken[1], "belotes": belote[1]},
-              "marks": {"points": marked[1][0], "bid": marked[1][1]}},
+              "marks": {"points": marked[1][0], "bid": marked[1][1],
+                        "belotes": marked_belote[1]}},
     }
 
 
@@ -684,17 +706,18 @@ def source_game():
     )
 
 
-def _snapshot_of(seen_rounds, totals, round_index):
+def _snapshot_of(seen_rounds, totals, round_index, table="t1"):
     """A join snapshot carrying the rounds scored so far."""
 
-    payload = snapshot_payload(round_index=round_index, rows=seen_rounds,
-                               totals=totals)
+    payload = snapshot_payload(table_id=table, round_index=round_index,
+                               rows=seen_rounds, totals=totals)
     if round_index is None:
         del payload["state"]["round.g1"]
     return payload
 
 
-def synthesize_frames(events, *, game="g1", keepalive_every=5, sockets=(0, 1), silent=frozenset()):
+def synthesize_frames(events, *, game="g1", table="t1", frame_prefix="",
+                      keepalive_every=5, sockets=(0, 1), silent=frozenset()):
     """The raw frame texts a session would have produced for a record.
 
     Everything the parser has to undo is done here: the deal goes out as a
@@ -731,7 +754,8 @@ def synthesize_frames(events, *, game="g1", keepalive_every=5, sockets=(0, 1), s
     rows: list = []
     # The session opens on a snapshot that knows of no completed round: this
     # game is watched from its first deal.
-    texts.append(envelope("payload", "joinTable", _snapshot_of((), (0, 0), None),
+    texts.append(envelope("payload", "joinTable",
+                          _snapshot_of((), (0, 0), None, table),
                           frame_id="s0"))
 
     for number in sorted(by_round):
@@ -767,7 +791,7 @@ def synthesize_frames(events, *, game="g1", keepalive_every=5, sockets=(0, 1), s
                         _snapshot_of(tuple(rows),
                                      (event.totals[TeamSide.NS],
                                       event.totals[TeamSide.EW]),
-                                     number),
+                                     number, table),
                         frame_id=f"s{number}"))
 
     if ended is not None:
@@ -779,6 +803,13 @@ def synthesize_frames(events, *, game="g1", keepalive_every=5, sockets=(0, 1), s
         texts.append(envelope("payload", "updateTable", {flag: 1},
                               frame_id="end"))
 
+    if frame_prefix:
+        # A frame is de-duplicated on its own id, and a real table's ids are
+        # unique across a session. Two halves synthesized from one record
+        # would otherwise collide frame for frame, and the second would
+        # vanish into the de-duplicator rather than reaching the parser.
+        texts = [_prefixed_id(text, frame_prefix) for text in texts]
+
     paired: list[tuple[str, int]] = []
     for index, text in enumerate(texts):
         if keepalive_every and index and index % keepalive_every == 0:
@@ -786,6 +817,14 @@ def synthesize_frames(events, *, game="g1", keepalive_every=5, sockets=(0, 1), s
         for socket in sockets:
             paired.append((text, socket))
     return paired
+
+
+def _prefixed_id(text, prefix):
+    """The same frame under a distinct id."""
+
+    frame = json.loads(text)
+    frame["id"] = f"{prefix}{frame['id']}"
+    return json.dumps(frame)
 
 
 def _index_in_trick(round_events_, played):
@@ -928,6 +967,32 @@ def raw_log_path(tmp_path, source_game):
     path = raw_path(tmp_path / "corpus", "session-1")
     with RawLogWriter(path) as log:
         for index, (text, socket) in enumerate(synthesize_frames(source_game)):
+            log.write_frame(
+                RawFrame(socket=socket, direction="recv", at=index / 10, text=text)
+            )
+    return path
+
+
+@pytest.fixture
+def two_table_raw_log_path(tmp_path, source_game):
+    """One session's log holding two tables, the way every real one does.
+
+    A session hops, so its log carries every table it looked at. The two
+    halves name different tables and different games, which is exactly what
+    a re-parse has to cut apart before it parses anything.
+
+    Returns:
+        The log file.
+    """
+
+    from contrai_scraper import RawFrame, RawLogWriter, raw_path
+
+    first = synthesize_frames(source_game, game="g1")
+    second = synthesize_frames(source_game, game="g2", table="t2",
+                               frame_prefix="second-")
+    path = raw_path(tmp_path / "corpus", "session-2")
+    with RawLogWriter(path) as log:
+        for index, (text, socket) in enumerate([*first, *second]):
             log.write_frame(
                 RawFrame(socket=socket, direction="recv", at=index / 10, text=text)
             )

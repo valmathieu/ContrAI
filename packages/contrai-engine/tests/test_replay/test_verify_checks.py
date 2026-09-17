@@ -24,6 +24,7 @@ from contrai_core import (
     PassBid,
     Position,
     Rank,
+    RuleConfig,
     Suit,
     TeamSide,
 )
@@ -104,11 +105,15 @@ class _State:
 class _Round:
     """The engine round the end-of-round checks read."""
 
-    def __init__(self, auction=None, winners=None, score=None, contract=None):
+    def __init__(self, auction=None, winners=None, score=None, contract=None,
+                 rules=None):
         self.auction = auction
         self.play_state = None if winners is None else _State(winners)
         self.round_score = score
         self.contract = contract
+        # A real round always has one; the catalogue defaults stand in here,
+        # as they do for a round built without an explicit ruleset.
+        self.rules = RuleConfig() if rules is None else rules
 
 
 class _Contract:
@@ -552,12 +557,14 @@ class TestCheckBelote:
 
 class TestCheckScore:
     @staticmethod
-    def _run(recorded, *, score=None, contract=None):
+    def _run(recorded, *, score=None, contract=None, rules=None):
         check = _RoundCheck(_Record(score=recorded))
         _check_score(
             check,
             _Round(
-                score=_score() if score is None else score, contract=contract
+                score=_score() if score is None else score,
+                contract=contract,
+                rules=rules,
             ),
         )
         return check
@@ -668,6 +675,54 @@ class TestCheckScore:
 
         assert "marked points differ" in _details(check)
 
+    def test_marks_are_compared_after_the_double_multiplier(self):
+        # A record holds what the sheet says, which is already doubled; the
+        # engine's Mark carries the components before the multiplier. Compared
+        # raw, every doubled round in an observed record came back suspect.
+        check = self._run(
+            _Scored(
+                declarer=None,
+                marked={
+                    TeamSide.NS: SideMark(made=100, announced=160),
+                    TeamSide.EW: SideMark(made=62, announced=0),
+                },
+            ),
+            score=_score(multiplier=2),
+        )
+
+        assert check.mismatches == []
+
+    def test_a_table_doubling_the_whole_mark_multiplies_both_components(self):
+        # Where the multiplier bites is the table's own convention: the
+        # tournament ruleset doubles the sum, not the announced part alone.
+        check = self._run(
+            _Scored(
+                declarer=None,
+                marked={
+                    TeamSide.NS: SideMark(made=200, announced=160),
+                    TeamSide.EW: SideMark(made=124, announced=0),
+                },
+            ),
+            score=_score(multiplier=2),
+            rules=RuleConfig.tournament(),
+        )
+
+        assert check.mismatches == []
+
+    def test_marks_that_still_disagree_once_multiplied_are_a_fault(self):
+        check = self._run(
+            _Scored(
+                declarer=None,
+                marked={
+                    TeamSide.NS: SideMark(made=100, announced=80),
+                    TeamSide.EW: SideMark(made=62, announced=0),
+                },
+            ),
+            score=_score(multiplier=2),
+        )
+
+        assert "marked points differ" in _details(check)
+
     def test_different_card_points_are_a_fault(self):
         check = self._run(
             _Scored(declarer=None, taken={TeamSide.NS: 99, TeamSide.EW: 63})
@@ -686,6 +741,25 @@ class TestCheckScore:
         check = self._run(_Scored(declarer=None, last_trick=TeamSide.EW))
 
         assert "last trick went to another side" in _details(check)
+
+    def test_a_last_trick_the_record_never_states_is_unchecked(self):
+        # An observed source may name no side at all: a table that folds the
+        # ten-point bonus into the row's card points states the points and
+        # nothing else. Those points are compared above, so the bonus is still
+        # checked — but a claim never made cannot disagree with the replay.
+        check = self._run(_Scored(declarer=None, last_trick=None))
+
+        assert check.mismatches == []
+        assert check.unchecked == ["score"]
+
+    def test_two_silences_about_the_last_trick_agree(self):
+        # A round whose tricks were never played has no last trick on either
+        # side, which is agreement rather than something left unchecked.
+        check = self._run(
+            _Scored(declarer=None, last_trick=None), score=_score(last_trick=None)
+        )
+
+        assert (check.mismatches, check.unchecked) == ([], [])
 
     def test_every_disagreeing_field_is_reported(self):
         # The score check does not stop at the first fault: a reader

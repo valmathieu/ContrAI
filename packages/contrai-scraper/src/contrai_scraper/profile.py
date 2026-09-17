@@ -15,6 +15,7 @@ rather than at every lookup.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import tomllib
@@ -26,6 +27,7 @@ from typing import Any
 from contrai_core import PRESETS, Position, Rank, Suit
 
 from .exceptions import ProfileError
+from .schedule import Schedule, parse_range, timezone_named
 
 #: A UI step is either one selector or a list of candidates tried in order.
 Selector = str | tuple[str, ...]
@@ -109,6 +111,7 @@ FIELD_NAMES: frozenset[str] = frozenset({
     "side_belote",
     "side_marked_made",
     "side_marked_announced",
+    "side_marked_belote",
     "bid_owner",
     "bid_suit",
     "bid_value",
@@ -168,6 +171,15 @@ class SelectorSection:
     tournament_marker: Selector
     tournament_marker_text: str
     next_table: Selector
+    rail_show: Selector | None
+    """Optional: the control that brings the table's panel rails back.
+
+    A table may slide the rails carrying its panel buttons off the screen
+    while a game runs. This control puts them back, and the site shows it
+    only while they are away — so a selector filtered on visibility answers
+    both "are they away" and "what to click". ``None`` where nothing moves.
+    """
+
     options_button: Selector
     options_row: Selector
     options_id_element: str
@@ -272,6 +284,37 @@ class RecorderSection:
 
 
 @dataclass(frozen=True, slots=True)
+class EgressSection:
+    """The gate every check runs against before any traffic reaches the site."""
+
+    home_ip: str
+    """The address that must never be the exit. May be indirected."""
+
+    expected_country: str
+    """Two letters, compared case-insensitively."""
+
+    probe_url: str
+    """A service answering with the caller's public address and country."""
+
+    probe_ip_field: str
+    probe_country_field: str
+    tunnel_interface: str | None
+    """The device the site's route must leave through, where one can be asked."""
+
+    def __post_init__(self) -> None:
+        try:
+            ipaddress.ip_address(self.home_ip)
+        except ValueError:
+            # The value is never echoed: it may well be a real address, and a
+            # refusal message is the one place it must not appear.
+            raise ProfileError("[egress].home_ip is not an IP address") from None
+        if len(self.expected_country) != 2 or not self.expected_country.isalpha():
+            raise ProfileError(
+                "[egress].expected_country must be a two-letter country code"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class OutputSection:
     """Where records and raw logs are written, and for how long they are kept."""
 
@@ -298,6 +341,8 @@ class Profile:
     wire: WireSection
     rules: RulesSection
     recorder: RecorderSection
+    schedule: Schedule
+    egress: EgressSection
     output: OutputSection
     privacy: PrivacySection
 
@@ -396,6 +441,13 @@ class _Table:
         if key not in self._data:
             return None
         return self.string(key)
+
+    def optional_selector(self, key: str) -> Selector | None:
+        """Read a selector key that may be absent."""
+
+        if key not in self._data:
+            return None
+        return self.selector(key)
 
     def booleans(self) -> Mapping[str, bool]:
         """Consume the whole table as site-chosen names bound to booleans.
@@ -533,10 +585,10 @@ def _site(table: _Table) -> SiteSection:
 
 
 def _account(table: _Table) -> AccountSection:
-    """Read ``[account]``, resolving the verification code's indirection."""
+    """Read ``[account]``, resolving both values' indirection."""
 
     section = AccountSection(
-        email=table.string("email"),
+        email=_secret("[account].email", table.string("email")),
         verification_code=_secret(
             "[account].verification_code", table.string("verification_code")
         ),
@@ -580,6 +632,7 @@ def _selectors(table: _Table) -> SelectorSection:
         tournament_marker=table.selector("tournament_marker"),
         tournament_marker_text=table.string("tournament_marker_text"),
         next_table=table.selector("next_table"),
+        rail_show=table.optional_selector("rail_show"),
         options_button=table.selector("options_button"),
         options_row=table.selector("options_row"),
         options_id_element=table.string("options_id_element"),
@@ -683,6 +736,35 @@ def _recorder(table: _Table) -> RecorderSection:
     return section
 
 
+def _schedule(table: _Table) -> Schedule:
+    """Read ``[schedule]``."""
+
+    section = Schedule(
+        timezone=timezone_named(table.string("timezone")),
+        active=tuple(parse_range(text) for text in table.strings("active")),
+        finish_current_game=table.boolean("finish_current_game"),
+        max_overrun_minutes=table.integer("max_overrun_minutes"),
+        idle_poll_minutes=table.integer("idle_poll_minutes"),
+    )
+    table.done()
+    return section
+
+
+def _egress(table: _Table) -> EgressSection:
+    """Read ``[egress]``, resolving the home address's indirection."""
+
+    section = EgressSection(
+        home_ip=_secret("[egress].home_ip", table.string("home_ip")),
+        expected_country=table.string("expected_country"),
+        probe_url=table.string("probe_url"),
+        probe_ip_field=table.string("probe_ip_field"),
+        probe_country_field=table.string("probe_country_field"),
+        tunnel_interface=table.optional_string("tunnel_interface"),
+    )
+    table.done()
+    return section
+
+
 def _output(table: _Table, base: Path) -> OutputSection:
     """Read ``[output]``, resolving both roots against the profile's directory.
 
@@ -692,10 +774,13 @@ def _output(table: _Table, base: Path) -> OutputSection:
             moved with the data it points at.
     """
 
+    retention = table.integer("raw_retention_days")
+    if retention < 0:
+        raise ProfileError("[output].raw_retention_days may not be negative")
     section = OutputSection(
         root=(base / table.string("root")).resolve(),
         raw_root=(base / table.string("raw_root")).resolve(),
-        raw_retention_days=table.integer("raw_retention_days"),
+        raw_retention_days=retention,
     )
     table.done()
     return section
@@ -744,6 +829,8 @@ def load_profile(path: Path | str) -> Profile:
         wire=_wire(root.section("wire")),
         rules=_rules(root.section("rules")),
         recorder=_recorder(root.section("recorder")),
+        schedule=_schedule(root.section("schedule")),
+        egress=_egress(root.section("egress")),
         output=_output(root.section("output"), path.parent),
         privacy=_privacy(root.section("privacy")),
     )

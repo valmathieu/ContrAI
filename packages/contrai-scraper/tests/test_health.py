@@ -37,6 +37,17 @@ class TestLines:
     def test_every_counter_starts_at_zero(self):
         assert set(HealthLog(write=lambda _: None).counters.as_dict().values()) == {0}
 
+    def test_a_heartbeat_carries_the_socket_counters(self):
+        # A dropped connection is invisible in the frames themselves — the
+        # mirror carries on — so the beat is where a reconnect shows up.
+        lines: list[str] = []
+        log = HealthLog(write=lines.append, clock=lambda: AT)
+        log.counters.sockets_opened = 3
+        log.counters.sockets_closed = 2
+        log.heartbeat()
+        payload = json.loads(lines[0])
+        assert (payload["sockets_opened"], payload["sockets_closed"]) == (3, 2)
+
 
 class TestCadence:
     def test_a_heartbeat_is_not_due_before_the_interval(self):

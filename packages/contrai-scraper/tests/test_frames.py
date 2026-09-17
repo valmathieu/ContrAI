@@ -1,8 +1,24 @@
-"""Pins the frame source: socket indexing, queueing, close."""
+"""Pins the frame source: socket indexing, queueing, close, socket counting."""
 
 import asyncio
+import json
 
-from contrai_scraper import PlaywrightFrameSource
+from playwright._impl._async_base import mapping
+
+from contrai_scraper import HealthLog, PlaywrightFrameSource
+
+
+def playwright_wraps(handler):
+    """Wraps a handler exactly as Playwright's own ``on`` does.
+
+    Playwright caches the wrapper it builds as an attribute of the handler's
+    owner — of the *instance*, for a bound method — so registering a method of
+    a slotted class fails. A fake that only stored the handler hid that until
+    the first live run. The mapping is Playwright's private one: an upgrade
+    that moves it fails here, loudly, rather than hiding the trap again.
+    """
+
+    return mapping.wrap_handler(handler)
 
 
 class FakeSocket:
@@ -11,7 +27,7 @@ class FakeSocket:
         self._handlers: dict[str, list] = {}
 
     def on(self, name: str, handler) -> None:
-        self._handlers.setdefault(name, []).append(handler)
+        self._handlers.setdefault(name, []).append(playwright_wraps(handler))
 
     def emit(self, name: str, payload) -> None:
         for handler in self._handlers.get(name, []):
@@ -23,7 +39,7 @@ class FakePage:
         self._handlers: dict[str, list] = {}
 
     def on(self, name: str, handler) -> None:
-        self._handlers.setdefault(name, []).append(handler)
+        self._handlers.setdefault(name, []).append(playwright_wraps(handler))
 
     def open_socket(self, url: str) -> FakeSocket:
         socket = FakeSocket(url)
@@ -117,3 +133,101 @@ class TestPlaywrightFrameSource:
             return [f.text async for f in source]
 
         assert drain(scenario) == ["first"]
+
+
+class TestBacklog:
+    def test_pending_counts_what_the_page_has_queued(self, profile):
+        # The reader running behind the page is not a detail: a hop is
+        # answered in a fraction of the time the gate that asked for it
+        # spends reading the DOM, so a snapshot with newer ones stacked
+        # behind it describes a table already left.
+        async def scenario():
+            page = FakePage()
+            source = PlaywrightFrameSource(page, profile.wire)
+            socket = page.open_socket("wss://example.invalid/sock/1")
+            socket.emit("framereceived", "one")
+            socket.emit("framereceived", "two")
+            queued = source.pending
+            await source.aclose()
+            taken = [frame.text async for frame in source]
+            return queued, taken, source.pending
+
+        assert drain(scenario) == (2, ["one", "two"], 0)
+
+
+class TestElapsed:
+    def test_the_clock_runs_on_while_the_reader_is_away(self, profile):
+        # The point of the property: a caller that spends time in the DOM is
+        # stamped on from the frame it last took, and that difference is how
+        # far behind the page it was. A frame's own stamp is taken when it
+        # arrives, so the two are comparable by construction.
+        async def scenario():
+            page = FakePage()
+            source = PlaywrightFrameSource(page, profile.wire)
+            page.open_socket("wss://example.invalid/sock/1").emit(
+                "framereceived", "one"
+            )
+            await source.aclose()
+            frame = await anext(source.__aiter__())
+            before = source.elapsed
+            await asyncio.sleep(0.01)
+            return frame.at <= before <= source.elapsed and before < source.elapsed
+
+        assert drain(scenario) is True
+
+
+class TestSocketCounting:
+    def test_an_opened_socket_is_counted_and_logged(self, profile):
+        async def scenario():
+            lines: list[str] = []
+            health = HealthLog(write=lines.append)
+            page = FakePage()
+            PlaywrightFrameSource(page, profile.wire, health=health)
+            page.open_socket("wss://example.invalid/sock/1")
+            return health.counters.sockets_opened, [
+                json.loads(line)["event"] for line in lines
+            ]
+
+        assert drain(scenario) == (1, ["socket_opened"])
+
+    def test_a_closed_socket_is_counted_and_names_its_index(self, profile):
+        async def scenario():
+            lines: list[str] = []
+            health = HealthLog(write=lines.append)
+            page = FakePage()
+            PlaywrightFrameSource(page, profile.wire, health=health)
+            page.open_socket("wss://example.invalid/sock/1")
+            second = page.open_socket("wss://example.invalid/sock/2")
+            second.emit("close", second)
+            closed = [
+                json.loads(line)
+                for line in lines
+                if json.loads(line)["event"] == "socket_closed"
+            ]
+            return health.counters.sockets_closed, [line["socket"] for line in closed]
+
+        assert drain(scenario) == (1, [1])
+
+    def test_a_socket_that_is_not_ours_is_not_counted(self, profile):
+        # A page opens sockets for chat, telemetry and whatever else the site
+        # runs; only the game's connections say anything about the recording.
+        async def scenario():
+            health = HealthLog(write=lambda _: None)
+            page = FakePage()
+            PlaywrightFrameSource(page, profile.wire, health=health)
+            other = page.open_socket("wss://elsewhere.invalid/other")
+            other.emit("close", other)
+            return health.counters.sockets_opened, health.counters.sockets_closed
+
+        assert drain(scenario) == (0, 0)
+
+    def test_without_a_health_log_nothing_is_counted(self, profile):
+        # The replay path and the profile check build a source with no log.
+        async def scenario():
+            page = FakePage()
+            PlaywrightFrameSource(page, profile.wire)
+            socket = page.open_socket("wss://example.invalid/sock/1")
+            socket.emit("close", socket)
+            return "no counting, no crash"
+
+        assert drain(scenario) == "no counting, no crash"

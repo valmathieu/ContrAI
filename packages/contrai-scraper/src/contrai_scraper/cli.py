@@ -22,33 +22,43 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import signal
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from contrai_data import GameEvent, RecordWriter, RoundDealt, game_path
 
 from contrai_scraper.browser import open_spectator
-from contrai_scraper.exceptions import ScraperError
+from contrai_scraper.egress import EgressGate, EgressReading
+from contrai_scraper.exceptions import (
+    BrowserError,
+    ParseError,
+    ScraperError,
+    ShiftError,
+)
 from contrai_scraper.frames import RawFrame, RawLogFrameSource
 from contrai_scraper.health import HealthLog
-from contrai_scraper.parse.session import SessionResult, parse_session
-from contrai_scraper.parse.snapshot import read_snapshot
+from contrai_scraper.parse.session import (
+    SessionResult,
+    parse_session,
+    split_visits,
+)
+from contrai_scraper.parse.snapshot import Snapshot, read_snapshot
 from contrai_scraper.parse.translate import Translator
 from contrai_scraper.profile import Profile, load_profile
-from contrai_scraper.rawlog import RawLogWriter, new_session_id, raw_path
+from contrai_scraper.rawlog import new_session_id, raw_dir
 from contrai_scraper.recorder import (
-    Recorder,
     RecorderLimits,
-    SessionSummary,
     # The same two helpers the recorder gates a table with. Imported rather
     # than restated so ``check-profile`` cannot pass a table the recorder
     # would refuse, or the other way round.
     _orientation_holds,
     _wire_pair,
 )
-from contrai_scraper.wire import WireStream, order_events
+from contrai_scraper.shift import Shift, ShiftSummary
+from contrai_scraper.wire import WireEvent, WireStream, order_events
 
 #: The subcommands, and the one a bare invocation means.
 SUBCOMMANDS: Final[tuple[str, ...]] = ("run", "parse", "check-profile")
@@ -60,6 +70,13 @@ RAW_GLOB: Final[str] = "*.jsonl"
 #: Seconds in a minute, since ``--minutes`` is the friendlier flag and
 #: :class:`~contrai_scraper.recorder.RecorderLimits` counts in seconds.
 _MINUTE: Final[float] = 60.0
+
+#: The exit status a shell gives a process stopped by an interrupt.
+EXIT_INTERRUPTED: Final[int] = 130
+
+#: The exit status of a shift that spent a failure budget: hand the process
+#: back to its supervisor for a fresh start.
+EXIT_SHIFT_ENDED: Final[int] = 3
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -116,6 +133,24 @@ def _reconfigure_streams() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _treat_sigterm_as_interrupt() -> None:
+    """Make SIGTERM take the path Ctrl+C takes.
+
+    A service manager stops a process with SIGTERM, whose default is to end
+    it without raising — so nothing unwinds and the game being watched is
+    never written. Inside ``asyncio.run`` the SIGINT handler is asyncio's
+    own, which cancels the main task; installing it for SIGTERM too is what
+    lets the recorder close its record as ``interrupted``.
+
+    Must be called from inside the running coroutine: asyncio installs its
+    handler only for the duration of ``run``.
+    """
+
+    handler = signal.getsignal(signal.SIGINT)
+    if callable(handler):
+        signal.signal(signal.SIGTERM, handler)
+
+
 def _run_recorder(args: argparse.Namespace) -> int:
     """Watch tables until the limits are reached.
 
@@ -123,7 +158,8 @@ def _run_recorder(args: argparse.Namespace) -> int:
         args: The parsed ``run`` arguments.
 
     Returns:
-        0. A session that watched nothing is not a failure — an empty shift
+        0; 130 when an interrupt stopped the run; 3 when a failure budget was
+        spent. A shift that watched nothing is not a failure — an empty shift
         is what a quiet evening looks like, and the health log says so.
 
     Raises:
@@ -135,42 +171,47 @@ def _run_recorder(args: argparse.Namespace) -> int:
         max_games=args.max_games,
         max_seconds=None if args.minutes is None else args.minutes * _MINUTE,
     )
-    asyncio.run(_watch(profile, limits, args.headless))
+    try:
+        asyncio.run(_shift(profile, limits, args.headless))
+    except KeyboardInterrupt:
+        # Both Ctrl+C and, through the handler above, a service stop: the
+        # recorder has already written the game in hand as interrupted.
+        return EXIT_INTERRUPTED
+    except ShiftError as error:
+        # A spent budget. A code of its own hands the process back to its
+        # supervisor, which starts a fresh one.
+        print(f"contrai-scrape: {error}", file=sys.stderr)
+        return EXIT_SHIFT_ENDED
     return 0
 
 
-async def _watch(  # pragma: no cover - needs a real browser
+async def _shift(  # pragma: no cover - needs a real browser
     profile: Profile, limits: RecorderLimits, headless: bool | None
-) -> SessionSummary:
-    """Open a browser, seat a spectator, and record until the limits stop it.
+) -> ShiftSummary:
+    """Run shifts until the limits stop them, printing what they did.
 
     Args:
         profile: The loaded profile.
-        limits: When to stop.
+        limits: When to stop, across every session.
         headless: Override for ``[browser].headless``; ``None`` takes it.
 
     Returns:
-        What the session did.
+        What the shift did, across its sessions.
     """
 
-    health = HealthLog()
-    session = new_session_id()
-    log = RawLogWriter(raw_path(profile.output.raw_root, session))
-    health.event("session_started", session=session, raw=str(log.path))
-    try:
-        async with open_spectator(profile, headless=headless) as (spectator, frames):
-            await spectator.log_in()
-            await spectator.enter_variant()
-            recorder = Recorder(
-                spectator, frames, profile, health, limits=limits, raw=log
-            )
-            summary = await recorder.run()
-    finally:
-        log.close()
-
+    _treat_sigterm_as_interrupt()
+    shift = Shift(
+        profile,
+        HealthLog(),
+        open_session=open_spectator,
+        egress=EgressGate(profile.egress, profile.site.url),
+        headless=headless,
+        limits=limits,
+    )
+    summary = await shift.run()
     print(
-        f"{summary.games_recorded} games, {summary.tables_seated} tables seated, "
-        f"{summary.tables_rejected} rejected"
+        f"{summary.sessions} sessions, {summary.games_recorded} games, "
+        f"{summary.tables_seated} tables seated, {summary.tables_rejected} rejected"
     )
     for path in summary.records:
         print(f"  -> {path}")
@@ -208,8 +249,40 @@ def _run_check(args: argparse.Namespace) -> int:
         return _report([*results, ("rotation holds", False, str(error))])
 
     results.append(("rotation holds", True, "the seat map walks the table's cycle"))
+
+    egress = _egress_result(_egress_reading(profile))
+    results.append(egress)
+    if not egress[1]:
+        # A refused egress means the next step would walk the site from the
+        # wrong address. Stop here rather than report on a walk never taken.
+        return _report(results)
+
     results += asyncio.run(_check(profile, args.headless))
     return _report(results)
+
+
+def _egress_reading(profile: Profile) -> EgressReading:  # pragma: no cover - real network
+    """Ask the network where this machine's traffic leaves."""
+
+    return EgressGate(profile.egress, profile.site.url).check_now()
+
+
+def _egress_result(reading: EgressReading) -> tuple[str, bool, str]:
+    """One check line for an egress reading, never naming the home address.
+
+    Args:
+        reading: What the gate answered.
+
+    Returns:
+        The ``(name, passed, detail)`` triple the report prints.
+    """
+
+    name = "egress leaves through the tunnel"
+    if reading.ok:
+        route = reading.route_device or "not checked on this machine"
+        return (name, True, f"exit {reading.exit_ip} ({reading.country}), route {route}")
+    detail = ", ".join(f"{key} {value}" for key, value in reading.fields().items() if value)
+    return (name, False, f"refused, nothing sent to the site: {detail}")
 
 
 def _report(results: Sequence[tuple[str, bool, str]]) -> int:
@@ -244,16 +317,41 @@ async def _check(  # pragma: no cover - needs a real browser
         ``(name, passed, detail)`` per live check, in the order they ran.
     """
 
+    async with open_spectator(profile, headless=headless) as (spectator, frames):
+        return await _live_checks(spectator, frames, profile)
+
+
+async def _live_checks(
+    spectator: Any, frames: Any, profile: Profile
+) -> list[tuple[str, bool, str]]:
+    """The live checks, over a browser that is already open.
+
+    Split from :func:`_check` so the walk runs against a scripted spectator.
+    A browser step that fails ends the walk with a failed line naming the
+    check it was on: ``check-profile`` exists to find a site change, and a
+    traceback would bury the one line that says which profile key stopped
+    matching.
+
+    Args:
+        spectator: The browser half, or anything with its surface.
+        frames: The frame source the spectator's page feeds.
+        profile: The loaded profile.
+
+    Returns:
+        ``(name, passed, detail)`` per check, in the order they ran.
+    """
+
     translator = Translator(profile)
     results: list[tuple[str, bool, str]] = []
-    async with open_spectator(profile, headless=headless) as (spectator, frames):
+    step = "login"
+    try:
         await spectator.log_in()
         results.append(("login", True, profile.account.email))
-        answered = await spectator.answer_pledge()
-        results.append(
-            ("pledge", True, "answered" if answered else "not showing")
-        )
-        await spectator.enter_variant()
+        step = "variant entered"
+        # The pledge is drawn between the menu steps, so only the walk into the
+        # variant can see it: a probe made before that walk found nothing.
+        answered = await spectator.enter_variant()
+        results.append(("pledge", True, "answered" if answered else "not showing"))
         results.append(("variant entered", True, "the server chose a table"))
 
         event = await _first_snapshot(frames, profile)
@@ -262,30 +360,83 @@ async def _check(  # pragma: no cover - needs a real browser
             return results
         results.append(("snapshot arrives", True, "the table described itself"))
 
+        # Named before the read, not after: a snapshot the profile cannot
+        # read would otherwise be reported against the menu step that last
+        # set ``step``, which is the one part of the walk that did work.
+        step = "the snapshot reads"
         snapshot = read_snapshot(event.data, translator, at=event.received_ms)
+        step = "marker agrees with the wire"
         marker = await spectator.read_tournament_marker()
         results.append((
-            "marker agrees with the wire",
+            step,
             marker == bool(snapshot.is_tournament),
             f"rendered {marker}, wire {bool(snapshot.is_tournament)}",
         ))
 
+        step = "options match [rules.options]"
         reading = await spectator.read_options(profile.rules.options)
         results.append((
-            "options match [rules.options]",
+            step,
             reading.matches,
             f"missing {list(reading.missing)}, extra {list(reading.extra)}, "
             f"differing {list(reading.differing)}",
         ))
 
+        step = "panel ids equal the wire's accounts"
         results.append(await _seat_ids_agree(spectator, snapshot, translator))
 
+        step = "us is the south seat's side"
         board = await spectator.read_scoreboard()
         results.append(_orientation_result(snapshot, board))
+    except (BrowserError, ParseError) as error:
+        # A snapshot the profile cannot read is as much a profile fault as a
+        # selector that stopped matching, and this command exists to name the
+        # key that broke rather than to print a traceback over it.
+        detail = str(error)
+        evidence = await _capture_failure(spectator, profile)
+        results.append((step, False, f"{detail} — {evidence}" if evidence else detail))
     return results
 
 
-async def _first_snapshot(frames, profile: Profile):  # pragma: no cover - browser
+async def _capture_failure(spectator: Any, profile: Profile) -> str:
+    """Save the page a failed live check was looking at.
+
+    The failed line names the profile key that stopped matching, which says
+    *which* selector broke and never *why*. On a host reached through a
+    console there is no second chance to look: the browser is gone by the
+    time the line is read, and the walk cannot be repeated by hand. So the
+    page is kept, exactly as ``run`` keeps it — the same
+    ``[browser].screenshot_on_error`` switch, the same two files, written
+    under the profile's raw root where a session's own evidence already
+    lands.
+
+    Args:
+        spectator: The browser half, still open on the failing page.
+        profile: The loaded profile.
+
+    Returns:
+        A phrase naming the files, for the failed line to carry, or the
+        empty string when the profile does not ask for them or nothing
+        could be written. A diagnosis never replaces the failure it was
+        taken for, so this reports nothing rather than raising.
+    """
+
+    if not profile.browser.screenshot_on_error:
+        return ""
+    directory = raw_dir(profile.output.raw_root)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # An unwritable raw root is worth knowing about, but not here: the
+        # line this decorates is already reporting a failure of its own.
+        return ""
+    saved = await spectator.capture(directory / f"check-profile-{new_session_id()}")
+    if not saved:
+        return ""
+    return f"page saved to {', '.join(str(path) for path in saved)}"
+
+
+async def _first_snapshot(frames: Any, profile: Profile) -> WireEvent | None:
     """The first join snapshot off the socket, or ``None`` if none arrives."""
 
     stream = WireStream(profile.wire)
@@ -302,8 +453,8 @@ async def _first_snapshot(frames, profile: Profile):  # pragma: no cover - brows
             return event
 
 
-async def _seat_ids_agree(  # pragma: no cover - needs a real browser
-    spectator, snapshot, translator
+async def _seat_ids_agree(
+    spectator: Any, snapshot: Snapshot, translator: Translator
 ) -> tuple[str, bool, str]:
     """Whether every seat's panel shows the account the wire named.
 
@@ -370,43 +521,54 @@ def _run_parse(args: argparse.Namespace) -> int:
     root = args.out or profile.output.root
     written = 0
     for log in logs:
-        try:
-            result = _parse_one(log, profile)
-        except ScraperError as error:
-            print(f"{log.name}: {error}")
-            continue
+        results, visits = _parse_log(log, profile)
+        print(f"{log.name}: {visits} table visits, {len(results)} with rounds")
+        for result in results:
+            rounds = _round_count(result.events)
+            header = result.events[0]
+            summary = f"  {header.game_id}, {rounds} rounds"
+            if result.skipped_rounds:
+                summary += (
+                    f", {len(result.skipped_rounds)} skipped "
+                    f"({', '.join(str(n) for n in result.skipped_rounds)})"
+                )
+            print(summary)
+            for note in result.notes:
+                print(f"    - {note}")
 
-        rounds = _round_count(result.events)
-        header = result.events[0]
-        summary = f"{log.name}: {header.game_id}, {rounds} rounds"
-        if result.skipped_rounds:
-            summary += (
-                f", {len(result.skipped_rounds)} skipped "
-                f"({', '.join(str(n) for n in result.skipped_rounds)})"
-            )
-        print(summary)
-        for note in result.notes:
-            print(f"  - {note}")
-
-        if args.dry_run:
+            if args.dry_run:
+                written += 1
+                continue
+            path = game_path(root, header.game_id)
+            with RecordWriter(path) as writer:
+                for event in result.events:
+                    writer.write(event)
+            print(f"    -> {path}")
             written += 1
-            continue
-        path = game_path(root, header.game_id)
-        with RecordWriter(path) as writer:
-            for event in result.events:
-                writer.write(event)
-        print(f"  -> {path}")
-        written += 1
 
     return 0 if written else 1
 
 
-def _parse_one(log: Path, profile: Profile) -> SessionResult:
-    """Replay one raw log through the whole pipeline.
+def _parse_log(log: Path, profile: Profile) -> tuple[list[SessionResult], int]:
+    """Replay one raw log, one record per table visit that held a game.
 
     A frame source is an async iterator, because the live one has to be —
     Playwright hands frames over through callbacks. Draining it here is the
     price of the replay and the live run being literally the same path.
+
+    The log is cut into visits before anything is parsed: it holds every
+    table the session looked at, and one game is what ``parse_session``
+    builds. A visit that yielded no round is not a game and gets no record —
+    most of them are tables a gate refused seconds after arriving — and a
+    visit this profile cannot read is reported rather than raised, so one
+    bad table does not cost the rest of the log.
+
+    Args:
+        log: The raw log to replay.
+        profile: The loaded profile.
+
+    Returns:
+        The records worth writing, and how many visits the log held.
     """
 
     frames = asyncio.run(_drain(RawLogFrameSource(log)))
@@ -416,7 +578,17 @@ def _parse_one(log: Path, profile: Profile) -> SessionResult:
         for frame in frames
         if (event := stream.ingest(frame.text, frame.socket)) is not None
     ]
-    return parse_session(order_events(events), profile)
+    visits = split_visits(events, profile)
+    results: list[SessionResult] = []
+    for visit in visits:
+        try:
+            result = parse_session(order_events(visit), profile)
+        except ScraperError as error:
+            print(f"  a visit could not be read: {error}")
+            continue
+        if _round_count(result.events):
+            results.append(result)
+    return results, len(visits)
 
 
 async def _drain(source: RawLogFrameSource) -> list[RawFrame]:

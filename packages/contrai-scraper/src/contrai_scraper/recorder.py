@@ -23,6 +23,15 @@ connections carry every frame, a snapshot already used to accept or reject a
 table is remembered across that reset, so its mirrored copy cannot be read as
 the next table's.
 
+**Frame identity is not enough to tell a table apart, though, so the table
+just left is remembered by name.** A hop does not empty the frame source, and
+a snapshot consumed while *watching* a table — the answer to a boundary or
+closing request — is never offered to a gate, so its mirrored copy is a first
+sighting at the next seat. Both leave a seat judging a table the page has
+already been moved off, which reads the page for one table and the wire for
+another. :meth:`Recorder._stale` is what refuses that, and it is keyed on the
+table's own id rather than on any frame's.
+
 The score for a round arrives one of two ways: the client can ask for table
 state without leaving, which answers on the socket as a fresh snapshot, and
 that is the fast path. The panel read behind it is evidence only — it goes to
@@ -38,13 +47,14 @@ import asyncio
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 from contrai_core import Position
 from contrai_data import EndReason, RecordWriter, RoundDealt, game_path
 
-from .exceptions import ScraperError
+from .exceptions import ParseError, ScraperError
 from .frames import FrameSource, RawFrame
 from .health import HealthLog
 from .parse.session import parse_session
@@ -58,12 +68,26 @@ from .wire import DEAL_VERB, WireEvent, WireStream, duplicate_key, order_events
 SCOREBOARD_PANEL = "scoreboard"
 
 
+class StopReason(StrEnum):
+    """Why a recorder stopped seating tables."""
+
+    MAX_GAMES = "max_games"
+    TIME_LIMIT = "time_limit"
+    WINDOW_CLOSED = "window_closed"
+    EGRESS_BLOCKED = "egress_blocked"
+    SOURCE_ENDED = "source_ended"
+
+
 @dataclass(frozen=True, slots=True)
 class RecorderLimits:
-    """When to stop; both unset means "until interrupted"."""
+    """When to stop; all unset means "until interrupted"."""
 
     max_games: int | None = None
     max_seconds: float | None = None
+    """Hard stop: past it, the game in hand is closed as ``observer_left``."""
+
+    seat_until_s: float | None = None
+    """Seconds after which no new table is taken; the game in hand runs on to max_seconds."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +98,8 @@ class SessionSummary:
     tables_seated: int
     tables_rejected: int
     records: tuple[Path, ...]
+    stop_reason: StopReason
+    """What ended the session: a limit, the window, the egress, or the frames."""
 
 
 class Recorder:
@@ -96,7 +122,8 @@ class Recorder:
         "_spectator", "_frames", "_profile", "_health", "_limits", "_raw",
         "_monotonic", "_translator", "_iterator", "_stream", "_buffer",
         "_seen_snapshots", "_records", "_deadline", "_stopped", "_active",
-        "_last_activity", "_seated", "_rejected", "_base",
+        "_last_activity", "_seated", "_rejected", "_base", "_egress",
+        "_seat_deadline", "_stop_reason", "_left_table",
     )
 
     def __init__(
@@ -109,6 +136,7 @@ class Recorder:
         limits: RecorderLimits = RecorderLimits(),
         raw: RawLogWriter | None = None,
         monotonic: Callable[[], float] = time.monotonic,
+        egress: Any = None,
     ) -> None:
         """Wire the loop up.
 
@@ -126,6 +154,9 @@ class Recorder:
                 interrupted session re-parsable.
             monotonic: The clock the watchdog and the run deadline are
                 measured on.
+            egress: Anything with ``async check() -> EgressReading``, asked
+                before every hop and when a table goes quiet. ``None`` skips
+                both checks, which is what a replay or a test wants.
         """
 
         self._spectator = spectator
@@ -135,14 +166,18 @@ class Recorder:
         self._limits = limits
         self._raw = raw
         self._monotonic = monotonic
+        self._egress = egress
         self._translator = Translator(profile)
         self._iterator: Any = None
         self._stream: WireStream | None = None
         self._buffer: list[WireEvent] = []
         self._seen_snapshots: set[str] = set()
+        self._left_table: str | None = None
         self._records: list[Path] = []
         self._deadline: float | None = None
+        self._seat_deadline: float | None = None
         self._stopped = False
+        self._stop_reason: StopReason | None = None
         self._active = False
         self._last_activity = 0.0
         self._seated = 0
@@ -153,7 +188,7 @@ class Recorder:
         """Watch tables until the limits are reached or the frames stop.
 
         Returns:
-            What the session did.
+            What the session did, and why it stopped.
 
         Raises:
             BaseException: Whatever stopped the process. An interruption
@@ -163,15 +198,22 @@ class Recorder:
         """
 
         self._iterator = self._frames.__aiter__()
-        if self._limits.max_seconds is not None:
-            self._deadline = self._monotonic() + self._limits.max_seconds
+        limits = self._limits
+        if limits.max_seconds is not None or limits.seat_until_s is not None:
+            # One reading for both: a second call would shift every scripted
+            # clock in the suite by a tick.
+            started = self._monotonic()
+            if limits.max_seconds is not None:
+                self._deadline = started + limits.max_seconds
+            if limits.seat_until_s is not None:
+                self._seat_deadline = started + limits.seat_until_s
         try:
             while not self._finished():
                 seated = await self._seat()
                 if seated is None:
                     continue
-                snapshot, event = seated
-                if not await self._gate(snapshot, event):
+                snapshot, event, tail = seated
+                if not await self._gate(snapshot, event, tail):
                     await self._hop()
                     continue
                 await self._watch(snapshot)
@@ -184,16 +226,18 @@ class Recorder:
             tables_seated=self._seated,
             tables_rejected=self._rejected,
             records=tuple(self._records),
+            stop_reason=self._stop_reason or self._limit_reason(),
         )
 
     # -- 1. seat ---------------------------------------------------------
 
-    async def _seat(self) -> tuple[Snapshot, WireEvent] | None:
+    async def _seat(self) -> tuple[Snapshot, WireEvent, list[WireEvent]] | None:
         """Wait for the join snapshot that describes wherever we landed.
 
         Returns:
             The snapshot and the event that carried it, or ``None`` when the
-            wait ran out — in which case the table has already been left.
+            wait ran out — in which case the table has already been left —
+            or when the shift stopped taking tables while it waited.
         """
 
         self._reset_buffer()
@@ -201,9 +245,14 @@ class Recorder:
         timeout = self._profile.recorder.snapshot_timeout_s
         while True:
             if self._past_deadline():
-                self._stopped = True
+                self._stop(StopReason.TIME_LIMIT)
                 return None
-            remaining = self._capped(timeout - (self._monotonic() - started))
+            if self._past_seat_deadline():
+                self._stop(StopReason.WINDOW_CLOSED)
+                return None
+            remaining = self._capped(
+                timeout - (self._monotonic() - started), seating=True
+            )
             if remaining <= 0:
                 return await self._give_up_on_seat()
             pulled = await self._pull(remaining)
@@ -219,10 +268,158 @@ class Recorder:
                 # has already judged. Seating on it would re-seat the table
                 # that was just left.
                 continue
-            snapshot = read_snapshot(
-                event.data, self._translator, at=event.received_ms
-            )
-            return snapshot, event
+            try:
+                snapshot = read_snapshot(
+                    event.data, self._translator, at=event.received_ms
+                )
+            except ParseError as error:
+                # A table this profile cannot read is a table to leave, not a
+                # session to end. The site runs variants whose contracts the
+                # tournament ruleset has no name for — all trump is the one
+                # that was met — and the options gate that refuses such a
+                # table sits *after* this read, so without this a table we
+                # never wanted spends a slot of the shift's failure budget.
+                # The reason and the message are logged and the count lands
+                # in ``tables_rejected``, so a profile that has genuinely
+                # drifted still shows itself rather than hiding as a hop.
+                return await self._leave_unreadable(error)
+            if self._stale(snapshot):
+                continue
+            snapshot, event, tail = await self._catch_up(snapshot, event)
+            if self._stopped:
+                return None
+            if self._past_seat_deadline():
+                # The table described itself a moment too late: the window
+                # closed while the snapshot was on its way, and a table seated
+                # now would be watched on time the shift no longer has.
+                self._stop(StopReason.WINDOW_CLOSED)
+                return None
+            # Remembered before the gate runs, not after: a table is left
+            # whether its gate accepted it or refused it, and the next seat
+            # has to know either way.
+            self._left_table = snapshot.table_id
+            return snapshot, event, tail
+
+    def _stale(self, snapshot: Snapshot) -> bool:
+        """Whether a snapshot describes the table the page has just left.
+
+        A hop does not empty the frame source, and the site answers one in a
+        fraction of the time the gate's two DOM reads take. So the snapshot
+        waiting in the queue at the next seat routinely describes the table
+        just left, and judging it reads the page for one table and the wire
+        for another: of thirteen gates measured across the sessions of
+        2026-09-16 and 2026-09-17, ten were judging a table the page had
+        already been moved off, and every one of those snapshots had arrived
+        **before** the hop that preceded its gate.
+
+        The first such snapshot of a session is the one answering the closing
+        request of the game just recorded. The drain that reads it never
+        registers it as a first sighting, so its mirrored copy — still queued
+        on the other connection, and dropped by the raw log as a duplicate —
+        is a first sighting at the next seat, and the table whose game has
+        just been written is judged again. That is where the lag starts; from
+        there every gate hands one on to the next.
+
+        The rule is "not the one we just left", never "none seen before": the
+        pool is small enough that the same table comes round again within a
+        few hops, and refusing a table for having been visited would empty
+        the shift.
+
+        Args:
+            snapshot: The snapshot a seat is considering.
+
+        Returns:
+            Whether to keep waiting for another one. A table genuinely
+            re-offered twice running is refused until ``snapshot_timeout_s``
+            runs out, which leaves it as a ``seat_timeout`` and one more hop
+            — of the twenty table joins measured across the two sessions,
+            none re-offered a table immediately.
+        """
+
+        if snapshot.table_id is None or snapshot.table_id != self._left_table:
+            return False
+        self._health.event("stale_snapshot", table=snapshot.table_id)
+        return True
+
+    async def _catch_up(
+        self, snapshot: Snapshot, event: WireEvent
+    ) -> tuple[Snapshot, WireEvent, list[WireEvent]]:
+        """The newest table already described, and what has happened since.
+
+        A hop moves the page long before the reader hears about it. Measured
+        across 2026-09-16 and 2026-09-17: over twenty table joins the new
+        table described itself between 0.05 s and 0.23 s after the page
+        joined its room, while a gate and its hop together took 1.8 s to
+        7.2 s — two DOM panel reads against a quarter-second wire. Gating
+        the first snapshot off the queue therefore judges a table the page
+        has left: its options, its scoreboard and its seats all belong to
+        somewhere else, and seating on it starts a record whose events are
+        somebody else's.
+
+        Draining the queue is not by itself the answer — the snapshot that
+        matters has usually not arrived yet, which is why
+        :meth:`Recorder._stale` refuses the table just left by name instead.
+        What a drain adds is that a page which has run *several* tables
+        ahead is not followed one gate at a time.
+
+        So a backlog is drained before anything is judged. Only what has
+        *already* arrived is taken: this never waits, so a page that is
+        keeping up costs nothing. Frames that followed the newest snapshot
+        are handed back rather than dropped, because they are the beginning
+        of the table about to be judged.
+
+        Args:
+            snapshot: The table the first queued snapshot described.
+            event: The event that carried it.
+
+        Returns:
+            The newest snapshot, its event, and the events that followed it.
+        """
+
+        tail: list[WireEvent] = []
+        while self._frames.pending:
+            pulled = await self._pull(self._profile.recorder.snapshot_timeout_s)
+            if pulled is None or self._stopped:
+                break
+            frame, later = pulled
+            if later is None:
+                continue
+            if later.kind != self._join_name or not self._first_sight(frame):
+                tail.append(later)
+                continue
+            try:
+                newer = read_snapshot(
+                    later.data, self._translator, at=later.received_ms
+                )
+            except ParseError:
+                # Unreadable is still newer, and the gate below is what says
+                # so — but this one cannot replace what we can read, so the
+                # older snapshot stands and its own gate decides.
+                continue
+            if self._stale(newer):
+                # Newer on the wire is not newer on the page: a late word
+                # from the table just left arrives behind the snapshot of
+                # the table the page has moved to. Taking it would be the
+                # very swap this drain exists to prevent.
+                continue
+            snapshot, event, tail = newer, later, []
+        return snapshot, event, tail
+
+    async def _leave_unreadable(self, error: ParseError) -> None:
+        """Leave a table whose snapshot this profile cannot read.
+
+        Args:
+            error: What the reader objected to, logged verbatim so the
+                operator sees the token rather than only the refusal.
+        """
+
+        self._rejected += 1
+        self._health.counters.tables_rejected += 1
+        self._health.event(
+            "table_rejected", reason="unreadable_snapshot", error=str(error)
+        )
+        await self._hop()
+        return None
 
     async def _give_up_on_seat(self) -> None:
         """Leave a table that never said what it was."""
@@ -233,13 +430,18 @@ class Recorder:
 
     # -- 2 to 6. the gates -----------------------------------------------
 
-    async def _gate(self, snapshot: Snapshot, event: WireEvent) -> bool:
+    async def _gate(
+        self, snapshot: Snapshot, event: WireEvent, tail: list[WireEvent]
+    ) -> bool:
         """Decide whether this table is worth a game's worth of frames.
 
         Args:
             snapshot: What the table said when we sat down.
             event: The event that carried it, which becomes the buffer's
                 first entry once the table is accepted.
+            tail: Whatever arrived after it while the reader was catching
+                up, which is the start of this table's play and belongs in
+                the buffer behind the snapshot.
 
         Returns:
             Whether the table was taken.
@@ -267,11 +469,18 @@ class Recorder:
         if not _orientation_holds(snapshot, board.rows):
             # A record whose two sides are swapped is well formed and wrong
             # about who won every round, and nothing downstream can see it.
+            # The row counts travel with the pair: the two readings drifting
+            # apart is itself a cause of a mismatch, and without them a log
+            # line cannot say whether the numbers even describe one round.
+            index = _comparable_row(snapshot, board.rows)
             self._health.event(
                 "orientation_mismatch",
                 table=snapshot.table_id,
-                panel=list(board.rows[-1]),
-                wire=list(_wire_pair(snapshot.score_rows[-1])),
+                panel=list(board.rows[index]),
+                wire=list(_wire_pair(snapshot.score_rows[index])),
+                round=index + 1,
+                panel_rows=len(board.rows),
+                wire_rows=len(snapshot.score_rows),
             )
             self._rejected += 1
             self._health.counters.tables_rejected += 1
@@ -280,7 +489,7 @@ class Recorder:
         self._seated += 1
         self._health.counters.tables_seated += 1
         self._health.event("table_seated", table=snapshot.table_id)
-        self._buffer = [event]
+        self._buffer = [event, *tail]
         return True
 
     def _reject(self, snapshot: Snapshot, reason: str, **fields: Any) -> bool:
@@ -317,8 +526,9 @@ class Recorder:
                 self._health.heartbeat(table=table_id)
             if self._past_deadline():
                 # The shift is over. The game was not abandoned and did not
-                # finish: we stopped watching it.
-                self._stopped = True
+                # finish: we stopped watching it. Only this hard deadline stops
+                # a game in hand; the seat deadline is never checked here.
+                self._stop(StopReason.TIME_LIMIT)
                 self._write(EndReason.OBSERVER_LEFT)
                 return
             remaining = self._capped(
@@ -413,19 +623,37 @@ class Recorder:
                 return
 
     async def _abandon(self) -> None:
-        """Give up on a table that has stopped playing, and leave."""
+        """Give up on a table that has stopped playing — or on a tunnel that has."""
 
         self._health.event("table_stale")
+        if self._egress is not None and not await self._egress_open():
+            # Silence behind a dead tunnel is not a table breaking up. Writing
+            # `abandoned` would blame the players for our network.
+            self._write(EndReason.INTERRUPTED)
+            return
         self._write(EndReason.ABANDONED)
-        await self._hop()
+        await self._hop(egress_checked=True)
 
-    async def _hop(self) -> None:
-        """Ask the server for another table.
+    async def _hop(self, *, egress_checked: bool = False) -> None:
+        """Ask the server for another table, if the shift still wants one.
 
         There is no leave: the site's exit control leaves spectating rather
-        than the table, and nothing in-session recovers from that.
+        than the table, and nothing in-session recovers from that. The egress
+        is re-checked first, because a hop is new traffic to the site.
+
+        Args:
+            egress_checked: Whether the caller has just checked the egress,
+                so a stale table costs one probe rather than two.
         """
 
+        if self._finished():
+            return
+        if (
+            self._egress is not None
+            and not egress_checked
+            and not await self._egress_open()
+        ):
+            return
         await self._spectator.next_table()
 
     # -- the record ------------------------------------------------------
@@ -488,7 +716,7 @@ class Recorder:
         except TimeoutError:
             return None
         except StopAsyncIteration:
-            self._stopped = True
+            self._stop(StopReason.SOURCE_ENDED)
             return None
 
         if self._raw is not None:
@@ -539,11 +767,19 @@ class Recorder:
     # -- small readings --------------------------------------------------
 
     async def _read_panel(self) -> Any:
-        """Read the scoreboard panel and file its text as evidence."""
+        """Read the scoreboard panel and file its text as evidence.
+
+        Stamped with the frame source's clock *after* the read, not before:
+        the panel describes whatever the page held when it was opened, and
+        the gap between that stamp and the frames on either side of it in
+        the log is how far behind the page the reader was.
+        """
 
         board = await self._spectator.read_scoreboard()
         if self._raw is not None:
-            self._raw.write_panel(SCOREBOARD_PANEL, board.text)
+            self._raw.write_panel(
+                SCOREBOARD_PANEL, board.text, at=self._frames.elapsed
+            )
         return board
 
     def _says(self, event: WireEvent, field: str) -> bool:
@@ -559,27 +795,84 @@ class Recorder:
 
         return self._profile.wire.events.join_snapshot
 
-    def _capped(self, remaining: float) -> float:
-        """One wait, shortened so it cannot outlive the run's deadline."""
+    def _capped(self, remaining: float, *, seating: bool = False) -> float:
+        """One wait, shortened so it cannot outlive the deadlines that bound it.
 
-        if self._deadline is None:
+        Args:
+            remaining: The wait the caller wants, in seconds.
+            seating: Whether the wait is for a table to seat, which the seat
+                deadline bounds too. A game already being watched is bounded
+                by the hard deadline only: capping it by the seat deadline
+                would abandon the game in hand the moment the window closed.
+
+        Returns:
+            The wait, cut to the earliest deadline that applies.
+        """
+
+        deadlines = [self._deadline]
+        if seating:
+            deadlines.append(self._seat_deadline)
+        present = [deadline for deadline in deadlines if deadline is not None]
+        if not present:
             return remaining
-        return min(remaining, self._deadline - self._monotonic())
+        return min(remaining, min(present) - self._monotonic())
 
     def _past_deadline(self) -> bool:
         """Whether the run's own time limit has passed."""
 
         return self._deadline is not None and self._monotonic() >= self._deadline
 
+    def _past_seat_deadline(self) -> bool:
+        """Whether the shift has stopped taking new tables."""
+
+        return (
+            self._seat_deadline is not None
+            and self._monotonic() >= self._seat_deadline
+        )
+
     def _finished(self) -> bool:
         """Whether the loop should stop seating tables."""
 
-        if self._stopped or self._past_deadline():
+        if self._stopped or self._past_deadline() or self._past_seat_deadline():
             return True
         return (
             self._limits.max_games is not None
             and len(self._records) >= self._limits.max_games
         )
+
+    def _stop(self, reason: StopReason) -> None:
+        """Stop seating, keeping the first reason given."""
+
+        self._stopped = True
+        if self._stop_reason is None:
+            self._stop_reason = reason
+
+    def _limit_reason(self) -> StopReason:
+        """Which limit ended a loop that stopped without saying why.
+
+        Every stop that is not a limit goes through :meth:`_stop` and names
+        itself, so a loop that ended with no reason ended on a limit — and one
+        that was neither the game count nor the hard deadline was the seat
+        deadline. Checked in that order, so a hard deadline that has also
+        passed is the one reported.
+        """
+
+        limits = self._limits
+        if limits.max_games is not None and len(self._records) >= limits.max_games:
+            return StopReason.MAX_GAMES
+        if self._past_deadline():
+            return StopReason.TIME_LIMIT
+        return StopReason.WINDOW_CLOSED
+
+    async def _egress_open(self) -> bool:
+        """Check the egress; on a refusal, say so and stop."""
+
+        reading = await self._egress.check()
+        if reading.ok:
+            return True
+        self._health.event("egress_blocked", **reading.fields())
+        self._stop(StopReason.EGRESS_BLOCKED)
+        return False
 
 
 def _orientation_holds(
@@ -602,19 +895,48 @@ def _orientation_holds(
         that has just started looks like.
     """
 
-    if not snapshot.score_rows or not panel:
+    index = _comparable_row(snapshot, panel)
+    if index is None:
         return True
-    return tuple(panel[-1]) == _wire_pair(snapshot.score_rows[-1])
+    return tuple(panel[index]) == _wire_pair(snapshot.score_rows[index])
+
+
+def _comparable_row(
+    snapshot: Snapshot, panel: tuple[tuple[int, int], ...]
+) -> int | None:
+    """The newest round both readings describe, or ``None`` when neither has one.
+
+    The panel is opened a moment *after* the join snapshot arrives, and a
+    table can score a round in between. Holding each reading's last row
+    against the other would then compare two different rounds and refuse a
+    table whose sides line up perfectly — measured on 2026-09-16, where the
+    panel read two rows, ``280 12`` and ``267 35``, against a snapshot that
+    held only the first. Both lists run oldest first from the same opening
+    round, so the rounds they share are the prefix they share.
+
+    Args:
+        snapshot: The table's own account of the rounds scored so far.
+        panel: What the scoreboard showed, oldest first.
+
+    Returns:
+        The index to compare in both, or ``None`` when one of them is empty.
+    """
+
+    shared = min(len(snapshot.score_rows), len(panel))
+    return None if shared == 0 else shared - 1
 
 
 def _wire_pair(row: ScoreRow) -> tuple[int, int]:
     """One score row as the panel would print it: the south seat's side first.
 
-    A round's marked points are what a scoreboard column holds — the made
-    points plus the announced ones — rather than the card points behind them.
+    A scoreboard column is a round's whole marked total — the made points,
+    the announced ones and the belote the sheet credited — rather than the
+    card points behind them. Leaving the belote out refused perfectly good
+    tables as though their sides were swapped, on every round where one was
+    marked.
     """
 
     return tuple(
-        sum(row.marked[seat.team_side])
+        sum(row.marked[seat.team_side]) + row.marked_belote[seat.team_side]
         for seat in (Position.SOUTH, Position.WEST)
     )

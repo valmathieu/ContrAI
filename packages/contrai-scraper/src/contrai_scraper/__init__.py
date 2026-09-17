@@ -13,6 +13,9 @@ The package is a pipeline with a browser at one end and a record at the other:
 * :mod:`contrai_scraper.recorder` is the loop that drives all of it, one table
   at a time, with :mod:`contrai_scraper.rawlog` keeping the evidence and
   :mod:`contrai_scraper.health` saying what it is doing.
+* :mod:`contrai_scraper.shift` runs recorders only inside the
+  :mod:`contrai_scraper.schedule` window and only once
+  :mod:`contrai_scraper.egress` says traffic leaves through the tunnel.
 
 :mod:`contrai_scraper.cli` wires them into the ``contrai-scrape`` console
 script.
@@ -24,6 +27,8 @@ lives in the profile. The code knows the *structure*; the document knows the
 
 from contrai_scraper.browser import (
     INIT_SCRIPT,
+    PANEL_ATTEMPT_TIMEOUT_MS,
+    PANEL_ATTEMPTS,
     SEND_SCRIPT,
     STEP_TIMEOUT_MS,
     OptionsReading,
@@ -31,11 +36,18 @@ from contrai_scraper.browser import (
     Spectator,
     open_spectator,
 )
+from contrai_scraper.egress import (
+    EgressGate,
+    EgressReading,
+    EgressRefusal,
+    route_device_from,
+)
 from contrai_scraper.exceptions import (
     BrowserError,
     ParseError,
     ProfileError,
     ScraperError,
+    ShiftError,
     WireError,
 )
 from contrai_scraper.frames import (
@@ -53,11 +65,13 @@ from contrai_scraper.recorder import (
     Recorder,
     RecorderLimits,
     SessionSummary,
+    StopReason,
 )
 from contrai_scraper.rawlog import (
     RawLine,
     RawLogWriter,
     new_session_id,
+    prune_raw_logs,
     raw_dir,
     raw_path,
     read_raw_log,
@@ -75,7 +89,11 @@ from contrai_scraper.parse.live import (
     collect_rounds,
     play_events,
 )
-from contrai_scraper.parse.session import SessionResult, parse_session
+from contrai_scraper.parse.session import (
+    SessionResult,
+    parse_session,
+    split_visits,
+)
 from contrai_scraper.parse.snapshot import (
     PlayerInfo,
     RowContract,
@@ -87,6 +105,7 @@ from contrai_scraper.parse.translate import Translator
 from contrai_scraper.profile import (
     AccountSection,
     BrowserSection,
+    EgressSection,
     OutputSection,
     PrivacySection,
     Profile,
@@ -99,6 +118,18 @@ from contrai_scraper.profile import (
     WireSection,
     WireTokens,
     load_profile,
+)
+from contrai_scraper.schedule import (
+    ActiveRange,
+    Schedule,
+    parse_range,
+    timezone_named,
+)
+from contrai_scraper.shift import (
+    EGRESS_BUDGET,
+    FAILURE_BUDGET,
+    Shift,
+    ShiftSummary,
 )
 from contrai_scraper.wire import (
     DEAL_VERB,
@@ -115,16 +146,25 @@ from contrai_scraper.wire import (
 __all__ = [
     "DEAL_PACKETS",
     "DEAL_VERB",
+    "EGRESS_BUDGET",
+    "FAILURE_BUDGET",
     "INIT_SCRIPT",
+    "PANEL_ATTEMPTS",
+    "PANEL_ATTEMPT_TIMEOUT_MS",
     "RECEIVED",
     "SCOREBOARD_PANEL",
     "SEND_SCRIPT",
     "SENT",
     "STEP_TIMEOUT_MS",
     "AccountSection",
+    "ActiveRange",
     "BrowserError",
     "BrowserSection",
     "Counters",
+    "EgressGate",
+    "EgressReading",
+    "EgressRefusal",
+    "EgressSection",
     "EventKey",
     "FrameSource",
     "HealthLog",
@@ -146,6 +186,7 @@ __all__ = [
     "RecorderSection",
     "RowContract",
     "RulesSection",
+    "Schedule",
     "ScoreRow",
     "ScoreboardReading",
     "ScraperError",
@@ -153,9 +194,13 @@ __all__ = [
     "SelectorSection",
     "SessionResult",
     "SessionSummary",
+    "Shift",
+    "ShiftError",
+    "ShiftSummary",
     "SiteSection",
     "Snapshot",
     "Spectator",
+    "StopReason",
     "Translator",
     "WireError",
     "WireEvent",
@@ -176,13 +221,18 @@ __all__ = [
     "open_spectator",
     "order_events",
     "parse_key",
+    "parse_range",
     "parse_session",
     "play_events",
+    "prune_raw_logs",
     "raw_dir",
     "raw_path",
     "read_raw_log",
     "read_snapshot",
     "resolve_dealer",
     "restore_forced_passes",
+    "route_device_from",
+    "split_visits",
+    "timezone_named",
     "unwrap",
 ]
