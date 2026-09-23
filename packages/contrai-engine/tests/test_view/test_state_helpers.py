@@ -11,6 +11,7 @@ import pytest
 
 from contrai_core import Card, Play, Position, Rank, Suit
 from contrai_engine.view.state_helpers import (
+    _belote_badges_by_trick,
     _belote_by_position,
     _current_winner,
     _explain_constraint,
@@ -372,3 +373,124 @@ class TestBeloteByPosition:
         assert _belote_by_position(round_)[Position.NORTH] == (
             Suit.SPADES, Suit.HEARTS,
         )
+
+
+class TestBeloteBadgesByTrick:
+    """`_belote_badges_by_trick` — each announcement on its own trick.
+
+    The trick grid shows all eight tricks at once, so a badge belongs on
+    the trick whose K or Q carried the announcement — not, as in the live
+    diamond, on every trick from then on.
+    """
+
+    class _PlayState:
+        def __init__(self, completed, current=()):
+            self.completed_tricks = tuple(completed)
+            self.current_trick = tuple(current)
+
+    class _Round:
+        def __init__(self, play_state, announced):
+            self.play_state = play_state
+            self.announced_belotes = announced
+
+    @staticmethod
+    def _trick(*plays):
+        return tuple(Play(player, Card(suit, rank)) for player, suit, rank in plays)
+
+    def test_no_round_or_no_play_yet_places_nothing(self, four_players):
+        north, *_ = four_players
+        assert _belote_badges_by_trick(None) == {}
+        assert _belote_badges_by_trick(
+            self._Round(None, ((north, Suit.HEARTS),))
+        ) == {}
+
+    def test_nothing_announced_places_nothing(self, four_players):
+        north, east, south, west = four_players
+        trick = self._trick(
+            (north, Suit.HEARTS, Rank.KING), (east, Suit.HEARTS, Rank.SEVEN),
+            (south, Suit.HEARTS, Rank.EIGHT), (west, Suit.HEARTS, Rank.NINE),
+        )
+        round_ = self._Round(self._PlayState([trick]), ())
+
+        assert _belote_badges_by_trick(round_) == {}
+
+    def test_the_belote_and_rebelote_tricks_each_carry_the_badge(
+        self, four_players
+    ):
+        north, east, south, west = four_players
+        belote = self._trick(
+            (north, Suit.HEARTS, Rank.KING), (east, Suit.HEARTS, Rank.SEVEN),
+            (south, Suit.HEARTS, Rank.EIGHT), (west, Suit.HEARTS, Rank.NINE),
+        )
+        quiet = self._trick(
+            (north, Suit.SPADES, Rank.ACE), (east, Suit.SPADES, Rank.SEVEN),
+            (south, Suit.SPADES, Rank.EIGHT), (west, Suit.SPADES, Rank.NINE),
+        )
+        rebelote = self._trick(
+            (north, Suit.HEARTS, Rank.QUEEN), (east, Suit.CLUBS, Rank.SEVEN),
+            (south, Suit.CLUBS, Rank.EIGHT), (west, Suit.CLUBS, Rank.NINE),
+        )
+        round_ = self._Round(
+            self._PlayState([belote, quiet, rebelote]),
+            ((north, Suit.HEARTS),),
+        )
+
+        assert _belote_badges_by_trick(round_) == {
+            0: {Position.NORTH: (Suit.HEARTS,)},
+            2: {Position.NORTH: (Suit.HEARTS,)},
+        }
+
+    def test_a_pair_that_does_not_mark_is_not_placed(self, four_players):
+        # Under ``single`` only the first-announced pair marks, and
+        # ``announced_belotes`` already leaves the others out.
+        north, east, south, west = four_players
+        trick = self._trick(
+            (north, Suit.HEARTS, Rank.KING), (east, Suit.CLUBS, Rank.KING),
+            (south, Suit.HEARTS, Rank.EIGHT), (west, Suit.HEARTS, Rank.NINE),
+        )
+        round_ = self._Round(
+            self._PlayState([trick]), ((north, Suit.HEARTS),)
+        )
+
+        assert _belote_badges_by_trick(round_) == {
+            0: {Position.NORTH: (Suit.HEARTS,)},
+        }
+
+    def test_another_seats_king_of_the_suit_is_not_placed(self, four_players):
+        north, east, *_ = four_players
+        trick = self._trick(
+            (east, Suit.HEARTS, Rank.KING), (north, Suit.HEARTS, Rank.QUEEN),
+        )
+        round_ = self._Round(
+            self._PlayState([], current=trick), ((north, Suit.HEARTS),)
+        )
+
+        assert _belote_badges_by_trick(round_) == {
+            0: {Position.NORTH: (Suit.HEARTS,)},
+        }
+
+    def test_the_trick_in_progress_is_indexed_after_the_completed_ones(
+        self, four_players
+    ):
+        north, east, south, west = four_players
+        done = self._trick(
+            (north, Suit.SPADES, Rank.ACE), (east, Suit.SPADES, Rank.SEVEN),
+            (south, Suit.SPADES, Rank.EIGHT), (west, Suit.SPADES, Rank.NINE),
+        )
+        live = self._trick((north, Suit.HEARTS, Rank.QUEEN))
+        round_ = self._Round(
+            self._PlayState([done], current=live), ((north, Suit.HEARTS),)
+        )
+
+        assert _belote_badges_by_trick(round_) == {
+            1: {Position.NORTH: (Suit.HEARTS,)},
+        }
+
+    def test_a_non_honour_of_the_pairs_suit_is_not_placed(self, four_players):
+        north, *_ = four_players
+        live = self._trick((north, Suit.HEARTS, Rank.ACE))
+        round_ = self._Round(
+            self._PlayState([], current=live), ((north, Suit.HEARTS),)
+        )
+
+        assert _belote_badges_by_trick(round_) == {}

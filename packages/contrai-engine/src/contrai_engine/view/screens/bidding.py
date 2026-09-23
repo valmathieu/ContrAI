@@ -104,7 +104,7 @@ def _render_bidding_diamond(
     return out
 
 
-def _panel_bidding_history(bids: list) -> Panel:
+def _panel_bidding_history(bids: list, width: int = 70) -> Panel:
     """One-line-per-round history of bids so far.
 
     Each line starts with the bidding-round number (``#1``, ``#2``,
@@ -112,6 +112,9 @@ def _panel_bidding_history(bids: list) -> Panel:
     line up vertically across rounds:
         #1  S Pass     E Pass     N 80 ♥     W Pass
         #2  S 100 ♥    E Pass     N 130 ♥    W ×2
+
+    ``width`` lets a wider screen — the replay's trick grid — run the
+    panel flush with its own edges; the in-game frame keeps 70.
     """
     # Fixed column widths so cells stack in vertical lanes. The bid
     # cell holds at most "S 240 NT" (8 cells); pad to leave a gap.
@@ -143,7 +146,7 @@ def _panel_bidding_history(bids: list) -> Panel:
         title=Text("Bidding so far", style=f"bold {TITLE}"),
         border_style=BORDER,
         box=ROUNDED,
-        width=70,
+        width=width,
     )
 
 

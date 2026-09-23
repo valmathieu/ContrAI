@@ -24,6 +24,7 @@ from contrai_core import (
 from contrai_engine.model.player import HumanPlayer
 from contrai_engine.view.screens.trick import (
     _ai_card_announcement,
+    _badge_rows,
     _card_prompt_text,
     _panel_current_trick,
     _panel_hand,
@@ -180,6 +181,29 @@ class TestPanelRound:
         assert on == off
 
 
+class TestBadgeRows:
+    """How many diamond rows a set of belote badges occupies."""
+
+    def test_no_badges_take_no_rows(self):
+        assert _badge_rows({}) == 0
+
+    def test_west_and_east_share_one_row(self):
+        assert _badge_rows({
+            Position.WEST: (Suit.HEARTS,),
+            Position.EAST: (Suit.CLUBS,),
+        }) == 1
+
+    def test_each_of_the_three_rows_counts_once(self):
+        assert _badge_rows({
+            Position.NORTH: (Suit.HEARTS,),
+            Position.WEST: (Suit.CLUBS,),
+            Position.SOUTH: (Suit.SPADES,),
+        }) == 3
+
+    def test_an_empty_suit_tuple_is_no_badge(self):
+        assert _badge_rows({Position.NORTH: ()}) == 0
+
+
 class TestRenderDiamond:
     """Winner star, pending ?, led marker, dots, belote badge."""
 
@@ -214,6 +238,38 @@ class TestRenderDiamond:
         ).plain
         assert "N A♠ ★" in text
         assert "E 7♥ ★" not in text
+
+    def test_the_lead_marker_replaces_the_led_suffix(self, four_players):
+        north, east, *_ = four_players
+        plays = (
+            Play(north, Card(Suit.SPADES, Rank.ACE)),
+            Play(east, Card(Suit.SPADES, Rank.SEVEN)),
+        )
+        text = _render_diamond(
+            plays, Suit.HEARTS,
+            pending_position=None, winner_position=Position.NORTH,
+            dimmed=False, width=18, lead_marker=True,
+        ).plain
+        assert "▸N A♠ ★" in text
+        assert "(led)" not in text
+        assert "▸E" not in text
+
+    def test_the_lead_marker_fits_the_narrow_diamond(self, four_players):
+        # The widest W / E row the grid can meet: the leader in the West
+        # slot and the winner in the East, both on a two-character rank.
+        north, east, south, west = four_players
+        plays = (
+            Play(west, Card(Suit.HEARTS, Rank.TEN)),
+            Play(north, Card(Suit.HEARTS, Rank.SEVEN)),
+            Play(east, Card(Suit.HEARTS, Rank.JACK)),
+            Play(south, Card(Suit.HEARTS, Rank.EIGHT)),
+        )
+        text = _render_diamond(
+            plays, Suit.HEARTS,
+            pending_position=None, winner_position=Position.EAST,
+            dimmed=False, width=18, lead_marker=True,
+        )
+        assert max(len(line) for line in text.plain.split("\n")) <= 18
 
     def test_dimmed_rendering_drops_the_led_marker(self, four_players):
         north, *_ = four_players

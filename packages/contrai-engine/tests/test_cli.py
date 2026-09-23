@@ -48,6 +48,7 @@ from contrai_engine.model.round.scoring import RoundScore
 from contrai_engine.options import DebugOptions, TableAids
 from contrai_engine.recording import RecordingView, RecordRequest
 from contrai_engine.ruleset import TableSetup, load_setup, save_setup, setup_path
+from contrai_engine.view.parsing import RoundPick
 
 @pytest.fixture
 def contrai_home(tmp_path):
@@ -1553,6 +1554,8 @@ class TestRunReplay:
                 self.summaries: list[tuple] = []
                 self.recaps = 0
                 self.steps = 0
+                self.grids: list[tuple] = []
+                self.redraws = 0
                 self._picks = list(picks)
                 self._keys = list(keys)
 
@@ -1585,9 +1588,23 @@ class TestRunReplay:
 
             def show_replay_summary(self, rows, game_id):
                 self.summaries.append((tuple(rows), game_id))
-                return self._picks.pop(0) if self._picks else None
+                pick = self._picks.pop(0) if self._picks else None
+                # A bare number scripts "step that round".
+                return RoundPick(pick) if isinstance(pick, int) else pick
 
-            def show_replay_step(self, *, can_go_back):
+            def show_replay_grid(self, round_, bids):
+                self.grids.append((round_, list(bids)))
+
+            def show_replay_notice(self, text):
+                self.console.print(text)
+
+            def redraw_screen(self):
+                self.redraws += 1
+
+            def show_replay_contract(self, round_):
+                pass
+
+            def show_replay_step(self, *, can_go_back, **_offered):
                 self.steps += 1
                 return self._keys.pop(0) if self._keys else "r"
 
@@ -1692,6 +1709,138 @@ class TestRunReplay:
 
         assert _run_replay(self._args(record_path)) == 0
         assert view.recaps == 2
+
+    def test_a_grid_pick_shows_the_grid_and_returns_to_the_picker(
+        self, record_path, monkeypatch
+    ):
+        view = self._view([RoundPick(2, grid=True), None], [])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        (round_, bids), = view.grids
+        # Rounds 1 and 2 were replayed, unseen, to reach it.
+        assert round_.round_number == 2
+        assert len(bids) == len(round_.auction.bids) >= 4
+        assert view.recaps == 0
+        assert view.steps == 0
+        assert len(view.summaries) == 2
+
+    def test_a_grid_carries_every_trick_of_a_played_round(
+        self, tmp_path, monkeypatch
+    ):
+        from tests.test_replay.conftest import play_and_record
+
+        # Seed 7 passes its first round out and plays the second.
+        play_and_record(tmp_path, seed=7, rounds=2)
+        (path,) = (tmp_path / "games").glob("*.jsonl")
+        view = self._view([RoundPick(2, grid=True), None], [])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        _run_replay(self._args(path))
+
+        (round_, _), = view.grids
+        assert round_.contract is not None
+        assert len(round_.play_state.completed_tricks) == 8
+
+    def test_a_grid_round_that_diverges_says_so(
+        self, record_path, monkeypatch
+    ):
+        from contrai_engine.replay.exceptions import ReplayError
+
+        class _Diverging(cli_module.ReplayController):
+            def replay_round(self, round_):
+                if round_.number == 2:
+                    raise ReplayError("the record ran out")
+                super().replay_round(round_)
+
+        monkeypatch.setattr(cli_module, "ReplayController", _Diverging)
+        view = self._view([RoundPick(2, grid=True), None], [])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        assert view.grids == []
+        assert any("diverges" in line for line in view.console.printed)
+        assert view.steps == 1
+
+    def test_g_at_the_recap_shows_the_round_then_the_recap_again(
+        self, record_path, monkeypatch
+    ):
+        # 'r' to the recap, 'g' there, then 'q' back to the picker.
+        view = self._view([1, None], ["r", "g", "q"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        (round_, bids), = view.grids
+        assert round_.round_number == 1
+        assert len(bids) == len(round_.auction.bids)
+        assert view.redraws == 1
+        assert view.recaps == 1
+
+    def test_g_at_a_divergence_shows_the_round_as_far_as_it_got(
+        self, record_path, monkeypatch
+    ):
+        from contrai_engine.replay.exceptions import ReplayError
+
+        class _Diverging(cli_module.ReplayController):
+            def replay_round(self, round_):
+                if round_.number == 2:
+                    raise ReplayError("the record ran out")
+                super().replay_round(round_)
+
+        monkeypatch.setattr(cli_module, "ReplayController", _Diverging)
+        view = self._view([2, None], ["g", "q"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        _run_replay(self._args(record_path))
+
+        assert len(view.grids) == 1
+        assert view.steps == 2
+
+    def test_a_stepped_round_that_diverges_says_so(
+        self, record_path, monkeypatch
+    ):
+        from contrai_engine.replay.exceptions import ReplayError
+
+        class _Diverging(cli_module.ReplayController):
+            def replay_round(self, round_):
+                if round_.number == 2:
+                    raise ReplayError("the record ran out")
+                super().replay_round(round_)
+
+        monkeypatch.setattr(cli_module, "ReplayController", _Diverging)
+        view = self._view([2, None], [])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        assert any("diverges" in line for line in view.console.printed)
+        assert view.recaps == 0
+        assert view.steps == 1
+
+    def test_a_suspect_earlier_round_is_stepped_past(
+        self, record_path, monkeypatch
+    ):
+        from contrai_engine.replay.exceptions import ReplayError
+
+        cleared: list[int] = []
+
+        class _EarlierDiverges(cli_module.ReplayController):
+            def replay_round(self, round_):
+                if round_.number == 1:
+                    raise ReplayError("round 1 is suspect")
+                super().replay_round(round_)
+
+            def clear_hands(self):
+                cleared.append(1)
+                super().clear_hands()
+
+        monkeypatch.setattr(cli_module, "ReplayController", _EarlierDiverges)
+        view = self._view([RoundPick(2, grid=True), None], [])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        _run_replay(self._args(record_path))
+
+        assert cleared == [1]
+        assert len(view.grids) == 1
 
     def test_an_unknown_round_exits_one(
         self, record_path, monkeypatch, capsys

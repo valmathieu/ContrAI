@@ -22,6 +22,7 @@ from contrai_engine.view.screens.replay import (
     _format_replay_contract,
     _format_replay_verdict,
     _panel_replay_summary,
+    _replay_contract_text,
     _replay_deal_text,
     _replay_step_prompt_text,
     _replay_step_rejection_text,
@@ -155,12 +156,14 @@ class TestPromptText:
         text = _replay_summary_prompt_text([_row(7), _row(8)])
 
         assert "[7-8]" in text.plain
+        assert "[g 7-8]" in text.plain
         assert "[q]" in text.plain
 
     def test_the_summary_prompt_holds_up_with_nothing_steppable(self):
         text = _replay_summary_prompt_text([_row(7, steppable=False)])
 
         assert "[q]" in text.plain
+        assert "[g" not in text.plain
 
     def test_the_step_prompt_lists_every_key(self):
         text = _replay_step_prompt_text(can_go_back=True)
@@ -172,6 +175,31 @@ class TestPromptText:
         text = _replay_step_prompt_text(can_go_back=False)
 
         assert "[p]" not in text.plain
+
+    def test_the_step_prompt_offers_a_while_bidding(self):
+        text = _replay_step_prompt_text(
+            can_go_back=True, can_skip_auction=True
+        )
+
+        assert "[a] skip bids" in text.plain
+
+    def test_the_step_prompt_hides_a_once_the_auction_is_over(self):
+        text = _replay_step_prompt_text(can_go_back=True)
+
+        assert "[a]" not in text.plain
+
+    def test_the_step_prompt_always_offers_the_grid(self):
+        text = _replay_step_prompt_text(can_go_back=False)
+
+        assert "[g] grid" in text.plain
+
+    def test_the_step_prompt_is_one_line_that_fits_80_columns(self):
+        text = _replay_step_prompt_text(
+            can_go_back=True, can_skip_auction=True
+        )
+
+        assert "\n" not in text.plain
+        assert text.cell_len <= 80
 
 
 class TestRejectionText:
@@ -194,6 +222,47 @@ class TestRejectionText:
         text = _replay_step_rejection_text(can_go_back=False)
 
         assert "[p]" not in text.plain
+        assert "[g]" in text.plain
+
+    def test_the_step_rejection_names_a_only_while_bidding(self):
+        assert "[a]" in _replay_step_rejection_text(
+            can_go_back=True, can_skip_auction=True
+        ).plain
+        assert "[a]" not in _replay_step_rejection_text(
+            can_go_back=True
+        ).plain
+
+
+class TestContractText:
+    class _Player:
+        position = Position.EAST
+
+    class _Contract:
+        value = 100
+        suit = Suit.HEARTS
+        double = False
+        redouble = False
+
+        def __init__(self, player):
+            self.player = player
+
+    class _Round:
+        def __init__(self, contract):
+            self.contract = contract
+
+    def test_it_names_the_contract_and_what_comes_next(self):
+        round_ = self._Round(self._Contract(self._Player()))
+
+        text = _replay_contract_text(round_)
+
+        assert text.plain.startswith("Contract set: ")
+        assert "100" in text.plain
+        assert "first card" in text.plain
+
+    def test_a_contractless_round_still_renders(self):
+        text = _replay_contract_text(object())
+
+        assert "first card" in text.plain
 
 
 class TestDealText:

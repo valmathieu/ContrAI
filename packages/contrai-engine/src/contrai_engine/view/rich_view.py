@@ -20,7 +20,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence
 
 from contrai_core.bid import (
     Bid,
@@ -65,6 +65,7 @@ from contrai_engine.view.layout import (
     _two_column,
 )
 from contrai_engine.view.parsing import (
+    RoundPick,
     _parse_bid_input,
     _parse_card_input,
     _parse_replay_key,
@@ -85,6 +86,10 @@ from contrai_engine.view.screens.endgame import (
     _end_game_prompt_text,
     _panel_game_over_banner,
     _panel_round_summary,
+)
+from contrai_engine.view.screens.grid import (
+    _render_trick_grid,
+    _replay_grid_prompt_text,
 )
 from contrai_engine.view.screens.landing import (
     _landing_subtitle,
@@ -107,6 +112,7 @@ from contrai_engine.view.screens.recap import (
 )
 from contrai_engine.view.screens.replay import (
     _panel_replay_summary,
+    _replay_contract_text,
     _replay_deal_text,
     _replay_step_prompt_text,
     _replay_step_rejection_text,
@@ -187,6 +193,11 @@ class RichView:
     """
 
     LOG_MAX = 5
+    #: The log's length under replay. Two rows shorter, because a replay
+    #: frame already shows what the log would repeat — the auction in
+    #: "Bidding so far", the trick in its diamond — and those two rows
+    #: are what keep a long auction's frame inside 40.
+    REPLAY_LOG_MAX = 3
 
     def __init__(
         self,
@@ -208,6 +219,10 @@ class RichView:
                 re-points this attribute before the next deal.
         """
         self.options: DebugOptions = options or DebugOptions()
+        if self.options.replay:
+            # Shadows the class constant on this instance, so the trim in
+            # ``_log`` and the panel height agree on the one value.
+            self.LOG_MAX = self.REPLAY_LOG_MAX
         self.aids: TableAids = aids or TableAids()
         self.console: Console = Console()
         self.target_score: int = DEFAULT_TARGET
@@ -221,6 +236,13 @@ class RichView:
         # belote announcements). Survives across rounds so the end of
         # round N and the start of round N+1 share continuity.
         self.event_log: list[Text] = []
+        # The arguments of the last in-game frame, and a callable that
+        # repaints whatever screen is up. A replay keeps its screen still
+        # while the viewer reads it: a rejected key, a belote stop or a
+        # return from the trick grid repaints rather than printing more
+        # underneath, which is what let a frame grow off the top.
+        self._last_frame: Optional[dict[str, Any]] = None
+        self._last_screen: Optional[Callable[[], None]] = None
 
     # ------------------------------------------------------------------
     # Lifecycle wiring (called by the CLI)
@@ -479,6 +501,11 @@ class RichView:
         line.append(_suit_glyph(suit), style=_suit_color(suit))
         line.append(").", style=DIM)
         self._log(line)
+        # A replay stops on the announcement, and no frame of its own
+        # follows it: repaint the card frame so the log line is on screen
+        # before the step prompt is read under it.
+        if self.options.replay:
+            self.redraw_frame()
         self._pause("CONTRAI_AI_CARD_DELAY", 0.9)
 
     def show_round_recap(
@@ -506,36 +533,45 @@ class RichView:
         left alone — unlike a tiebreaker, the next round here really is
         just the next round.
         """
-        self.console.clear()
-        self.console.print(
-            _panel_round_recap(
-                round_,
-                running_scores,
-                self.target_score,
-                tiebreaker=is_tiebreaker,
-                belote_gated=belote_gated,
+
+        def draw() -> None:
+            self.console.clear()
+            self.console.print(
+                _panel_round_recap(
+                    round_,
+                    running_scores,
+                    self.target_score,
+                    tiebreaker=is_tiebreaker,
+                    belote_gated=belote_gated,
+                )
             )
-        )
-        # Under replay the recap's own prompt is left off: it would
-        # invite a keystroke this method never reads (``_wait_or_pause``
-        # returns at once), and there is no next round to deal — the
-        # replay's step prompt, drawn underneath, owns the key.
-        if not self.options.replay:
-            if is_final:
-                prompt_text = Text(
-                    "Press [Enter] to see the final score…", style=FG
+            # Under replay the recap's own prompt is left off: it would
+            # invite a keystroke this method never reads
+            # (``_wait_or_pause`` returns at once), and there is no next
+            # round to deal — the replay's step prompt, drawn underneath,
+            # owns the key.
+            if not self.options.replay:
+                if is_final:
+                    prompt_text = Text(
+                        "Press [Enter] to see the final score…", style=FG
+                    )
+                elif is_tiebreaker:
+                    prompt_text = Text(
+                        "Press [Enter] to deal the tiebreaker round…",
+                        style=FG,
+                    )
+                else:
+                    prompt_text = Text(
+                        "Press [Enter] to deal the next round…", style=FG
+                    )
+                if self.options.autoplay:
+                    prompt_text = _autoplay_pause_text(prompt_text.plain)
+                self.console.print(
+                    _panel_prompt(prompt_text, mandatory=False)
                 )
-            elif is_tiebreaker:
-                prompt_text = Text(
-                    "Press [Enter] to deal the tiebreaker round…", style=FG
-                )
-            else:
-                prompt_text = Text(
-                    "Press [Enter] to deal the next round…", style=FG
-                )
-            if self.options.autoplay:
-                prompt_text = _autoplay_pause_text(prompt_text.plain)
-            self.console.print(_panel_prompt(prompt_text, mandatory=False))
+
+        draw()
+        self._last_screen = draw
         self._wait_or_pause(GOLD, "CONTRAI_AUTOPLAY_RECAP_PAUSE", 2.5)
 
     def on_round_complete(self, round_: "Round", running_scores: dict) -> None:
@@ -881,8 +917,8 @@ class RichView:
 
     def show_replay_summary(
         self, rows: Sequence["ReplayRow"], game_id: str
-    ) -> Optional[int]:
-        """Show a recorded game's rounds and return the one to step.
+    ) -> Optional[RoundPick]:
+        """Show a recorded game's rounds and return the one to open.
 
         Unlike :meth:`show_landing`, a blank answer is **not** the exit:
         ``[q]`` is, and pressing Enter re-prompts. Closing a record by
@@ -893,7 +929,8 @@ class RichView:
             game_id: The record's id, for the panel title.
 
         Returns:
-            The record round number to replay, or ``None`` to leave.
+            The round to open and how — stepped, or as a trick grid —
+            or ``None`` to leave.
         """
         steppable = [row.number for row in rows if row.steppable]
         # As in ``show_landing``, a rejection rides inside the next
@@ -932,36 +969,122 @@ class RichView:
             prompt_question=_replay_deal_text(round_),
         )
 
-    def show_replay_step(self, *, can_go_back: bool) -> str:
-        """Draw the step prompt under the current frame and read one key.
+    def show_replay_grid(self, round_: "Round", bids: Sequence[Bid]) -> None:
+        """Show a round's tricks as a grid, and wait for Enter.
 
-        The console is deliberately not cleared: the frame above is the
-        action being stepped, and a rejected key re-prompts beneath it
-        rather than riding into the next frame's Prompt panel — there is
-        no next frame until the viewer asks for one.
+        A screen of its own, not a frame: it neither caches nor replaces
+        the in-game frame, so whoever opened it can repaint what was on
+        screen before.
+
+        Args:
+            round_: The round, complete or in progress.
+            bids: Its auction as far as it has gone.
+        """
+        self.console.clear()
+        self.console.print(_render_trick_grid(round_, bids))
+        self.console.print(_replay_grid_prompt_text())
+        self._setup_input()
+
+    def show_replay_contract(self, round_: "Round") -> None:
+        """Render the frame ``[a]`` comes to rest on: the table before play.
+
+        The last bid's frame, repainted as play is about to begin — an
+        empty trick on the table, the contract in the Round panel and in
+        the prompt line.
+
+        Args:
+            round_: The round whose auction just closed on a contract.
+        """
+        self.redraw_frame(
+            phase="playing",
+            current_player=None,
+            current_plays=(),
+            bidding_history=None,
+            prompt_question=_replay_contract_text(round_),
+        )
+
+    def show_replay_step(
+        self, *, can_go_back: bool, can_skip_auction: bool = False
+    ) -> str:
+        """Draw the step keys under the current frame and read one key.
+
+        The keys are one line, not a second Prompt panel: the frame above
+        already carries its own, and every row spent here is a row of the
+        frame's top pushed off a normal terminal. The frame itself is not
+        cleared — it is the action being stepped. A rejected key repaints
+        the screen and names the problem above the keys, so the screen
+        never grows.
 
         Args:
             can_go_back: Whether a previous stop exists, which decides
                 whether ``[p]`` is offered.
+            can_skip_auction: Whether the round is still bidding, which
+                decides whether ``[a]`` is.
 
         Returns:
-            One of ``"n"``, ``"t"``, ``"r"``, ``"p"``, ``"q"``.
+            One of ``"n"``, ``"t"``, ``"r"``, ``"a"``, ``"g"``, ``"p"``,
+            ``"q"``.
         """
+        offered = {
+            "can_go_back": can_go_back,
+            "can_skip_auction": can_skip_auction,
+        }
+        notice: Optional[Text] = None
         while True:
-            self.console.print(
-                _panel_prompt(
-                    _replay_step_prompt_text(can_go_back=can_go_back),
-                    mandatory=False,
-                )
-            )
-            key = _parse_replay_key(
-                self._setup_input(), can_go_back=can_go_back
-            )
+            if notice is not None:
+                self.console.print(notice)
+            self.console.print(_replay_step_prompt_text(**offered))
+            key = _parse_replay_key(self._setup_input(), **offered)
             if key is not None:
                 return key
-            self.console.print(
-                _replay_step_rejection_text(can_go_back=can_go_back)
-            )
+            notice = _replay_step_rejection_text(**offered)
+            self.redraw_screen()
+
+    def redraw_frame(self, **overrides: Any) -> None:
+        """Repaint the last in-game frame, optionally changing some of it.
+
+        The frame is rebuilt from the arguments it was last drawn with,
+        against the view's *current* state — so a line logged since then
+        shows. The overrides persist: they become the frame a later
+        repaint draws.
+
+        Args:
+            **overrides: ``_render_in_game`` keyword arguments to replace.
+        """
+        if self._last_frame is None:
+            return
+        self._render_in_game(**{**self._last_frame, **overrides})
+
+    def redraw_screen(self) -> None:
+        """Repaint whichever screen is up: the in-game frame or the recap."""
+        if self._last_screen is not None:
+            self._last_screen()
+
+    def show_replay_notice(self, text: str) -> None:
+        """Print a line under the screen that is up, and keep it there.
+
+        The line becomes part of that screen: a later
+        :meth:`redraw_screen` — a rejected key, a return from the trick
+        grid — paints it again, where a bare ``console.print`` would be
+        wiped by the repaint's clear.
+
+        Args:
+            text: The line, e.g. why the round stopped replaying.
+        """
+        base = self._last_screen
+        line = Text(text, style=RED)
+
+        def draw() -> None:
+            if base is not None:
+                base()
+            self.console.print(line)
+            # Repainting an in-game frame re-registers the frame alone as
+            # the screen; put the frame-plus-line back, or a second
+            # repaint would drop the line.
+            self._last_screen = draw
+
+        self.console.print(line)
+        self._last_screen = draw
 
     # ------------------------------------------------------------------
     # Top-level in-game render
@@ -987,7 +1110,22 @@ class RichView:
         so it survives the ``console.clear()`` that opens every frame.
         Under debug mode, once a round exists, a face-up strip showing
         every seat's hand is printed below the middle row.
+
+        The arguments are kept, so :meth:`redraw_frame` can paint the same
+        frame again.
         """
+        self._last_frame = {
+            "phase": phase,
+            "current_player": current_player,
+            "current_plays": current_plays,
+            "playable_cards": playable_cards,
+            "bidding_history": bidding_history,
+            "trick_winner": trick_winner,
+            "prompt_question": prompt_question,
+            "mandatory": mandatory,
+            "notice": notice,
+        }
+        self._last_screen = self.redraw_frame
         self.console.clear()
         round_ = self.game.current_round if self.game else None
         # Which of the eight tricks is on the table. Resolved once here
@@ -1030,8 +1168,11 @@ class RichView:
                 )
             )
             # Why each AI seat played what it played. A human seat has no
-            # entry — Round records no rationale for one.
-            self.console.print(_panel_ai_rationale(round_))
+            # entry — Round records no rationale for one. A replay leaves
+            # it off: every entry would read "recorded action", and its
+            # ten rows are what pushed the frame's top off the screen.
+            if self.options.debug:
+                self.console.print(_panel_ai_rationale(round_))
         # Hand panel — always rendered when a human is seated, so the
         # slot stays put across AI bid frames, AI play frames, and the
         # trick-won pause. ``interactive`` is true only when the human

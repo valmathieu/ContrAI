@@ -78,12 +78,14 @@ from contrai_engine.replay import (
     ReplayInterrupt,
     SteppingView,
     Verdict,
+    read_step_key,
     replay_rows,
     verify_game,
     verify_record,
 )
 from contrai_engine.replay.verify import default_out_root
 from contrai_engine.ruleset import TableSetup, resolve_setup, save_setup, setup_path
+from contrai_engine.view.parsing import RoundPick
 from contrai_engine.view.rich_view import RichView
 
 if TYPE_CHECKING:
@@ -649,6 +651,65 @@ def _run_verify(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def _replay_quietly(controller: ReplayController, index: int) -> None:
+    """Replay the rounds before ``controller.rounds[index]``, unseen.
+
+    The scripted deal source indexes on the game's own round counter and
+    cannot seek, so reaching a round means playing every round before it.
+    The controller's view must already be quiet.
+
+    Args:
+        controller: The controller, fresh.
+        index: The position, in ``controller.rounds``, of the round the
+            viewer asked for.
+    """
+
+    for earlier in controller.rounds[:index]:
+        try:
+            controller.replay_round(earlier)
+        except (IllegalBidError, IllegalPlayError, ReplayError):
+            # A suspect earlier round is the verifier's business, not
+            # this screen's: clear the hands it left behind and carry on
+            # to the round the viewer asked for.
+            controller.clear_hands()
+
+
+def _show_round_grid(record: "GameRecord", number: int, view: Any) -> None:
+    """Replay one recorded round unseen, then show all its tricks at once.
+
+    Args:
+        record: The record being replayed.
+        number: The record's number for the round to show.
+        view: The view to render through.
+    """
+
+    # Quiet from start to finish: nothing but the grid reaches the screen.
+    stepper = SteppingView(view)
+    controller = ReplayController(record, view=stepper)
+    index = [r.number for r in controller.rounds].index(number)
+    stepper.attach(controller.game, controller.game.rules.target_score)
+    _replay_quietly(controller, index)
+    try:
+        controller.replay_round(controller.rounds[index])
+    except (IllegalBidError, IllegalPlayError, ReplayError) as exc:
+        view.show_replay_notice(
+            f"Round {number} diverges from the record: {exc}"
+        )
+        # ``g`` still answers here: the grid of the round as far as it
+        # got is the quickest look at where it went wrong.
+        read_step_key(
+            view,
+            controller.game.current_round,
+            stepper.bids,
+            can_go_back=False,
+        )
+        return
+    round_ = controller.game.current_round
+    view.show_replay_grid(
+        round_, round_.auction.bids if round_.auction is not None else []
+    )
+
+
 def _step_round(record: "GameRecord", number: int, view: Any) -> None:
     """Step one recorded round, restarting it whenever the viewer goes back.
 
@@ -673,14 +734,7 @@ def _step_round(record: "GameRecord", number: int, view: Any) -> None:
         index = [r.number for r in controller.rounds].index(number)
         stepper.attach(controller.game, controller.game.rules.target_score)
         try:
-            for earlier in controller.rounds[:index]:
-                try:
-                    controller.replay_round(earlier)
-                except (IllegalBidError, IllegalPlayError, ReplayError):
-                    # A suspect earlier round is the verifier's business,
-                    # not this screen's: clear the hands it left behind and
-                    # carry on to the round the viewer asked for.
-                    controller.clear_hands()
+            _replay_quietly(controller, index)
             stepper.quiet = False
             controller.replay_round(controller.rounds[index])
         except ReplayInterrupt as interrupt:
@@ -689,15 +743,22 @@ def _step_round(record: "GameRecord", number: int, view: Any) -> None:
             resume_at = interrupt.resume_at
             continue
         except (IllegalBidError, IllegalPlayError, ReplayError) as exc:
-            view.console.print(
+            view.show_replay_notice(
                 f"Round {number} diverges from the record: {exc}"
             )
-            view.show_replay_step(can_go_back=False)
+            read_step_key(
+                view,
+                controller.game.current_round,
+                stepper.bids,
+                can_go_back=False,
+            )
             return
-        view.show_round_recap(
-            controller.game.current_round, controller.game.scores
+        round_ = controller.game.current_round
+        view.show_round_recap(round_, controller.game.scores)
+        key = read_step_key(
+            view, round_, stepper.bids, can_go_back=stepper.stops > 0
         )
-        if view.show_replay_step(can_go_back=stepper.stops > 0) == "p":
+        if key == "p":
             resume_at = max(stepper.stops - 1, 0)
             continue
         return
@@ -731,14 +792,17 @@ def _run_replay(args: argparse.Namespace) -> int:
         )
         return 1
     view = RichView(options=DebugOptions(replay=True))
-    pick = args.round
+    pick = RoundPick(args.round) if args.round is not None else None
     try:
         while True:
             if pick is None:
                 pick = view.show_replay_summary(rows, record.header.game_id)
                 if pick is None:
                     return 0
-            _step_round(record, pick, view)
+            if pick.grid:
+                _show_round_grid(record, pick.number, view)
+            else:
+                _step_round(record, pick.number, view)
             pick = None
     except (KeyboardInterrupt, EOFError):
         view.console.print("\nGoodbye.")
