@@ -691,7 +691,9 @@ def _show_round_grid(record: "GameRecord", number: int, view: Any) -> None:
     try:
         controller.replay_round(controller.rounds[index])
     except (IllegalBidError, IllegalPlayError, ReplayError) as exc:
-        view.console.print(f"Round {number} diverges from the record: {exc}")
+        view.show_replay_notice(
+            f"Round {number} diverges from the record: {exc}"
+        )
         view.show_replay_step(can_go_back=False)
         return
     round_ = controller.game.current_round
@@ -733,7 +735,7 @@ def _step_round(record: "GameRecord", number: int, view: Any) -> None:
             resume_at = interrupt.resume_at
             continue
         except (IllegalBidError, IllegalPlayError, ReplayError) as exc:
-            view.console.print(
+            view.show_replay_notice(
                 f"Round {number} diverges from the record: {exc}"
             )
             view.show_replay_step(can_go_back=False)

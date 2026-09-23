@@ -223,7 +223,7 @@ The keys: `[n]` or `[Enter]` for the next action, `[t]` to the end of the trick,
 - The *AI rationale* panel stays a debug-mode feature. Under replay every entry would read `recorded action`.
 - The keys are a single bare line instead of a second Prompt panel under the frame's own.
 - The log keeps 3 lines instead of 5. What it would repeat is already on screen, in *Bidding so far* and in the trick diamond.
-- Nothing is printed below a frame that has already been read. `RichView` keeps the arguments of its last in-game frame (`redraw_frame`) and a callable that repaints whichever screen is up, frame or recap (`redraw_screen`). A rejected key repaints and names the problem above the keys. A belote stop, whose hook draws no frame of its own, repaints the card frame so its log line shows.
+- Nothing is printed below a frame that has already been read. `RichView` keeps the arguments of its last in-game frame (`redraw_frame`) and a callable that repaints whichever screen is up, frame or recap (`redraw_screen`). A rejected key repaints and names the problem above the keys. A belote stop, whose hook draws no frame of its own, repaints the card frame so its log line shows. A line the driver prints under a frame, such as "Round N diverges from the record", goes through `show_replay_notice`. That makes it part of the screen, so a repaint draws it again instead of wiping it.
 
 **Trump choices.** No trump and all trump are off by default (`contree-domain.md` §9.2). Turn them on with a ruleset file:
 

@@ -1594,6 +1594,9 @@ class TestRunReplay:
             def show_replay_grid(self, round_, bids):
                 self.grids.append((round_, list(bids)))
 
+            def show_replay_notice(self, text):
+                self.console.print(text)
+
             def show_replay_contract(self, round_):
                 pass
 
@@ -1753,6 +1756,26 @@ class TestRunReplay:
         assert _run_replay(self._args(record_path)) == 0
         assert view.grids == []
         assert any("diverges" in line for line in view.console.printed)
+        assert view.steps == 1
+
+    def test_a_stepped_round_that_diverges_says_so(
+        self, record_path, monkeypatch
+    ):
+        from contrai_engine.replay.exceptions import ReplayError
+
+        class _Diverging(cli_module.ReplayController):
+            def replay_round(self, round_):
+                if round_.number == 2:
+                    raise ReplayError("the record ran out")
+                super().replay_round(round_)
+
+        monkeypatch.setattr(cli_module, "ReplayController", _Diverging)
+        view = self._view([2, None], [])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        assert any("diverges" in line for line in view.console.printed)
+        assert view.recaps == 0
         assert view.steps == 1
 
     def test_a_suspect_earlier_round_is_stepped_past(

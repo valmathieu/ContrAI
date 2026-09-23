@@ -1059,6 +1059,32 @@ class RichView:
         if self._last_screen is not None:
             self._last_screen()
 
+    def show_replay_notice(self, text: str) -> None:
+        """Print a line under the screen that is up, and keep it there.
+
+        The line becomes part of that screen: a later
+        :meth:`redraw_screen` — a rejected key, a return from the trick
+        grid — paints it again, where a bare ``console.print`` would be
+        wiped by the repaint's clear.
+
+        Args:
+            text: The line, e.g. why the round stopped replaying.
+        """
+        base = self._last_screen
+        line = Text(text, style=RED)
+
+        def draw() -> None:
+            if base is not None:
+                base()
+            self.console.print(line)
+            # Repainting an in-game frame re-registers the frame alone as
+            # the screen; put the frame-plus-line back, or a second
+            # repaint would drop the line.
+            self._last_screen = draw
+
+        self.console.print(line)
+        self._last_screen = draw
+
     # ------------------------------------------------------------------
     # Top-level in-game render
     # ------------------------------------------------------------------

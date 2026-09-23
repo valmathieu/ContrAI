@@ -2536,6 +2536,27 @@ class TestRedraw:
         # have been printed on its own.
         assert "Log" not in captured
 
+    def test_a_notice_is_printed_under_the_screen(self):
+        view = RichView(options=DebugOptions(replay=True))
+        captured = _capture_prints(view)
+
+        view.show_replay_notice("Round 3 diverges")
+
+        assert captured == ["Round 3 diverges"]
+
+    def test_a_notice_survives_every_repaint(self, monkeypatch, four_players):
+        view = self._view(monkeypatch, four_players, replay=True)
+        view._render_in_game(phase="bidding", bidding_history=[])
+        view.show_replay_notice("Round 3 diverges")
+        captured = _capture_prints(view)
+
+        view.redraw_screen()
+        view.redraw_screen()
+
+        assert captured.count("Round 3 diverges") == 2
+        # The frame came back each time too.
+        assert captured.count("Log") == 2
+
     def test_a_replayed_belote_repaints_the_frame(
         self, monkeypatch, four_players
     ):
