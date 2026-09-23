@@ -299,6 +299,15 @@ would seat four players from a table we left.
 `HealthLog` writes one JSON object per line to stderr — a transition per line plus a counter
 heartbeat — so a shift is `journalctl`-readable without a parser being written for it.
 
+Several workers write one stream, so each gets a log of its own from `HealthLog.worker(label)`:
+every line it writes carries `worker` right after the event name, and its counters and its
+heartbeat interval are its own. A worker that has stopped seating tables then shows as one worker's
+flat counters rather than as a dip in a total. The fleet's own beat is a separate event,
+`fleet_heartbeat`, carrying the workers' counters added up and how many there are, so a reader
+summing `heartbeat` lines per worker never counts one twice. The label is an opaque name such as
+`bot01`, never the account's address. A log with no label — `run`'s — writes exactly what it
+always did.
+
 ## Shifts
 
 `contrai-scrape run` is a shift: a process meant to stay up for weeks, watching only inside the
