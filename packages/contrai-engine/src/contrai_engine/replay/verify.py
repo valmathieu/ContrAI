@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from contrai_core import PRESETS, Card, Position, Rank, Suit, TeamSide
+from contrai_core.bid import SlamLevel
 from contrai_core.exceptions import IllegalBidError, IllegalPlayError
 from contrai_data import (
     BeloteHeld,
@@ -637,13 +638,41 @@ def _check_contract_terms(
         )
 
 
+def _sweep_substitute(slam: SlamOutcome) -> int | None:
+    """The flat figure an observed table writes in place of a swept pile.
+
+    §7.2: the substitute is the base value of the Slam-family level the
+    round carries — **500** for an announced Solo Slam, **250** for an
+    announced Slam and for an unannounced sweep alike. The engine's own
+    personal-sweep premium (:func:`sweep_substitute`, which pays a
+    declarer's solo sweep the Solo Slam's 500) is a *marking* rule and
+    never reaches this column: an unannounced sweep is written 250
+    whoever took the tricks.
+
+    Args:
+        slam: The round's slam classification.
+
+    Returns:
+        The substitute figure, or ``None`` when the round is no sweep at
+        all and the real pile is the only acceptable answer.
+    """
+
+    if slam is SlamOutcome.SOLO_SLAM:
+        return SlamLevel.SOLO_SLAM.base_value
+    if slam in (SlamOutcome.SLAM, SlamOutcome.UNANNOUNCED):
+        return SlamLevel.SLAM.base_value
+    return None
+
+
 def _taken_agrees(score: Any, recorded: Any, slam: SlamOutcome) -> bool:
-    """Whether the captured card points agree, allowing a sweep's 250.
+    """Whether the captured card points agree, allowing a sweep's substitute.
 
     §4.2.1: an observed table records a sweeping side's card points as
-    the **250** of the Slam substitute rather than the 162 actually on
-    the table, while the engine records the real pile. Both are true
-    statements about the same round, so a sweep accepts either.
+    the flat Slam substitute rather than the 162 actually on the table,
+    while the engine records the real pile. Both are true statements
+    about the same round, so a sweep accepts either — but only its *own*
+    substitute, so a Solo Slam's 500 and a Slam's 250 stay distinct and
+    a wrong figure is still a fault.
 
     Args:
         score: The replayed round score.
@@ -658,7 +687,8 @@ def _taken_agrees(score: Any, recorded: Any, slam: SlamOutcome) -> bool:
     theirs = {side: recorded.taken.get(side, 0) for side in TeamSide}
     if mine == theirs:
         return True
-    if slam is SlamOutcome.NONE:
+    substitute = _sweep_substitute(slam)
+    if substitute is None:
         return False
     # A sweep: the side that took everything is the one whose pile the
     # substitute stands in for, and the other side's zero must still be a
@@ -667,7 +697,7 @@ def _taken_agrees(score: Any, recorded: Any, slam: SlamOutcome) -> bool:
     if sweeper is None:
         return False
     return theirs == {
-        side: (250 if side is sweeper else 0) for side in TeamSide
+        side: (substitute if side is sweeper else 0) for side in TeamSide
     }
 
 

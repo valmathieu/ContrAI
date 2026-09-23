@@ -846,6 +846,45 @@ class TestTakenAgrees:
             is False
         )
 
+    def test_an_announced_solo_slam_states_its_own_500(self):
+        # §7.2: the substitute is the *announced* level's base value, so
+        # a Solo Slam writes 500 where a Slam writes 250. Observed live
+        # on obs-72aabacf round 15, the corpus's only announced Solo
+        # Slam, which the 250-only tolerance called suspect.
+        assert (
+            _taken_agrees(
+                _score(card_points={TeamSide.NS: 0, TeamSide.EW: 162}),
+                _Scored(taken={TeamSide.NS: 0, TeamSide.EW: 500}),
+                SlamOutcome.SOLO_SLAM,
+            )
+            is True
+        )
+
+    def test_a_solo_slam_does_not_accept_the_team_substitute(self):
+        # The tolerance widens to the round's own figure, not to "any
+        # slam number": 250 on a Solo Slam is still a disagreement.
+        assert (
+            _taken_agrees(
+                _score(card_points={TeamSide.NS: 0, TeamSide.EW: 162}),
+                _Scored(taken={TeamSide.NS: 0, TeamSide.EW: 250}),
+                SlamOutcome.SOLO_SLAM,
+            )
+            is False
+        )
+
+    def test_an_unannounced_sweep_keeps_the_team_substitute(self):
+        # The observed table marks 250 for every unannounced sweep,
+        # personal or not — the 500 of §7.2's personal-sweep premium
+        # never reaches the card-points column here.
+        assert (
+            _taken_agrees(
+                _score(card_points={TeamSide.NS: 0, TeamSide.EW: 162}),
+                _Scored(taken={TeamSide.NS: 0, TeamSide.EW: 250}),
+                SlamOutcome.UNANNOUNCED,
+            )
+            is True
+        )
+
 
 # ---------------------------------------------------------------------------
 # The observer's own guards
