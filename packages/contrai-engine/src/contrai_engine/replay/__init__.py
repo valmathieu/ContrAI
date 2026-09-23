@@ -23,7 +23,12 @@ from .exceptions import (
     SeatMismatchError,
 )
 from .player import RecordedPlayer, RoundScript
-from .stepping import ReplayInterrupt, StepMode, SteppingView
+from .stepping import (
+    ReplayInterrupt,
+    StepMode,
+    SteppingView,
+    read_step_key,
+)
 from .summary import ReplayRow, replay_rows
 from .verdict import (
     GameVerdict,
@@ -56,6 +61,7 @@ __all__ = [
     "ReplayInterrupt",
     "StepMode",
     "SteppingView",
+    "read_step_key",
     "ReplayRow",
     "replay_rows",
     "Verdict",

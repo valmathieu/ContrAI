@@ -78,6 +78,7 @@ from contrai_engine.replay import (
     ReplayInterrupt,
     SteppingView,
     Verdict,
+    read_step_key,
     replay_rows,
     verify_game,
     verify_record,
@@ -694,7 +695,14 @@ def _show_round_grid(record: "GameRecord", number: int, view: Any) -> None:
         view.show_replay_notice(
             f"Round {number} diverges from the record: {exc}"
         )
-        view.show_replay_step(can_go_back=False)
+        # ``g`` still answers here: the grid of the round as far as it
+        # got is the quickest look at where it went wrong.
+        read_step_key(
+            view,
+            controller.game.current_round,
+            stepper.bids,
+            can_go_back=False,
+        )
         return
     round_ = controller.game.current_round
     view.show_replay_grid(
@@ -738,12 +746,19 @@ def _step_round(record: "GameRecord", number: int, view: Any) -> None:
             view.show_replay_notice(
                 f"Round {number} diverges from the record: {exc}"
             )
-            view.show_replay_step(can_go_back=False)
+            read_step_key(
+                view,
+                controller.game.current_round,
+                stepper.bids,
+                can_go_back=False,
+            )
             return
-        view.show_round_recap(
-            controller.game.current_round, controller.game.scores
+        round_ = controller.game.current_round
+        view.show_round_recap(round_, controller.game.scores)
+        key = read_step_key(
+            view, round_, stepper.bids, can_go_back=stepper.stops > 0
         )
-        if view.show_replay_step(can_go_back=stepper.stops > 0) == "p":
+        if key == "p":
             resume_at = max(stepper.stops - 1, 0)
             continue
         return

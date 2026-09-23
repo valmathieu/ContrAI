@@ -304,3 +304,7 @@ class TestParseReplayKey:
 
     def test_a_is_refused_once_the_auction_is_over(self):
         assert _parse_replay_key("a", can_go_back=True) is None
+
+    def test_g_is_always_on_offer(self):
+        assert _parse_replay_key("g", can_go_back=False) == "g"
+        assert _parse_replay_key("grid", can_go_back=True) == "g"

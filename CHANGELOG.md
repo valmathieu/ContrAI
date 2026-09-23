@@ -10,7 +10,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 ### Added
 
-- (engine) `contrai replay` trick grid: `g N` on the picker shows round N's eight tricks, 4 × 2, with leader, winner, points, belote and the auction. See [engine docs](docs/engine/index.md).
+- (engine) `contrai replay` trick grid: `g N` on the picker, or `g` at any stop, shows the round's tricks 4 × 2 with leader, winner, points, belote and auction. See [engine docs](docs/engine/index.md).
 - (engine) `contrai replay` gains `a`: skip the rest of the auction and stop on the contract, one key before the first card. See [engine docs](docs/engine/index.md).
 
 ### Fixed

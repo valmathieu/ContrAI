@@ -179,6 +179,8 @@ _REPLAY_KEYS: Final[dict[str, str]] = {
     "round": "r",
     "a": "a",
     "auction": "a",
+    "g": "g",
+    "grid": "g",
     "p": "p",
     "back": "p",
     "q": "q",
@@ -201,8 +203,9 @@ def _parse_replay_key(
         can_skip_auction: Whether the round is still bidding.
 
     Returns:
-        One of ``"n"``, ``"t"``, ``"r"``, ``"a"``, ``"p"``, ``"q"``, or
-        ``None``.
+        One of ``"n"``, ``"t"``, ``"r"``, ``"a"``, ``"g"``, ``"p"``,
+        ``"q"``, or ``None``. ``g`` is always on offer: every stop has a
+        round to show.
     """
 
     key = _REPLAY_KEYS.get(raw.strip().lower())

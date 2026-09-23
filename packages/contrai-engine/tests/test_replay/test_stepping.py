@@ -13,6 +13,7 @@ from contrai_engine.replay.stepping import (
     ReplayInterrupt,
     StepMode,
     SteppingView,
+    read_step_key,
 )
 
 
@@ -23,6 +24,7 @@ class _Inner:
         self.calls: list[str] = []
         self.prompts: list[bool] = []
         self.skips: list[bool] = []
+        self.grids: list[tuple] = []
         self._keys = list(keys or [])
 
     def attach(self, game, target_score):
@@ -54,6 +56,13 @@ class _Inner:
 
     def show_replay_contract(self, round_):
         self.calls.append("show_replay_contract")
+
+    def show_replay_grid(self, round_, bids):
+        self.calls.append("show_replay_grid")
+        self.grids.append((round_, list(bids)))
+
+    def redraw_screen(self):
+        self.calls.append("redraw_screen")
 
     def show_replay_step(self, *, can_go_back, can_skip_auction=False):
         self.prompts.append(can_go_back)
@@ -294,6 +303,80 @@ class TestSkipAuction:
         _bid_to_contract(stepper, 1)
 
         assert stepper.stops == 2
+
+
+class TestGridKey:
+    def test_g_shows_the_grid_repaints_and_asks_again(self):
+        inner = _Inner(["g", "n"])
+        stepper = SteppingView(inner)
+        stepper.quiet = False
+
+        stepper.on_round_dealt("round")
+
+        assert inner.calls == [
+            "on_round_dealt",
+            "show_replay_deal",
+            "show_replay_grid",
+            "redraw_screen",
+        ]
+        assert inner.grids == [("round", [])]
+        assert len(inner.prompts) == 2
+
+    def test_g_takes_no_stop_and_the_next_key_still_counts(self):
+        # At card 1: 'g', then 't'. The 't' read after the grid runs the
+        # trick out as it would have without it.
+        inner = _Inner(["g", "t", "n"])
+        stepper = SteppingView(inner)
+        stepper.quiet = False
+
+        _play(stepper, 4)
+
+        assert stepper.stops == 4
+        # Card 1 was asked twice (g, t); the trick frame once.
+        assert inner.prompts == [False, False, True]
+        assert len(inner.grids) == 1
+
+    def test_the_grid_gets_the_bids_so_far(self):
+        inner = _Inner(["n", "n", "g", "n"])
+        stepper = SteppingView(inner)
+        stepper.quiet = False
+
+        stepper.on_round_dealt("round")
+        stepper.on_bid_made(None, None, ["bid 1"])
+        stepper.on_bid_made(None, None, ["bid 1", "bid 2"])
+
+        assert inner.grids == [("round", ["bid 1", "bid 2"])]
+
+    def test_bids_are_tracked_while_quiet_and_reset_by_a_deal(self):
+        stepper = SteppingView(_Inner())
+
+        stepper.on_round_dealt("round 1")
+        stepper.on_bid_made(None, None, ["bid"])
+        assert stepper.bids == ["bid"]
+
+        stepper.on_round_dealt("round 2")
+        assert stepper.bids == []
+
+
+class TestReadStepKey:
+    def test_any_number_of_grids_before_the_real_key(self):
+        inner = _Inner(["g", "g", "t"])
+
+        key = read_step_key(inner, "round", ["bid"], can_go_back=True)
+
+        assert key == "t"
+        assert inner.grids == [("round", ["bid"])] * 2
+        assert inner.calls.count("redraw_screen") == 2
+
+    def test_the_offers_reach_the_prompt(self):
+        inner = _Inner(["n"])
+
+        read_step_key(
+            inner, None, [], can_go_back=False, can_skip_auction=True
+        )
+
+        assert inner.prompts == [False]
+        assert inner.skips == [True]
 
 
 class TestLeaving:

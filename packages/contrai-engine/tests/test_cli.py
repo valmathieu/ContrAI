@@ -1555,6 +1555,7 @@ class TestRunReplay:
                 self.recaps = 0
                 self.steps = 0
                 self.grids: list[tuple] = []
+                self.redraws = 0
                 self._picks = list(picks)
                 self._keys = list(keys)
 
@@ -1596,6 +1597,9 @@ class TestRunReplay:
 
             def show_replay_notice(self, text):
                 self.console.print(text)
+
+            def redraw_screen(self):
+                self.redraws += 1
 
             def show_replay_contract(self, round_):
                 pass
@@ -1757,6 +1761,40 @@ class TestRunReplay:
         assert view.grids == []
         assert any("diverges" in line for line in view.console.printed)
         assert view.steps == 1
+
+    def test_g_at_the_recap_shows_the_round_then_the_recap_again(
+        self, record_path, monkeypatch
+    ):
+        # 'r' to the recap, 'g' there, then 'q' back to the picker.
+        view = self._view([1, None], ["r", "g", "q"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        (round_, bids), = view.grids
+        assert round_.round_number == 1
+        assert len(bids) == len(round_.auction.bids)
+        assert view.redraws == 1
+        assert view.recaps == 1
+
+    def test_g_at_a_divergence_shows_the_round_as_far_as_it_got(
+        self, record_path, monkeypatch
+    ):
+        from contrai_engine.replay.exceptions import ReplayError
+
+        class _Diverging(cli_module.ReplayController):
+            def replay_round(self, round_):
+                if round_.number == 2:
+                    raise ReplayError("the record ran out")
+                super().replay_round(round_)
+
+        monkeypatch.setattr(cli_module, "ReplayController", _Diverging)
+        view = self._view([2, None], ["g", "q"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        _run_replay(self._args(record_path))
+
+        assert len(view.grids) == 1
+        assert view.steps == 2
 
     def test_a_stepped_round_that_diverges_says_so(
         self, record_path, monkeypatch

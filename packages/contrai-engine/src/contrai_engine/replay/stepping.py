@@ -46,6 +46,7 @@ NEXT_KEY = "n"
 TRICK_KEY = "t"
 ROUND_KEY = "r"
 AUCTION_KEY = "a"
+GRID_KEY = "g"
 BACK_KEY = "p"
 OUT_KEY = "q"
 
@@ -69,13 +70,53 @@ class StepMode(Enum):
 
 
 #: Which mode each continuing key selects. ``p`` and ``q`` leave the
-#: round instead of setting a mode, so neither appears here.
+#: round instead of setting a mode, and ``g`` never reaches the gate —
+#: :func:`read_step_key` serves it — so none of the three appears here.
 _MODES: dict[str, StepMode] = {
     NEXT_KEY: StepMode.ACTION,
     TRICK_KEY: StepMode.TRICK,
     ROUND_KEY: StepMode.ROUND,
     AUCTION_KEY: StepMode.AUCTION,
 }
+
+
+def read_step_key(
+    view: Any,
+    round_: Any,
+    bids: Any,
+    *,
+    can_go_back: bool,
+    can_skip_auction: bool = False,
+) -> str:
+    """Read the viewer's key at a stop, serving any trick-grid requests.
+
+    ``g`` is not a way to move on: it shows the round so far as a trick
+    grid, repaints the screen it was pressed on, and asks again — as
+    many times as the viewer likes. So it is served here, below every
+    caller, rather than returned to one: the step gate inside a round
+    and the driver's own prompts after it (the recap, a divergence) all
+    read their key through this.
+
+    Args:
+        view: The view to prompt on and to draw the grid with.
+        round_: The round on screen, as far as it has gone.
+        bids: Its auction as far as it has gone — the round's own
+            ``auction`` is set only once bidding ends.
+        can_go_back: Whether ``[p]`` is offered.
+        can_skip_auction: Whether ``[a]`` is offered.
+
+    Returns:
+        The first key that is not ``g``.
+    """
+
+    while True:
+        key = view.show_replay_step(
+            can_go_back=can_go_back, can_skip_auction=can_skip_auction
+        )
+        if key != GRID_KEY:
+            return key
+        view.show_replay_grid(round_, bids)
+        view.redraw_screen()
 
 
 class ReplayInterrupt(Exception):
@@ -120,7 +161,9 @@ class SteppingView:
         Args:
             inner: The view to forward to and render through. It must
                 answer ``show_replay_deal(round_)``,
-                ``show_replay_contract(round_)`` and
+                ``show_replay_contract(round_)``,
+                ``show_replay_grid(round_, bids)``, ``redraw_screen()``
+                and
                 ``show_replay_step(can_go_back=..., can_skip_auction=...)``.
             resume_at: How many stops to pass through in silence before
                 prompting — how a restarted round returns to where it
@@ -135,6 +178,11 @@ class SteppingView:
         # skipping the auction means anything, so the only time ``a`` is
         # offered.
         self._in_auction = False
+        # What the trick grid needs at a stop: the round on screen, and
+        # its bids so far — ``Round.auction`` is set only once bidding
+        # ends, so a grid asked for mid-auction has to be handed them.
+        self._round: Any = None
+        self._bids: list[Any] = []
         self.quiet = True
 
     @property
@@ -142,6 +190,12 @@ class SteppingView:
         """How many stop points this round has reached so far."""
 
         return self._stops
+
+    @property
+    def bids(self) -> list[Any]:
+        """The bids of the round on screen, as far as its auction has gone."""
+
+        return list(self._bids)
 
     def __getattr__(self, name: str) -> Any:
         """Forward anything not intercepted here to the inner view.
@@ -195,6 +249,8 @@ class SteppingView:
         """
 
         self._in_auction = True
+        self._round = round_
+        self._bids = []
         if self.quiet:
             return
         self._inner.on_round_dealt(round_)
@@ -243,6 +299,7 @@ class SteppingView:
             history: The auction so far.
         """
 
+        self._bids = list(history)
         if self.quiet:
             return
         self._inner.on_bid_made(player, bid, history)
@@ -343,7 +400,12 @@ class SteppingView:
                 the round.
         """
 
-        key = self._inner.show_replay_step(
+        # ``g`` is served inside and never comes back: it repaints this
+        # stop's own frame, so neither the stop count nor the mode moves.
+        key = read_step_key(
+            self._inner,
+            self._round,
+            self._bids,
             can_go_back=self._stops > 1,
             can_skip_auction=self._in_auction,
         )

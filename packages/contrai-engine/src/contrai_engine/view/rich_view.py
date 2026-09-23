@@ -1022,7 +1022,8 @@ class RichView:
                 decides whether ``[a]`` is.
 
         Returns:
-            One of ``"n"``, ``"t"``, ``"r"``, ``"a"``, ``"p"``, ``"q"``.
+            One of ``"n"``, ``"t"``, ``"r"``, ``"a"``, ``"g"``, ``"p"``,
+            ``"q"``.
         """
         offered = {
             "can_go_back": can_go_back,

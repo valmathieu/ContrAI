@@ -188,6 +188,11 @@ class TestPromptText:
 
         assert "[a]" not in text.plain
 
+    def test_the_step_prompt_always_offers_the_grid(self):
+        text = _replay_step_prompt_text(can_go_back=False)
+
+        assert "[g] grid" in text.plain
+
     def test_the_step_prompt_is_one_line_that_fits_80_columns(self):
         text = _replay_step_prompt_text(
             can_go_back=True, can_skip_auction=True
@@ -217,6 +222,7 @@ class TestRejectionText:
         text = _replay_step_rejection_text(can_go_back=False)
 
         assert "[p]" not in text.plain
+        assert "[g]" in text.plain
 
     def test_the_step_rejection_names_a_only_while_bidding(self):
         assert "[a]" in _replay_step_rejection_text(

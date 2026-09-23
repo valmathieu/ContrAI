@@ -17,8 +17,8 @@ stateDiagram-v2
     RoundRecap : <b>4. Round recap</b><br/>show_round_recap(round, scores, is_final, is_tiebreaker, belote_gated)<br/>contract (doubled/redoubled verbose) · trump · made/failed<br/>Outcome: tricks won · round points<br/>Scoring: contract · tricks · last trick · belote · round score<br/>running totals · target<br/>gold notice when belote_gated: "past the target on Belote alone"<br/>"Press [Enter] to deal next round…"<br/>(or "…to see the final score…" when is_final,<br/>"…to deal the tiebreaker round…" when is_tiebreaker ·<br/>belote_gated leaves the prompt alone)
     EndGame : <b>5. End game</b><br/>show_end_game(status)<br/>[n] new · [r] rematch · [q] quit
     ReplayPicker : <b>6. Replay picker</b><br/>show_replay_summary(rows, game_id) -> RoundPick | None<br/>one row per recorded round: # · contract · outcome<br/>· running totals · verification verdict<br/>[1-n] step a round · [g 1-n] trick grid · [q] quit<br/>a round that cannot be replayed is listed and marked, never hidden
-    ReplayGrid : <b>8. Replay grid</b><br/>[g 1-n] on the picker · show_replay_grid(round, bids)<br/>contract + result · 8 tricks, 4 across × 2 down<br/>▸ led · ★ won · points · belote on its own trick<br/>Bidding so far, one row per time round the table<br/>[Enter] back
-    ReplayStep : <b>7. Replay step</b><br/>show_replay_step(can_go_back, can_skip_auction) -> key<br/>[n] / [Enter] action · [t] end of trick · [r] end of round<br/>· [a] skip bids (while bidding) · [p] back · [q] rounds<br/>4 stops per trick, not 5 · one key line under the frame<br/>the frames are the live game's own — Bidding / MidTrick /<br/>TrickWon / RoundRecap — with every hand face up
+    ReplayGrid : <b>8. Replay grid</b><br/>[g 1-n] on the picker, [g] at any step<br/>show_replay_grid(round, bids)<br/>contract + result · 8 tricks, 4 across × 2 down<br/>▸ led · ★ won · points · belote on its own trick<br/>Bidding so far, one row per time round the table<br/>[Enter] back to where it was opened
+    ReplayStep : <b>7. Replay step</b><br/>show_replay_step(can_go_back, can_skip_auction) -> key<br/>[n] / [Enter] action · [t] end of trick · [r] end of round<br/>· [a] skip bids (while bidding) · [g] grid · [p] back · [q] rounds<br/>4 stops per trick, not 5 · one key line under the frame<br/>the frames are the live game's own — Bidding / MidTrick /<br/>TrickWon / RoundRecap — with every hand face up
 
     Landing --> PresetPicker : [p]
     PresetPicker --> Landing : a pick,<br/>or [Enter]
@@ -50,6 +50,10 @@ stateDiagram-v2
     ReplayPicker --> [*] : [q] quit
     %% Unlabelled on purpose: both edges cross the Landing / Table rules
     %% edges, whose labels a label here lands on. The keys are in the nodes.
+    %% The grid is also reachable with [g] from any ReplayStep stop; those
+    %% two edges are left out because dagre re-lays the whole chart around
+    %% them and stacks the Landing labels on top of each other. The node
+    %% text says so instead.
     ReplayPicker --> ReplayGrid
     ReplayGrid --> ReplayPicker
 

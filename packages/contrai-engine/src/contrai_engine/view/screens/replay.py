@@ -233,8 +233,9 @@ def _replay_step_prompt_text(
     bare under a frame that already fills most of a terminal and must not
     wrap on an 80-column one: ``trick`` and ``round`` stand for "run to
     the end of the trick / round", ``skip bids`` for "run to the
-    contract". ``[p]`` is omitted at a round's first stop, ``[a]`` once
-    the auction is over.
+    contract", ``grid`` for "show the round so far as a trick grid".
+    ``[p]`` is omitted at a round's first stop, ``[a]`` once the auction
+    is over.
 
     Args:
         can_go_back: Whether a previous stop exists to return to.
@@ -251,6 +252,7 @@ def _replay_step_prompt_text(
     ]
     if can_skip_auction:
         keys.append(("[a]", "skip bids"))
+    keys.append(("[g]", "grid"))
     if can_go_back:
         keys.append(("[p]", "back"))
     text = Text()
@@ -280,6 +282,7 @@ def _replay_step_rejection_text(
     keys = ["[n]", "[t]", "[r]"]
     if can_skip_auction:
         keys.append("[a]")
+    keys.append("[g]")
     if can_go_back:
         keys.append("[p]")
     keys.append("[q]")
