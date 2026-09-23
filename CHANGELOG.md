@@ -8,9 +8,19 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 ## [Unreleased]
 
+### Added
+
+- (core) `RuleConfig.substitute_survives_doubling` and `personal_sweep_marks_solo_slam` (§9.6) — the observed tables' sweep scoring, both set in the `tournament` preset. See [core docs](docs/core/index.md).
+
+### Changed
+
+- (engine) **BREAKING:** `sweep_substitute(tag)` takes the ruleset, and a doubled sweep is now tagged `UnannouncedSlam`. Call `sweep_substitute(tag, rules)`; re-parse older scraped records.
+
 ### Fixed
 
 - (engine) `contrai verify` accepts an announced Solo Slam's 500 in a swept round's card-points column, not 250 only. See [engine docs](docs/engine/index.md).
+- (engine) A doubled sweep is tagged an unannounced slam and always made, so a swept doubled 170 no longer scores as a failure. See [engine docs](docs/engine/index.md).
+- (scraper) A doubled sweep is recorded as an unannounced slam — the multiplier no longer suppresses the classification.
 
 ## [0.5.0] - 2026-09-17
 

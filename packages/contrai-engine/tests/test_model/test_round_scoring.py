@@ -27,13 +27,17 @@ from contrai_core.card import Card
 from contrai_core.contract import Contract
 from contrai_core.deck import Deck
 from contrai_core.play import Play, PlayState
-from contrai_core.rule_config import Rounding, RuleConfig
+from contrai_core.rule_config import PRESETS, Rounding, RuleConfig
 from contrai_core.rules import rules_for
 from contrai_core.team_side import TeamSide
 from contrai_core.types import Rank, Suit
 
 from contrai_engine.model.round import Round, UnannouncedSlam
-from contrai_engine.model.round.components import Mark, marked_total
+from contrai_engine.model.round.components import (
+    Mark,
+    marked_components,
+    marked_total,
+)
 from contrai_engine.model.round.scoring import (
     RoundScore,
     score_round,
@@ -778,8 +782,10 @@ def _split_round(
     return round_
 
 
-def _sweep_round(players_dict, value, *, personal=False, rules=None):
-    """Build an un-doubled numeric round the declaring team sweeps.
+def _sweep_round(
+    players_dict, value, *, personal=False, doubled=False, rules=None
+):
+    """Build a numeric round the declaring team sweeps.
 
     All 32 cards land in eight tricks played entirely by the N-S seats,
     so N-S wins every one and captures the whole 152-point pack — 162
@@ -792,6 +798,8 @@ def _sweep_round(players_dict, value, *, personal=False, rules=None):
         value: the numeric contract value, bid by N.
         personal: whether N sweeps alone (``UnannouncedSlam.GRAND_SLAM``)
             or the partner takes the last trick (``SLAM``).
+        doubled: whether E doubles the contract, so the sweep lands on
+            the ×2 path the ``substitute_survives_doubling`` knob rules.
         rules: optional table ruleset.
 
     Returns:
@@ -806,9 +814,13 @@ def _sweep_round(players_dict, value, *, personal=False, rules=None):
         seat_cards = [("N", card) for card in cards[:28]]
         seat_cards += [("S", card) for card in cards[28:]]
 
+    contract = Contract(
+        ContractBid(players_dict["N"], value, _SPLIT_TRUMP),
+        **({"double_player": players_dict["E"]} if doubled else {}),
+    )
     round_ = _numeric_round(
         players_dict,
-        contract=_contract(players_dict["N"], value, _SPLIT_TRUMP),
+        contract=contract,
         team_cards={TeamSide.NS: seat_cards, TeamSide.EW: []},
         rules=rules,
     )
@@ -1071,6 +1083,133 @@ class TestUnannouncedSlamSubstituteSwitch:
             players, contract=contract, trick_winners=["N"] * 8, rules=rules
         )
         assert score_round(round_).scores[TeamSide.NS] == 500
+
+
+class TestSubstituteSurvivesDoubling:
+    """§9.6 — whether a *doubled* sweep keeps its flat substitute.
+
+    §7.2's default is "un-doubled only": a doubled sweep falls back to
+    the winner-takes-all grid with the pile flat at 160. The observed
+    tournament tables mark the substitute anyway, which is the whole
+    reason the knob exists.
+    """
+
+    def test_a_doubled_sweep_is_tagged_whatever_the_knob_says(
+        self, players
+    ):
+        # The tag classifies what happened; the knob decides what it is
+        # worth. A doubled sweep is still eight tricks taken uncalled.
+        round_ = _sweep_round(players, 100, doubled=True)
+        assert score_round(round_).unannounced_slam is UnannouncedSlam.SLAM
+
+    def test_off_by_default_the_doubled_sweep_marks_the_flat_pile(
+        self, players
+    ):
+        # §7.2 default: the substitute does not apply, so the doubled
+        # made round is winner-takes-all with the pile flat — 160, plus
+        # C × 2 under the default marking conventions.
+        round_ = _sweep_round(players, 100, doubled=True)
+        score = score_round(round_)
+        assert score.scores[TeamSide.NS] == 360        # 160 + 100*2
+        assert score.scores[TeamSide.EW] == 0
+
+    def test_on_the_doubled_sweep_marks_its_substitute(self, players):
+        rules = RuleConfig(substitute_survives_doubling=True)
+        round_ = _sweep_round(players, 100, doubled=True, rules=rules)
+        score = score_round(round_)
+        assert score.scores[TeamSide.NS] == 450        # 250 + 100*2
+
+    def test_an_un_doubled_sweep_is_untouched_by_the_knob(self, players):
+        # The knob is named for the doubled round and reaches no other.
+        rules = RuleConfig(substitute_survives_doubling=True)
+        assert (
+            score_round(_sweep_round(players, 100, rules=rules)).scores[
+                TeamSide.NS
+            ]
+            == 350                                     # 250 + 100
+        )
+
+    def test_a_doubled_sweep_past_162_no_longer_fails(self, players):
+        # A sweep can never fail — every trick is already taken. While a
+        # doubled sweep went untagged that short-circuit never fired, so
+        # a 170 contract was judged on its 162 card points and marked as
+        # a failure. Nothing in the V5 corpus reaches 170 doubled; this
+        # pins the shape the tag now covers.
+        score = score_round(_sweep_round(players, 170, doubled=True))
+        assert score.contract_made is True
+
+    def test_the_observed_doubled_team_sweep(self, players):
+        # obs-7bfd7f3f round 13: 120 in diamonds, doubled, the declaring
+        # team sweeping. The site marked made 500, announced 240.
+        rules = PRESETS["tournament"]
+        round_ = _sweep_round(players, 120, doubled=True, rules=rules)
+        score = score_round(round_)
+        assert marked_components(
+            score.marks[TeamSide.NS], score.multiplier, rules
+        ) == (500, 240)
+
+
+class TestPersonalSweepMarksSoloSlam:
+    """§9.6 — whether a declarer's solo sweep marks 500 or the team 250.
+
+    §7.2 pays the declarer's personal sweep the Solo Slam's 500 — "the
+    sweep the declarer could have bid". The observed tables do not: all
+    49 unannounced sweeps in the V5 corpus are marked 250, the two
+    personal ones included.
+    """
+
+    def test_on_by_default_the_personal_sweep_marks_500(self, players):
+        round_ = _sweep_round(players, 100, personal=True)
+        score = score_round(round_)
+        assert score.unannounced_slam is UnannouncedSlam.GRAND_SLAM
+        assert score.scores[TeamSide.NS] == 600        # 100 + 500
+
+    def test_off_the_personal_sweep_marks_the_team_250(self, players):
+        rules = RuleConfig(personal_sweep_marks_solo_slam=False)
+        round_ = _sweep_round(players, 100, personal=True, rules=rules)
+        score = score_round(round_)
+        assert score.scores[TeamSide.NS] == 350        # 100 + 250
+
+    def test_the_tag_survives_the_switch(self, players):
+        # As with the substitute switch: the recap still says who swept.
+        rules = RuleConfig(personal_sweep_marks_solo_slam=False)
+        round_ = _sweep_round(players, 100, personal=True, rules=rules)
+        assert (
+            score_round(round_).unannounced_slam
+            is UnannouncedSlam.GRAND_SLAM
+        )
+
+    def test_a_team_sweep_is_untouched_by_the_knob(self, players):
+        rules = RuleConfig(personal_sweep_marks_solo_slam=False)
+        assert (
+            score_round(_sweep_round(players, 100, rules=rules)).scores[
+                TeamSide.NS
+            ]
+            == 350
+        )
+
+    def test_the_observed_personal_sweep(self, players):
+        # obs-2629f21c round 8 and obs-e44783eb round 6: a 100 contract
+        # swept by the declarer alone, marked 250 / 100 by the site.
+        rules = PRESETS["tournament"]
+        round_ = _sweep_round(players, 100, personal=True, rules=rules)
+        score = score_round(round_)
+        assert marked_components(
+            score.marks[TeamSide.NS], score.multiplier, rules
+        ) == (250, 100)
+
+    def test_the_observed_doubled_personal_sweep(self, players):
+        # obs-579624dd round 7: 140 in diamonds, doubled, swept by the
+        # declarer alone. Both knobs bite at once — the site marked made
+        # 500 (250 × 2), not 1000.
+        rules = PRESETS["tournament"]
+        round_ = _sweep_round(
+            players, 140, personal=True, doubled=True, rules=rules
+        )
+        score = score_round(round_)
+        assert marked_components(
+            score.marks[TeamSide.NS], score.multiplier, rules
+        ) == (500, 280)
 
 
 class TestFailureSwitchesEndToEnd:
@@ -1350,14 +1489,26 @@ class TestUnannouncedSlamSubstitute:
     """The tag → flat-substitute mapping shared by scorer and recap."""
 
     def test_team_sweep_substitutes_250(self):
-        assert sweep_substitute(UnannouncedSlam.SLAM) == 250
+        assert sweep_substitute(UnannouncedSlam.SLAM, RuleConfig()) == 250
 
     def test_declarer_sweep_substitutes_500(self):
-        assert sweep_substitute(UnannouncedSlam.GRAND_SLAM) == 500
+        assert (
+            sweep_substitute(UnannouncedSlam.GRAND_SLAM, RuleConfig()) == 500
+        )
+
+    def test_declarer_sweep_substitutes_250_where_the_premium_is_off(self):
+        # §9.6: a table may decline to pay the personal sweep more than
+        # the team one, which is what the observed tables do.
+        rules = RuleConfig(personal_sweep_marks_solo_slam=False)
+        assert sweep_substitute(UnannouncedSlam.GRAND_SLAM, rules) == 250
+
+    def test_a_team_sweep_ignores_the_premium_switch(self):
+        rules = RuleConfig(personal_sweep_marks_solo_slam=False)
+        assert sweep_substitute(UnannouncedSlam.SLAM, rules) == 250
 
     def test_no_sweep_substitutes_nothing(self):
         # An ordinary round has no tag, so nothing replaces its pile.
-        assert sweep_substitute(None) == 0
+        assert sweep_substitute(None, RuleConfig()) == 0
 
 
 class TestUnannouncedSlamScoring:
@@ -1411,9 +1562,11 @@ class TestUnannouncedSlamScoring:
         assert scores[TeamSide.NS] == 370  # 100 + 250 + 20
         assert scores[TeamSide.EW] == 0
 
-    def test_doubled_sweep_keeps_winner_takes_all_and_is_unflagged(self, players):
+    def test_doubled_sweep_keeps_winner_takes_all_but_is_flagged(self, players):
         """A doubled contract swept by the declarer keeps the
-        winner-takes-all 160 + C×M shape — no 250 substitute, no flag."""
+        winner-takes-all 160 + C×M shape at a §9 default table — no 250
+        substitute. It is still flagged: the tag says what happened, and
+        ``substitute_survives_doubling`` says what it is worth."""
         contract = Contract(
             ContractBid(players["N"], 100, Suit.SPADES),
             double_player=players["E"],
@@ -1439,7 +1592,7 @@ class TestUnannouncedSlamScoring:
         _seed_play_state(round_, players, contract, plays)
         assert list(round_.play_state.trick_winners) == [winner] * 8
         scores = round_.calculate_round_scores()
-        assert round_.unannounced_slam is None
+        assert round_.unannounced_slam is UnannouncedSlam.GRAND_SLAM
         assert round_.contract_made is True
         assert scores[TeamSide.NS] == 360  # 160 + 100*2
         assert scores[TeamSide.EW] == 0

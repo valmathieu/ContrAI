@@ -573,14 +573,14 @@ def _round_scored(
         # The last trick's bonus is folded into the row's card points rather
         # than stated, so which side took it is not recoverable.
         last_trick=None,
-        slam=_slam(contract, row.contract.multiplier, plays),
+        slam=_slam(contract, plays),
         source=ScoreSource.SNAPSHOT,
         ts=ts,
     )
 
 
 def _slam(
-    contract: ContractBid, multiplier: int, plays: Sequence[CardPlayed]
+    contract: ContractBid, plays: Sequence[CardPlayed]
 ) -> SlamOutcome:
     """Which Slam, if any, the round was.
 
@@ -593,12 +593,12 @@ def _slam(
     ``SlamOutcome.UNANNOUNCED`` means "all eight tricks taken without having
     called it", so writing ``NONE`` for a swept round states something the
     round's own plays contradict — and the verifier, which replays them, says
-    so. The engine recognises the sweep only off a numeric contract and only
-    un-doubled (§7.2), and that is mirrored here rather than re-decided.
+    so. A doubled sweep is still a sweep: what the double changes is what the
+    round is *worth*, which the §9.6 scoring knobs decide, not whether the
+    eight tricks were taken. The multiplier is therefore not read here.
 
     Args:
         contract: The auction's winning bid.
-        multiplier: What the score row says the round was multiplied by.
         plays: Every play of the round, the rebuilt last trick included.
 
     Returns:
@@ -609,9 +609,7 @@ def _slam(
         return SlamOutcome.SLAM
     if contract.value is SlamLevel.SOLO_SLAM:
         return SlamOutcome.SOLO_SLAM
-    if multiplier == 1 and _swept_by(plays, contract.suit) is (
-        contract.player.team_side
-    ):
+    if _swept_by(plays, contract.suit) is contract.player.team_side:
         return SlamOutcome.UNANNOUNCED
     return SlamOutcome.NONE
 

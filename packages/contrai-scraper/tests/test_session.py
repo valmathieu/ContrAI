@@ -454,30 +454,26 @@ class TestUnannouncedSlam:
     def test_a_declaring_side_that_swept_is_an_unannounced_slam(self):
         # The engine writes UNANNOUNCED for exactly this round, and a record
         # saying "none" is contradicted by its own plays — which is what the
-        # verifier caught live on 2026-09-16 (obs-3bb24810 round 4).
+        # verifier caught live on 2026-09-16 (obs-3bb24810 round 4). There
+        # is no multiplier argument: a doubled sweep is still eight tricks
+        # taken uncalled, and the §9.6 knobs price it, not the parser.
         contract = ContractBid(player=Position.WEST, value=130, suit=Suit.SPADES)
-        assert _slam(contract, 1, _sweep_plays()) is SlamOutcome.UNANNOUNCED
-
-    def test_a_doubled_sweep_is_not_one(self):
-        # Recognised un-doubled only: a doubled sweep keeps the
-        # winner-takes-all shape, as the engine's scoring has it.
-        contract = ContractBid(player=Position.WEST, value=130, suit=Suit.SPADES)
-        assert _slam(contract, 2, _sweep_plays()) is SlamOutcome.NONE
+        assert _slam(contract, _sweep_plays()) is SlamOutcome.UNANNOUNCED
 
     def test_a_sweep_by_the_defence_is_not_the_declarer_s_slam(self):
         contract = ContractBid(player=Position.NORTH, value=130, suit=Suit.SPADES)
-        assert _slam(contract, 1, _sweep_plays()) is SlamOutcome.NONE
+        assert _slam(contract, _sweep_plays()) is SlamOutcome.NONE
 
     def test_an_ordinary_round_stays_none(self):
         contract = ContractBid(player=Position.WEST, value=130, suit=Suit.SPADES)
-        assert _slam(contract, 1,
+        assert _slam(contract,
                      _sweep_plays(winner_of_last=Position.NORTH)) is SlamOutcome.NONE
 
     def test_a_bid_slam_outranks_a_swept_one(self):
         # The declarer announced it, so that is what the round was.
         contract = ContractBid(player=Position.WEST, value=SlamLevel.SLAM,
                                suit=Suit.SPADES)
-        assert _slam(contract, 1, _sweep_plays()) is SlamOutcome.SLAM
+        assert _slam(contract, _sweep_plays()) is SlamOutcome.SLAM
 
 
 def _snap(table, at=None):

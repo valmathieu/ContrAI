@@ -194,6 +194,8 @@ package "rule_config.py" as p_rule_config {
         + only_announced_points_multiplied : bool = True
         + any_failure_marks_160 : bool = False
         + unannounced_slam_substitute : bool = True
+        + substitute_survives_doubling : bool = False
+        + personal_sweep_marks_solo_slam : bool = True
         + failed_slam_marks_made_points : bool = True
         + failed_slam_marks_announced_points : bool = True
         + attack_must_outscore_defense : bool = True

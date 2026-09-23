@@ -52,14 +52,18 @@ class TestDefaults:
         assert cfg.only_announced_points_multiplied is True
         assert cfg.any_failure_marks_160 is False
         assert cfg.unannounced_slam_substitute is True
+        # §7.2 "Un-doubled only", and the personal-sweep premium the
+        # same section pays — both catalogue defaults.
+        assert cfg.substitute_survives_doubling is False
+        assert cfg.personal_sweep_marks_solo_slam is True
         assert (cfg.failed_slam_marks_made_points,
                 cfg.failed_slam_marks_announced_points) == (True, True)
         assert cfg.attack_must_outscore_defense is True
         assert cfg.rounding is Rounding.EXACT
         assert cfg.win_on_belote_points_alone is True
 
-    def test_has_exactly_22_fields(self):
-        assert len(dataclasses.fields(RuleConfig)) == 22
+    def test_has_exactly_24_fields(self):
+        assert len(dataclasses.fields(RuleConfig)) == 24
 
     def test_target_scores_constant(self):
         assert TARGET_SCORES == (500, 1000, 1500, 2000, 3000, 4000, 5000)
@@ -117,7 +121,7 @@ class TestPresets:
         assert set(PRESETS) == {"classic", "tournament"}
         assert PRESETS["classic"] == RuleConfig()
 
-    def test_tournament_moves_exactly_four_knobs_off_classic(self):
+    def test_tournament_moves_exactly_six_knobs_off_classic(self):
         tournament = RuleConfig.tournament()
         assert PRESETS["tournament"] == tournament
         moved = {
@@ -130,8 +134,15 @@ class TestPresets:
             "any_failure_marks_160",
             "only_announced_points_multiplied",
             "solo_slam_gives_the_lead",
+            "substitute_survives_doubling",
+            "personal_sweep_marks_solo_slam",
         }
         assert tournament.turn_direction is TurnDirection.CLOCKWISE
         assert tournament.any_failure_marks_160 is True
         assert tournament.only_announced_points_multiplied is False
         assert tournament.solo_slam_gives_the_lead is True
+        # Both read off the V5 corpus's 59 sweeps: the site marks the
+        # substitute on a doubled contract, and marks 250 for a
+        # declarer's personal sweep rather than the Solo Slam's 500.
+        assert tournament.substitute_survives_doubling is True
+        assert tournament.personal_sweep_marks_solo_slam is False

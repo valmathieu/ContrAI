@@ -22,6 +22,7 @@ from .components import Mark, contract_components, marked_total, round_mark
 
 if TYPE_CHECKING:
     from contrai_core.player import BasePlayer
+    from contrai_core.rule_config import RuleConfig
     from ..player import Player
     from .round import Round
 
@@ -30,11 +31,13 @@ class UnannouncedSlam(Enum):
     """Outcome tag for an *unannounced* all-tricks sweep on a numeric contract.
 
     Set by :func:`score_round` (via :meth:`Round.calculate_round_scores`)
-    after play, when the declaring team takes all 8 tricks on an
-    un-doubled numeric (80-180) contract without having bid a Slam.
-    The round still scores on the numeric path — the bidder's
+    after play, when the declaring team takes all 8 tricks on a numeric
+    (80-180) contract without having bid a Slam — doubled or not, since
+    the tag records what happened and the §9.6 knobs decide what it is
+    worth. The round still scores on the numeric path — the bidder's
     contract value plus a flat substitute for the trick pile, 250 or 500
-    depending on the member below — *not* the Slam at-risk grid.
+    depending on the member below and on the table — *not* the Slam
+    at-risk grid.
 
     This is deliberately distinct from :class:`contrai_core.SlamLevel`: that
     enum is a *declared bid value*; this is a post-play classification, and
@@ -65,8 +68,8 @@ class RoundScore:
         contract_made: The canonical made/failed signal — ``None`` when
             the round was all-passed (no contract), else a bool.
         unannounced_slam: The :class:`UnannouncedSlam` tag when the
-            declaring team swept all 8 tricks on an un-doubled numeric
-            contract, else ``None``.
+            declaring team swept all 8 tricks on a numeric contract,
+            else ``None``.
         marks: Each side's two §7.2 components, before the multiplier and
             before belote. What the recap breaks the score down into.
         belote_points: 20 per pair each side marks, after any
@@ -90,7 +93,9 @@ class RoundScore:
     multiplier: int
 
 
-def sweep_substitute(tag: Optional[UnannouncedSlam]) -> int:
+def sweep_substitute(
+    tag: Optional[UnannouncedSlam], rules: 'RuleConfig'
+) -> int:
     """The flat amount an unannounced sweep puts in place of the pile.
 
     A sweep the declaring team never bid still marks a flat
@@ -100,6 +105,12 @@ def sweep_substitute(tag: Optional[UnannouncedSlam]) -> int:
     marks the 500 of the Solo Slam that was there for the taking. A
     partner's solo sweep is not that shape and stays on the team's 250.
 
+    That premium is a table's call
+    (:attr:`contrai_core.RuleConfig.personal_sweep_marks_solo_slam`,
+    §9.6): switched off, every unannounced sweep marks the team's 250
+    whoever took the tricks, which is what the observed tournament
+    tables do.
+
     Named for the *sweep*, not for the ruleset row: the bool that decides
     whether a table marks this substitute at all is
     :attr:`contrai_core.RuleConfig.unannounced_slam_substitute`, and two
@@ -108,13 +119,18 @@ def sweep_substitute(tag: Optional[UnannouncedSlam]) -> int:
     Args:
         tag: The round's :class:`UnannouncedSlam` classification, or
             ``None`` for an ordinary round.
+        rules: The table ruleset, which decides whether a declarer's
+            personal sweep is worth more than the team's.
 
     Returns:
-        500 for a declarer's personal sweep, 250 for a team sweep, and
-        0 when there was no sweep at all (the pile is counted for real).
+        500 for a declarer's personal sweep where the table pays it, 250
+        for a team sweep, and 0 when there was no sweep at all (the pile
+        is counted for real).
     """
     if tag is UnannouncedSlam.GRAND_SLAM:
-        return SlamLevel.SOLO_SLAM.base_value
+        if rules.personal_sweep_marks_solo_slam:
+            return SlamLevel.SOLO_SLAM.base_value
+        return SlamLevel.SLAM.base_value
     if tag is UnannouncedSlam.SLAM:
         return SlamLevel.SLAM.base_value
     return 0
@@ -232,12 +248,14 @@ def score_round(round_: 'Round') -> RoundScore:
             ) == 8
     else:
         # An unannounced sweep: the declaring team took all 8 on a
-        # numeric contract without having bid a Slam. Recognised only
-        # un-doubled — a doubled sweep keeps the winner-takes-all shape
-        # (§7.2, "Un-doubled only"). GRAND_SLAM when the contracting
-        # player swept personally, which is worth the 500 of the Solo
-        # Slam that was there for the taking.
-        if multiplier == 1 and trick_counts[contract_side] == 8:
+        # numeric contract without having bid a Slam. *Every* sweep is
+        # tagged, doubled or not — the tag classifies what happened and
+        # the knobs below decide what it is worth, which is also why it
+        # survives `unannounced_slam_substitute` being off. GRAND_SLAM
+        # when the contracting player swept personally: the Solo Slam
+        # that was there for the taking, worth 500 at a table that pays
+        # the premium (§9.6, `personal_sweep_marks_solo_slam`).
+        if trick_counts[contract_side] == 8:
             unannounced_slam = (
                 UnannouncedSlam.GRAND_SLAM
                 if count_player_tricks(trick_winners, contract.player) == 8
@@ -284,8 +302,12 @@ def score_round(round_: 'Round') -> RoundScore:
     substitute: Optional[int] = None
     if slam_family:
         substitute = contract.get_slam_card_substitute()
-    elif unannounced_slam is not None and rules.unannounced_slam_substitute:
-        substitute = sweep_substitute(unannounced_slam)
+    elif (
+        unannounced_slam is not None
+        and rules.unannounced_slam_substitute
+        and (multiplier == 1 or rules.substitute_survives_doubling)
+    ):
+        substitute = sweep_substitute(unannounced_slam, rules)
 
     attack_mark, defense_mark = contract_components(
         contract_value=contract_value,
