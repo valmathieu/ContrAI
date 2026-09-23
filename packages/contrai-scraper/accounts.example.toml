@@ -1,0 +1,19 @@
+# Copy to accounts.toml (git-ignored) beside profile.toml and fill in. Every
+# value here is a placeholder: this file is committed.
+#
+# One table per spectator account. A fleet runs one worker per account, taking
+# them in this order. The table's name is the worker's label, and every health
+# line the worker writes carries it — so keep it an opaque token such as bot01,
+# never the address. The site itself is described once, in profile.toml; only
+# the accounts multiply.
+#
+# Both values may read "env:NAME" to take NAME from the environment, which
+# keeps the accounts out of this file too.
+
+[bot01]
+email = "env:CONTRAI_BOT01_EMAIL"
+verification_code = "env:CONTRAI_BOT01_CODE"
+
+[bot02]
+email = "env:CONTRAI_BOT02_EMAIL"
+verification_code = "env:CONTRAI_BOT02_CODE"

@@ -17,6 +17,7 @@ the same reason.
 | Module | Role |
 | ------ | ---- |
 | `contrai_scraper.profile` | `profile.toml` → frozen, validated sections. The only place the site is named. |
+| `contrai_scraper.accounts` | `accounts.toml` → the labelled spectator accounts a fleet logs in with, one per worker. |
 | `contrai_scraper.exceptions` | `ScraperError` / `ProfileError` / `WireError` / `ParseError`. |
 | `contrai_scraper.frames` | `RawFrame` and the two frame sources: a live Playwright page, or a stored raw log. |
 | `contrai_scraper.rawlog` | The verbatim per-session log: `RawLogWriter`, `read_raw_log`, `raw_path`. |
@@ -148,6 +149,15 @@ silently wrong data.
 | `[egress]` | The gate before any site traffic: the home address (through the environment), the expected country, an echo service, and the tunnel device the route must use. |
 | `[output]` | Where records and raw logs go; both roots resolve relative to the profile, and both name the same directory. |
 | `[privacy]` | Inputs to the pseudonymisation step, which is not built yet. |
+
+A fleet logs in with several accounts, and they do not multiply the profile. They live in a second
+git-ignored document, `accounts.toml` beside `profile.toml` (`accounts.example.toml` is its
+committed schema): one table per account, named by its **label**, holding the same `email` and
+`verification_code` as `[account]` and read as strictly, `env:NAME` included. The label is what a
+worker's health lines carry instead of the address, so it must be a plain token such as `bot01`,
+and a label that is not one is refused by its position rather than repeated. Two labels on one
+address are refused too: two sessions on one account would sign each other out. The profile's own
+`[account]` stays, and `run` still reads it.
 
 Two exceptions are worth knowing. `ProfileError` means the document is wrong — edit it.
 `ParseError` means the wire said something the document does not describe — investigate the

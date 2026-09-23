@@ -3,7 +3,9 @@
 The package is a pipeline with a browser at one end and a record at the other:
 
 * :mod:`contrai_scraper.profile` reads the local, git-ignored ``profile.toml``
-  that every string in the run comes from.
+  that every string in the run comes from, and
+  :mod:`contrai_scraper.accounts` the ``accounts.toml`` beside it that a
+  fleet logs in with.
 * :mod:`contrai_scraper.browser` is the only module that touches a page:
   login, the menu walk, the table hop and the two panels.
 * :mod:`contrai_scraper.frames` and :mod:`contrai_scraper.wire` turn socket
@@ -25,6 +27,7 @@ lives in the profile. The code knows the *structure*; the document knows the
 *strings*.
 """
 
+from contrai_scraper.accounts import LabelledAccount, load_accounts
 from contrai_scraper.browser import (
     INIT_SCRIPT,
     PANEL_ATTEMPT_TIMEOUT_MS,
@@ -168,6 +171,7 @@ __all__ = [
     "EventKey",
     "FrameSource",
     "HealthLog",
+    "LabelledAccount",
     "LiveRound",
     "OptionsReading",
     "OutputSection",
@@ -216,6 +220,7 @@ __all__ = [
     "dig",
     "duplicate_key",
     "final_trick",
+    "load_accounts",
     "load_profile",
     "new_session_id",
     "open_spectator",

@@ -15,7 +15,9 @@ _ALLOWED = re.compile(r"^(192\.0\.2|198\.51\.100|203\.0\.113)\.\d{1,3}$|^127\.|^
 _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 
 #: What must never enter the build context, even inside an allowed directory.
-_LOCAL_MATERIAL = ("**/profile.toml", "**/.env", "**/*.env", "**/records", "**/raw")
+_LOCAL_MATERIAL = (
+    "**/profile.toml", "**/accounts.toml", "**/.env", "**/*.env", "**/records", "**/raw",
+)
 
 
 class TestDeployFiles:

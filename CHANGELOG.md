@@ -8,6 +8,10 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 ## [Unreleased]
 
+### Added
+
+- (scraper) `load_accounts` — `accounts.toml` beside the profile lists labelled spectator accounts for a fleet; values may read `env:NAME`, labels never carry the address. See [scraper docs](docs/scraper/index.md).
+
 ### Fixed
 
 - (scraper) The live recorder refuses a buffer holding two games or two tables, logged as `record_refused`, instead of merging them into one record. See [scraper docs](docs/scraper/index.md).
