@@ -9,7 +9,8 @@ Syntactic validation only — the auction and round rules own legality.
 
 from __future__ import annotations
 
-from typing import Final, Optional, Sequence
+import re
+from typing import Final, NamedTuple, Optional, Sequence
 
 from contrai_core import BasePlayer, Card
 from contrai_core.bid import (
@@ -119,31 +120,50 @@ def _parse_card_input(
     return card
 
 
+class RoundPick(NamedTuple):
+    """What the replay picker was asked for.
+
+    Attributes:
+        number: The record's number for the chosen round.
+        grid: ``True`` to show the round as a trick grid, ``False`` to
+            step through it.
+    """
+
+    number: int
+    grid: bool = False
+
+
+#: A picker answer: an optional ``g`` / ``grid`` and a round number. No
+#: sign is accepted, so a negative answer needs no guard of its own.
+_ROUND_PICK: Final = re.compile(r"(?:(g|grid)\s*)?(\d+)")
+
+
 def _parse_round_pick(
     raw: str, steppable: Sequence[int]
-) -> Optional[int]:
-    """Parse a round number off the replay picker. ``None`` on anything else.
+) -> Optional[RoundPick]:
+    """Parse the replay picker's answer. ``None`` on anything else.
 
-    The answer is checked against the rounds that can actually be
-    replayed rather than against the record's full list, so a round the
-    table shows but the driver refuses is rejected here instead of
-    failing halfway through a replay.
+    ``7`` steps round 7; ``g 7`` (or ``g7``, ``grid 7``) shows it as a
+    trick grid. The number is checked against the rounds that can
+    actually be replayed rather than against the record's full list, so a
+    round the table shows but the driver refuses is rejected here instead
+    of failing halfway through a replay.
 
     Args:
         raw: What the viewer typed.
         steppable: The record round numbers that can be replayed.
 
     Returns:
-        The chosen round number, or ``None`` if the answer named none.
+        The pick, or ``None`` if the answer named no replayable round.
     """
 
-    # ``str.isdigit()`` is false for ``"-8"``, so a negative answer needs
-    # no guard of its own.
-    text = raw.strip()
-    if not text.isdigit():
+    match = _ROUND_PICK.fullmatch(raw.strip().lower())
+    if match is None:
         return None
-    number = int(text)
-    return number if number in steppable else None
+    number = int(match.group(2))
+    if number not in steppable:
+        return None
+    return RoundPick(number, grid=match.group(1) is not None)
 
 
 #: The replay step keys, each with the word that spells it out.

@@ -156,12 +156,14 @@ class TestPromptText:
         text = _replay_summary_prompt_text([_row(7), _row(8)])
 
         assert "[7-8]" in text.plain
+        assert "[g 7-8]" in text.plain
         assert "[q]" in text.plain
 
     def test_the_summary_prompt_holds_up_with_nothing_steppable(self):
         text = _replay_summary_prompt_text([_row(7, steppable=False)])
 
         assert "[q]" in text.plain
+        assert "[g" not in text.plain
 
     def test_the_step_prompt_lists_every_key(self):
         text = _replay_step_prompt_text(can_go_back=True)

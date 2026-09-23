@@ -177,7 +177,7 @@ def _format_replay_contract(row: "ReplayRow") -> Text:
 
 
 def _replay_summary_prompt_text(rows: Sequence["ReplayRow"]) -> Text:
-    """The picker's key list: the steppable range, and ``[q]`` to leave.
+    """The picker's key list: step or grid a round, and ``[q]`` to leave.
 
     Args:
         rows: The rows on screen.
@@ -190,10 +190,11 @@ def _replay_summary_prompt_text(rows: Sequence["ReplayRow"]) -> Text:
     steppable = [row.number for row in rows if row.steppable]
     text = Text()
     if steppable:
-        text.append(
-            f"[{min(steppable)}-{max(steppable)}]", style=f"bold {FG}"
-        )
+        span = f"{min(steppable)}-{max(steppable)}"
+        text.append(f"[{span}]", style=f"bold {FG}")
         text.append(" step a round  ·  ", style=FG)
+        text.append(f"[g {span}]", style=f"bold {FG}")
+        text.append(" all its tricks  ·  ", style=FG)
     text.append("[q]", style=f"bold {GOLD}")
     text.append(" quit", style=FG)
     return text
@@ -217,7 +218,8 @@ def _replay_summary_rejection_text(rows: Sequence["ReplayRow"]) -> Text:
         )
     return Text(
         "✗ Pick one of the rounds the table does not mark "
-        f"'{NOT_STEPPABLE}' ({min(steppable)}-{max(steppable)}), or [q].",
+        f"'{NOT_STEPPABLE}' ({min(steppable)}-{max(steppable)}, "
+        "g before it for the grid), or [q].",
         style=RED,
     )
 

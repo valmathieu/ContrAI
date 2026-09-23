@@ -18,6 +18,7 @@ from contrai_core.bid import (
 )
 from contrai_engine.model.player import AiPlayer
 from contrai_engine.view.parsing import (
+    RoundPick,
     _parse_bid_input,
     _parse_card_input,
     _parse_replay_key,
@@ -223,10 +224,25 @@ class TestParseRoundPick:
     """The replay picker's answer, checked against the steppable rounds."""
 
     def test_a_steppable_number_is_accepted(self):
-        assert _parse_round_pick("8", [7, 8, 9]) == 8
+        assert _parse_round_pick("8", [7, 8, 9]) == RoundPick(8, grid=False)
 
     def test_surrounding_space_is_ignored(self):
-        assert _parse_round_pick("  8 ", [7, 8, 9]) == 8
+        assert _parse_round_pick("  8 ", [7, 8, 9]) == RoundPick(8)
+
+    def test_g_asks_for_the_grid(self):
+        for raw in ("g 8", "g8", "grid 8", "G 8", " grid8 "):
+            assert _parse_round_pick(raw, [7, 8, 9]) == RoundPick(
+                8, grid=True
+            ), raw
+
+    def test_the_grid_is_held_to_the_steppable_rounds_too(self):
+        assert _parse_round_pick("g 8", [7, 9]) is None
+
+    def test_g_alone_names_no_round(self):
+        assert _parse_round_pick("g", [7, 8, 9]) is None
+
+    def test_another_word_before_the_number_is_refused(self):
+        assert _parse_round_pick("go 8", [7, 8, 9]) is None
 
     def test_a_round_that_is_not_steppable_is_refused(self):
         assert _parse_round_pick("8", [7, 9]) is None

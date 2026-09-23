@@ -65,6 +65,7 @@ from contrai_engine.view.layout import (
     _two_column,
 )
 from contrai_engine.view.parsing import (
+    RoundPick,
     _parse_bid_input,
     _parse_card_input,
     _parse_replay_key,
@@ -85,6 +86,10 @@ from contrai_engine.view.screens.endgame import (
     _end_game_prompt_text,
     _panel_game_over_banner,
     _panel_round_summary,
+)
+from contrai_engine.view.screens.grid import (
+    _render_trick_grid,
+    _replay_grid_prompt_text,
 )
 from contrai_engine.view.screens.landing import (
     _landing_subtitle,
@@ -912,8 +917,8 @@ class RichView:
 
     def show_replay_summary(
         self, rows: Sequence["ReplayRow"], game_id: str
-    ) -> Optional[int]:
-        """Show a recorded game's rounds and return the one to step.
+    ) -> Optional[RoundPick]:
+        """Show a recorded game's rounds and return the one to open.
 
         Unlike :meth:`show_landing`, a blank answer is **not** the exit:
         ``[q]`` is, and pressing Enter re-prompts. Closing a record by
@@ -924,7 +929,8 @@ class RichView:
             game_id: The record's id, for the panel title.
 
         Returns:
-            The record round number to replay, or ``None`` to leave.
+            The round to open and how — stepped, or as a trick grid —
+            or ``None`` to leave.
         """
         steppable = [row.number for row in rows if row.steppable]
         # As in ``show_landing``, a rejection rides inside the next
@@ -962,6 +968,22 @@ class RichView:
             bidding_history=[],
             prompt_question=_replay_deal_text(round_),
         )
+
+    def show_replay_grid(self, round_: "Round", bids: Sequence[Bid]) -> None:
+        """Show a round's tricks as a grid, and wait for Enter.
+
+        A screen of its own, not a frame: it neither caches nor replaces
+        the in-game frame, so whoever opened it can repaint what was on
+        screen before.
+
+        Args:
+            round_: The round, complete or in progress.
+            bids: Its auction as far as it has gone.
+        """
+        self.console.clear()
+        self.console.print(_render_trick_grid(round_, bids))
+        self.console.print(_replay_grid_prompt_text())
+        self._setup_input()
 
     def show_replay_contract(self, round_: "Round") -> None:
         """Render the frame ``[a]`` comes to rest on: the table before play.

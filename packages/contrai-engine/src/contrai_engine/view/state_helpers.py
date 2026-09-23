@@ -20,6 +20,8 @@ from contrai_core import (
     NoTrumpRules,
     Play,
     Position,
+    Rank,
+    Suit,
     rules_for,
 )
 from contrai_core.trick import current_winner
@@ -159,6 +161,53 @@ def _belote_by_position(round_) -> dict[Position, tuple[Suit, ...]]:
         seat = player.position
         badges[seat] = badges.get(seat, ()) + (suit,)
     return badges
+
+
+def _belote_badges_by_trick(
+    round_,
+) -> dict[int, dict[Position, tuple[Suit, ...]]]:
+    """Place each announced belote on the tricks where it was said.
+
+    The live diamond badges a seat from its announcement to the end of
+    the round, because it only ever shows the trick on the table. The
+    replay's trick grid shows all eight at once, where a badge on every
+    later trick would say nothing about *when*: there the badge belongs
+    on the trick whose K or Q the announcement was made with — the
+    belote's trick, and the rebelote's.
+
+    Only :attr:`~contrai_engine.model.round.Round.announced_belotes` is
+    read for *which* pairs to show, for the reason
+    :func:`_belote_by_position` gives: it is the regime's own verdict on
+    which announcements mark.
+
+    Args:
+        round_: The round, complete or in progress, or ``None``.
+
+    Returns:
+        0-based trick index → seat → the suits announced in that trick.
+        The trick in progress, if any, is indexed after the completed
+        ones. Tricks with no announcement are absent.
+    """
+    play_state = getattr(round_, "play_state", None) if round_ else None
+    announced = getattr(round_, "announced_belotes", None) or ()
+    if play_state is None or not announced:
+        return {}
+    tricks = list(play_state.completed_tricks)
+    if play_state.current_trick:
+        tricks.append(play_state.current_trick)
+    pairs = {(player, suit) for player, suit in announced}
+    placed: dict[int, dict[Position, tuple[Suit, ...]]] = {}
+    for index, trick in enumerate(tricks):
+        for player, card in trick:
+            if (player, card.suit) not in pairs:
+                continue
+            if card.rank not in (Rank.KING, Rank.QUEEN):
+                continue
+            seats = placed.setdefault(index, {})
+            seats[player.position] = (
+                seats.get(player.position, ()) + (card.suit,)
+            )
+    return placed
 
 
 def _resolve_delay(env_var: str, default: float) -> float:

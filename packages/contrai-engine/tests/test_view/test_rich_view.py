@@ -42,6 +42,7 @@ from contrai_engine.ruleset import (
     save_setup,
     setup_path,
 )
+from contrai_engine.view.parsing import RoundPick
 from contrai_engine.view.rich_view import RichView
 from contrai_engine.view.screens.bidding import (
     _bidding_prompt_text,
@@ -2328,7 +2329,16 @@ class TestShowReplaySummary:
             RichView(options=DebugOptions(replay=True)), ["7"]
         )
 
-        assert view.show_replay_summary(self._rows(), "g") == 7
+        assert view.show_replay_summary(self._rows(), "g") == RoundPick(7)
+
+    def test_a_grid_pick_is_returned_as_one(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["g 7"]
+        )
+
+        assert view.show_replay_summary(self._rows(), "g") == RoundPick(
+            7, grid=True
+        )
 
     def test_q_leaves(self):
         view = _drive_landing(
@@ -2349,14 +2359,14 @@ class TestShowReplaySummary:
             RichView(options=DebugOptions(replay=True)), ["8", "7"]
         )
 
-        assert view.show_replay_summary(self._rows(), "g") == 7
+        assert view.show_replay_summary(self._rows(), "g") == RoundPick(7)
 
     def test_a_blank_answer_re_prompts_rather_than_leaving(self):
         view = _drive_landing(
             RichView(options=DebugOptions(replay=True)), ["", "7"]
         )
 
-        assert view.show_replay_summary(self._rows(), "g") == 7
+        assert view.show_replay_summary(self._rows(), "g") == RoundPick(7)
 
 
 class TestShowReplayStep:
@@ -2584,6 +2594,45 @@ class TestReplayRecapPrompt:
         view = RichView(options=DebugOptions(replay=True))
 
         assert "Press [Enter]" not in self._recap_texts(view)
+
+
+class TestShowReplayGrid:
+    """The trick grid: its own screen, read once, leaving the frame alone."""
+
+    def test_it_clears_draws_and_waits_for_one_answer(self, four_players):
+        view = RichView(options=DebugOptions(replay=True))
+        cleared: list[int] = []
+        answers = iter([""])
+        view.console.clear = lambda *a, **k: cleared.append(1)
+        captured = []
+        view.console.print = lambda *a, **k: captured.extend(a)
+        view.console.input = lambda *a, **k: next(answers)
+
+        view.show_replay_grid(TestReplayRecapPrompt._StubRound(), [])
+
+        assert cleared == [1]
+        assert any("[Enter] back" in getattr(x, "plain", "") for x in captured)
+        # The one answer was read and nothing more was asked.
+        assert next(answers, "done") == "done"
+
+    def test_it_leaves_the_cached_frame_to_be_repainted(
+        self, monkeypatch, four_players
+    ):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(replay=True))
+        view.attach(
+            TestDebugStrip._StubGame(list(four_players)), target_score=1500
+        )
+        view._render_in_game(phase="bidding", bidding_history=[])
+        frame, screen = view._last_frame, view._last_screen
+        _drive_landing(view, [""])
+
+        view.show_replay_grid(view.game.current_round, [])
+
+        assert view._last_frame is frame
+        assert view._last_screen == screen
 
 
 class TestShowReplayContract:
