@@ -57,7 +57,7 @@ from contrai_data import EndReason, RecordWriter, RoundDealt, game_path
 from .exceptions import ParseError, ScraperError
 from .frames import FrameSource, RawFrame
 from .health import HealthLog
-from .parse.session import parse_session
+from .parse.session import parse_session, split_visits
 from .parse.snapshot import ScoreRow, Snapshot, read_snapshot
 from .parse.translate import Translator
 from .profile import Profile
@@ -668,6 +668,20 @@ class Recorder:
 
         if not self._buffer:
             return
+        mixture = self._mixture()
+        if mixture is not None:
+            # A buffer is one table's game by construction, but only by
+            # construction: a seat taken one table behind the page once
+            # filled one with 108 events of another table against 59 of its
+            # own, and the parser folded both into a single record. Rounds
+            # numbered alike collide, the seats come from whichever snapshot
+            # sorts first, and the result is complete, legal and wrong. The
+            # raw log still holds every frame for `contrai-scrape parse` to
+            # cut apart; what this path must not do is guess which half was
+            # the table it seated.
+            self._health.event("record_refused", **mixture)
+            self._buffer = []
+            return
         try:
             result = parse_session(
                 order_events(self._buffer), self._profile, end_reason=end_reason
@@ -697,6 +711,39 @@ class Recorder:
         # buffer, and a record written twice is a record with two of every
         # round.
         self._buffer = []
+
+    def _mixture(self) -> dict[str, Any] | None:
+        """What makes the buffer more than one game, or ``None`` when it is one.
+
+        The buffer is cut exactly as ``contrai-scrape parse`` cuts a raw log,
+        by :func:`~contrai_scraper.parse.session.split_visits`: a join
+        snapshot naming another table opens a visit, and a boundary re-read
+        of the seated table does not. Two tests then decide, and either one
+        refuses. More than one game key means two games' plays would share
+        round numbers. More than one table means another table's snapshot is
+        in the buffer, which would lend the record its seats and its score
+        rows even when none of its plays came along. The pre-game draw is
+        keyed to the game it opens, so a table caught from its first card is
+        still one game.
+
+        Returns:
+            The fields a refusal is logged with — the reason, the wire's game
+            ids and the tables in the order they were met — or ``None`` when
+            the buffer holds one game at one table.
+        """
+
+        visits = split_visits(self._buffer, self._profile)
+        games = sorted(
+            {event.key.game for event in self._buffer if event.key is not None}
+        )
+        if len(visits) <= 1 and len(games) <= 1:
+            return None
+        tables = [self._translator.field(visit[0].data, "table_id") for visit in visits]
+        return {
+            "reason": "several_games" if len(games) > 1 else "several_tables",
+            "games": games,
+            "tables": list(dict.fromkeys(tables)),
+        }
 
     # -- the wire --------------------------------------------------------
 

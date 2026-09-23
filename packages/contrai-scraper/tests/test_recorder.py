@@ -1117,6 +1117,75 @@ class TestRefusals:
         assert "parse_note" in events
 
 
+class TestMixedBuffers:
+    """A buffer holding two games is refused, never merged into one record."""
+
+    def test_a_second_games_play_refuses_the_record(
+        self, profile, builders, session_frames, source_game
+    ):
+        # A play keyed to another game, landing mid-watch the way the other
+        # table's events did behind a seat taken one table late.
+        lines: list[str] = []
+        script = session_frames(source_game)
+        script.insert(6, frame(builders.envelope(
+            "payload", "g2,1,1,0,card,p9", "2w", frame_id="foreign")))
+        summary = run_recorder(FakeSpectator(), script, profile,
+                               health=HealthLog(write=lines.append))
+        refusal = _only(lines, "record_refused")
+        assert (summary.games_recorded, records_in(profile),
+                refusal["reason"], refusal["games"]) == (
+            0, [], "several_games", ["g1", "g2"])
+
+    def test_another_tables_snapshot_refuses_the_record(
+        self, profile, builders, session_frames, source_game
+    ):
+        # No play of the other game came along, but its snapshot would still
+        # lend the record its seats and its score rows.
+        lines: list[str] = []
+        script = session_frames(source_game)
+        script.insert(6, snapshot_frame(builders, table_id="t9", frame_id="sx"))
+        summary = run_recorder(FakeSpectator(), script, profile,
+                               health=HealthLog(write=lines.append))
+        refusal = _only(lines, "record_refused")
+        assert (summary.games_recorded, refusal["reason"], refusal["tables"]) == (
+            0, "several_tables", ["t1", "t9"])
+
+    def test_a_table_re_read_at_its_boundaries_is_still_one_game(
+        self, profile, session_frames, source_game
+    ):
+        # The boundary reads answer as fresh snapshots of the seated table,
+        # three of them in this game; none of them opens a second visit.
+        lines: list[str] = []
+        summary = run_recorder(FakeSpectator(), session_frames(source_game),
+                               profile, health=HealthLog(write=lines.append))
+        events = {json.loads(line)["event"] for line in lines}
+        assert (summary.games_recorded, "record_refused" in events) == (1, False)
+
+    def test_an_interrupted_mixed_buffer_is_refused_too(
+        self, profile, builders, session_frames, source_game
+    ):
+        # The interrupt handler writes whatever the buffer holds, so it goes
+        # through the same refusal rather than around it.
+        lines: list[str] = []
+        script = session_frames(source_game)[:12]
+        script.insert(6, frame(builders.envelope(
+            "payload", "g2,1,1,0,card,p9", "2w", frame_id="foreign")))
+        script.append(_interrupt)
+        with pytest.raises(KeyboardInterrupt):
+            run_recorder(FakeSpectator(), script, profile,
+                         health=HealthLog(write=lines.append))
+        assert (records_in(profile), _only(lines, "record_refused")["reason"]) == (
+            [], "several_games")
+
+
+def _only(lines, name):
+    """The one health line carrying ``name``, parsed."""
+
+    matching = [entry for entry in map(json.loads, lines) if entry["event"] == name]
+    assert len(matching) == 1
+    return matching[0]
+
+
 #: The round the one-round games below are built from: dealer South,
 #: declarer West — the seat after it, clockwise — eighty in spades, made.
 _ROUND_ONE = (Position.SOUTH, Position.WEST, 80, Suit.SPADES, True,

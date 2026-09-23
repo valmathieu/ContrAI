@@ -103,10 +103,18 @@ how many visits a log carried. Without the cut a re-parse merged tables — roun
 belonged elsewhere were dropped as undealable, records took whichever game id came first, and
 records appeared for games no recorder ever accepted.
 
-Two limits on "the same path" are worth knowing before a log is used as evidence. The cut belongs
-to `parse`: a live session buffers one table because it seats one table, so `Recorder._write`
-hands `parse_session` the buffer as it stands, and a seat that was one table behind the page
-merged two tables into one record before the seating rule below was in place. And the log is
+The live path makes the same cut, as a check rather than a split. A session buffers one table
+because it seats one table, but that is true only by construction: a seat taken one table behind
+the page once filled a buffer with 108 events of another table against 59 of its own, and the
+parser merged both into a single record. So `Recorder._write` runs `split_visits` over the buffer
+and refuses the record, logged as `record_refused`, when it holds more than one game key
+(`several_games`) or another table's snapshot (`several_tables`). A snapshot alone is enough: it
+would lend the record its seats and its score rows. It refuses rather than splits because a second
+game that arrived without a snapshot of its own leaves nothing to say which half was the table
+seated, and the raw log still holds every frame for `parse` to cut apart. The pre-game draw is keyed
+to the game it opens, so a table caught from its first card is still one game.
+
+One limit on "the same path" is worth knowing before a log is used as evidence. The log is
 de-duplicated by frame identity and never reset, so the mirrored connection's copy of a frame is
 not in the file — a replay is faithful for the parser, which drops those copies anyway, but it
 cannot reproduce a fault whose trigger *is* a mirrored copy.
