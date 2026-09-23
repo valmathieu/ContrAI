@@ -131,6 +131,13 @@ seat_element = "#seat-{seat}"
 player_panel = ".player-panel"
 player_id_title = ".player-panel .title"
 player_id_prefix = "no. "
+mode_new_games = "#new-games"
+lobby_variant = "#new-variant"
+lobby_tables = ".slot-list"
+lobby_back = ["#tool-back", "#tool-close"]
+lobby_layer = ".screen"
+lobby_row_tournament_class = "cup-row"
+lobby_row_hash_attr = "data-key"
 
 [wire]
 socket_url_pattern = "^wss://example\\\\.invalid/sock/\\\\d+$"

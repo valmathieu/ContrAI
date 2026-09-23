@@ -75,6 +75,29 @@ seat_element = "#placeholder-seat-{seat}"
 player_panel = ".placeholder-player-panel"
 player_id_title = ".placeholder-player-panel .placeholder-title"
 player_id_prefix = "placeholder "
+# The lobby, where a fleet waits for games to start. Optional as a group:
+# `run` never goes there, so leave all seven out if you do not run a fleet —
+# but a profile naming only some of them is refused. The page's own script
+# reads lobby_tables, lobby_back and lobby_layer, so they must be plain CSS
+# (no Playwright-only syntax such as :visible), and so must mode_observe and
+# mode_new_games, whose reach the walk checks before it clicks them.
+#
+# mode_new_games is the action beside mode_observe that opens the list of
+# games; lobby_variant is the variant inside that list's own picker, which is
+# not the observe branch's `variant`.
+mode_new_games = "#placeholder-new-games"
+lobby_variant = "#placeholder-new-games-variant"
+lobby_tables = ".placeholder-table-list"
+# Every screen of the page keeps its controls in the DOM, so a back control
+# is chosen by whether the screen it sits on is the one showing: lobby_layer
+# names what a screen's controls sit in, and lobby_back ranks the back-ish
+# controls best first. Each screen may back out through a different one.
+lobby_back = [".placeholder-toolbar .placeholder-back", ".placeholder-toolbar .placeholder-close"]
+lobby_layer = ".placeholder-layer"
+# The list's tournament row is told apart by a class, and carries the hash the
+# lobby's socket events are keyed by in an attribute.
+lobby_row_tournament_class = "placeholder-tournament"
+lobby_row_hash_attr = "data-placeholder-hash"
 
 # How a socket frame is recognised, unwrapped and keyed. `deal_key_arity` is
 # how many parts a composite key has when it addresses a deal rather than a

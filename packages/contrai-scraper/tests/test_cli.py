@@ -408,6 +408,72 @@ class TestLiveChecks:
         assert passed["panel ids equal the wire's accounts"] is False
 
 
+class FakeLobbyWalk(FakeWalk):
+    """A spectator whose lobby walk is scripted too."""
+
+    def __init__(self, *, table_hash="cfg-42", **kwargs):
+        super().__init__(**kwargs)
+        self._hash = table_hash
+        self.steps: list[str] = []
+
+    async def log_in(self):
+        self.steps.append("log_in")
+        await super().log_in()
+
+    async def enter_lobby(self):
+        self.steps.append("enter_lobby")
+        self._step("enter_lobby")
+        return False
+
+    async def read_tournament_hash(self):
+        self.steps.append("read_tournament_hash")
+        return self._hash
+
+    async def enter_table_from_lobby(self):
+        self.steps.append("enter_table_from_lobby")
+        self._step("enter_table_from_lobby")
+
+
+class TestLobbyChecks:
+    def test_a_lobby_the_profile_describes_passes_every_check(self, profile, builders):
+        from contrai_scraper.cli import _lobby_checks
+
+        walk = FakeLobbyWalk()
+        results = asyncio.run(_lobby_checks(walk, Frames(_join_frame(builders)), profile))
+        assert ([(name, passed) for name, passed, _ in results], walk.steps) == (
+            [("lobby entered", True), ("tournament row found", True),
+             ("back to a table from the lobby", True)],
+            ["log_in", "enter_lobby", "read_tournament_hash", "enter_table_from_lobby"],
+        )
+
+    def test_a_list_with_no_tournament_row_fails_that_line_only(self, profile, builders):
+        from contrai_scraper.cli import _lobby_checks
+
+        walk = FakeLobbyWalk(table_hash=None)
+        results = asyncio.run(_lobby_checks(walk, Frames(_join_frame(builders)), profile))
+        assert [passed for _, passed, _ in results] == [True, False, True]
+
+    def test_a_step_that_fails_is_a_line_naming_its_check(self, profile):
+        from contrai_scraper.cli import _lobby_checks
+
+        message = "[selectors].lobby_back matched 2 control(s), none of them on the screen shown"
+        walk = FakeLobbyWalk(fail={"enter_table_from_lobby": message})
+        results = asyncio.run(_lobby_checks(walk, Frames(), profile))
+        assert results[-1] == ("back to a table from the lobby", False, message)
+
+    def test_a_table_that_never_describes_itself_fails_the_round_trip(self, profile):
+        from contrai_scraper.cli import _lobby_checks
+
+        results = asyncio.run(_lobby_checks(FakeLobbyWalk(), Frames(), profile))
+        assert results[-1] == (
+            "back to a table from the lobby", False, "no snapshot within the timeout")
+
+    def test_a_profile_with_no_lobby_is_told_so_and_not_failed(self):
+        from contrai_scraper.cli import LOBBY_NOT_DESCRIBED
+
+        assert LOBBY_NOT_DESCRIBED[:2] == ("lobby described", True)
+
+
 def _capturing_profile(profile_text, tmp_path, root):
     """The fixture profile with failure capture on and its roots in ``root``."""
 

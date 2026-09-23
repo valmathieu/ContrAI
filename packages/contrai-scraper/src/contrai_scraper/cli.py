@@ -30,7 +30,7 @@ from typing import Any, Final
 
 from contrai_data import GameEvent, RecordWriter, RoundDealt, game_path
 
-from contrai_scraper.browser import open_spectator
+from contrai_scraper.browser import open_browser, open_session, open_spectator
 from contrai_scraper.egress import EgressGate, EgressReading
 from contrai_scraper.exceptions import (
     BrowserError,
@@ -317,8 +317,73 @@ async def _check(  # pragma: no cover - needs a real browser
         ``(name, passed, detail)`` per live check, in the order they ran.
     """
 
-    async with open_spectator(profile, headless=headless) as (spectator, frames):
-        return await _live_checks(spectator, frames, profile)
+    async with open_browser(profile, headless=headless) as browser:
+        async with open_session(browser, profile) as (spectator, frames):
+            results = await _live_checks(spectator, frames, profile)
+        if not profile.selectors.has_lobby:
+            return [*results, LOBBY_NOT_DESCRIBED]
+        # A session of its own, logged in afresh: the lobby is checked by the
+        # route a fleet takes into it, never by a way back from the table the
+        # checks above left the page on, which nothing has measured.
+        async with open_session(browser, profile) as (spectator, frames):
+            return [*results, *await _lobby_checks(spectator, frames, profile)]
+
+
+#: The line a profile describing no lobby gets: a fact, not a failure, since
+#: only a fleet needs one.
+LOBBY_NOT_DESCRIBED: Final[tuple[str, bool, str]] = (
+    "lobby described", True, "no — only `fleet` needs it",
+)
+
+
+async def _lobby_checks(
+    spectator: Any, frames: Any, profile: Profile
+) -> list[tuple[str, bool, str]]:
+    """The lobby, walked the way a fleet walks it: in, read, and out to a table.
+
+    Split from :func:`_check` so the walk runs against a scripted spectator.
+    A browser step that fails ends it with a failed line naming the check it
+    was on, exactly as the table checks do.
+
+    Args:
+        spectator: A fresh browser half, not yet logged in.
+        frames: The frame source its page feeds.
+        profile: The loaded profile, which describes the lobby.
+
+    Returns:
+        ``(name, passed, detail)`` per check, in the order they ran.
+    """
+
+    results: list[tuple[str, bool, str]] = []
+    step = "lobby entered"
+    try:
+        await spectator.log_in()
+        await spectator.enter_lobby()
+        results.append((step, True, "the list of games is showing"))
+
+        step = "tournament row found"
+        found = await spectator.read_tournament_hash() is not None
+        results.append((
+            step,
+            found,
+            "the list shows a tournament row" if found
+            else "no row carries [selectors].lobby_row_tournament_class",
+        ))
+
+        step = "back to a table from the lobby"
+        await spectator.enter_table_from_lobby()
+        event = await _first_snapshot(frames, profile)
+        results.append((
+            step,
+            event is not None,
+            "the server chose a table" if event is not None
+            else "no snapshot within the timeout",
+        ))
+    except BrowserError as error:
+        detail = str(error)
+        evidence = await _capture_failure(spectator, profile)
+        results.append((step, False, f"{detail} — {evidence}" if evidence else detail))
+    return results
 
 
 async def _live_checks(

@@ -201,6 +201,52 @@ class SelectorSection:
     player_id_title: Selector
     player_id_prefix: str
 
+    # -- the lobby: optional as a group, and all-or-none -------------------
+    #
+    # A fleet waits for games on the lobby screen rather than being seated by
+    # the server, so it needs the route there and back. `run` does not, which
+    # is why a profile naming none of these keys still loads; one naming only
+    # some of them is refused, since a lobby half-described fails mid-shift.
+
+    mode_new_games: Selector | None
+    """The action beside the observe one that opens the list of games."""
+
+    lobby_variant: Selector | None
+    """The variant inside that list's own picker — not the observe branch's."""
+
+    lobby_tables: str | None
+    """The list container. Read in the page's own script, so plain CSS."""
+
+    lobby_back: tuple[str, ...] | None
+    """Back-ish controls, best first. Plain CSS, and chosen by layer."""
+
+    lobby_layer: str | None
+    """What a screen's controls sit in; its computed style says whether it shows."""
+
+    lobby_row_tournament_class: str | None
+    """The class marking the tournament row among the list's rows."""
+
+    lobby_row_hash_attr: str | None
+    """The row attribute holding the hash the lobby's socket events are keyed by."""
+
+    @property
+    def has_lobby(self) -> bool:
+        """Whether the profile describes the lobby, which a fleet needs."""
+
+        return self.mode_new_games is not None
+
+
+#: The ``[selectors]`` keys that describe the lobby, all or none of them.
+LOBBY_SELECTOR_KEYS: tuple[str, ...] = (
+    "mode_new_games",
+    "lobby_variant",
+    "lobby_tables",
+    "lobby_back",
+    "lobby_layer",
+    "lobby_row_tournament_class",
+    "lobby_row_hash_attr",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class WireEvents:
@@ -442,6 +488,30 @@ class _Table:
             return None
         return self.string(key)
 
+    def group(self, keys: tuple[str, ...], name: str) -> bool:
+        """Whether an optional group of keys is present — all of it, or none.
+
+        Args:
+            keys: The group's keys.
+            name: What the group describes, for the refusal.
+
+        Returns:
+            Whether every key is there. ``False`` means none of them is.
+
+        Raises:
+            ProfileError: Some of the group's keys are there and some are not.
+                A half-described group loads cleanly and fails the first time
+                it is used, which for a lobby is hours into a shift.
+        """
+
+        present = [key for key in keys if key in self._data]
+        if present and len(present) != len(keys):
+            missing = ", ".join(key for key in keys if key not in self._data)
+            raise ProfileError(
+                f"{self.label} describes {name} only in part; missing: {missing}"
+            )
+        return bool(present)
+
     def optional_selector(self, key: str) -> Selector | None:
         """Read a selector key that may be absent."""
 
@@ -617,6 +687,8 @@ def _selectors(table: _Table) -> SelectorSection:
         raise ProfileError(
             "[selectors].seat_element must carry a {seat} placeholder"
         )
+    lobby = table.group(LOBBY_SELECTOR_KEYS, "the lobby")
+    back = table.selector("lobby_back") if lobby else None
     section = SelectorSection(
         dismiss_tutorial=table.selector("dismiss_tutorial"),
         login_start=table.selector("login_start"),
@@ -647,6 +719,17 @@ def _selectors(table: _Table) -> SelectorSection:
         player_panel=table.selector("player_panel"),
         player_id_title=table.selector("player_id_title"),
         player_id_prefix=table.string("player_id_prefix"),
+        mode_new_games=table.selector("mode_new_games") if lobby else None,
+        lobby_variant=table.selector("lobby_variant") if lobby else None,
+        lobby_tables=table.string("lobby_tables") if lobby else None,
+        # Normalised to a tuple: the list is a ranking, and a single control
+        # is a ranking of one.
+        lobby_back=(back,) if isinstance(back, str) else back,
+        lobby_layer=table.string("lobby_layer") if lobby else None,
+        lobby_row_tournament_class=(
+            table.string("lobby_row_tournament_class") if lobby else None
+        ),
+        lobby_row_hash_attr=table.string("lobby_row_hash_attr") if lobby else None,
     )
     table.done()
     return section

@@ -13,6 +13,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) `load_accounts` — `accounts.toml` beside the profile lists labelled spectator accounts for a fleet; values may read `env:NAME`, labels never carry the address. See [scraper docs](docs/scraper/index.md).
 - (scraper) `SharedEgressGate` — overlapping egress checks share one probe and a passing reading answers for `max_age_s`; a refusal is never reused. See [scraper docs](docs/scraper/index.md).
 - (scraper) `HealthLog.worker(label)` — a fleet worker's lines carry `worker` and its own counters; `fleet_heartbeat` adds the workers up. `run`'s lines are unchanged. See [scraper docs](docs/scraper/index.md).
+- (scraper) `Spectator` walks the lobby, choosing each back control by the screen it sits on, and `check-profile` walks it too; its seven `[selectors]` keys are optional. See [scraper docs](docs/scraper/index.md).
 
 ### Changed
 

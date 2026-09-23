@@ -238,11 +238,55 @@ class TestSelectors:
         # control is unrecoverable. Refusing is how the operator finds out.
         path = tmp_path / "fixture-profile.toml"
         path.write_text(
-            profile_text.replace("variant = ", 'table_row = ".t"\nvariant = '),
+            profile_text.replace("\nvariant = ", '\ntable_row = ".t"\nvariant = '),
             encoding="utf-8",
         )
         with pytest.raises(ProfileError, match="table_row"):
             load_profile(path)
+
+
+#: The lobby's seven selector lines in the fixture profile, removable as one.
+LOBBY_LINES = (
+    'mode_new_games = "#new-games"\n'
+    'lobby_variant = "#new-variant"\n'
+    'lobby_tables = ".slot-list"\n'
+    'lobby_back = ["#tool-back", "#tool-close"]\n'
+    'lobby_layer = ".screen"\n'
+    'lobby_row_tournament_class = "cup-row"\n'
+    'lobby_row_hash_attr = "data-key"\n'
+)
+
+
+class TestLobbySelectors:
+    def test_the_lobby_is_read(self, profile):
+        selectors = profile.selectors
+        assert (selectors.has_lobby, selectors.mode_new_games, selectors.lobby_back,
+                selectors.lobby_row_hash_attr) == (
+            True, "#new-games", ("#tool-back", "#tool-close"), "data-key")
+
+    def test_a_profile_naming_no_lobby_still_loads(self, tmp_path, profile_text):
+        # `run` never goes to the lobby, so today's profiles must keep loading.
+        assert LOBBY_LINES in profile_text
+        path = tmp_path / "p.toml"
+        path.write_text(profile_text.replace(LOBBY_LINES, ""), encoding="utf-8")
+        selectors = load_profile(path).selectors
+        assert (selectors.has_lobby, selectors.lobby_back) == (False, None)
+
+    def test_a_lobby_described_in_part_is_refused(self, tmp_path, profile_text):
+        # Half a lobby loads cleanly and fails hours into a shift.
+        path = tmp_path / "p.toml"
+        path.write_text(profile_text.replace('lobby_layer = ".screen"\n', ""),
+                        encoding="utf-8")
+        with pytest.raises(ProfileError, match="the lobby only in part; missing: lobby_layer"):
+            load_profile(path)
+
+    def test_a_single_back_control_is_a_ranking_of_one(self, tmp_path, profile_text):
+        path = tmp_path / "p.toml"
+        path.write_text(
+            profile_text.replace('["#tool-back", "#tool-close"]', '"#tool-back"'),
+            encoding="utf-8",
+        )
+        assert load_profile(path).selectors.lobby_back == ("#tool-back",)
 
 
 class TestWire:

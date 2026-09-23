@@ -12,7 +12,10 @@ documented beside it.
 
 **There is no table list.** The server decides where a spectator sits, so the
 walk ends at the variant and the only way to see another table is to ask for
-one. Nothing here browses.
+one. Nothing here browses. The lobby a fleet waits in is not a list of running
+games either: it lists table *slots*, one of which is the tournament's, filling
+and recycling for the next four players — so it says when a game starts and
+who is in it, never where to find it.
 
 **There is no way back in.** The site's exit control leaves *spectating*
 rather than the table, and the documented route back is what breaks
@@ -35,11 +38,11 @@ from typing import Any, Final
 
 from contrai_core import Position
 
-from .exceptions import BrowserError
+from .exceptions import BrowserError, ProfileError
 from .frames import PlaywrightFrameSource
 from .health import HealthLog
 from .parse.translate import Translator
-from .profile import Profile, Selector
+from .profile import LOBBY_SELECTOR_KEYS, Profile, Selector
 
 #: How long one step of the walk waits for its element. The profile's
 #: ``slow_mo_ms`` paces the run; this bounds a step that is simply not there.
@@ -71,6 +74,54 @@ PANEL_ATTEMPT_TIMEOUT_MS: Final[int] = STEP_TIMEOUT_MS // PANEL_ATTEMPTS
 #: The attribute a class-membership test reads. Playwright's locator has no
 #: class list of its own, so the attribute is read and split.
 _CLASS_ATTR: Final[str] = "class"
+
+#: How many back steps a walk takes looking for a control before giving up.
+#: The page stacks four screens, so four steps reach the bottom of any of them.
+LOBBY_BACK_STEPS: Final[int] = 4
+
+#: How long a back step is given to land before the page is read again — the
+#: pause the chase probe measured its round trips with.
+BACK_SETTLE_MS: Final[int] = 600
+
+#: Reads every control a list of candidates matches, with the geometry and the
+#: *layer* style that decide whether a click on it could land. Read-only.
+#:
+#: The layer is the point. The page stacks its screens, each keeping its
+#: controls in the DOM with a real box, so Playwright's ``:visible`` — which
+#: asks about the element — cannot tell the screen being shown from the three
+#: behind it. What is hidden is the screen, so its computed style is asked.
+READ_CONTROLS: Final[str] = """
+([selectors, layer]) => {
+  const found = [];
+  selectors.forEach((selector, rank) => {
+    document.querySelectorAll(selector).forEach((el, index) => {
+      const own = getComputedStyle(el);
+      const box = el.getBoundingClientRect();
+      const host = el.closest(layer);
+      const shown = host ? getComputedStyle(host) : null;
+      found.push({
+        rank, index,
+        display: own.display, visibility: own.visibility, opacity: own.opacity,
+        layerDisplay: shown ? shown.display : null,
+        layerVisibility: shown ? shown.visibility : null,
+        layerOpacity: shown ? shown.opacity : null,
+        onScreen: box.width > 0 && box.height > 0 && box.right > 0 &&
+                  box.left < innerWidth && box.bottom > 0 && box.top < innerHeight,
+      });
+    });
+  });
+  return found;
+}
+"""
+
+#: What a click at the screen's centre would land on. Read-only.
+READ_CENTRE: Final[str] = """
+(list) => {
+  const x = innerWidth / 2, y = innerHeight / 2;
+  const at = document.elementFromPoint(x, y);
+  return {x, y, found: Boolean(at), inList: Boolean(at && at.closest(list))};
+}
+"""
 
 #: Wraps the page's WebSocket constructor so a frame can be sent on a socket
 #: the page owns. Playwright cannot send on one; this keeps the instances.
@@ -248,6 +299,167 @@ class Spectator:
         """
 
         await self._click_panel("next_table")
+
+    # -- the lobby -------------------------------------------------------
+
+    async def enter_lobby(self) -> bool:
+        """Walk to the list of games, where a fleet waits for one to start.
+
+        The route of :meth:`enter_variant` up to the online menu, then the
+        action beside the observe one. The first-use pledge is met the same
+        way and for the same reason: it is drawn between the menu steps, and
+        can arrive a moment after it was looked for.
+
+        Returns:
+            Whether the pledge was showing and answered on the way.
+
+        Raises:
+            ProfileError: If the profile describes no lobby.
+            BrowserError: If a menu step is not there.
+        """
+
+        self._require_lobby()
+        await self._click("mode_online")
+        answered = await self.answer_pledge()
+        try:
+            await self._click("mode_new_games")
+        except BrowserError:
+            # One answer and one retry, the pattern `enter_variant` carries on
+            # the step beside this one.
+            if not await self.answer_pledge():
+                raise
+            answered = True
+            await self._click("mode_new_games")
+        await self._click("lobby_variant")
+        await self.dismiss_overlay()
+        return answered
+
+    async def read_tournament_hash(self) -> str | None:
+        """The hash the tournament row's socket events are keyed by.
+
+        The lobby's socket says everything about a row except which one is the
+        tournament's, so that is read off the page once, on arrival, and the
+        socket is followed from then on. The hash is a configuration's
+        fingerprint, not a table's id: it outlives every game played at the
+        slot, which is exactly what makes it worth keeping.
+
+        Returns:
+            The hash, or ``None`` when the list shows no tournament row.
+
+        Raises:
+            ProfileError: If the profile describes no lobby.
+        """
+
+        self._require_lobby()
+        selectors = self._selectors
+        row = (
+            self._page.locator(selectors.lobby_tables)
+            .locator(f":scope > .{selectors.lobby_row_tournament_class}")
+            .first
+        )
+        if not await row.count():
+            return None
+        return await row.get_attribute(
+            selectors.lobby_row_hash_attr, timeout=STEP_TIMEOUT_MS
+        )
+
+    async def back_once(self) -> None:
+        """Back out of whichever screen is showing, choosing the control by layer.
+
+        There is no single back control. Each stacked screen carries its own —
+        the list's is one icon, the menus' another — and every screen keeps
+        its controls in the DOM with a real box, so a selector filtered on
+        visibility matches the ones behind as readily as the one in front.
+        Guessing cost the chase probe three live runs, each dying on a control
+        that was right for a screen other than the one shown. So every
+        candidate is read with its screen's computed style, the ones a click
+        could land on are kept, and the best-ranked of those is clicked.
+
+        Raises:
+            ProfileError: If the profile describes no lobby.
+            BrowserError: If no candidate is on the screen shown, or the one
+                chosen would not take the click. The message counts what was
+                matched and never quotes a selector.
+        """
+
+        self._require_lobby()
+        candidates = self._selectors.lobby_back
+        controls = await self._controls("lobby_back", candidates)
+        usable = [control for control in controls if _usable(control)]
+        if not usable:
+            raise BrowserError(
+                f"[selectors].lobby_back matched {len(controls)} control(s), "
+                "none of them on the screen shown"
+            )
+        chosen = min(usable, key=lambda control: (control["rank"], control["index"]))
+        target = self._page.locator(candidates[chosen["rank"]]).nth(chosen["index"])
+        try:
+            await target.click(timeout=STEP_TIMEOUT_MS)
+        except Exception as error:  # noqa: BLE001 - Playwright's timeout is its own type
+            raise BrowserError(
+                "[selectors].lobby_back chose a control that would not take a click"
+            ) from error
+
+    async def dismiss_overlay(self) -> bool:
+        """Click the lobby's first-visit overlay away — once it is proven to be there.
+
+        "Any click dismisses it" is true only while it is up. Without it, a
+        click at the centre of the screen lands on a table slot and sits the
+        account down: the one place in the whole walk where a wrong click
+        changes something on the site rather than merely failing. So what is
+        under the centre is read first, and the click is made only when that
+        is not the list.
+
+        Returns:
+            Whether a click was made.
+
+        Raises:
+            ProfileError: If the profile describes no lobby.
+        """
+
+        self._require_lobby()
+        centre = await self._page.evaluate(READ_CENTRE, self._selectors.lobby_tables)
+        if not centre["found"] or centre["inList"]:
+            return False
+        await self._page.mouse.click(centre["x"], centre["y"])
+        return True
+
+    async def enter_table_from_lobby(self) -> None:
+        """Leave the lobby for the observe branch, where the server seats us.
+
+        Backs out of the list and its variant picker until the observe action
+        is in reach, then takes it and the variant. Measured at about 3.1 s
+        from the first step back to the first join snapshot, across every
+        chase the probe ran.
+
+        Raises:
+            ProfileError: If the profile describes no lobby.
+            BrowserError: If a step is not there.
+        """
+
+        self._require_lobby()
+        await self._back_until("mode_observe")
+        await self._click("variant")
+
+    async def return_to_lobby(self) -> None:
+        """Walk from wherever the page stands back to the lobby's list.
+
+        Nothing has measured this route, so it is written to fail fast rather
+        than to recover: back out until the new-games action is in reach, at
+        most :data:`LOBBY_BACK_STEPS` times, then walk in again. A step that
+        does not land raises, and the caller rebuilds the session — the one
+        recovery that has been measured to work.
+
+        Raises:
+            ProfileError: If the profile describes no lobby.
+            BrowserError: If the new-games action never comes within reach,
+                or a step after it is not there.
+        """
+
+        self._require_lobby()
+        await self._back_until("mode_new_games")
+        await self._click("lobby_variant")
+        await self.dismiss_overlay()
 
     async def read_tournament_marker(self) -> bool:
         """Whether the rendered marker names a tournament.
@@ -615,6 +827,105 @@ class Spectator:
         if self._selectors.rail_show is None:
             return
         await self._dismiss("rail_show")
+
+    def _require_lobby(self) -> None:
+        """Refuse a lobby step on a profile that does not describe the lobby.
+
+        Raises:
+            ProfileError: Naming the keys a lobby needs.
+        """
+
+        if not self._selectors.has_lobby:
+            raise ProfileError(
+                "the profile describes no lobby; [selectors] needs "
+                + ", ".join(LOBBY_SELECTOR_KEYS)
+            )
+
+    async def _controls(
+        self, key: str, candidates: tuple[str, ...]
+    ) -> list[dict[str, Any]]:
+        """Every control the candidates match, with what decides its reach.
+
+        Raises:
+            BrowserError: If the page's own script could not run the query —
+                it takes plain CSS, and a selector written in Playwright's
+                own syntax is the usual reason.
+        """
+
+        try:
+            return await self._page.evaluate(
+                READ_CONTROLS, [list(candidates), self._selectors.lobby_layer]
+            )
+        except Exception as error:  # noqa: BLE001 - a script error is Playwright's type
+            raise BrowserError(
+                f"[selectors].{key} could not be read by the page's own script; "
+                "a lobby step needs plain CSS"
+            ) from error
+
+    async def _reachable(self, key: str) -> bool:
+        """Whether one of a key's candidates is on the screen being shown."""
+
+        controls = await self._controls(key, self._candidates(key))
+        return any(_usable(control) for control in controls)
+
+    async def _back_until(self, key: str) -> None:
+        """Back out screen by screen until a control is in reach, then click it.
+
+        Asked of the page before each step rather than tried with a short
+        click: a control on a screen behind the one shown has a real box and
+        would hold a click for its whole timeout, while its screen's style
+        answers at once.
+
+        Raises:
+            BrowserError: If it is still out of reach after
+                :data:`LOBBY_BACK_STEPS` steps, or a back step fails.
+        """
+
+        for step in range(LOBBY_BACK_STEPS + 1):
+            if await self._reachable(key):
+                await self._click(key)
+                return
+            if step < LOBBY_BACK_STEPS:
+                await self.back_once()
+                await self._page.wait_for_timeout(BACK_SETTLE_MS)
+        raise BrowserError(
+            f"[selectors].{key} was not in reach after {LOBBY_BACK_STEPS} steps back"
+        )
+
+
+def _usable(control: Mapping[str, Any]) -> bool:
+    """Whether a click on one control could land, on the screen being shown.
+
+    Args:
+        control: One entry of :data:`READ_CONTROLS`' answer.
+
+    Returns:
+        Whether it is on the screen, displayed and visible itself, and sits on
+        a layer that is displayed, visible and not faded out. A control with
+        no layer is judged by its own style alone.
+    """
+
+    if not control["onScreen"]:
+        return False
+    if control["display"] == "none" or control["visibility"] == "hidden":
+        return False
+    if control["layerDisplay"] == "none" or control["layerVisibility"] == "hidden":
+        return False
+    return _opaque(control["opacity"]) and _opaque(control["layerOpacity"])
+
+
+def _opaque(value: Any) -> bool:
+    """Whether a computed opacity leaves an element showing.
+
+    Missing or unreadable counts as showing: the question is whether a screen
+    has been faded out, and a value nobody can read is not evidence that it
+    has.
+    """
+
+    try:
+        return float(1 if value is None else value) >= 0.1
+    except (TypeError, ValueError):
+        return True
 
 
 def _number_in(text: str, prefix: str) -> str | None:

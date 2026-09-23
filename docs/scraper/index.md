@@ -138,7 +138,7 @@ silently wrong data.
 | `[site]` | Where the site lives, and which language it answers in. |
 | `[account]` | The spectator account. Values may read `env:NAME` instead of holding the secret. |
 | `[browser]` | Headless or headed, slow-motion, screenshot-on-error. |
-| `[selectors]` | One entry per UI step; a list means "try these in order". `seat_element` is a template filled with a seat token; `scoreboard_cell` is looked up inside each scoreboard row; `options_id_element` and `options_state_element` inside each option row. `rail_show` is optional: it names the control that brings a table's collapsible panel rails back, filtered on visibility so it is clicked only while they are away, and it is clicked again before every attempt at a panel control. |
+| `[selectors]` | One entry per UI step; a list means "try these in order". `seat_element` is a template filled with a seat token; `scoreboard_cell` is looked up inside each scoreboard row; `options_id_element` and `options_state_element` inside each option row. `rail_show` is optional: it names the control that brings a table's collapsible panel rails back, filtered on visibility so it is clicked only while they are away, and it is clicked again before every attempt at a panel control. The seven lobby keys (`mode_new_games`, `lobby_*`) are optional as a group — all or none — since only a fleet goes to the lobby. |
 | `[wire]` | How a frame is recognised, unwrapped and keyed. |
 | `[wire.events]` | The three event names the parser reacts to. |
 | `[wire.fields]` | Dotted paths, one per logical field the parser reads. The set of names is fixed. |
@@ -307,6 +307,44 @@ flat counters rather than as a dip in a total. The fleet's own beat is a separat
 summing `heartbeat` lines per worker never counts one twice. The label is an opaque name such as
 `bot01`, never the account's address. A log with no label — `run`'s — writes exactly what it
 always did.
+
+## The lobby
+
+`run` sits wherever the server puts it, which is always a game already under way. The lobby is
+where a game can be seen *before* it starts: a screen listing table slots, one of them the
+tournament's, which fills with four players, starts, and recycles for the next four. It says when a
+game starts and who is in it, never where to find it — its rows carry a hash that is a
+configuration's fingerprint rather than a table's id, and a table cannot be joined by it — so a
+spectator still reaches the game through the observe branch and a scan.
+
+`Spectator` walks it with the same care as the rest of the flow. `enter_lobby` takes the action
+beside the observe one and the variant inside that list's own picker, meeting the first-use pledge
+the way `enter_variant` does. `read_tournament_hash` reads the tournament row's hash off the page
+once: the lobby's socket says everything about a row except which one is the tournament's.
+`enter_table_from_lobby` backs out to the observe action and takes it; `return_to_lobby` walks from
+wherever the page stands back to the list.
+
+**There is no single back control.** The page stacks its screens — the mode menu, the online menu,
+the variant picker, the list — and each carries its own back control, one icon on the menus and
+another on the list. Every screen keeps its controls in the DOM with a real box, so Playwright's
+`:visible`, which asks about the element, matches the controls of the three screens behind as
+readily as the one in front; a hard-coded control cost the chase probe three live runs, each dying
+on a control that was right for a screen other than the one shown. So `back_once` reads every
+candidate in `lobby_back` together with the computed style of the screen it sits on (`lobby_layer`),
+keeps the ones a click could land on, and clicks the best-ranked of those. `_back_until` asks the
+same question of a menu action before each step, rather than trying a short click that a control on
+a hidden screen would hold for its whole timeout.
+
+**The overlay click is the one click that changes the site.** The lobby's first-visit overlay goes
+away at any click, but without it a click at the centre of the screen lands on a table slot and
+sits the account down. `dismiss_overlay` reads what is under the centre first and clicks only when
+that is not the list.
+
+`return_to_lobby` is the one route nothing has measured: the probes only ever went from the lobby
+to a table. It is written to fail fast — at most `LOBBY_BACK_STEPS` steps back, then a
+`BrowserError` naming the key it was waiting for — so that the caller can rebuild the session, the
+one recovery measured to work. `check-profile` walks the lobby in a session of its own when the
+profile describes one: in, the tournament row, and back out to a table.
 
 ## Shifts
 
