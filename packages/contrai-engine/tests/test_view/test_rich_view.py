@@ -2390,6 +2390,22 @@ class TestShowReplayStep:
 
         assert view.show_replay_step(can_go_back=False) == "n"
 
+    def test_a_is_taken_while_the_auction_is_open(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["a"]
+        )
+
+        assert view.show_replay_step(
+            can_go_back=True, can_skip_auction=True
+        ) == "a"
+
+    def test_a_re_prompts_once_the_auction_is_over(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["a", "n"]
+        )
+
+        assert view.show_replay_step(can_go_back=True) == "n"
+
     def test_it_does_not_clear_the_frame_it_prompts_under(self):
         view = RichView(options=DebugOptions(replay=True))
         cleared: list[int] = []
@@ -2568,6 +2584,40 @@ class TestReplayRecapPrompt:
         view = RichView(options=DebugOptions(replay=True))
 
         assert "Press [Enter]" not in self._recap_texts(view)
+
+
+class TestShowReplayContract:
+    """Where ``[a]`` comes to rest: the table as play is about to begin."""
+
+    def _view_after_a_bid(self, monkeypatch, four_players):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(replay=True))
+        view.attach(
+            TestDebugStrip._StubGame(list(four_players)), target_score=1500
+        )
+        north, *_ = four_players
+        view._render_in_game(
+            phase="bidding",
+            bidding_history=[PassBid(north)],
+            prompt_question=Text("N passes."),
+        )
+        return view
+
+    def test_it_repaints_the_frame_as_play_with_the_contract_prompt(
+        self, monkeypatch, four_players
+    ):
+        view = self._view_after_a_bid(monkeypatch, four_players)
+        captured = _capture_prints(view)
+
+        view.show_replay_contract(view.game.current_round)
+
+        assert any(text.startswith("Contract set") for text in captured)
+        # A play frame: the auction's history panel is gone.
+        assert "Bidding so far" not in captured
+        assert view._last_frame["phase"] == "playing"
+        assert view._last_frame["current_plays"] == ()
 
 
 class TestShowReplayDeal:

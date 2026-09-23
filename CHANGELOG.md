@@ -8,6 +8,10 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 ## [Unreleased]
 
+### Added
+
+- (engine) `contrai replay` gains `a`: skip the rest of the auction and stop on the contract, one key before the first card. See [engine docs](docs/engine/index.md).
+
 ### Fixed
 
 - (engine) `contrai replay` frames fit a 40-row terminal (they were 42–54 rows): one-line keys, no rationale panel, a repaint instead of more output. See [engine docs](docs/engine/index.md).

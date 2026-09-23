@@ -17,7 +17,7 @@ stateDiagram-v2
     RoundRecap : <b>4. Round recap</b><br/>show_round_recap(round, scores, is_final, is_tiebreaker, belote_gated)<br/>contract (doubled/redoubled verbose) · trump · made/failed<br/>Outcome: tricks won · round points<br/>Scoring: contract · tricks · last trick · belote · round score<br/>running totals · target<br/>gold notice when belote_gated: "past the target on Belote alone"<br/>"Press [Enter] to deal next round…"<br/>(or "…to see the final score…" when is_final,<br/>"…to deal the tiebreaker round…" when is_tiebreaker ·<br/>belote_gated leaves the prompt alone)
     EndGame : <b>5. End game</b><br/>show_end_game(status)<br/>[n] new · [r] rematch · [q] quit
     ReplayPicker : <b>6. Replay picker</b><br/>show_replay_summary(rows, game_id) -> round | None<br/>one row per recorded round: # · contract · outcome<br/>· running totals · verification verdict<br/>[1-n] step a round · [q] quit<br/>a round that cannot be replayed is listed and marked, never hidden
-    ReplayStep : <b>7. Replay step</b><br/>show_replay_step(can_go_back) -> key<br/>[n] / [Enter] action · [t] end of trick · [r] end of round<br/>· [p] back · [q] rounds<br/>4 stops per trick, not 5<br/>the frames are the live game's own — Bidding / MidTrick /<br/>TrickWon / RoundRecap — with every hand face up
+    ReplayStep : <b>7. Replay step</b><br/>show_replay_step(can_go_back, can_skip_auction) -> key<br/>[n] / [Enter] action · [t] end of trick · [r] end of round<br/>· [a] skip bids (while bidding) · [p] back · [q] rounds<br/>4 stops per trick, not 5 · one key line under the frame<br/>the frames are the live game's own — Bidding / MidTrick /<br/>TrickWon / RoundRecap — with every hand face up
 
     Landing --> PresetPicker : [p]
     PresetPicker --> Landing : a pick,<br/>or [Enter]
@@ -43,7 +43,7 @@ stateDiagram-v2
     EndGame --> [*] : [q] quit
 
     ReplayPicker --> ReplayStep : [1-n]
-    ReplayStep --> ReplayStep : [n] [t] [r]
+    ReplayStep --> ReplayStep : [n] [t] [r] [a]
     ReplayStep --> ReplayStep : [p] restart and<br/>fast-forward
     ReplayStep --> ReplayPicker : [q], or the<br/>round ran out
     ReplayPicker --> [*] : [q] quit

@@ -1587,7 +1587,10 @@ class TestRunReplay:
                 self.summaries.append((tuple(rows), game_id))
                 return self._picks.pop(0) if self._picks else None
 
-            def show_replay_step(self, *, can_go_back):
+            def show_replay_contract(self, round_):
+                pass
+
+            def show_replay_step(self, *, can_go_back, **_offered):
                 self.steps += 1
                 return self._keys.pop(0) if self._keys else "r"
 

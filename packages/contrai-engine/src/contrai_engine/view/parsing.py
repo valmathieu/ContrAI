@@ -157,6 +157,8 @@ _REPLAY_KEYS: Final[dict[str, str]] = {
     "trick": "t",
     "r": "r",
     "round": "r",
+    "a": "a",
+    "auction": "a",
     "p": "p",
     "back": "p",
     "q": "q",
@@ -164,24 +166,30 @@ _REPLAY_KEYS: Final[dict[str, str]] = {
 }
 
 
-def _parse_replay_key(raw: str, *, can_go_back: bool) -> Optional[str]:
+def _parse_replay_key(
+    raw: str, *, can_go_back: bool, can_skip_auction: bool = False
+) -> Optional[str]:
     """Parse a replay step key. ``None`` on anything the screen cannot do.
 
-    ``p`` is refused at a round's first stop rather than silently doing
-    nothing: there is no earlier action, and a key that looks like it
+    ``p`` is refused at a round's first stop, and ``a`` once the auction
+    is over, rather than silently doing nothing: a key that looks like it
     worked is worse than one that says it did not.
 
     Args:
         raw: What the viewer typed.
         can_go_back: Whether a previous stop exists to return to.
+        can_skip_auction: Whether the round is still bidding.
 
     Returns:
-        One of ``"n"``, ``"t"``, ``"r"``, ``"p"``, ``"q"``, or ``None``.
+        One of ``"n"``, ``"t"``, ``"r"``, ``"a"``, ``"p"``, ``"q"``, or
+        ``None``.
     """
 
     key = _REPLAY_KEYS.get(raw.strip().lower())
     if key is None:
         return None
     if key == "p" and not can_go_back:
+        return None
+    if key == "a" and not can_skip_auction:
         return None
     return key

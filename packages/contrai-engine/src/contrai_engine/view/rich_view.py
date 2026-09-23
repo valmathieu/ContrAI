@@ -107,6 +107,7 @@ from contrai_engine.view.screens.recap import (
 )
 from contrai_engine.view.screens.replay import (
     _panel_replay_summary,
+    _replay_contract_text,
     _replay_deal_text,
     _replay_step_prompt_text,
     _replay_step_rejection_text,
@@ -962,7 +963,27 @@ class RichView:
             prompt_question=_replay_deal_text(round_),
         )
 
-    def show_replay_step(self, *, can_go_back: bool) -> str:
+    def show_replay_contract(self, round_: "Round") -> None:
+        """Render the frame ``[a]`` comes to rest on: the table before play.
+
+        The last bid's frame, repainted as play is about to begin — an
+        empty trick on the table, the contract in the Round panel and in
+        the prompt line.
+
+        Args:
+            round_: The round whose auction just closed on a contract.
+        """
+        self.redraw_frame(
+            phase="playing",
+            current_player=None,
+            current_plays=(),
+            bidding_history=None,
+            prompt_question=_replay_contract_text(round_),
+        )
+
+    def show_replay_step(
+        self, *, can_go_back: bool, can_skip_auction: bool = False
+    ) -> str:
         """Draw the step keys under the current frame and read one key.
 
         The keys are one line, not a second Prompt panel: the frame above
@@ -975,23 +996,25 @@ class RichView:
         Args:
             can_go_back: Whether a previous stop exists, which decides
                 whether ``[p]`` is offered.
+            can_skip_auction: Whether the round is still bidding, which
+                decides whether ``[a]`` is.
 
         Returns:
-            One of ``"n"``, ``"t"``, ``"r"``, ``"p"``, ``"q"``.
+            One of ``"n"``, ``"t"``, ``"r"``, ``"a"``, ``"p"``, ``"q"``.
         """
+        offered = {
+            "can_go_back": can_go_back,
+            "can_skip_auction": can_skip_auction,
+        }
         notice: Optional[Text] = None
         while True:
             if notice is not None:
                 self.console.print(notice)
-            self.console.print(
-                _replay_step_prompt_text(can_go_back=can_go_back)
-            )
-            key = _parse_replay_key(
-                self._setup_input(), can_go_back=can_go_back
-            )
+            self.console.print(_replay_step_prompt_text(**offered))
+            key = _parse_replay_key(self._setup_input(), **offered)
             if key is not None:
                 return key
-            notice = _replay_step_rejection_text(can_go_back=can_go_back)
+            notice = _replay_step_rejection_text(**offered)
             self.redraw_screen()
 
     def redraw_frame(self, **overrides: Any) -> None:

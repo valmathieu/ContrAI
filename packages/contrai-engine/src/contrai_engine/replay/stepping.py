@@ -45,6 +45,7 @@ from typing import Any
 NEXT_KEY = "n"
 TRICK_KEY = "t"
 ROUND_KEY = "r"
+AUCTION_KEY = "a"
 BACK_KEY = "p"
 OUT_KEY = "q"
 
@@ -55,6 +56,7 @@ class StepMode(Enum):
     ACTION = "action"
     TRICK = "trick"
     ROUND = "round"
+    AUCTION = "auction"
 
     def __str__(self) -> str:
         """Render as the mode token, e.g. ``"trick"``.
@@ -72,6 +74,7 @@ _MODES: dict[str, StepMode] = {
     NEXT_KEY: StepMode.ACTION,
     TRICK_KEY: StepMode.TRICK,
     ROUND_KEY: StepMode.ROUND,
+    AUCTION_KEY: StepMode.AUCTION,
 }
 
 
@@ -116,8 +119,9 @@ class SteppingView:
 
         Args:
             inner: The view to forward to and render through. It must
-                answer ``show_replay_deal(round_)`` and
-                ``show_replay_step(can_go_back=...)``.
+                answer ``show_replay_deal(round_)``,
+                ``show_replay_contract(round_)`` and
+                ``show_replay_step(can_go_back=..., can_skip_auction=...)``.
             resume_at: How many stops to pass through in silence before
                 prompting — how a restarted round returns to where it
                 was.
@@ -127,6 +131,10 @@ class SteppingView:
         self._resume_at = resume_at
         self._stops = 0
         self._mode = StepMode.ACTION
+        # Whether the round on screen is still bidding — the only time
+        # skipping the auction means anything, so the only time ``a`` is
+        # offered.
+        self._in_auction = False
         self.quiet = True
 
     @property
@@ -186,11 +194,45 @@ class SteppingView:
             round_: The round just dealt.
         """
 
+        self._in_auction = True
         if self.quiet:
             return
         self._inner.on_round_dealt(round_)
         self._inner.show_replay_deal(round_)
         self._stop()
+
+    def on_contract_established(self, round_: Any) -> None:
+        """Close the auction; under ``a``, come to rest on the empty table.
+
+        The engine fires this right after the last bid and before the
+        first card, which is exactly where ``a`` promises to land. The
+        stop it makes is **not counted**: it re-shows the last bid's stop
+        with the contract as its prompt, so stop numbering — which ``p``
+        and ``resume_at`` both count in — is the same whichever keys
+        brought the viewer here, and ``p`` steps back as it would from
+        the last bid.
+
+        An all-pass round never fires this, so ``a`` there runs on to the
+        round's end, the next place anything happens.
+
+        Args:
+            round_: The round whose auction just closed on a contract.
+        """
+
+        self._in_auction = False
+        if self.quiet:
+            return
+        # Forwarded defensively: the engine asks ``hasattr`` of *this*
+        # wrapper, which now always says yes, so the question of whether
+        # the inner view answers has to be asked again here.
+        forward = getattr(self._inner, "on_contract_established", None)
+        if forward is not None:
+            forward(round_)
+        if self._mode is not StepMode.AUCTION:
+            return
+        self._inner.show_replay_contract(round_)
+        self._mode = StepMode.ACTION
+        self._prompt()
 
     def on_bid_made(self, player: Any, bid: Any, history: Any) -> None:
         """Forward the bid frame, then stop.
@@ -285,11 +327,26 @@ class SteppingView:
         self._stops += 1
         if self._stops <= self._resume_at:
             return
-        if self._mode is StepMode.ROUND:
+        # ``AUCTION`` runs like ``ROUND`` here: its resting place is not a
+        # counted stop but :meth:`on_contract_established`.
+        if self._mode in (StepMode.ROUND, StepMode.AUCTION):
             return
         if self._mode is StepMode.TRICK and not trick_end:
             return
-        key = self._inner.show_replay_step(can_go_back=self._stops > 1)
+        self._prompt()
+
+    def _prompt(self) -> None:
+        """Read the viewer's key at the current stop and act on it.
+
+        Raises:
+            ReplayInterrupt: If the viewer asked to step back or to leave
+                the round.
+        """
+
+        key = self._inner.show_replay_step(
+            can_go_back=self._stops > 1,
+            can_skip_auction=self._in_auction,
+        )
         if key == OUT_KEY:
             raise ReplayInterrupt(None)
         if key == BACK_KEY:

@@ -277,3 +277,14 @@ class TestParseReplayKey:
 
     def test_an_unknown_key_is_refused(self):
         assert _parse_replay_key("z", can_go_back=True) is None
+
+    def test_a_skips_the_auction_while_it_is_open(self):
+        assert _parse_replay_key(
+            "a", can_go_back=True, can_skip_auction=True
+        ) == "a"
+        assert _parse_replay_key(
+            "auction", can_go_back=True, can_skip_auction=True
+        ) == "a"
+
+    def test_a_is_refused_once_the_auction_is_over(self):
+        assert _parse_replay_key("a", can_go_back=True) is None

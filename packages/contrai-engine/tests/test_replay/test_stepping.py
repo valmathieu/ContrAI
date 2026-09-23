@@ -22,6 +22,7 @@ class _Inner:
     def __init__(self, keys: list[str] | None = None) -> None:
         self.calls: list[str] = []
         self.prompts: list[bool] = []
+        self.skips: list[bool] = []
         self._keys = list(keys or [])
 
     def attach(self, game, target_score):
@@ -45,11 +46,18 @@ class _Inner:
     def on_round_complete(self, round_, running_scores):
         self.calls.append("on_round_complete")
 
+    def on_contract_established(self, round_):
+        self.calls.append("on_contract_established")
+
     def show_replay_deal(self, round_):
         self.calls.append("show_replay_deal")
 
-    def show_replay_step(self, *, can_go_back):
+    def show_replay_contract(self, round_):
+        self.calls.append("show_replay_contract")
+
+    def show_replay_step(self, *, can_go_back, can_skip_auction=False):
         self.prompts.append(can_go_back)
+        self.skips.append(can_skip_auction)
         return self._keys.pop(0) if self._keys else "r"
 
     def anything_else(self):
@@ -174,6 +182,118 @@ class TestModes:
 
     def test_a_mode_renders_as_its_token(self):
         assert str(StepMode.TRICK) == "trick"
+
+
+def _bid_to_contract(stepper, bids):
+    """Deal, make ``bids`` bids, then close the auction on a contract."""
+    stepper.on_round_dealt(None)
+    for _ in range(bids):
+        stepper.on_bid_made(None, None, [])
+    stepper.on_contract_established(None)
+
+
+class TestSkipAuction:
+    def test_a_passes_the_bids_and_rests_on_the_contract(self):
+        inner = _Inner(["a", "n"])
+        stepper = SteppingView(inner)
+        stepper.quiet = False
+
+        _bid_to_contract(stepper, 4)
+
+        # The deal's prompt, then nothing until the contract's.
+        assert len(inner.prompts) == 2
+        assert inner.calls[-2:] == [
+            "on_contract_established",
+            "show_replay_contract",
+        ]
+
+    def test_the_contract_stop_is_not_counted(self):
+        # It re-shows the last bid's stop, so numbering is the same
+        # whichever keys brought the viewer there.
+        stepper = SteppingView(_Inner(["a", "n"]))
+        stepper.quiet = False
+
+        _bid_to_contract(stepper, 4)
+
+        assert stepper.stops == 5
+
+    def test_back_from_the_contract_steps_back_as_from_the_last_bid(self):
+        stepper = SteppingView(_Inner(["a", "p"]))
+        stepper.quiet = False
+
+        with pytest.raises(ReplayInterrupt) as excinfo:
+            _bid_to_contract(stepper, 4)
+
+        assert excinfo.value.resume_at == 3
+
+    def test_play_steps_by_action_after_the_contract(self):
+        inner = _Inner(["a", "n", "n"])
+        stepper = SteppingView(inner)
+        stepper.quiet = False
+        _bid_to_contract(stepper, 4)
+
+        stepper.on_card_played(None, None, [None])
+
+        assert len(inner.prompts) == 3
+
+    def test_an_all_pass_round_runs_to_its_end(self):
+        # No contract hook ever fires, so nothing stops ``a`` before the
+        # round is over.
+        inner = _Inner(["a"])
+        stepper = SteppingView(inner)
+        stepper.quiet = False
+
+        stepper.on_round_dealt(None)
+        for _ in range(4):
+            stepper.on_bid_made(None, None, [])
+
+        assert len(inner.prompts) == 1
+
+    def test_a_is_offered_only_while_the_auction_is_open(self):
+        inner = _Inner(["n"] * 10)
+        stepper = SteppingView(inner)
+        stepper.quiet = False
+
+        _bid_to_contract(stepper, 2)
+        stepper.on_card_played(None, None, [None])
+
+        # Deal, two bids: open. The card: closed.
+        assert inner.skips == [True, True, True, False]
+
+    def test_outside_a_the_contract_is_forwarded_without_a_stop(self):
+        inner = _Inner(["n"] * 10)
+        stepper = SteppingView(inner)
+        stepper.quiet = False
+
+        _bid_to_contract(stepper, 4)
+
+        assert inner.calls[-1] == "on_contract_established"
+        assert len(inner.prompts) == 5
+
+    def test_quiet_forwards_no_contract_but_still_closes_the_auction(self):
+        inner = _Inner()
+        stepper = SteppingView(inner)
+
+        stepper.on_round_dealt(None)
+        stepper.on_contract_established(None)
+        stepper.quiet = False
+        stepper.on_card_played(None, None, [None])
+
+        assert "on_contract_established" not in inner.calls
+        assert inner.skips == [False]
+
+    def test_an_inner_view_without_the_hook_is_tolerated(self):
+        # The engine asks ``hasattr`` of the wrapper, which always says
+        # yes now, so a hookless inner view must not break the round.
+        class _Hookless(_Inner):
+            on_contract_established = None
+
+        stepper = SteppingView(_Hookless(["n"] * 10))
+        stepper.quiet = False
+
+        _bid_to_contract(stepper, 1)
+
+        assert stepper.stops == 2
 
 
 class TestLeaving:
