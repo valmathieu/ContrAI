@@ -12,6 +12,10 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 - (scraper) `load_accounts` — `accounts.toml` beside the profile lists labelled spectator accounts for a fleet; values may read `env:NAME`, labels never carry the address. See [scraper docs](docs/scraper/index.md).
 
+### Changed
+
+- (scraper) `open_spectator` is now built on `open_browser` plus `open_session`, so one Chromium can carry several isolated sessions; its behaviour is unchanged. See [scraper docs](docs/scraper/index.md).
+
 ### Fixed
 
 - (scraper) The live recorder refuses a buffer holding two games or two tables, logged as `record_refused`, instead of merging them into one record. See [scraper docs](docs/scraper/index.md).

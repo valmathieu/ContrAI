@@ -37,6 +37,8 @@ from contrai_scraper.browser import (
     OptionsReading,
     ScoreboardReading,
     Spectator,
+    open_browser,
+    open_session,
     open_spectator,
 )
 from contrai_scraper.egress import (
@@ -223,6 +225,8 @@ __all__ = [
     "load_accounts",
     "load_profile",
     "new_session_id",
+    "open_browser",
+    "open_session",
     "open_spectator",
     "order_events",
     "parse_key",

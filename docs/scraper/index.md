@@ -24,7 +24,7 @@ the same reason.
 | `contrai_scraper.wire` | Envelope, keepalive, de-duplication, composite key → `WireEvent`. |
 | `contrai_scraper.lzstring` | The LZ-String base64 codec the deal payload arrives in. |
 | `contrai_scraper.parse` | `translate`, `deal`, `snapshot`, `live`, `session` — wire events → a record. |
-| `contrai_scraper.browser` | `Spectator` — the only module that touches a page. Login, the walk, the hop, the two panels. |
+| `contrai_scraper.browser` | `Spectator` — the only module that touches a page. Login, the walk, the hop, the two panels. `open_browser` / `open_session` — one Chromium, one isolated context per session. |
 | `contrai_scraper.recorder` | `Recorder` — the table loop: seat, gate, watch, write, hop. Imports no Playwright. |
 | `contrai_scraper.schedule` | `Schedule` — daily ranges in a named timezone; answers "is it open now" and "when does that change". |
 | `contrai_scraper.egress` | `EgressGate` — exit address, country and route device, checked before the site is touched. |
@@ -184,6 +184,14 @@ have had:
   and the answer arrives on the socket as a fresh join snapshot — 0.21 s against 2.58 s for the
   rendered panel, with no replay cost. The panel is the fallback, and it is evidence for the raw
   log rather than a score the parser can use.
+
+A session *is* a browser context — its own cookies, so its own login, and its own sockets, so its
+own frames — opened by `open_session` on a browser `open_browser` launched. The browser is the
+expensive half and the context the cheap one, so several sessions can share one Chromium and
+rebuilding one of them costs the others nothing; `open_spectator`, the single-session path `run`
+takes, is simply one of each. The order inside a session is load-bearing: the script that keeps the
+page's sockets is added to the context before its page exists, and the frame source listens before
+anything navigates, or the join snapshot describing the first table is gone.
 
 The walk follows the site's timing, not only its markup. It lets the landing page settle before
 probing for the first-visit tutorial, opens the address form through its own entry, and, because

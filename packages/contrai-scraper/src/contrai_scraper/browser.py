@@ -637,25 +637,22 @@ def _number_in(text: str, prefix: str) -> str | None:
 
 
 @asynccontextmanager
-async def open_spectator(  # pragma: no cover - needs a real browser
-    profile: Profile,
-    *,
-    headless: bool | None = None,
-    health: HealthLog | None = None,
-) -> AsyncIterator[tuple[Spectator, PlaywrightFrameSource]]:
-    """Launch a browser, attach a frame source, yield the pair.
+async def open_browser(  # pragma: no cover - needs a real browser
+    profile: Profile, *, headless: bool | None = None
+) -> AsyncIterator[Any]:
+    """Launch one Chromium that any number of sessions can share.
 
-    The frame source is built **before any navigation**: the first socket
-    opens during the walk, and a source attached afterwards misses the join
-    snapshot that is the only description of the table's opening state.
+    A browser is the expensive half — a process, its renderers, most of the
+    memory — and a context is the cheap half that holds a login. So a fleet
+    launches one of these and opens a session per worker on it, and rebuilding
+    one worker's session never costs the others theirs.
 
     Args:
-        profile: The loaded profile.
+        profile: The loaded profile; ``[browser]`` paces every session.
         headless: Override for ``[browser].headless``; ``None`` takes it.
-        health: The session's log, so socket opens and closes are counted.
 
     Yields:
-        The spectator and the frames its page will produce.
+        The Playwright browser, closed on the way out.
     """
 
     from playwright.async_api import async_playwright
@@ -666,9 +663,68 @@ async def open_spectator(  # pragma: no cover - needs a real browser
             slow_mo=profile.browser.slow_mo_ms,
         )
         try:
-            page = await browser.new_page()
-            frames = PlaywrightFrameSource(page, profile.wire, health=health)
-            await page.add_init_script(INIT_SCRIPT)
-            yield Spectator(page, profile), frames
+            yield browser
         finally:
             await browser.close()
+
+
+@asynccontextmanager
+async def open_session(
+    browser: Any, profile: Profile, *, health: HealthLog | None = None
+) -> AsyncIterator[tuple[Spectator, PlaywrightFrameSource]]:
+    """Open one isolated session on a shared browser, and yield its pair.
+
+    A session is a browser *context*: its own cookies, so its own login, and
+    its own sockets, so its own frames. Two sessions on one browser are two
+    spectators as far as the site can tell, which is what lets one Chromium
+    carry a whole fleet.
+
+    The order is load-bearing. The script that keeps the page's sockets is
+    added to the context before its page exists, so it runs on every document
+    the page ever loads. And the frame source is built **before any
+    navigation**: the first socket opens during the walk, and a source
+    attached afterwards misses the join snapshot that is the only description
+    of the table's opening state.
+
+    Args:
+        browser: A Playwright browser, or anything with ``new_context``.
+        profile: The loaded profile — for a fleet worker, the site's profile
+            with that worker's account in ``[account]``.
+        health: The session's log, so socket opens and closes are counted.
+
+    Yields:
+        The spectator and the frames its page will produce. The context is
+        closed on the way out, whatever ended the session.
+    """
+
+    context = await browser.new_context()
+    try:
+        await context.add_init_script(INIT_SCRIPT)
+        page = await context.new_page()
+        frames = PlaywrightFrameSource(page, profile.wire, health=health)
+        yield Spectator(page, profile), frames
+    finally:
+        await context.close()
+
+
+@asynccontextmanager
+async def open_spectator(  # pragma: no cover - needs a real browser
+    profile: Profile,
+    *,
+    headless: bool | None = None,
+    health: HealthLog | None = None,
+) -> AsyncIterator[tuple[Spectator, PlaywrightFrameSource]]:
+    """Launch a browser and open one session on it: the single-worker path.
+
+    Args:
+        profile: The loaded profile.
+        headless: Override for ``[browser].headless``; ``None`` takes it.
+        health: The session's log, so socket opens and closes are counted.
+
+    Yields:
+        The spectator and the frames its page will produce.
+    """
+
+    async with open_browser(profile, headless=headless) as browser:
+        async with open_session(browser, profile, health=health) as pair:
+            yield pair

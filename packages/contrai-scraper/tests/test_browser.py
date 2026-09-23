@@ -957,3 +957,129 @@ class TestWalk:
 
         drain(scenario)
         assert page.clicks == ["#by-email", "#go-icon", "#submit"]
+
+
+class SessionLog:
+    """What a fake browser was asked, in the order it was asked."""
+
+    def __init__(self):
+        self.calls: list[tuple] = []
+
+
+class SessionPage:
+    def __init__(self, log, index):
+        self.log = log
+        self.index = index
+
+    def on(self, name, handler):
+        self.log.calls.append(("on", self.index, name))
+
+
+class SessionContext:
+    def __init__(self, log, index):
+        self.log = log
+        self.index = index
+
+    async def add_init_script(self, script):
+        self.log.calls.append(("init_script", self.index, script))
+
+    async def new_page(self):
+        self.log.calls.append(("new_page", self.index))
+        return SessionPage(self.log, self.index)
+
+    async def close(self):
+        self.log.calls.append(("close", self.index))
+
+
+class SessionBrowser:
+    """A browser whose contexts only say what was done to them."""
+
+    def __init__(self):
+        self.log = SessionLog()
+        self.opened = 0
+
+    async def new_context(self):
+        index = self.opened
+        self.opened += 1
+        self.log.calls.append(("new_context", index))
+        return SessionContext(self.log, index)
+
+
+class TestSessions:
+    def test_the_socket_script_precedes_the_page_and_the_listener_precedes_use(
+        self, profile
+    ):
+        # The script must be on the context before the page exists, so it runs
+        # on every document the page loads; the frame source must be listening
+        # before anyone navigates, or the join snapshot is gone.
+        from contrai_scraper import INIT_SCRIPT, open_session
+
+        browser = SessionBrowser()
+
+        async def scenario():
+            async with open_session(browser, profile):
+                return list(browser.log.calls)
+
+        assert drain(scenario) == [
+            ("new_context", 0),
+            ("init_script", 0, INIT_SCRIPT),
+            ("new_page", 0),
+            ("on", 0, "websocket"),
+        ]
+
+    def test_the_context_is_closed_however_the_session_ends(self, profile):
+        from contrai_scraper import open_session
+
+        browser = SessionBrowser()
+
+        async def scenario():
+            async with open_session(browser, profile):
+                raise BrowserError("the walk broke")
+
+        with pytest.raises(BrowserError):
+            drain(scenario)
+        assert browser.log.calls[-1] == ("close", 0)
+
+    def test_two_sessions_on_one_browser_are_two_contexts(self, profile):
+        # One Chromium carries the fleet; each worker still gets a login and
+        # sockets of its own, and closing one leaves the other open.
+        from contrai_scraper import open_session
+
+        browser = SessionBrowser()
+
+        async def scenario():
+            async with open_session(browser, profile) as (first, _):
+                async with open_session(browser, profile) as (second, _):
+                    pass
+                return first is not second, list(browser.log.calls)
+
+        distinct, calls = drain(scenario)
+        assert (distinct, browser.opened, calls[-1], ("close", 0) in calls) == (
+            True, 2, ("close", 1), False
+        )
+
+    def test_the_session_speaks_for_the_profile_it_was_given(self, profile):
+        # A fleet worker's profile is the site's with its own account swapped
+        # in; the spectator must log in as that account, not the site's.
+        from contrai_scraper import AccountSection, open_session
+
+        worker = dataclasses.replace(
+            profile, account=AccountSection("bot@example.invalid", "4242")
+        )
+        page = FakePage({"#by-email": ["Email"], "#email": ["input"],
+                         "#go": ["Continue"], "#code": ["input"], "#submit": ["OK"]})
+
+        class OnePageContext(SessionContext):
+            async def new_page(self):
+                return page
+
+        class OnePageBrowser(SessionBrowser):
+            async def new_context(self):
+                return OnePageContext(self.log, 0)
+
+        async def scenario():
+            async with open_session(OnePageBrowser(), worker) as (spectator, _):
+                await spectator.log_in()
+
+        drain(scenario)
+        assert page.filled == [("#email", "bot@example.invalid"), ("#code", "4242")]
