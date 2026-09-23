@@ -1952,6 +1952,45 @@ class TestReplayMode:
 
         assert any("Debug — all hands" in text for text in captured)
 
+    def _frame_titles(self, monkeypatch, four_players, **options):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(**options))
+        view.attach(
+            TestDebugStrip._StubGame(list(four_players)), target_score=1500
+        )
+        captured = _capture_prints(view)
+        view._render_in_game(phase="bidding", bidding_history=[])
+        return captured
+
+    def test_replay_leaves_the_rationale_panel_off(
+        self, monkeypatch, four_players
+    ):
+        # Every replayed entry would read "recorded action", and the
+        # panel's rows are what pushed the frame's top off the screen.
+        captured = self._frame_titles(monkeypatch, four_players, replay=True)
+
+        assert "Debug — AI rationale" not in captured
+
+    def test_debug_still_shows_it(self, monkeypatch, four_players):
+        captured = self._frame_titles(monkeypatch, four_players, debug=True)
+
+        assert "Debug — AI rationale" in captured
+
+    def test_replay_keeps_a_shorter_log(self):
+        view = RichView(options=DebugOptions(replay=True))
+        for i in range(10):
+            view._log(Text(f"line {i}"))
+
+        assert view.LOG_MAX == RichView.REPLAY_LOG_MAX
+        assert [line.plain for line in view.event_log] == [
+            "line 7", "line 8", "line 9"
+        ]
+
+    def test_a_live_view_keeps_the_full_log(self):
+        assert RichView().LOG_MAX == RichView.LOG_MAX == 5
+
 
 class TestLiveRoundScoreAid:
     """``RichView`` carries the §9.7 interface aid and hands it to the frame.
@@ -2361,6 +2400,137 @@ class TestShowReplayStep:
         view.show_replay_step(can_go_back=True)
 
         assert cleared == []
+
+    def test_the_keys_are_one_bare_line_not_a_second_prompt_panel(self):
+        view = RichView(options=DebugOptions(replay=True))
+        printed: list = []
+        view.console.print = lambda *a, **k: printed.extend(a)
+        view.console.input = lambda *a, **k: "n"
+
+        view.show_replay_step(can_go_back=True)
+
+        assert len(printed) == 1
+        assert isinstance(printed[0], Text)
+        assert "\n" not in printed[0].plain
+
+    def test_a_rejected_key_repaints_the_screen_rather_than_stacking(self):
+        view = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["z", "n"]
+        )
+        repaints: list[int] = []
+        view._last_screen = lambda: repaints.append(1)
+        printed: list[str] = []
+        view.console.print = lambda *a, **k: printed.extend(
+            x.plain for x in a if hasattr(x, "plain")
+        )
+
+        assert view.show_replay_step(can_go_back=True) == "n"
+        assert repaints == [1]
+        # The rejection is named once, above the keys of the second read.
+        assert sum("✗" in line for line in printed) == 1
+
+
+class TestRedraw:
+    """The cached frame a replay repaints instead of stacking output."""
+
+    def _view(self, monkeypatch, four_players, **options):
+        from contrai_engine.view import rich_view
+
+        monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
+        view = RichView(options=DebugOptions(**options))
+        view.attach(
+            TestDebugStrip._StubGame(list(four_players)), target_score=1500
+        )
+        return view
+
+    def test_redraw_before_any_frame_draws_nothing(self):
+        view = RichView(options=DebugOptions(replay=True))
+        captured = _capture_prints(view)
+
+        view.redraw_frame()
+        view.redraw_screen()
+
+        assert captured == []
+
+    def test_redraw_frame_repaints_the_last_frame(
+        self, monkeypatch, four_players
+    ):
+        view = self._view(monkeypatch, four_players, replay=True)
+        view._render_in_game(
+            phase="bidding", bidding_history=[], prompt_question=Text("first")
+        )
+        captured = _capture_prints(view)
+
+        view.redraw_frame()
+
+        assert any("first" in text for text in captured)
+
+    def test_an_override_replaces_that_argument_and_sticks(
+        self, monkeypatch, four_players
+    ):
+        view = self._view(monkeypatch, four_players, replay=True)
+        view._render_in_game(
+            phase="bidding", bidding_history=[], prompt_question=Text("first")
+        )
+        view.redraw_frame(prompt_question=Text("second"))
+        captured = _capture_prints(view)
+
+        view.redraw_frame()
+
+        assert any("second" in text for text in captured)
+        assert not any("first" in text for text in captured)
+
+    def test_redraw_shows_a_line_logged_since_the_frame(
+        self, monkeypatch, four_players
+    ):
+        view = self._view(monkeypatch, four_players, replay=True)
+        view._render_in_game(phase="bidding", bidding_history=[])
+        view._log(Text("logged later"))
+        captured = _capture_prints(view)
+
+        view.redraw_frame()
+
+        assert any("logged later" in text for text in captured)
+
+    def test_redraw_screen_repaints_the_recap_once_it_is_up(
+        self, monkeypatch, four_players
+    ):
+        view = self._view(monkeypatch, four_players, replay=True)
+        view._render_in_game(phase="bidding", bidding_history=[])
+        view.show_round_recap(
+            TestReplayRecapPrompt._StubRound(),
+            {TeamSide.NS: 0, TeamSide.EW: 0},
+        )
+        captured = _capture_prints(view)
+
+        view.redraw_screen()
+
+        assert "Round #1 recap" in captured
+        # Not the in-game frame drawn before it, whose Log panel would
+        # have been printed on its own.
+        assert "Log" not in captured
+
+    def test_a_replayed_belote_repaints_the_frame(
+        self, monkeypatch, four_players
+    ):
+        view = self._view(monkeypatch, four_players, replay=True)
+        view._render_in_game(phase="bidding", bidding_history=[])
+        captured = _capture_prints(view)
+        north, *_ = four_players
+
+        view.on_belote_announced(north, "belote", Suit.HEARTS, None)
+
+        assert any("announces" in text for text in captured)
+
+    def test_a_live_belote_does_not(self, monkeypatch, four_players):
+        view = self._view(monkeypatch, four_players)
+        view._render_in_game(phase="bidding", bidding_history=[])
+        captured = _capture_prints(view)
+        north, *_ = four_players
+
+        view.on_belote_announced(north, "belote", Suit.HEARTS, None)
+
+        assert captured == []
 
 
 class TestReplayRecapPrompt:

@@ -2,8 +2,8 @@
 
 The two screens a recorded game is watched through: the round picker —
 one row per recorded round, with its contract, outcome, running totals
-and verification verdict — and the step prompt that draws under whatever
-frame the replay just rendered.
+and verification verdict — and the one-line step keys that draw under
+whatever frame the replay just rendered.
 
 This module is the **throwaway half** of the picker. The stable half is
 :mod:`contrai_engine.replay.summary`, which computes the rows as plain
@@ -222,25 +222,30 @@ def _replay_summary_rejection_text(rows: Sequence["ReplayRow"]) -> Text:
 
 
 def _replay_step_prompt_text(*, can_go_back: bool) -> Text:
-    """The step prompt's key list; ``[p]`` is omitted at a round's first stop.
+    """The step keys, as one line; ``[p]`` is omitted at a round's first stop.
+
+    One line, and short words, because it is printed bare under a frame
+    that already fills most of a terminal: ``trick`` and ``round`` stand
+    for "run to the end of the trick / round".
 
     Args:
         can_go_back: Whether a previous stop exists to return to.
 
     Returns:
-        The prompt line.
+        The key line.
     """
 
-    text = Text()
-    text.append("[n]", style=f"bold {FG}")
-    text.append(" next  ·  ", style=FG)
-    text.append("[t]", style=f"bold {FG}")
-    text.append(" end of trick  ·  ", style=FG)
-    text.append("[r]", style=f"bold {FG}")
-    text.append(" end of round  ·  ", style=FG)
+    keys: list[tuple[str, str]] = [
+        ("[n]", "next"),
+        ("[t]", "trick"),
+        ("[r]", "round"),
+    ]
     if can_go_back:
-        text.append("[p]", style=f"bold {FG}")
-        text.append(" back  ·  ", style=FG)
+        keys.append(("[p]", "back"))
+    text = Text()
+    for key, label in keys:
+        text.append(key, style=f"bold {FG}")
+        text.append(f" {label} · ", style=FG)
     text.append("[q]", style=f"bold {GOLD}")
     text.append(" rounds", style=FG)
     return text
