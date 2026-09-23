@@ -45,6 +45,7 @@ from contrai_scraper.egress import (
     EgressGate,
     EgressReading,
     EgressRefusal,
+    SharedEgressGate,
     route_device_from,
 )
 from contrai_scraper.exceptions import (
@@ -200,6 +201,7 @@ __all__ = [
     "SelectorSection",
     "SessionResult",
     "SessionSummary",
+    "SharedEgressGate",
     "Shift",
     "ShiftError",
     "ShiftSummary",

@@ -340,6 +340,15 @@ The egress gate is what makes a failure of that confinement visible rather than 
 runs before every session, before every hop and when a table goes quiet, and a refusal sends nothing
 to the site; but it is visibility, not the guarantee.
 
+Several workers behind one tunnel share one gate, `SharedEgressGate`, because "before every hop"
+multiplies: ten workers scanning would send the echo service about fifty requests in twenty seconds
+from one exit address, which is how a free-tier service starts answering `429` — read by the gate
+as a refusal. Asks that overlap a probe in flight wait for it and take its answer, good or bad, and
+a passing reading answers later asks for `max_age_s`. A refusal is never reused: it answers only the
+asks that were waiting on it, so the next caller probes again and fail-closed is unchanged. The
+window is short next to `stale_after_s`, so a tunnel that died before a table went quiet has no
+passing reading left to vouch for it when the watchdog asks.
+
 The image, the Compose file, the environment templates and the procedures that prove the
 confinement — the exit address, the refusal of the home address, a tunnel outage under a packet
 capture — live in `deploy/install.md`.

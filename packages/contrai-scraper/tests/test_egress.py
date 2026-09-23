@@ -132,3 +132,116 @@ class TestAsync:
     def test_the_check_runs_off_the_event_loop(self, profile):
         gate, _ = build(profile)
         assert asyncio.run(gate.check()).ok is True
+
+
+class ScriptedGate:
+    """A gate whose probe waits for a signal, answering from a script."""
+
+    def __init__(self, *readings, hold=False):
+        self.readings = list(readings)
+        self.probes = 0
+        self.release = asyncio.Event()
+        if not hold:
+            self.release.set()
+
+    async def check(self):
+        self.probes += 1
+        await self.release.wait()
+        return self.readings.pop(0)
+
+
+def _reading(refusal=None):
+    from contrai_scraper import EgressReading
+
+    return EgressReading(refusal=refusal, exit_ip=None if refusal else EXIT,
+                         country="XX", route_device=None)
+
+
+class Clock:
+    """A monotonic clock the test moves by hand."""
+
+    def __init__(self):
+        self.now = 100.0
+
+    def __call__(self):
+        return self.now
+
+
+class TestShared:
+    def test_ten_overlapping_asks_cost_one_probe(self):
+        from contrai_scraper import SharedEgressGate
+
+        inner = ScriptedGate(_reading(), hold=True)
+        shared = SharedEgressGate(inner, max_age_s=60, monotonic=Clock())
+
+        async def scenario():
+            asks = [asyncio.ensure_future(shared.check()) for _ in range(10)]
+            await asyncio.sleep(0)
+            inner.release.set()
+            return await asyncio.gather(*asks)
+
+        readings = asyncio.run(scenario())
+        assert (inner.probes, shared.probes, all(r.ok for r in readings)) == (1, 1, True)
+
+    def test_asks_waiting_on_a_refusal_share_it_and_stay_refused(self):
+        # Coalescing is not caching: every ask that was waiting on the refused
+        # probe is refused by it, which is the answer about that instant.
+        from contrai_scraper import SharedEgressGate
+
+        inner = ScriptedGate(_reading(EgressRefusal.PROBE_FAILED), hold=True)
+        shared = SharedEgressGate(inner, max_age_s=60, monotonic=Clock())
+
+        async def scenario():
+            asks = [asyncio.ensure_future(shared.check()) for _ in range(4)]
+            await asyncio.sleep(0)
+            inner.release.set()
+            return await asyncio.gather(*asks)
+
+        readings = asyncio.run(scenario())
+        assert (inner.probes, {r.ok for r in readings}) == (1, {False})
+
+    def test_a_passing_reading_answers_later_asks_within_the_window(self):
+        from contrai_scraper import SharedEgressGate
+
+        clock = Clock()
+        inner = ScriptedGate(_reading(), _reading())
+        shared = SharedEgressGate(inner, max_age_s=60, monotonic=clock)
+
+        async def scenario():
+            await shared.check()
+            clock.now += 59
+            return await shared.check()
+
+        assert (asyncio.run(scenario()).ok, inner.probes) == (True, 1)
+
+    def test_a_passing_reading_past_the_window_is_probed_again(self):
+        from contrai_scraper import SharedEgressGate
+
+        clock = Clock()
+        inner = ScriptedGate(_reading(), _reading(EgressRefusal.WRONG_COUNTRY))
+        shared = SharedEgressGate(inner, max_age_s=60, monotonic=clock)
+
+        async def scenario():
+            await shared.check()
+            clock.now += 60
+            return await shared.check()
+
+        reading = asyncio.run(scenario())
+        assert (reading.refusal, inner.probes) == (EgressRefusal.WRONG_COUNTRY, 2)
+
+    def test_a_refusal_never_answers_a_later_ask(self):
+        # Fail closed means a refusal is always re-asked, never remembered:
+        # a tunnel that came back is let through by the very next probe.
+        from contrai_scraper import SharedEgressGate
+
+        clock = Clock()
+        inner = ScriptedGate(_reading(EgressRefusal.PROBE_FAILED), _reading())
+        shared = SharedEgressGate(inner, max_age_s=60, monotonic=clock)
+
+        async def scenario():
+            first = await shared.check()
+            clock.now += 1
+            return first, await shared.check()
+
+        first, second = asyncio.run(scenario())
+        assert (first.ok, second.ok, inner.probes) == (False, True, 2)
