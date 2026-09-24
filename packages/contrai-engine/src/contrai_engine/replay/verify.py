@@ -604,6 +604,38 @@ def _check_score(check: _RoundCheck, round_: Any) -> None:
                 observed=str(recorded.last_trick),
             )
 
+    _check_carried_over(check, score, recorded)
+
+
+def _check_carried_over(check: _RoundCheck, score: Any, recorded: Any) -> None:
+    """The dispute pot paid out this round must be the one recorded (§7.5).
+
+    A record that cannot say — an observed round whose running total
+    before it was never read — carries ``None``, and a claim never made is
+    not a disagreement: the check is left unchecked, as a missing last
+    trick is, and ``score`` is named unchecked once however many of its
+    parts could not be compared.
+
+    Args:
+        check: The round's accumulating checks.
+        score: The replayed round score.
+        recorded: The recorded score line.
+    """
+
+    if recorded.carried_over is None:
+        if _SCORE not in check.unchecked:
+            check.unchecked.append(_SCORE)
+        return
+    mine = {side: score.carried_over.get(side, 0) for side in TeamSide}
+    theirs = {side: recorded.carried_over.get(side, 0) for side in TeamSide}
+    if mine != theirs:
+        check.fault(
+            MismatchKind.SCORE,
+            "the carried-over points differ",
+            expected=str(_side_totals(mine)),
+            observed=str(_side_totals(theirs)),
+        )
+
 
 def _check_contract_terms(
     check: _RoundCheck, contract: Any, score: Any, recorded: Any

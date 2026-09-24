@@ -179,9 +179,11 @@ It exits `0` when every round is `verified` or `partial`, `1` when any round is 
 | `illegal_play` | a card the play state refuses | `PlayState.apply` raises |
 | `trick_winner` | the record's next leader is not the seat core says won | the replay asks a seat out of turn |
 | `belote` | a pair the deal does not hold, or an announcement that never happened | the dealt hands, and the replay |
-| `score` | outcome, declarer, contract terms, marks, card points, belote, last trick | `score_round` vs `round_scored` |
+| `score` | outcome, declarer, contract terms, marks, card points, belote, last trick, carried-over dispute points | `score_round` vs `round_scored` |
 
 A round is `verified` when every applicable check ran and passed, `suspect` when one failed, and **`partial` when a check had nothing to run against** — overwhelmingly a round with no `round_scored` event, which is the *common* case in an observed game: a spectator sees the cards long before it sees a score sheet. That third verdict is why a corpus gate reads "no round is suspect" rather than "every round is verified". A game takes the worst verdict among its rounds.
+
+A dispute pot is paid into the next winner's total and stated nowhere else, so a record's `carried_over` is the only place a payout can be checked; the replay computes it and the two are compared per side. An observed round whose running total before it was never read carries `null` there, and that part of the check reads `unchecked`, not `suspect`.
 
 **A sweep's card points accept the substitute as well as the pile.** An observed table writes the flat Slam figure in the card-points column rather than the 162 actually on the table (spec §4.2.1), and both statements describe the same round, so `score` accepts either — but only the figure that round carries: **500** for an announced Solo Slam, **250** for an announced Slam and for an unannounced sweep alike. Keying on the round's own level rather than on one tolerated number keeps a wrong substitute a fault, and keeps the column clear of the engine's *marking* rule, which pays a declarer's personal unannounced sweep the Solo Slam's 500 (`contree-domain.md` §7.2) — a premium the card-points column never carries.
 

@@ -173,6 +173,7 @@ class _Scored:
         }
         self.last_trick = TeamSide.NS
         self.slam = SlamOutcome.NONE
+        self.carried_over = {side: 0 for side in TeamSide}
         for name, value in overrides.items():
             setattr(self, name, value)
 
@@ -556,6 +557,36 @@ class TestCheckBelote:
 
 
 class TestCheckScore:
+    def test_an_agreeing_carry_reports_nothing(self):
+        import dataclasses
+        score = dataclasses.replace(
+            _score(), carried_over={TeamSide.NS: 161, TeamSide.EW: 0}
+        )
+        check = self._run(
+            _Scored(carried_over={TeamSide.NS: 161, TeamSide.EW: 0}),
+            score=score,
+        )
+        assert "carried-over" not in _details(check)
+
+    def test_a_different_carry_is_a_fault(self):
+        import dataclasses
+        score = dataclasses.replace(
+            _score(), carried_over={TeamSide.NS: 0, TeamSide.EW: 161}
+        )
+        check = self._run(_Scored(), score=score)
+        assert "the carried-over points differ" in _details(check)
+
+    def test_an_unknown_carry_is_unchecked_not_a_fault(self):
+        check = self._run(_Scored(carried_over=None))
+        assert "carried-over" not in _details(check)
+        assert check.unchecked == ["score"]
+
+    def test_score_is_named_unchecked_once(self):
+        # A scraped round states neither its last trick nor, after a gap,
+        # its carry: one unchecked "score", not two.
+        check = self._run(_Scored(carried_over=None, last_trick=None))
+        assert check.unchecked == ["score"]
+
     def test_a_held_round_agrees_with_a_held_record(self):
         import dataclasses
         from contrai_data import RoundOutcome
