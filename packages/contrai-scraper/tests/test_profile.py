@@ -337,6 +337,58 @@ class TestLobbyWire:
         assert load_profile(_write(tmp_path, text)).wire.draw_verb is None
 
 
+#: The fixture profile's [fleet] section, removable as one.
+FLEET_SECTION = (
+    "\n[fleet]\n"
+    "workers = 2\n"
+    "login_stagger_s = 0\n"
+    "scan_distinct_budget = 5\n"
+    "scan_deadline_s = 60\n"
+    "roster_max_age_s = 30\n"
+    "claim_ttl_s = 600\n"
+    "egress_cache_s = 60\n"
+)
+
+
+class TestFleet:
+    def test_the_fleet_is_read(self, profile):
+        fleet = profile.fleet
+        assert (fleet.workers, fleet.scan_distinct_budget, fleet.claim_ttl_s,
+                profile.fleet_gaps()) == (2, 5, 600, ())
+
+    def test_a_profile_with_no_fleet_loads_and_says_what_a_fleet_needs(
+        self, tmp_path, profile_text
+    ):
+        assert FLEET_SECTION in profile_text
+        text = profile_text.replace(FLEET_SECTION, "")
+        text = text.replace(LOBBY_LINES, "").replace(LOBBY_FIELD_LINES, "")
+        text = text.replace(LOBBY_EVENT_LINE, "")
+        loaded = load_profile(_write(tmp_path, text))
+        assert (loaded.fleet, len(loaded.fleet_gaps())) == (None, 3)
+
+    @pytest.mark.parametrize("workers", [0, 11])
+    def test_a_worker_count_out_of_range_is_refused(self, tmp_path, profile_text,
+                                                    workers):
+        text = profile_text.replace("workers = 2", f"workers = {workers}")
+        with pytest.raises(ProfileError, match="between 1 and 10"):
+            load_profile(_write(tmp_path, text))
+
+    def test_a_negative_stagger_is_refused(self, tmp_path, profile_text):
+        text = profile_text.replace("login_stagger_s = 0", "login_stagger_s = -1")
+        with pytest.raises(ProfileError, match="login_stagger_s may not be negative"):
+            load_profile(_write(tmp_path, text))
+
+    def test_a_scan_with_no_budget_is_refused(self, tmp_path, profile_text):
+        text = profile_text.replace("scan_distinct_budget = 5", "scan_distinct_budget = 0")
+        with pytest.raises(ProfileError, match="scan_distinct_budget must be positive"):
+            load_profile(_write(tmp_path, text))
+
+    def test_an_unknown_fleet_key_is_refused(self, tmp_path, profile_text):
+        text = profile_text.replace("workers = 2", "workers = 2\ncamp = true")
+        with pytest.raises(ProfileError, match=r"\[fleet\] has unknown keys: camp"):
+            load_profile(_write(tmp_path, text))
+
+
 class TestWire:
     def test_the_resume_vocabulary_is_read(self, profile):
         assert (

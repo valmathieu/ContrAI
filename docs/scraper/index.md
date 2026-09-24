@@ -31,11 +31,13 @@ the same reason.
 | `contrai_scraper.schedule` | `Schedule` — daily ranges in a named timezone; answers "is it open now" and "when does that change". |
 | `contrai_scraper.egress` | `EgressGate` — exit address, country and route device, checked before the site is touched. |
 | `contrai_scraper.shift` | `Shift` — the outer loop: schedule gate, egress gate, one browser session and raw log per window, failure budgets. |
+| `contrai_scraper.fleet` | `Fleet` / `Worker` — the same gates for N workers on one browser, waiting in the lobby and chasing each game; budgets per worker. |
 | `contrai_scraper.health` | `HealthLog` and `Counters` — one JSON line per transition, on stderr. |
 | `contrai_scraper.cli` | `contrai-scrape`: `run` (the default), `check-profile` and `parse`. |
 
 ```bash
 uv run contrai-scrape run --profile profile.toml --headless    # watch tables
+uv run contrai-scrape fleet --profile profile.toml --accounts accounts.toml --workers 5 --headless
 uv run contrai-scrape check-profile profile.toml               # validate before a shift
 uv run contrai-scrape parse RAW... --profile profile.toml      # re-parse stored logs
 ```
@@ -159,6 +161,7 @@ silently wrong data.
 | `[schedule]` | When the scraper may watch: a timezone, daily ranges that may cross midnight, and how long a closing range lets the game in hand run on. |
 | `[egress]` | The gate before any site traffic: the home address (through the environment), the expected country, an echo service, and the tunnel device the route must use. |
 | `[output]` | Where records and raw logs go; both roots resolve relative to the profile, and both name the same directory. |
+| `[fleet]` | Optional, read by `fleet` alone: how many workers (at most 10), their login stagger, a chase's distinct-table budget and deadline, how old a roster may be, and the registry's and egress gate's timings. |
 | `[privacy]` | Inputs to the pseudonymisation step, which is not built yet. |
 
 A fleet logs in with several accounts, and they do not multiply the profile. They live in a second
@@ -449,6 +452,40 @@ reconciles the two, one browser session at a time.
   its supervisor starts a fresh one. Exit code 130 means it was interrupted — Ctrl+C, or the
   SIGTERM a service or container stop sends — and the game in hand was written `interrupted`.
 
+## Fleets
+
+`contrai-scrape fleet` runs several workers, each on its own account, and catches games from their
+first card instead of wherever the server seats it. It is a shift in shape — the same schedule gate,
+the same egress gate (one shared `SharedEgressGate`, since every worker and every hop asks it), the
+same retention pruning — but inside an open window it launches one Chromium and opens a session per
+worker on it, logins staggered by `login_stagger_s`.
+
+Each worker loops on the same route. It logs in, walks to the lobby, reads the tournament row's
+hash, and waits there on the socket (`in_hall`) until `LobbyWatcher` announces a start. A roster
+older than `roster_max_age_s` when read is left alone (`roster_stale`); otherwise the worker claims
+it in the registry — a second worker that read the same start logs `roster_taken` and keeps waiting
+— walks out to a table and runs a chasing recorder, which records that one game or gives up. The
+roster is released either way, and the worker walks back to the lobby. Idle workers belong in the
+lobby, not at a table: a spectator left at a table after its game is sent back to the menu anyway,
+and a worker already in the lobby spends none of the few seconds before the first deal getting
+there.
+
+The walk back is the one route nothing has measured, so it fails fast, and a failure rebuilds the
+worker's session — a fresh context and a fresh login — logged as `return_rebuilt` and *not* counted
+against the worker. Everything else that ends a session is: three sessions in a row that fail, or six
+refused egress checks in a row, and the worker goes down (`worker_down`) and stays down for the
+process. A chase that runs its course, whatever it found, clears the streak, so a profile broken in
+a way every chase meets cannot keep logging in forever. The process hands itself back with exit
+code 3 only once a majority of its workers are down — one worker's bad account does not end the
+others' night — which for a fleet of one is exactly `run`'s rule. A worker whose chase was stopped by
+a refused egress sends nothing more on that session and checks the egress again before the next.
+
+Without `--accounts` a fleet is one worker, labelled `bot01`, on the profile's own `[account]`; with
+it, `--workers` (default `[fleet].workers`) takes that many accounts from the top of the file, and
+asking for more than the file holds, or more than ten, is a usage error. `--max-games` stops new
+chases once the fleet has recorded that many games, and `--minutes` bounds the run. A profile that
+lacks the lobby keys or a `[fleet]` section is refused with a list of what is missing.
+
 ## Deployment
 
 The confinement is structural. On the box the scraper runs in a container with no network of its
@@ -479,8 +516,11 @@ capture — live in `deploy/install.md`.
 
 ## Pending
 
-- Multi-table orchestration: several browser contexts, a shared registry of tables already
-  watched.
+- The fleet's live ramp — two, five, then ten workers — and the memory each browser context
+  costs, which is unmeasured: the 0.8–1.0 GB figure is per *browser*.
+- Recording one game twice: a record file is opened for appending, so a game recorded, abandoned
+  and recorded again later would hold two headers. `run` has always had this; the fleet's registry
+  rules it out for two workers at once, not for one worker twice.
 - Pseudonymisation: records currently carry raw ids, names and account fields — personal data,
   local only.
 - Rate-limiting / ToS considerations.

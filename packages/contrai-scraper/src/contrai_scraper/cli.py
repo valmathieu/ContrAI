@@ -1,10 +1,15 @@
 """Console entry point for the spectator scraper.
 
-Three subcommands. ``run`` watches tables and is still the default, so a bare
+Four subcommands. ``run`` watches tables and is still the default, so a bare
 ``contrai-scrape`` is ``contrai-scrape run`` with the word left out — but it
 now needs a profile, and a bare invocation fails with usage rather than
 launching anything. That is the intended break: there is no longer a flow
 that works without one.
+
+``fleet`` is ``run`` grown sideways: several accounts on one browser, waiting
+in the lobby rather than sitting where the server puts them, so that every
+game is caught from its first card. One worker on the profile's own account is
+a fleet too, which is how it runs without an accounts file.
 
 ``check-profile`` is the other half of unattended operation. It walks the
 same site the recorder does and reports one line per check, so a site change
@@ -31,14 +36,16 @@ from typing import Any, Final
 
 from contrai_data import GameEvent, RecordWriter, RoundDealt, game_path
 
+from contrai_scraper.accounts import LabelledAccount, load_accounts
 from contrai_scraper.browser import open_browser, open_session, open_spectator
-from contrai_scraper.egress import EgressGate, EgressReading
+from contrai_scraper.egress import EgressGate, EgressReading, SharedEgressGate
 from contrai_scraper.exceptions import (
     BrowserError,
     ParseError,
     ScraperError,
     ShiftError,
 )
+from contrai_scraper.fleet import SOLE_WORKER, Fleet, FleetSummary
 from contrai_scraper.frames import RawFrame, RawLogFrameSource
 from contrai_scraper.health import HealthLog
 from contrai_scraper.lobby import lobby_seats
@@ -49,7 +56,7 @@ from contrai_scraper.parse.session import (
 )
 from contrai_scraper.parse.snapshot import Snapshot, read_snapshot
 from contrai_scraper.parse.translate import Translator
-from contrai_scraper.profile import Profile, load_profile
+from contrai_scraper.profile import FLEET_CEILING, Profile, load_profile
 from contrai_scraper.rawlog import new_session_id, raw_dir
 from contrai_scraper.recorder import (
     RecorderLimits,
@@ -59,11 +66,12 @@ from contrai_scraper.recorder import (
     _orientation_holds,
     _wire_pair,
 )
+from contrai_scraper.registry import TableRegistry
 from contrai_scraper.shift import Shift, ShiftSummary
 from contrai_scraper.wire import WireEvent, WireStream, order_events
 
 #: The subcommands, and the one a bare invocation means.
-SUBCOMMANDS: Final[tuple[str, ...]] = ("run", "parse", "check-profile")
+SUBCOMMANDS: Final[tuple[str, ...]] = ("run", "fleet", "parse", "check-profile")
 DEFAULT_SUBCOMMAND: Final[str] = "run"
 
 #: Where a directory argument is searched for logs.
@@ -103,6 +111,7 @@ def main(argv: list[str] | None = None) -> int:
     # future wrapper, rebound one.
     dispatch = {
         "run": _run_recorder,
+        "fleet": _run_fleet,
         "check-profile": _run_check,
         "parse": _run_parse,
     }
@@ -217,6 +226,131 @@ async def _shift(  # pragma: no cover - needs a real browser
     )
     for path in summary.records:
         print(f"  -> {path}")
+    return summary
+
+
+# ---------------------------------------------------------------------------
+# fleet
+# ---------------------------------------------------------------------------
+
+
+def _run_fleet(args: argparse.Namespace) -> int:
+    """Run workers that wait in the lobby and chase every game that starts.
+
+    Args:
+        args: The parsed ``fleet`` arguments.
+
+    Returns:
+        0; 130 when an interrupt stopped the run; 3 when the fleet handed
+        itself back — egress refused too often, or most workers down.
+
+    Raises:
+        SystemExit: If the profile cannot run a fleet, or the accounts do
+            not add up (exit code 2).
+    """
+
+    profile = _profile_or_exit(args)
+    gaps = profile.fleet_gaps()
+    if gaps:
+        args.parser.error(f"this profile cannot run a fleet; it needs {', '.join(gaps)}")
+    accounts = _fleet_accounts(args, profile)
+    limits = RecorderLimits(
+        max_games=args.max_games,
+        max_seconds=None if args.minutes is None else args.minutes * _MINUTE,
+    )
+    try:
+        asyncio.run(_fleet(profile, accounts, limits, args.headless))
+    except KeyboardInterrupt:
+        # Every worker's recorder has written its game in hand as interrupted.
+        return EXIT_INTERRUPTED
+    except ShiftError as error:
+        print(f"contrai-scrape: {error}", file=sys.stderr)
+        return EXIT_SHIFT_ENDED
+    return 0
+
+
+def _fleet_accounts(
+    args: argparse.Namespace, profile: Profile
+) -> tuple[LabelledAccount, ...]:
+    """The accounts the fleet's workers log in with, one each.
+
+    Without ``--accounts`` a fleet is one worker on the profile's own
+    ``[account]`` — the fleet's way of working, at the size ``run`` works at.
+    With it, ``--workers`` (or ``[fleet].workers``) takes that many accounts
+    from the top of the file.
+
+    Raises:
+        SystemExit: If the accounts cannot be read, or there are fewer of
+            them than workers asked for, or the count is out of range.
+    """
+
+    assert profile.fleet is not None
+    if args.accounts is None:
+        if args.workers not in (None, 1):
+            args.parser.error(
+                "more than one worker needs --accounts: one account per worker"
+            )
+        return (LabelledAccount(label=SOLE_WORKER, account=profile.account),)
+    try:
+        accounts = load_accounts(args.accounts)
+    except ScraperError as error:
+        args.parser.error(str(error))
+    wanted = profile.fleet.workers if args.workers is None else args.workers
+    if not 1 <= wanted <= FLEET_CEILING:
+        args.parser.error(f"--workers must be between 1 and {FLEET_CEILING}")
+    if wanted > len(accounts):
+        args.parser.error(
+            f"{wanted} workers asked for, but {args.accounts} holds "
+            f"{len(accounts)} account(s)"
+        )
+    return accounts[:wanted]
+
+
+async def _fleet(  # pragma: no cover - needs a real browser
+    profile: Profile,
+    accounts: tuple[LabelledAccount, ...],
+    limits: RecorderLimits,
+    headless: bool | None,
+) -> FleetSummary:
+    """Run the fleet until its limits stop it, printing what it did.
+
+    Args:
+        profile: The loaded profile, which can run a fleet.
+        accounts: One per worker.
+        limits: When to stop, across the fleet.
+        headless: Override for ``[browser].headless``; ``None`` takes it.
+
+    Returns:
+        What the fleet did.
+    """
+
+    _treat_sigterm_as_interrupt()
+    section = profile.fleet
+    assert section is not None
+    fleet = Fleet(
+        profile,
+        accounts,
+        HealthLog(),
+        open_browser=open_browser,
+        open_session=open_session,
+        egress=SharedEgressGate(
+            EgressGate(profile.egress, profile.site.url),
+            max_age_s=section.egress_cache_s,
+        ),
+        registry=TableRegistry(claim_ttl_s=section.claim_ttl_s),
+        headless=headless,
+        limits=limits,
+    )
+    summary = await fleet.run()
+    print(
+        f"{summary.windows} windows, {summary.chases} chases "
+        f"({summary.chases_given_up} given up), {summary.games_recorded} games, "
+        f"{summary.tables_seated} tables seated, {summary.tables_rejected} rejected"
+    )
+    for path in summary.records:
+        print(f"  -> {path}")
+    if summary.workers_down:
+        print(f"  workers down: {', '.join(summary.workers_down)}")
     return summary
 
 
@@ -864,7 +998,7 @@ def _build_parser() -> tuple[
             "Seat a spectator at tournament tables and write one record per "
             "game watched."
         ),
-        epilog="other subcommands: parse, check-profile",
+        epilog="other subcommands: fleet, parse, check-profile",
     )
     run.add_argument(
         "--profile",
@@ -888,6 +1022,52 @@ def _build_parser() -> tuple[
         help="stop after this long (default: no limit)",
     )
     _add_headless(run)
+
+    fleet = subcommands.add_parser(
+        "fleet",
+        help="run workers that wait in the lobby and chase every game that starts",
+        description=(
+            "Log spectator accounts in on one browser, wait in the lobby, and "
+            "chase each tournament game to its table from its first card, one "
+            "record per game."
+        ),
+    )
+    fleet.add_argument(
+        "--profile",
+        type=Path,
+        required=True,
+        metavar="FILE",
+        help="the profile describing the site, its lobby and [fleet]",
+    )
+    fleet.add_argument(
+        "--accounts",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="the accounts, one per worker (default: one worker, the profile's [account])",
+    )
+    fleet.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        metavar="N",
+        help=f"how many workers, at most {FLEET_CEILING} (default: [fleet].workers)",
+    )
+    fleet.add_argument(
+        "--max-games",
+        type=int,
+        default=None,
+        metavar="N",
+        help="take no new chase after this many games (default: no limit)",
+    )
+    fleet.add_argument(
+        "--minutes",
+        type=float,
+        default=None,
+        metavar="N",
+        help="stop after this long (default: no limit)",
+    )
+    _add_headless(fleet)
 
     check = subcommands.add_parser(
         "check-profile",
@@ -939,7 +1119,7 @@ def _build_parser() -> tuple[
         action="store_true",
         help="report only; do not write any record",
     )
-    return parser, {"run": run, "check-profile": check, "parse": parse}
+    return parser, {"run": run, "fleet": fleet, "check-profile": check, "parse": parse}
 
 
 if __name__ == "__main__":  # pragma: no cover - console-script shim

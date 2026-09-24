@@ -394,6 +394,51 @@ class EgressSection:
             )
 
 
+#: The most workers a fleet may run. Ten is about the whole tournament
+#: population: a courtesy ceiling, since every worker is one more spectator
+#: the tables can count.
+FLEET_CEILING: int = 10
+
+
+@dataclass(frozen=True, slots=True)
+class FleetSection:
+    """How a fleet of workers waits, chases and shares its gates. Optional."""
+
+    workers: int
+    """How many workers to run, at most :data:`FLEET_CEILING`."""
+
+    login_stagger_s: int
+    """Seconds between one worker's first login and the next's."""
+
+    scan_distinct_budget: int
+    """Distinct tables a chase judges before giving up."""
+
+    scan_deadline_s: int
+    """Seconds a chase looks for its table before giving up."""
+
+    roster_max_age_s: int
+    """How old a starting roster may be and still be chased."""
+
+    claim_ttl_s: int
+    """How long an unrefreshed registry claim holds against other workers."""
+
+    egress_cache_s: int
+    """How long a passing egress reading answers the fleet's later checks."""
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.workers <= FLEET_CEILING:
+            raise ProfileError(
+                f"[fleet].workers must be between 1 and {FLEET_CEILING}"
+            )
+        for name in ("login_stagger_s", "egress_cache_s"):
+            if getattr(self, name) < 0:
+                raise ProfileError(f"[fleet].{name} may not be negative")
+        for name in ("scan_distinct_budget", "scan_deadline_s", "roster_max_age_s",
+                     "claim_ttl_s"):
+            if getattr(self, name) <= 0:
+                raise ProfileError(f"[fleet].{name} must be positive")
+
+
 @dataclass(frozen=True, slots=True)
 class OutputSection:
     """Where records and raw logs are written, and for how long they are kept."""
@@ -425,6 +470,24 @@ class Profile:
     egress: EgressSection
     output: OutputSection
     privacy: PrivacySection
+    fleet: FleetSection | None
+    """``None`` where no fleet runs; ``run`` never reads it."""
+
+    def fleet_gaps(self) -> tuple[str, ...]:
+        """What the profile lacks for ``contrai-scrape fleet``, by section.
+
+        Returns:
+            One phrase per missing group, empty when a fleet can run.
+        """
+
+        gaps = []
+        if not self.selectors.has_lobby:
+            gaps.append("the lobby's [selectors] keys")
+        if not self.wire.has_lobby:
+            gaps.append("[wire.events].lobby_table and the [wire.fields] lobby paths")
+        if self.fleet is None:
+            gaps.append("a [fleet] section")
+        return tuple(gaps)
 
 
 class _Table:
@@ -521,6 +584,11 @@ class _Table:
         if key not in self._data:
             return None
         return self.string(key)
+
+    def has(self, key: str) -> bool:
+        """Whether a key (or, at the top level, a section) is present."""
+
+        return key in self._data
 
     def group(self, keys: tuple[str, ...], name: str) -> bool:
         """Whether an optional group of keys is present — all of it, or none.
@@ -919,6 +987,22 @@ def _output(table: _Table, base: Path) -> OutputSection:
     return section
 
 
+def _fleet(table: _Table) -> FleetSection:
+    """Read ``[fleet]``."""
+
+    section = FleetSection(
+        workers=table.integer("workers"),
+        login_stagger_s=table.integer("login_stagger_s"),
+        scan_distinct_budget=table.integer("scan_distinct_budget"),
+        scan_deadline_s=table.integer("scan_deadline_s"),
+        roster_max_age_s=table.integer("roster_max_age_s"),
+        claim_ttl_s=table.integer("claim_ttl_s"),
+        egress_cache_s=table.integer("egress_cache_s"),
+    )
+    table.done()
+    return section
+
+
 def _privacy(table: _Table) -> PrivacySection:
     """Read ``[privacy]``; the salt may be absent entirely."""
 
@@ -966,6 +1050,7 @@ def load_profile(path: Path | str) -> Profile:
         egress=_egress(root.section("egress")),
         output=_output(root.section("output"), path.parent),
         privacy=_privacy(root.section("privacy")),
+        fleet=_fleet(root.section("fleet")) if root.has("fleet") else None,
     )
     root.done()
     return profile

@@ -287,5 +287,29 @@ raw_retention_days = 30
 
 # Inputs to the pseudonymisation step, which is not built yet. The salt may be
 # omitted entirely, or indirected through the environment.
+# Optional: only `contrai-scrape fleet` reads it, and only a profile that also
+# describes the lobby (the lobby keys under [selectors], [wire.events] and
+# [wire.fields]) can run one. Policy, not site vocabulary.
+[fleet]
+# At most 10 — about the whole tournament population. Without --accounts the
+# fleet is one worker on [account] whatever this says.
+workers = 2
+# Seconds between one worker's first login and the next's.
+login_stagger_s = 20
+# A chase gives up after judging this many *distinct* tables, or after this
+# many seconds — whichever comes first. The walk re-offers tables, so a budget
+# counted in hops would shrink silently; in the probe's four chases the table
+# was found within 7 distinct tables and 26 seconds.
+scan_distinct_budget = 12
+scan_deadline_s = 30
+# A starting roster older than this when read is not chased: its game has
+# begun without the fleet.
+roster_max_age_s = 10
+# How long a table claim holds unrefreshed. A worker watching a table refreshes
+# its claim on every frame; this is only the backstop for a wedged worker.
+claim_ttl_s = 600
+# How long a passing egress check answers the fleet's later ones.
+egress_cache_s = 60
+
 [privacy]
 pseudonym_salt = "env:CONTRAI_SCRAPER_SALT"

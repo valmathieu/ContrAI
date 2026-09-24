@@ -134,6 +134,111 @@ class TestLimits:
         assert (code, "refused" in capsys.readouterr().err) == (3, True)
 
 
+class TestFleetCommand:
+    """``fleet``: what it is handed, what it refuses, what it exits with."""
+
+    @pytest.fixture
+    def handed(self, monkeypatch):
+        """What ``fleet`` handed the async run, instead of running it."""
+
+        seen = {}
+
+        def capture(profile, accounts, limits, headless):
+            seen.update(accounts=accounts, limits=limits, headless=headless)
+
+        monkeypatch.setattr("contrai_scraper.cli._fleet", capture)
+        monkeypatch.setattr("contrai_scraper.cli.asyncio.run", lambda c: c)
+        return seen
+
+    @staticmethod
+    def _accounts_file(tmp_path, count):
+        path = tmp_path / "fixture-accounts.toml"
+        path.write_text("".join(
+            f'[bot{index:02}]\nemail = "bot{index:02}@example.invalid"\n'
+            'verification_code = "0000"\n'
+            for index in range(1, count + 1)
+        ), encoding="utf-8")
+        return path
+
+    def test_without_accounts_it_is_one_worker_on_the_profiles_account(
+        self, handed, profile_path, profile
+    ):
+        assert main(["fleet", "--profile", str(profile_path)]) == 0
+        (only,) = handed["accounts"]
+        assert (only.label, only.account.email) == ("bot01", profile.account.email)
+
+    def test_with_accounts_it_takes_the_profiles_worker_count(
+        self, handed, profile_path, tmp_path
+    ):
+        main(["fleet", "--profile", str(profile_path),
+              "--accounts", str(self._accounts_file(tmp_path, 3))])
+        assert [item.label for item in handed["accounts"]] == ["bot01", "bot02"]
+
+    def test_workers_on_the_command_line_win(self, handed, profile_path, tmp_path):
+        main(["fleet", "--profile", str(profile_path), "--workers", "3",
+              "--accounts", str(self._accounts_file(tmp_path, 3))])
+        assert len(handed["accounts"]) == 3
+
+    def test_the_limits_and_the_window_mode_reach_the_fleet(self, handed, profile_path):
+        main(["fleet", "--profile", str(profile_path), "--minutes", "20",
+              "--max-games", "4", "--headless"])
+        assert (handed["limits"].max_seconds, handed["limits"].max_games,
+                handed["headless"]) == (1200.0, 4, True)
+
+    def test_more_workers_than_accounts_is_a_usage_error(self, handed, profile_path,
+                                                        tmp_path, capsys):
+        with pytest.raises(SystemExit) as exc:
+            main(["fleet", "--profile", str(profile_path), "--workers", "3",
+                  "--accounts", str(self._accounts_file(tmp_path, 2))])
+        assert (exc.value.code, "holds 2 account(s)" in capsys.readouterr().err) == (
+            2, True)
+
+    def test_several_workers_without_accounts_is_a_usage_error(self, handed,
+                                                                profile_path):
+        with pytest.raises(SystemExit) as exc:
+            main(["fleet", "--profile", str(profile_path), "--workers", "2"])
+        assert exc.value.code == 2
+
+    @pytest.mark.parametrize("workers", ["0", "11"])
+    def test_a_worker_count_out_of_range_is_a_usage_error(self, handed, profile_path,
+                                                          tmp_path, workers):
+        with pytest.raises(SystemExit):
+            main(["fleet", "--profile", str(profile_path), "--workers", workers,
+                  "--accounts", str(self._accounts_file(tmp_path, 3))])
+
+    def test_accounts_that_do_not_load_are_a_usage_error(self, handed, profile_path,
+                                                         tmp_path):
+        with pytest.raises(SystemExit) as exc:
+            main(["fleet", "--profile", str(profile_path),
+                  "--accounts", str(tmp_path / "absent.toml")])
+        assert exc.value.code == 2
+
+    def test_a_profile_that_cannot_run_a_fleet_is_a_usage_error(
+        self, handed, tmp_path, profile_text, capsys
+    ):
+        path = tmp_path / "no-fleet.toml"
+        path.write_text(profile_text.split("\n[fleet]\n")[0], encoding="utf-8")
+        with pytest.raises(SystemExit) as exc:
+            main(["fleet", "--profile", str(path)])
+        assert (exc.value.code, "[fleet] section" in capsys.readouterr().err) == (2, True)
+
+    def test_a_fleet_that_hands_itself_back_exits_3(self, monkeypatch, profile_path):
+        def down(coroutine):
+            coroutine.close()
+            raise ShiftError("2 of 3 workers are down")
+
+        monkeypatch.setattr("contrai_scraper.cli.asyncio.run", down)
+        assert main(["fleet", "--profile", str(profile_path)]) == 3
+
+    def test_an_interrupted_fleet_exits_130(self, monkeypatch, profile_path):
+        def interrupted(coroutine):
+            coroutine.close()
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr("contrai_scraper.cli.asyncio.run", interrupted)
+        assert main(["fleet", "--profile", str(profile_path)]) == 130
+
+
 class TestSigterm:
     def test_sigterm_cancels_the_run_the_way_ctrl_c_does(self):
         # A service stop is SIGTERM, and Python's default for it is to die

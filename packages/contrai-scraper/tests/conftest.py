@@ -267,6 +267,15 @@ raw_retention_days = 30
 
 [privacy]
 pseudonym_salt = "unused-in-4a"
+
+[fleet]
+workers = 2
+login_stagger_s = 0
+scan_distinct_budget = 5
+scan_deadline_s = 60
+roster_max_age_s = 30
+claim_ttl_s = 600
+egress_cache_s = 60
 """
 
 

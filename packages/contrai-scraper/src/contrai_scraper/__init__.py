@@ -20,6 +20,9 @@ The package is a pipeline with a browser at one end and a record at the other:
 * :mod:`contrai_scraper.shift` runs recorders only inside the
   :mod:`contrai_scraper.schedule` window and only once
   :mod:`contrai_scraper.egress` says traffic leaves through the tunnel.
+* :mod:`contrai_scraper.fleet` does the same for several workers on one
+  browser, which wait in the lobby and chase each game as it starts, with
+  :mod:`contrai_scraper.registry` keeping two of them off one table.
 
 :mod:`contrai_scraper.cli` wires them into the ``contrai-scrape`` console
 script.
@@ -58,6 +61,7 @@ from contrai_scraper.exceptions import (
     ShiftError,
     WireError,
 )
+from contrai_scraper.fleet import HALL_POLL_S, SOLE_WORKER, Fleet, FleetSummary, Worker
 from contrai_scraper.frames import (
     RECEIVED,
     SENT,
@@ -119,6 +123,7 @@ from contrai_scraper.profile import (
     AccountSection,
     BrowserSection,
     EgressSection,
+    FleetSection,
     OutputSection,
     PrivacySection,
     Profile,
@@ -162,6 +167,7 @@ __all__ = [
     "DRAW_ROUND",
     "EGRESS_BUDGET",
     "FAILURE_BUDGET",
+    "HALL_POLL_S",
     "INIT_SCRIPT",
     "PANEL_ATTEMPTS",
     "PANEL_ATTEMPT_TIMEOUT_MS",
@@ -169,6 +175,7 @@ __all__ = [
     "SCOREBOARD_PANEL",
     "SEND_SCRIPT",
     "SENT",
+    "SOLE_WORKER",
     "STEP_TIMEOUT_MS",
     "AccountSection",
     "ActiveRange",
@@ -182,6 +189,9 @@ __all__ = [
     "EgressRefusal",
     "EgressSection",
     "EventKey",
+    "Fleet",
+    "FleetSection",
+    "FleetSummary",
     "FrameSource",
     "HealthLog",
     "LabelledAccount",
@@ -230,6 +240,7 @@ __all__ = [
     "WireSection",
     "WireStream",
     "WireTokens",
+    "Worker",
     "WorkerClaims",
     "bid_events",
     "collect_rounds",
