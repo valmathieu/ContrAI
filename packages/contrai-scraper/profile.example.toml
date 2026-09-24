@@ -310,6 +310,12 @@ roster_max_age_s = 10
 claim_ttl_s = 600
 # How long a passing egress check answers the fleet's later ones.
 egress_cache_s = 60
+# Once a process, before its first lobby, each worker hops this many tables
+# the ordinary way, recording nothing, so the fleet starts knowing what is
+# running and logs a `census` line estimating how many tournament tables there
+# are. Set census_enabled = false to go straight to the lobby.
+census_enabled = true
+census_hops = 8
 
 [privacy]
 pseudonym_salt = "env:CONTRAI_SCRAPER_SALT"

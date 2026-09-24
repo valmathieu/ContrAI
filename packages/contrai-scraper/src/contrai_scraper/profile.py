@@ -425,6 +425,12 @@ class FleetSection:
     egress_cache_s: int
     """How long a passing egress reading answers the fleet's later checks."""
 
+    census_enabled: bool
+    """Whether each worker sweeps a few tables before its first lobby."""
+
+    census_hops: int
+    """Tables each worker's startup sweep looks at."""
+
     def __post_init__(self) -> None:
         if not 1 <= self.workers <= FLEET_CEILING:
             raise ProfileError(
@@ -434,7 +440,7 @@ class FleetSection:
             if getattr(self, name) < 0:
                 raise ProfileError(f"[fleet].{name} may not be negative")
         for name in ("scan_distinct_budget", "scan_deadline_s", "roster_max_age_s",
-                     "claim_ttl_s"):
+                     "claim_ttl_s", "census_hops"):
             if getattr(self, name) <= 0:
                 raise ProfileError(f"[fleet].{name} must be positive")
 
@@ -998,6 +1004,8 @@ def _fleet(table: _Table) -> FleetSection:
         roster_max_age_s=table.integer("roster_max_age_s"),
         claim_ttl_s=table.integer("claim_ttl_s"),
         egress_cache_s=table.integer("egress_cache_s"),
+        census_enabled=table.boolean("census_enabled"),
+        census_hops=table.integer("census_hops"),
     )
     table.done()
     return section

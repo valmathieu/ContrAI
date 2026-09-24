@@ -2,6 +2,8 @@
 
 import asyncio
 
+import pytest
+
 from contrai_scraper import TableRegistry
 
 ROSTER = frozenset({"095024", "100001", "100002", "100003"})
@@ -127,6 +129,38 @@ class TestCensus:
         table, _ = registry()
         table.census()["t9"] = None
         assert table.census() == {}
+
+
+class TestPopulationEstimate:
+    @staticmethod
+    def _expected(population, sightings):
+        # The model, restated here rather than imported: uniform draws with
+        # replacement leave this many distinct tables on average.
+        return population * (1 - (1 - 1 / population) ** sightings)
+
+    @pytest.mark.parametrize(("sightings", "distinct"), [(20, 9), (12, 7), (5, 4)])
+    def test_the_estimate_expects_exactly_what_was_seen(self, sightings, distinct):
+        from contrai_scraper import estimate_population
+
+        estimate = estimate_population(sightings, distinct)
+        assert abs(self._expected(estimate, sightings) - distinct) < 0.05
+
+    def test_more_repeats_mean_a_smaller_population(self):
+        from contrai_scraper import estimate_population
+
+        assert estimate_population(20, 6) < estimate_population(20, 12)
+
+    def test_one_table_seen_again_and_again_is_one_table(self):
+        from contrai_scraper import estimate_population
+
+        assert estimate_population(8, 1) == 1.0
+
+    @pytest.mark.parametrize(("sightings", "distinct"), [(0, 0), (5, 5)],
+                             ids=["nothing-seen", "nothing-seen-twice"])
+    def test_without_a_repeat_there_is_no_estimate(self, sightings, distinct):
+        from contrai_scraper import estimate_population
+
+        assert estimate_population(sightings, distinct) is None
 
 
 class TestWorkerClaims:

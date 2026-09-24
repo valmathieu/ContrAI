@@ -30,13 +30,15 @@ from pathlib import Path
 from typing import Any, Final
 
 from .accounts import LabelledAccount
-from .exceptions import BrowserError, ProfileError, ShiftError
+from .exceptions import BrowserError, ParseError, ProfileError, ShiftError
 from .health import HealthLog
 from .lobby import LobbyRoster, LobbyWatcher
+from .parse.snapshot import Snapshot, read_snapshot
+from .parse.translate import Translator
 from .profile import FleetSection, Profile
 from .rawlog import RawLogWriter, new_session_id, prune_raw_logs, raw_path
 from .recorder import ChaseTarget, Recorder, RecorderLimits, SessionSummary, StopReason
-from .registry import TableRegistry
+from .registry import TableRegistry, estimate_population
 from .shift import EGRESS_BUDGET, FAILURE_BUDGET, _earliest, _stamp, _utc_now
 from .wire import WireStream
 
@@ -81,7 +83,7 @@ class Fleet:
         "_registry", "_headless", "_limits", "_clock", "_monotonic", "_sleep",
         "_recorder", "_workers", "_windows", "_chases", "_gave_up", "_games",
         "_seated", "_rejected", "_records", "_down", "_run_deadline",
-        "_seat_deadline", "_hard_deadline",
+        "_seat_deadline", "_hard_deadline", "_census_due", "_census_sightings",
     )
 
     def __init__(
@@ -156,6 +158,8 @@ class Fleet:
         self._run_deadline: float | None = None
         self._seat_deadline: float | None = None
         self._hard_deadline: float | None = None
+        self._census_due = 0
+        self._census_sightings: list[tuple[str, bool | None]] = []
         # Made once and kept across windows: a worker's log, its claims and
         # its failure streak belong to the account, not to one browser.
         self._workers = [Worker(self, account) for account in accounts]
@@ -235,6 +239,8 @@ class Fleet:
         )
 
         live = [worker for worker in self._workers if worker.label not in self._down]
+        if self.section.census_enabled:
+            self._census_due = sum(1 for worker in live if not worker.censused)
         self._windows += 1
         self._health.event("fleet_window_opened", workers=len(live))
         async with self._open_browser(self._profile, headless=self._headless) as browser:
@@ -353,6 +359,40 @@ class Fleet:
         self._rejected += summary.tables_rejected
         self._records.extend(summary.records)
 
+    def census_report(self, sightings: list[tuple[str, bool | None]]) -> None:
+        """Take one worker's startup sweep, and say what the sweeps have seen so far.
+
+        The line is the fleet's first measurement of the population it is
+        sized against: how many different tournament tables the sweeps met,
+        how many times in all, and what population that resighting rate
+        suggests — which is what says whether a ceiling of ten is right. It
+        is written after every sweep with the number still out, rather than
+        once at the end, so a worker that goes down before its sweep costs the
+        report one worker's sightings and not the report.
+
+        Args:
+            sightings: ``(table id, is tournament)`` per table the worker's
+                sweep read, repeats included.
+        """
+
+        self._census_sightings.extend(sightings)
+        self._census_due -= 1
+        tournament = [table for table, cup in self._census_sightings if cup]
+        distinct = len(set(tournament))
+        self._health.event(
+            "census",
+            pending=max(0, self._census_due),
+            tables=len({table for table, _ in self._census_sightings}),
+            tournament_tables=distinct,
+            sightings=len(tournament),
+            estimate=estimate_population(len(tournament), distinct),
+        )
+
+    def now(self) -> float:
+        """The fleet's monotonic clock."""
+
+        return self._monotonic()
+
     def worker_down(self, label: str) -> None:
         """Count a worker out, and hand the process back if most of them are.
 
@@ -384,7 +424,7 @@ class Worker:
     """One account: log in, wait in the lobby, chase, record, and back again."""
 
     __slots__ = ("_fleet", "_label", "_profile", "_browser", "_health", "_claims",
-                 "_failures")
+                 "_failures", "_censused")
 
     def __init__(self, fleet: Fleet, account: LabelledAccount) -> None:
         """Bind a worker to its fleet and its account.
@@ -402,12 +442,19 @@ class Worker:
         self._health = fleet.health.worker(account.label)
         self._claims = fleet.registry.for_worker(account.label)
         self._failures = 0
+        self._censused = False
 
     @property
     def label(self) -> str:
         """The account's opaque name."""
 
         return self._label
+
+    @property
+    def censused(self) -> bool:
+        """Whether this worker's startup sweep has been made — once a process."""
+
+        return self._censused
 
     async def run(self, browser: Any, *, delay: float = 0.0) -> None:
         """Sessions, one after another, until the fleet stops or this worker is down.
@@ -469,19 +516,160 @@ class Worker:
             ) as (spectator, frames):
                 try:
                     await spectator.log_in()
-                    await spectator.enter_lobby()
-                    table_hash = await spectator.read_tournament_hash()
-                    if table_hash is None:
-                        raise BrowserError(
-                            "[selectors].lobby_row_tournament_class matched no row"
-                        )
-                    await self._hall(spectator, frames, log, table_hash)
+                    if await self._arrive(spectator, frames, log):
+                        table_hash = await spectator.read_tournament_hash()
+                        if table_hash is None:
+                            raise BrowserError(
+                                "[selectors].lobby_row_tournament_class matched no row"
+                            )
+                        await self._hall(spectator, frames, log, table_hash)
                 except BrowserError:
                     await self._capture(spectator, log.path)
                     raise
         finally:
             log.close()
         self._health.event("session_ended", session=session)
+
+    async def _arrive(self, spectator: Any, frames: Any, log: RawLogWriter) -> bool:
+        """Reach the lobby — by way of the startup census, the first time.
+
+        Returns:
+            Whether the worker is in the lobby. ``False`` means the census was
+            cut short — by the fleet stopping or the egress refusing — and the
+            session should end where it stands.
+
+        Raises:
+            _ReturnFailed: The walk back from the census's last table did not
+                land.
+        """
+
+        fleet = self._fleet
+        if not fleet.section.census_enabled or self._censused:
+            await spectator.enter_lobby()
+            return True
+        # Marked before the sweep, not after: a sweep that fails is not one to
+        # repeat at the price of every later session's login.
+        self._censused = True
+        sightings: list[tuple[str, bool | None]] = []
+        try:
+            finished = await self._census(spectator, frames, log, sightings)
+        finally:
+            fleet.census_report(sightings)
+        if not finished:
+            return False
+        try:
+            await spectator.return_to_lobby()
+        except BrowserError as error:
+            raise _ReturnFailed(str(error)) from error
+        return True
+
+    async def _census(
+        self,
+        spectator: Any,
+        frames: Any,
+        log: RawLogWriter,
+        sightings: list[tuple[str, bool | None]],
+    ) -> bool:
+        """Look at a few tables the ordinary way, recording nothing.
+
+        Before its first lobby each worker walks the observe branch and hops
+        ``census_hops`` times, reading every join snapshot into the registry's
+        census. Workers sweep in parallel, so the fleet starts knowing which
+        tables are running and how far along, and how often the same ones
+        came round — the resightings the population estimate is built on.
+
+        Args:
+            spectator: The worker's browser half, logged in.
+            frames: Its frame source.
+            log: The session's raw log.
+            sightings: Filled with ``(table id, is tournament)`` per table
+                read, repeats included — kept by the caller even if the sweep
+                raises, so the fleet's report still counts what was seen.
+
+        Returns:
+            Whether the sweep ran to its end.
+        """
+
+        fleet = self._fleet
+        self._health.event("census_started", hops=fleet.section.census_hops)
+        await spectator.enter_variant()
+        stream = WireStream(self._profile.wire)
+        iterator = aiter(frames)
+        left: str | None = None
+        for hop in range(fleet.section.census_hops):
+            if hop:
+                if fleet.stopping():
+                    self._health.event("census_stopped", reason="fleet_stopping")
+                    return False
+                if not (await fleet.egress.check()).ok:
+                    # Nothing more to the site; the worker's own loop asks the
+                    # egress again, and counts the refusals, before anything else.
+                    self._health.event("census_stopped", reason="egress_blocked")
+                    return False
+                await spectator.next_table()
+            snapshot = await self._next_snapshot(iterator, stream, log, left)
+            if snapshot is None:
+                continue
+            left = snapshot.table_id
+            sightings.append((snapshot.table_id, snapshot.is_tournament))
+            self._claims.seen(
+                snapshot.table_id,
+                is_tournament=snapshot.is_tournament,
+                round_index=snapshot.round_index,
+            )
+            self._health.event(
+                "census_seen", table=snapshot.table_id,
+                tournament=snapshot.is_tournament, round=snapshot.round_index,
+            )
+        self._health.event(
+            "census_done", seen=len(sightings),
+            distinct=len({table for table, _ in sightings}),
+        )
+        return True
+
+    async def _next_snapshot(
+        self, iterator: Any, stream: WireStream, log: RawLogWriter, left: str | None
+    ) -> Snapshot | None:
+        """The next table that describes itself, within ``snapshot_timeout_s``.
+
+        The table just left does not count: a hop moves the page long before
+        the reader hears of it, so the snapshot waiting in the queue is
+        routinely the last table's — counting it again would be a resighting
+        that never happened, and resightings are what the estimate is made of.
+        A table this profile cannot read is not counted either.
+
+        Returns:
+            The snapshot, or ``None`` when none came in time or the fleet
+            stopped.
+
+        Raises:
+            BrowserError: The frames ended.
+        """
+
+        fleet = self._fleet
+        translator = Translator(self._profile)
+        join = self._profile.wire.events.join_snapshot
+        started = fleet.now()
+        timeout = self._profile.recorder.snapshot_timeout_s
+        while not fleet.stopping() and fleet.now() - started < timeout:
+            try:
+                frame = await asyncio.wait_for(anext(iterator), HALL_POLL_S)
+            except TimeoutError:
+                continue
+            except StopAsyncIteration:
+                raise BrowserError("the frame source ended: the page has gone") from None
+            log.write_frame(frame)
+            event = stream.ingest(frame.text, frame.socket)
+            if event is None or event.kind != join:
+                continue
+            try:
+                snapshot = read_snapshot(event.data, translator, at=event.received_ms)
+            except ParseError:
+                continue
+            if snapshot.table_id is None or snapshot.table_id == left:
+                continue
+            return snapshot
+        return None
 
     async def _hall(
         self, spectator: Any, frames: Any, log: RawLogWriter, table_hash: str

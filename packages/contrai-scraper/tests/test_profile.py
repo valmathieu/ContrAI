@@ -347,6 +347,8 @@ FLEET_SECTION = (
     "roster_max_age_s = 30\n"
     "claim_ttl_s = 600\n"
     "egress_cache_s = 60\n"
+    "census_enabled = false\n"
+    "census_hops = 3\n"
 )
 
 

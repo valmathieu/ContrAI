@@ -161,7 +161,7 @@ silently wrong data.
 | `[schedule]` | When the scraper may watch: a timezone, daily ranges that may cross midnight, and how long a closing range lets the game in hand run on. |
 | `[egress]` | The gate before any site traffic: the home address (through the environment), the expected country, an echo service, and the tunnel device the route must use. |
 | `[output]` | Where records and raw logs go; both roots resolve relative to the profile, and both name the same directory. |
-| `[fleet]` | Optional, read by `fleet` alone: how many workers (at most 10), their login stagger, a chase's distinct-table budget and deadline, how old a roster may be, and the registry's and egress gate's timings. |
+| `[fleet]` | Optional, read by `fleet` alone: how many workers (at most 10), their login stagger, a chase's distinct-table budget and deadline, how old a roster may be, the registry's and egress gate's timings, and the startup census. |
 | `[privacy]` | Inputs to the pseudonymisation step, which is not built yet. |
 
 A fleet logs in with several accounts, and they do not multiply the profile. They live in a second
@@ -479,6 +479,19 @@ a way every chase meets cannot keep logging in forever. The process hands itself
 code 3 only once a majority of its workers are down — one worker's bad account does not end the
 others' night — which for a fleet of one is exactly `run`'s rule. A worker whose chase was stopped by
 a refused egress sends nothing more on that session and checks the egress again before the next.
+
+Once a process, before its first lobby, each worker can make a **census**: it walks the observe
+branch and hops `census_hops` tables the ordinary way, recording nothing, reading each join snapshot
+into the registry — which tables are running, tournament or not, and how far along. Workers sweep in
+parallel, and after each sweep the fleet writes a `census` line: distinct tournament tables, how many
+sightings, and a resighting-based estimate of the population — the `N` for which uniform draws with
+replacement would leave exactly as many distinct tables as were seen (`estimate_population`). The
+walk is not a uniform draw, so the figure is a sizing indicator, not a count; it is what says whether
+ten workers is about the whole population. Re-read on the chase probe's walks it comes to 12 and 14
+tables of every kind, against "rarely more than about ten tournament tables". A sweep skips the
+table it has just left, so a stale snapshot cannot pose as a resighting; a sweep cut short by a
+stopping fleet or a refused egress still reports what it saw. Set `census_enabled = false` to go
+straight to the lobby.
 
 Without `--accounts` a fleet is one worker, labelled `bot01`, on the profile's own `[account]`; with
 it, `--workers` (default `[fleet].workers`) takes that many accounts from the top of the file, and

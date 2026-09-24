@@ -131,6 +131,10 @@ class Walker:
         self._step("enter_lobby")
         return False
 
+    async def enter_variant(self):
+        self._step("enter_variant")
+        return False
+
     async def read_tournament_hash(self):
         self.calls.append("read_tournament_hash")
         return self._hash
@@ -571,6 +575,128 @@ class TestHeartbeat:
         harness.run()
         hall = [beat for beat in harness.events("heartbeat") if beat.get("state") == "hall"]
         assert hall[0]["worker"] == "bot01"
+
+
+def table(builders, table_id, *, frame_id, cup=True, suit="wood"):
+    """A join snapshot a census hop lands on."""
+
+    payload = builders.snapshot_payload(table_id=table_id,
+                                        rows=[builders.score_row(suit=suit)])
+    payload["table"]["cup"] = cup
+    return received(builders.envelope("payload", "joinTable", payload, frame_id=frame_id))
+
+
+def censusing(profile, hops=3):
+    """The fixture profile with the startup census switched on."""
+
+    return dataclasses.replace(profile, fleet=dataclasses.replace(
+        profile.fleet, census_enabled=True, census_hops=hops))
+
+
+class TestCensus:
+    def test_each_worker_sweeps_before_its_first_lobby(self, profile, builders):
+        harness = Harness(censusing(profile))
+        walker = Walker()
+        harness.script("bot01", (walker, Frames(
+            [table(builders, "tA", frame_id="a"), table(builders, "tB", frame_id="b"),
+             table(builders, "tA", frame_id="a2")],
+            on_empty=harness.end)))
+        harness.run()
+        census = harness.events("census")[-1]
+        assert ((census["tournament_tables"], census["sightings"], census["pending"]),
+                walker.calls) == (
+            (2, 3, 0),
+            ["log_in", "enter_variant", "next_table", "next_table", "return_to_lobby",
+             "read_tournament_hash"])
+        assert census["estimate"] is not None
+
+    def test_the_table_just_left_is_not_counted_twice(self, profile, builders):
+        # The snapshot waiting after a hop is routinely the last table's; a
+        # resighting counted there never happened.
+        harness = Harness(censusing(profile, hops=2))
+        harness.script("bot01", (Walker(), Frames(
+            [table(builders, "tA", frame_id="a"), table(builders, "tA", frame_id="a2"),
+             table(builders, "tB", frame_id="b")],
+            on_empty=harness.end)))
+        harness.run()
+        assert [entry["table"] for entry in harness.events("census_seen")] == ["tA", "tB"]
+
+    def test_a_table_this_profile_cannot_read_is_not_counted(self, profile, builders):
+        harness = Harness(censusing(profile, hops=1))
+        harness.script("bot01", (Walker(), Frames(
+            [received("tick"), table(builders, "tX", frame_id="x", suit="everything"),
+             table(builders, "tA", frame_id="a")],
+            on_empty=harness.end)))
+        harness.run()
+        assert [entry["table"] for entry in harness.events("census_seen")] == ["tA"]
+
+    def test_plain_tables_are_seen_but_not_counted_as_the_population(
+        self, profile, builders
+    ):
+        harness = Harness(censusing(profile, hops=2))
+        harness.script("bot01", (Walker(), Frames(
+            [table(builders, "tA", frame_id="a"),
+             table(builders, "tP", frame_id="p", cup=False)],
+            on_empty=harness.end)))
+        harness.run()
+        census = harness.events("census")[-1]
+        assert (census["tables"], census["tournament_tables"]) == (2, 1)
+
+    def test_the_census_happens_once_a_process(self, profile, builders):
+        # The walk back after the sweep fails: the rebuilt session goes
+        # straight to the lobby rather than sweeping again.
+        harness = Harness(censusing(profile, hops=1))
+        second = Walker()
+        harness.script(
+            "bot01",
+            (Walker(fail={"return_to_lobby": "out of reach"}),
+             Frames([table(builders, "tA", frame_id="a")])),
+            (second, Frames(on_empty=harness.end)),
+        )
+        harness.run()
+        assert (len(harness.events("census")), second.calls[:2]) == (
+            1, ["log_in", "enter_lobby"])
+
+    def test_a_census_that_hears_nothing_moves_on(self, profile):
+        harness = Harness(censusing(profile, hops=2))
+
+        def time_passes():
+            harness.now += 31.0
+            if harness.saw("census_done"):
+                harness.end()
+
+        harness.script("bot01", (Walker(), Frames(on_empty=time_passes)))
+        harness.run()
+        assert harness.events("census_done")[0]["seen"] == 0
+
+    def test_a_refused_egress_cuts_the_census_short(self, profile, builders):
+        # The fleet's check and the worker's pass; the census's next hop is
+        # refused, so the page stays put and the worker asks again.
+        harness = Harness(censusing(profile), egress=(OPEN, OPEN, BLOCKED, OPEN))
+        harness.script(
+            "bot01",
+            (Walker(), Frames([table(builders, "tA", frame_id="a")])),
+            (Walker(), Frames(on_empty=harness.end)),
+        )
+        harness.run()
+        assert (harness.events("census_stopped")[0]["reason"],
+                harness.events("census")[-1]["tournament_tables"]) == ("egress_blocked", 1)
+
+    def test_a_stopping_fleet_cuts_the_census_short(self, profile, builders):
+        harness = Harness(censusing(profile))
+        harness.script("bot01", (Walker(), Frames(
+            [table(builders, "tA", frame_id="a")], on_empty=harness.end)))
+        harness.run()
+        assert harness.events("census_stopped")[0]["reason"] == "fleet_stopping"
+
+    def test_a_census_whose_page_goes_away_still_reports(self, profile, builders):
+        harness = Harness(censusing(profile))
+        harness.script("bot01",
+                       (Walker(), Frames([table(builders, "tA", frame_id="a")], ends=True)),
+                       (Walker(), Frames(on_empty=harness.end)))
+        harness.run()
+        assert (harness.events("census")[0]["tournament_tables"],
+                harness.saw("session_failed")) == (1, True)
 
 
 class TestConstruction:

@@ -276,6 +276,8 @@ scan_deadline_s = 60
 roster_max_age_s = 30
 claim_ttl_s = 600
 egress_cache_s = 60
+census_enabled = false
+census_hops = 3
 """
 
 

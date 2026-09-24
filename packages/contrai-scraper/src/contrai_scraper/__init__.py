@@ -73,7 +73,13 @@ from contrai_scraper.frames import (
 from contrai_scraper.health import Counters, HealthLog
 from contrai_scraper.lobby import LobbyRoster, LobbyWatcher, lobby_seats
 from contrai_scraper.lzstring import compress_to_base64, decompress_from_base64
-from contrai_scraper.registry import Claim, Sighting, TableRegistry, WorkerClaims
+from contrai_scraper.registry import (
+    Claim,
+    Sighting,
+    TableRegistry,
+    WorkerClaims,
+    estimate_population,
+)
 from contrai_scraper.recorder import (
     SCOREBOARD_PANEL,
     ChaseTarget,
@@ -249,6 +255,7 @@ __all__ = [
     "decompress_from_base64",
     "dig",
     "duplicate_key",
+    "estimate_population",
     "final_trick",
     "is_draw",
     "load_accounts",

@@ -53,6 +53,48 @@ class Sighting:
     at: float
 
 
+def estimate_population(sightings: int, distinct: int) -> float | None:
+    """How many tables there are, judged by how often the same ones came round.
+
+    A resighting estimate. If every sighting were a draw, uniformly and with
+    replacement, from a population of ``N`` tables, the number of distinct
+    tables expected after ``n`` sightings is ``N * (1 - (1 - 1/N) ** n)`` — it
+    climbs towards ``N`` as repeats become the rule. Seeing ``distinct``
+    tables in ``sightings`` is then answered by the ``N`` that expects
+    exactly that many, found by bisection since the curve rises with ``N``.
+
+    The server's walk is not a uniform draw — it repeats without being a
+    cycle — so this is a sizing figure, not a count: it says whether a fleet
+    of ten is about the population, not which tables are in it.
+
+    Args:
+        sightings: Tables seen, repeats included.
+        distinct: Different tables among them.
+
+    Returns:
+        The estimate, to one decimal; ``None`` when nothing was seen or when
+        nothing was seen twice, since then no finite population fits better
+        than a larger one.
+    """
+
+    if distinct <= 0 or sightings <= distinct:
+        return None
+
+    def expected(population: float) -> float:
+        return population * (1 - (1 - 1 / population) ** sightings)
+
+    low, high = float(distinct), float(distinct)
+    while expected(high) < distinct:
+        low, high = high, high * 2
+    for _ in range(60):
+        middle = (low + high) / 2
+        if expected(middle) < distinct:
+            low = middle
+        else:
+            high = middle
+    return round(high, 1)
+
+
 class TableRegistry:
     """The fleet's claims on rosters and tables, and its census of tables seen."""
 
