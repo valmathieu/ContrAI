@@ -118,12 +118,21 @@ round_state_prefix = "placeholder."
 resume_action = "placeholder-resume"
 resume_room_prefix = "placeholder-room-"
 resume_param = "placeholderLastEvent"
+# Optional. The verb the pre-game draw is keyed by, at round 0: each player
+# draws a real card, with its place in the deck, that belongs to no hand.
+# Round 0 is left out of every record whether or not this is named; naming it
+# is what lets a parse say so when something else turns up there.
+draw_verb = "placeholder-draw"
 
-# The three event names the parser reacts to.
+# The three event names the parser reacts to, and the lobby's own.
 [wire.events]
 join_snapshot = "placeholderJoin"
 table_update = "placeholderUpdate"
 counters = "placeholderCounters"
+# Optional, and only with the four lobby paths under [wire.fields]: the event
+# that drives the lobby screen, one per row. A fleet reads it for games
+# starting; `run` never does.
+lobby_table = "placeholderLobbyRow"
 
 # Dotted paths, each resolved relative to the payload it is looked up in: the
 # table/state names walk from a snapshot's root, the player names from one
@@ -184,6 +193,14 @@ ended = "over"
 left = "gone"
 spectators = "watchers"
 observable_tables = "tables"
+# Optional, all four or none, and only with [wire.events].lobby_table. Each
+# walks one lobby event: the row it describes, the row's whole seat map (never
+# a change to it), the account inside one seat, and the flag the row raises
+# the moment its game starts.
+lobby_hash = "placeholder"
+lobby_seats = "placeholder.seats"
+lobby_seat_account = "account"
+lobby_full = "placeholder.full"
 
 # The site's vocabulary, mapped onto core values. Keys are the site's tokens;
 # values are the canonical one-letter names — ranks 7 8 9 10 J Q K A, suits

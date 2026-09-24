@@ -9,7 +9,9 @@ The package is a pipeline with a browser at one end and a record at the other:
 * :mod:`contrai_scraper.browser` is the only module that touches a page:
   login, the menu walk, the table hop and the two panels.
 * :mod:`contrai_scraper.frames` and :mod:`contrai_scraper.wire` turn socket
-  frames into a de-duplicated stream of game events, live or replayed.
+  frames into a de-duplicated stream of game events, live or replayed, and
+  :mod:`contrai_scraper.lobby` reads the lobby's own events for games
+  starting.
 * :mod:`contrai_scraper.parse` assembles those events into a ``contrai-data``
   record.
 * :mod:`contrai_scraper.recorder` is the loop that drives all of it, one table
@@ -65,6 +67,7 @@ from contrai_scraper.frames import (
     RawLogFrameSource,
 )
 from contrai_scraper.health import Counters, HealthLog
+from contrai_scraper.lobby import LobbyRoster, LobbyWatcher, lobby_seats
 from contrai_scraper.lzstring import compress_to_base64, decompress_from_base64
 from contrai_scraper.recorder import (
     SCOREBOARD_PANEL,
@@ -90,9 +93,11 @@ from contrai_scraper.parse.deal import (
 )
 from contrai_scraper.parse.forced_passes import restore_forced_passes
 from contrai_scraper.parse.live import (
+    DRAW_ROUND,
     LiveRound,
     bid_events,
     collect_rounds,
+    is_draw,
     play_events,
 )
 from contrai_scraper.parse.session import (
@@ -152,6 +157,7 @@ from contrai_scraper.wire import (
 __all__ = [
     "DEAL_PACKETS",
     "DEAL_VERB",
+    "DRAW_ROUND",
     "EGRESS_BUDGET",
     "FAILURE_BUDGET",
     "INIT_SCRIPT",
@@ -176,6 +182,8 @@ __all__ = [
     "HealthLog",
     "LabelledAccount",
     "LiveRound",
+    "LobbyRoster",
+    "LobbyWatcher",
     "OptionsReading",
     "OutputSection",
     "ParseError",
@@ -224,8 +232,10 @@ __all__ = [
     "dig",
     "duplicate_key",
     "final_trick",
+    "is_draw",
     "load_accounts",
     "load_profile",
+    "lobby_seats",
     "new_session_id",
     "open_browser",
     "open_session",

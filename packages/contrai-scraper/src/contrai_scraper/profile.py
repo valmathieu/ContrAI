@@ -73,7 +73,8 @@ _POSITION_BY_NAME: Mapping[str, Position] = {
     "E": Position.EAST,
 }
 
-#: Every logical name ``[wire.fields]`` must bind, and no other. The set spans
+#: Every logical name ``[wire.fields]`` must bind, and no other — bar the
+#: lobby's optional group, :data:`LOBBY_FIELD_NAMES`. The set spans
 #: both halves of the scraper — the browser half reads ``spectators`` and
 #: ``observable_tables``, the parser reads the rest — so the local document is
 #: written once and neither half has to grow the schema later.
@@ -125,6 +126,18 @@ FIELD_NAMES: frozenset[str] = frozenset({
     "left",
     "spectators",
     "observable_tables",
+})
+
+#: The logical names that read the lobby's socket events, all or none of them.
+#: Optional because only a fleet waits in the lobby: ``lobby_hash`` is the row
+#: an event describes, ``lobby_seats`` its whole seat map, ``lobby_seat_account``
+#: the account inside one seat, and ``lobby_full`` the flag the row raises the
+#: moment its game starts.
+LOBBY_FIELD_NAMES: frozenset[str] = frozenset({
+    "lobby_hash",
+    "lobby_seats",
+    "lobby_seat_account",
+    "lobby_full",
 })
 
 
@@ -250,11 +263,17 @@ LOBBY_SELECTOR_KEYS: tuple[str, ...] = (
 
 @dataclass(frozen=True, slots=True)
 class WireEvents:
-    """The three event names the parser reacts to."""
+    """The three event names the parser reacts to, and the lobby's own."""
 
     join_snapshot: str
     table_update: str
     counters: str
+    lobby_table: str | None
+    """The lobby's event for one row, or ``None`` where no fleet runs.
+
+    Not a table's event at all: it is what drives the lobby screen, and the
+    only way to see a tournament game's four players before it starts.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,9 +325,24 @@ class WireSection:
     resume_action: str
     resume_room_prefix: str
     resume_param: str
+    draw_verb: str | None
+    """The verb the pre-game draw is keyed by, at round 0.
+
+    Every player draws a real card with its place in the deck, and none of
+    those cards belongs to a hand. Round 0 is left out of every record either
+    way; naming the verb is what lets a parse say so when something *other*
+    than the draw turns up there, rather than dropping it unremarked.
+    """
+
     events: WireEvents
     fields: Mapping[str, str]
     tokens: WireTokens
+
+    @property
+    def has_lobby(self) -> bool:
+        """Whether the profile can read the lobby's socket, which a fleet needs."""
+
+        return self.events.lobby_table is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -612,7 +646,7 @@ def _tokens(table: _Table, key: str, vocabulary: Mapping[str, Any]) -> Mapping[s
 
 
 def _fields(table: _Table) -> Mapping[str, str]:
-    """Read ``[wire.fields]``, which must bind exactly :data:`FIELD_NAMES`.
+    """Read ``[wire.fields]``: exactly :data:`FIELD_NAMES`, plus the lobby's or not.
 
     Args:
         table: The ``[wire]`` table the field map hangs off.
@@ -621,12 +655,18 @@ def _fields(table: _Table) -> Mapping[str, str]:
         Logical name to the dotted path that reads it.
 
     Raises:
-        ProfileError: A logical name is unknown or missing, or a path is not
-            a string.
+        ProfileError: A logical name is unknown or missing, the lobby's names
+            are there only in part, or a path is not a string.
     """
 
     raw = table.mapping("fields")
-    unknown = sorted(set(raw) - FIELD_NAMES)
+    lobby = set(raw) & LOBBY_FIELD_NAMES
+    if lobby and lobby != LOBBY_FIELD_NAMES:
+        raise ProfileError(
+            "[wire.fields] describes the lobby only in part; missing: "
+            + ", ".join(sorted(LOBBY_FIELD_NAMES - lobby))
+        )
+    unknown = sorted(set(raw) - FIELD_NAMES - LOBBY_FIELD_NAMES)
     if unknown:
         raise ProfileError(
             f"[wire.fields] names fields this parser does not read: "
@@ -751,10 +791,19 @@ def _wire(table: _Table) -> WireSection:
         join_snapshot=events_table.string("join_snapshot"),
         table_update=events_table.string("table_update"),
         counters=events_table.string("counters"),
+        lobby_table=events_table.optional_string("lobby_table"),
     )
     events_table.done()
 
     fields = _fields(table)
+    if (events.lobby_table is None) != LOBBY_FIELD_NAMES.isdisjoint(fields):
+        # The event and the paths that read it are one description: an event
+        # nothing can read, or paths for an event nobody names, both load and
+        # then read nothing at all.
+        raise ProfileError(
+            "[wire.events].lobby_table and the [wire.fields] lobby paths "
+            f"({', '.join(sorted(LOBBY_FIELD_NAMES))}) go together: name all or none"
+        )
 
     tokens_table = table.section("tokens")
     tokens = WireTokens(
@@ -783,6 +832,7 @@ def _wire(table: _Table) -> WireSection:
         resume_action=table.string("resume_action"),
         resume_room_prefix=table.string("resume_room_prefix"),
         resume_param=table.string("resume_param"),
+        draw_verb=table.optional_string("draw_verb"),
         events=events,
         fields=fields,
         tokens=tokens,

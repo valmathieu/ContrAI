@@ -289,6 +289,54 @@ class TestLobbySelectors:
         assert load_profile(path).selectors.lobby_back == ("#tool-back",)
 
 
+#: The lobby's four field paths in the fixture profile, removable as one.
+LOBBY_FIELD_LINES = (
+    'lobby_hash = "key"\n'
+    'lobby_seats = "chairs"\n'
+    'lobby_seat_account = "acct"\n'
+    'lobby_full = "ready"\n'
+)
+LOBBY_EVENT_LINE = 'lobby_table = "slot"\n'
+
+
+def _write(tmp_path, text):
+    path = tmp_path / "p.toml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+class TestLobbyWire:
+    def test_the_lobbys_event_and_paths_are_read(self, profile):
+        wire = profile.wire
+        assert (wire.has_lobby, wire.events.lobby_table, wire.fields["lobby_full"],
+                wire.draw_verb) == (True, "slot", "ready", "lots")
+
+    def test_a_profile_that_reads_no_lobby_still_loads(self, tmp_path, profile_text):
+        assert LOBBY_FIELD_LINES in profile_text and LOBBY_EVENT_LINE in profile_text
+        text = profile_text.replace(LOBBY_FIELD_LINES, "").replace(LOBBY_EVENT_LINE, "")
+        wire = load_profile(_write(tmp_path, text)).wire
+        assert (wire.has_lobby, "lobby_full" in wire.fields) == (False, False)
+
+    def test_paths_named_in_part_are_refused(self, tmp_path, profile_text):
+        text = profile_text.replace('lobby_full = "ready"\n', "")
+        with pytest.raises(ProfileError, match="lobby only in part; missing: lobby_full"):
+            load_profile(_write(tmp_path, text))
+
+    def test_an_event_nothing_can_read_is_refused(self, tmp_path, profile_text):
+        text = profile_text.replace(LOBBY_FIELD_LINES, "")
+        with pytest.raises(ProfileError, match="go together"):
+            load_profile(_write(tmp_path, text))
+
+    def test_paths_for_an_event_nobody_names_are_refused(self, tmp_path, profile_text):
+        text = profile_text.replace(LOBBY_EVENT_LINE, "")
+        with pytest.raises(ProfileError, match="go together"):
+            load_profile(_write(tmp_path, text))
+
+    def test_the_draw_verb_is_optional(self, tmp_path, profile_text):
+        text = profile_text.replace('draw_verb = "lots"\n', "")
+        assert load_profile(_write(tmp_path, text)).wire.draw_verb is None
+
+
 class TestWire:
     def test_the_resume_vocabulary_is_read(self, profile):
         assert (

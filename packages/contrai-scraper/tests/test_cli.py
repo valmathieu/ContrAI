@@ -434,15 +434,24 @@ class FakeLobbyWalk(FakeWalk):
         self._step("enter_table_from_lobby")
 
 
+def _lobby_frame(builders, data=None, frame_id="l1"):
+    """A lobby event, in the fixture vocabulary, for the tournament row."""
+
+    if data is None:
+        data = {"key": "cfg-42", "chairs": {"top": {"acct": "095024"}}}
+    return _received(builders.envelope("payload", "slot", data, frame_id=frame_id))
+
+
 class TestLobbyChecks:
     def test_a_lobby_the_profile_describes_passes_every_check(self, profile, builders):
         from contrai_scraper.cli import _lobby_checks
 
         walk = FakeLobbyWalk()
-        results = asyncio.run(_lobby_checks(walk, Frames(_join_frame(builders)), profile))
+        frames = Frames(_lobby_frame(builders), _join_frame(builders))
+        results = asyncio.run(_lobby_checks(walk, frames, profile))
         assert ([(name, passed) for name, passed, _ in results], walk.steps) == (
             [("lobby entered", True), ("tournament row found", True),
-             ("back to a table from the lobby", True)],
+             ("lobby events read", True), ("back to a table from the lobby", True)],
             ["log_in", "enter_lobby", "read_tournament_hash", "enter_table_from_lobby"],
         )
 
@@ -450,8 +459,25 @@ class TestLobbyChecks:
         from contrai_scraper.cli import _lobby_checks
 
         walk = FakeLobbyWalk(table_hash=None)
-        results = asyncio.run(_lobby_checks(walk, Frames(_join_frame(builders)), profile))
-        assert [passed for _, passed, _ in results] == [True, False, True]
+        frames = Frames(_lobby_frame(builders), _join_frame(builders))
+        results = asyncio.run(_lobby_checks(walk, frames, profile))
+        assert [passed for _, passed, _ in results] == [True, False, True, True]
+
+    def test_a_profile_that_cannot_read_the_lobbys_socket_fails_that_line(
+        self, profile, builders
+    ):
+        import dataclasses
+
+        from contrai_scraper.cli import _lobby_checks
+
+        blind = dataclasses.replace(
+            profile, wire=dataclasses.replace(
+                profile.wire,
+                events=dataclasses.replace(profile.wire.events, lobby_table=None)))
+        results = asyncio.run(_lobby_checks(FakeLobbyWalk(), Frames(_join_frame(builders)),
+                                            blind))
+        name, passed, detail = results[2]
+        assert (name, passed, "lobby_table" in detail) == ("lobby events read", False, True)
 
     def test_a_step_that_fails_is_a_line_naming_its_check(self, profile):
         from contrai_scraper.cli import _lobby_checks
@@ -472,6 +498,42 @@ class TestLobbyChecks:
         from contrai_scraper.cli import LOBBY_NOT_DESCRIBED
 
         assert LOBBY_NOT_DESCRIBED[:2] == ("lobby described", True)
+
+
+class TestLobbyEventLine:
+    def _result(self, profile, builders, data):
+        from contrai_scraper import WireStream
+        from contrai_scraper.cli import _lobby_event_result
+
+        event = WireStream(profile.wire).ingest(
+            _lobby_frame(builders, data).text, socket=0)
+        return _lobby_event_result(event, profile, "cfg-42")
+
+    def test_the_tournament_rows_event_passes_with_its_seat_count(self, profile, builders):
+        assert self._result(profile, builders, None) == (
+            "lobby events read", True,
+            "an event for the tournament row named 1 seated account(s)")
+
+    def test_another_rows_event_reads_the_paths_just_as_well(self, profile, builders):
+        _, passed, detail = self._result(
+            profile, builders, {"key": "cfg-7", "chairs": {}})
+        assert (passed, "another row" in detail) == (True, True)
+
+    def test_silence_passes_and_says_it_proved_nothing(self, profile):
+        # The lobby speaks only when a seat changes: 27 s and 82 s of silence
+        # after arriving were both measured.
+        from contrai_scraper.cli import _lobby_event_result
+
+        _, passed, detail = _lobby_event_result(None, profile, "cfg-42")
+        assert (passed, "proves nothing yet" in detail) == (True, True)
+
+    def test_an_event_naming_no_row_fails_on_the_hash_path(self, profile, builders):
+        _, passed, detail = self._result(profile, builders, {"chairs": {}})
+        assert (passed, "lobby_hash" in detail) == (False, True)
+
+    def test_an_event_with_no_seat_map_fails_on_the_seats_path(self, profile, builders):
+        _, passed, detail = self._result(profile, builders, {"key": "cfg-42"})
+        assert (passed, "lobby_seats" in detail) == (False, True)
 
 
 def _capturing_profile(profile_text, tmp_path, root):

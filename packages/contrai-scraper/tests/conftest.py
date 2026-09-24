@@ -151,11 +151,13 @@ round_state_prefix = "round."
 resume_action = "resume"
 resume_room_prefix = "room-"
 resume_param = "lastSeen"
+draw_verb = "lots"
 
 [wire.events]
 join_snapshot = "joinTable"
 table_update = "updateTable"
 counters = "counters"
+lobby_table = "slot"
 
 # Dotted paths, each resolved relative to the payload it is looked up in:
 # the table/state names walk from a snapshot's root, the player names from one
@@ -212,6 +214,10 @@ ended = "over"
 left = "gone"
 spectators = "watchers"
 observable_tables = "tables"
+lobby_hash = "key"
+lobby_seats = "chairs"
+lobby_seat_account = "acct"
+lobby_full = "ready"
 
 [wire.tokens]
 seats = { top = "N", right = "E", bottom = "S", left = "W" }

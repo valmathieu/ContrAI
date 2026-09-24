@@ -22,6 +22,7 @@ the same reason.
 | `contrai_scraper.frames` | `RawFrame` and the two frame sources: a live Playwright page, or a stored raw log. |
 | `contrai_scraper.rawlog` | The verbatim per-session log: `RawLogWriter`, `read_raw_log`, `raw_path`. |
 | `contrai_scraper.wire` | Envelope, keepalive, de-duplication, composite key → `WireEvent`. |
+| `contrai_scraper.lobby` | `LobbyWatcher` — the lobby's socket events → a `LobbyRoster` the moment a tournament game starts. |
 | `contrai_scraper.lzstring` | The LZ-String base64 codec the deal payload arrives in. |
 | `contrai_scraper.parse` | `translate`, `deal`, `snapshot`, `live`, `session` — wire events → a record. |
 | `contrai_scraper.browser` | `Spectator` — the only module that touches a page. Login, the walk, the hop, the two panels. `open_browser` / `open_session` — one Chromium, one isolated context per session. |
@@ -74,6 +75,15 @@ that is well-formed and wrong:
   — the round's plays are replayed through core's own trick-winner rule to decide it. Reading the
   contract alone would write `none`, which the round's own plays contradict and which `contrai
   verify` calls `suspect`.
+- **The pre-game draw is not a round.** Before the first deal each player draws a card to seat the
+  table, and each draw arrives keyed at round 0 with a real card and its place in the deck — cards
+  that belong to no hand. It never wears a deal's key, so it cannot pass for one, but a stage taking
+  "every keyed event of the table" would fold four stray cards into the record. `collect_rounds`
+  leaves round 0 out by name, and the draw's verb (`[wire].draw_verb`) wherever it is addressed; the
+  draw itself goes unremarked, and anything *else* the rule sweeps up is a parse note. It matters
+  only for a game watched from its first card, which `run` never sees and a fleet always does. Do
+  not add a "require a bid before accepting a deal" guard instead: the first bid has been seen
+  1.8 s and 24.6 s after the deal.
 
 One thing the wire leaves out entirely is a **forced pass**. The table skips a seat whose only
 legal bid is a pass — the doubler's partner, the partner of a Slam bidder, everyone after a
@@ -139,9 +149,9 @@ silently wrong data.
 | `[account]` | The spectator account. Values may read `env:NAME` instead of holding the secret. |
 | `[browser]` | Headless or headed, slow-motion, screenshot-on-error. |
 | `[selectors]` | One entry per UI step; a list means "try these in order". `seat_element` is a template filled with a seat token; `scoreboard_cell` is looked up inside each scoreboard row; `options_id_element` and `options_state_element` inside each option row. `rail_show` is optional: it names the control that brings a table's collapsible panel rails back, filtered on visibility so it is clicked only while they are away, and it is clicked again before every attempt at a panel control. The seven lobby keys (`mode_new_games`, `lobby_*`) are optional as a group — all or none — since only a fleet goes to the lobby. |
-| `[wire]` | How a frame is recognised, unwrapped and keyed. |
-| `[wire.events]` | The three event names the parser reacts to. |
-| `[wire.fields]` | Dotted paths, one per logical field the parser reads. The set of names is fixed. |
+| `[wire]` | How a frame is recognised, unwrapped and keyed. `draw_verb`, optional, names the pre-game draw's verb. |
+| `[wire.events]` | The three event names the parser reacts to, plus the lobby's own, `lobby_table` — optional, and only together with the lobby's paths below. |
+| `[wire.fields]` | Dotted paths, one per logical field the parser reads. The set of names is fixed, bar the lobby's four (`lobby_hash`, `lobby_seats`, `lobby_seat_account`, `lobby_full`), which are all or none. |
 | `[wire.tokens]` | The site's vocabulary mapped onto core values — cards, seats, team labels, bid values. |
 | `[rules]` | The core preset, plus the table options the browser half checks. |
 | `[recorder]` | The loop's own thresholds — hop, watchdog, heartbeat, seat timeout. Policy, not site vocabulary. |
@@ -340,11 +350,36 @@ away at any click, but without it a click at the centre of the screen lands on a
 sits the account down. `dismiss_overlay` reads what is under the centre first and clicks only when
 that is not the list.
 
+**The roster comes off the socket, not the page.** The tournament row shows four players for about
+a second and a half, so reading the page every three seconds caught 6 of the 11 games that started
+in a measured half hour; the socket carried all 11. Every row is driven by a `lobby_table` event,
+and `LobbyWatcher` reads the tournament row's (by the hash the page gave) under three rules, each of
+which is a record about the wrong players when broken:
+
+- **An event's seats are the whole seat map, never a change to it.** Nothing in the stream vacates
+  a seat, so adding events up leaves a ghost wherever a player changed chairs — that reading agreed
+  with the page 4.7% of the time and reported 104 complete rosters where the page showed 6, while
+  looking as though it worked.
+- **The roster is the one the row held when its game started.** Seats change constantly before a
+  start (74 changes in half an hour, swaps included) and the row recycles right after. The row
+  raises a flag of its own (`lobby_full`) in the event that follows the fourth seat by milliseconds;
+  that event, with its four accounts, is the roster, announced once. Waiting for the row to empty
+  instead would wait for the next player to sit down — 35 s after the start in the first case
+  measured. Re-read on the stored logs, the watcher announces the clean run's 11 starts, every
+  roster the page-polling caught among them, and in each of the four chases exactly the roster that
+  was then found at its table.
+- **Accounts are matched as the site spells them**: six digits, zero-padded, kept as strings. A seat
+  whose account is not one does not count. `LobbyRoster.digest` names a roster in log lines without
+  naming its players.
+
 `return_to_lobby` is the one route nothing has measured: the probes only ever went from the lobby
 to a table. It is written to fail fast — at most `LOBBY_BACK_STEPS` steps back, then a
 `BrowserError` naming the key it was waiting for — so that the caller can rebuild the session, the
 one recovery measured to work. `check-profile` walks the lobby in a session of its own when the
-profile describes one: in, the tournament row, and back out to a table.
+profile describes one: in, the tournament row, the first lobby event, and back out to a table. The
+lobby speaks only when a seat changes — its first event after arriving came 27 s and 82 s later in
+the two runs timed — so a wait that hears nothing passes and says it proved nothing; an event that
+arrives and cannot be read is what fails, naming the path that read nothing.
 
 ## Shifts
 

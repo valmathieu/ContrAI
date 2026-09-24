@@ -1161,6 +1161,24 @@ class TestMixedBuffers:
         events = {json.loads(line)["event"] for line in lines}
         assert (summary.games_recorded, "record_refused" in events) == (1, False)
 
+    def test_a_caught_opening_and_its_draw_are_one_game(
+        self, profile, builders, session_frames, source_game
+    ):
+        # The draw is keyed to the game it opens, so it never reads as a
+        # second game — and it never reaches the record.
+        lines: list[str] = []
+        script = session_frames(source_game)
+        script[2:2] = [
+            frame(builders.envelope("payload", f"g1,0,0,{index},lots,p{index + 1}",
+                                    card, frame_id=f"draw{index}"))
+            for index, card in enumerate(("2w", "5x"))
+        ]
+        summary = run_recorder(FakeSpectator(), script, profile,
+                               health=HealthLog(write=lines.append))
+        events = {json.loads(line)["event"] for line in lines}
+        assert (summary.games_recorded, len(records_in(profile)[0].rounds),
+                "record_refused" in events, "parse_note" in events) == (1, 2, False, False)
+
     def test_an_interrupted_mixed_buffer_is_refused_too(
         self, profile, builders, session_frames, source_game
     ):

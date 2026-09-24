@@ -24,6 +24,7 @@ import argparse
 import asyncio
 import signal
 import sys
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Final
@@ -40,6 +41,7 @@ from contrai_scraper.exceptions import (
 )
 from contrai_scraper.frames import RawFrame, RawLogFrameSource
 from contrai_scraper.health import HealthLog
+from contrai_scraper.lobby import lobby_seats
 from contrai_scraper.parse.session import (
     SessionResult,
     parse_session,
@@ -362,13 +364,24 @@ async def _lobby_checks(
         results.append((step, True, "the list of games is showing"))
 
         step = "tournament row found"
-        found = await spectator.read_tournament_hash() is not None
+        table_hash = await spectator.read_tournament_hash()
         results.append((
             step,
-            found,
-            "the list shows a tournament row" if found
+            table_hash is not None,
+            "the list shows a tournament row" if table_hash is not None
             else "no row carries [selectors].lobby_row_tournament_class",
         ))
+
+        step = "lobby events read"
+        if profile.wire.has_lobby:
+            event = await _first_event(frames, profile, profile.wire.events.lobby_table)
+            results.append(_lobby_event_result(event, profile, table_hash))
+        else:
+            results.append((
+                step, False,
+                "the profile names no [wire.events].lobby_table; a fleet needs it "
+                "and the [wire.fields] lobby paths",
+            ))
 
         step = "back to a table from the lobby"
         await spectator.enter_table_from_lobby()
@@ -504,18 +517,81 @@ async def _capture_failure(spectator: Any, profile: Profile) -> str:
 async def _first_snapshot(frames: Any, profile: Profile) -> WireEvent | None:
     """The first join snapshot off the socket, or ``None`` if none arrives."""
 
+    return await _first_event(frames, profile, profile.wire.events.join_snapshot)
+
+
+async def _first_event(frames: Any, profile: Profile, kind: str) -> WireEvent | None:
+    """The first event of one kind off the socket, within ``snapshot_timeout_s``.
+
+    The timeout is one deadline for the whole wait, not a fresh one per frame:
+    the socket carries a keepalive about once a second, so a per-frame wait
+    for an event that is not coming would never end.
+
+    Args:
+        frames: The frame source.
+        profile: The loaded profile.
+        kind: The event name to wait for.
+
+    Returns:
+        The event, or ``None`` when none arrived in time or the frames ended.
+    """
+
     stream = WireStream(profile.wire)
-    name = profile.wire.events.join_snapshot
     iterator = frames.__aiter__()
-    timeout = profile.recorder.snapshot_timeout_s
+    deadline = time.monotonic() + profile.recorder.snapshot_timeout_s
     while True:
         try:
-            frame = await asyncio.wait_for(anext(iterator), timeout)
+            frame = await asyncio.wait_for(
+                anext(iterator), max(0.0, deadline - time.monotonic())
+            )
         except (TimeoutError, StopAsyncIteration):
             return None
         event = stream.ingest(frame.text, frame.socket)
-        if event is not None and event.kind == name:
+        if event is not None and event.kind == kind:
             return event
+
+
+def _lobby_event_result(
+    event: WireEvent | None, profile: Profile, table_hash: str | None
+) -> tuple[str, bool, str]:
+    """Whether the profile reads the lobby's socket, judged on the first event.
+
+    Silence is not a failure: the lobby speaks only when a seat changes, and
+    the first event after arriving has been measured at 27 s and at 82 s. So
+    a quiet wait passes and says it proved nothing; an event that arrived and
+    cannot be read is what fails, naming the path that read nothing.
+
+    Args:
+        event: The first lobby event, or ``None`` when none came.
+        profile: The loaded profile, which reads the lobby's socket.
+        table_hash: The tournament row's hash as the page gave it.
+
+    Returns:
+        One check result.
+    """
+
+    name = "lobby events read"
+    if event is None:
+        return (
+            name, True,
+            f"none arrived in {profile.recorder.snapshot_timeout_s} s — a quiet "
+            "lobby looks the same, so this proves nothing yet",
+        )
+    translator = Translator(profile)
+    row = translator.field(event.data, "lobby_hash")
+    if not isinstance(row, str):
+        return (
+            name, False,
+            "an event arrived, but [wire.fields].lobby_hash names no row in it",
+        )
+    seats = lobby_seats(event.data, translator)
+    if seats is None:
+        return (
+            name, False,
+            "an event arrived, but [wire.fields].lobby_seats reads no seat map in it",
+        )
+    where = "the tournament row" if row == table_hash else "another row"
+    return (name, True, f"an event for {where} named {len(seats)} seated account(s)")
 
 
 async def _seat_ids_agree(
