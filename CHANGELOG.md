@@ -14,6 +14,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (engine) `contrai replay` gains `a`: skip the rest of the auction and stop on the contract, one key before the first card. See [engine docs](docs/engine/index.md).
 - (data) `read_verdict(path)` and `GameVerdict.from_json` read a verdict file back, refusing anything `write_verdict` would not write. See [data docs](docs/data/index.md).
 - (data) `build_catalog(root)` rebuilds `<root>/catalog.sqlite`, a SQLite index of games, seats, rounds and verdicts with player and clean-round views. See [data docs](docs/data/index.md).
+- (engine) `contrai catalog [ROOT] [--player ID_OR_NAME]` rebuilds the corpus index with a summary, or lists one player's games. See [engine docs](docs/engine/index.md).
 
 ### Fixed
 

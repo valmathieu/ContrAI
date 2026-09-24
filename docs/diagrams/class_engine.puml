@@ -73,6 +73,10 @@ class RoundRecord <<from contrai-data>> #E0F5F2 {
 class RoundScored <<from contrai-data>> #E0F5F2
 class Verdict      <<from contrai-data>> #E0F5F2
 class RoundVerdict <<from contrai-data>> #E0F5F2
+class "catalog.py" as p_catalog_data <<from contrai-data>> #E0F5F2 {
+    build~_catalog(root) : CatalogSummary
+    player~_games(root, player) : PlayerReport
+}
 class GameVerdict  <<from contrai-data>> #E0F5F2 {
     + verdict : Verdict <<property>>
     + counts : dict<Verdict, int> <<property>>
@@ -1284,6 +1288,7 @@ RoundVerdict --> Verdict : verdict
 p_verify_fn ..> GameVerdict : <<write~_verdict>>
 p_verify_fn ..> ReplayController : <<drives round by round>>
 Cli ..> p_verify_fn : <<verify PATH...>>
+Cli ..> p_catalog_data : <<catalog [ROOT] [--player]>>
 
 ' Stepping is replay with the keyboard in the view's place.
 ReplayController ..> SteppingView : <<notifies as a view>>

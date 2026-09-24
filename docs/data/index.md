@@ -342,7 +342,8 @@ progress is unrecoverable and is skipped entirely. Recording starts at the next 
 `<root>/catalog.sqlite`, a SQLite database the corpus questions are asked of: *which games did this
 player play*, *which rounds are clean enough to train on*, *how many rounds a day are landing*,
 *which suspect rounds share a mismatch class*. Each of those is a join over thousands of files, and
-a directory of JSONL cannot answer a join without reading all of it.
+a directory of JSONL cannot answer a join without reading all of it. `contrai catalog` runs it
+from the engine CLI (see [engine docs](../engine/index.md#cli)).
 
 **It is an index, never a second copy.** Every row is derived from a record or a verdict, the
 records stay the source of truth, and nothing writes to the catalog except a rebuild. A catalog can

@@ -28,7 +28,7 @@ Source at `packages/contrai-engine/src/contrai_engine/`:
   - `state_helpers.py` — small game-state readers (`_current_winner`, `_explain_constraint`, `_sort_hand_for_display`, `_belote_by_position` — which groups `Round.announced_belotes` by seat, so the regime decides what the badge shows — `_resolve_delay`)
   - `layout.py` — cross-screen layout (`_two_column`, the Prompt panel, the event-log panel, and the Game-score panel shown in every in-game frame's top-left)
   - `screens/` — one module per screen: `landing.py`, `setup.py`, `bidding.py`, `trick.py`, `recap.py`, `endgame.py`, `replay.py`, `grid.py` (the replay's trick grid). Each exposes pure `(data) -> Panel/Text` builders; `RichView` composes and prints them. The landing screen is split in two on purpose — `landing.py` holds the fixed furniture (title, subtitle, suit ribbon, seat roster), `setup.py` the half that is *edited* (the table summary, the preset radio, the knob grid and their prompts)
-- `cli.py` — `contrai` console-script entry point, a subcommand CLI whose default is `play`: landing → game-loop → end-game; parses the three debug-mode flags, the two mutually exclusive ruleset flags `--rules FILE` / `--preset NAME`, and the two mutually exclusive record flags `--record [DIR]` / `--no-record`; also runs `verify PATH...` and `replay PATH [--round N]` (see [CLI](#cli))
+- `cli.py` — `contrai` console-script entry point, a subcommand CLI whose default is `play`: landing → game-loop → end-game; parses the three debug-mode flags, the two mutually exclusive ruleset flags `--rules FILE` / `--preset NAME`, and the two mutually exclusive record flags `--record [DIR]` / `--no-record`; also runs `verify PATH...`, `replay PATH [--round N]` and `catalog [ROOT] [--player ID_OR_NAME]` (see [CLI](#cli))
 - `replay/` — drive the real engine from a record rather than from players and the RNG:
   - `deal.py` — `ScriptedDealSource`, which answers the `DealSource` seam off a record: the dealer `round_dealt` names, and a deck `Deck.stacked` builds from the recorded hands. Re-exports `DealSource` / `RandomDealSource` so a replay imports all three from one place
   - `player.py` — `RecordedPlayer`, a real `Player` whose `choose_bid` / `choose_card` read the round's `RoundScript` instead of deciding, addressing each action by its position in the round rather than by a per-seat queue
@@ -226,6 +226,18 @@ The keys: `[n]` or `[Enter]` for the next action, `[t]` to the end of the trick,
 - The keys are a single bare line instead of a second Prompt panel under the frame's own.
 - The log keeps 3 lines instead of 5. What it would repeat is already on screen, in *Bidding so far* and in the trick diamond.
 - Nothing is printed below a frame that has already been read. `RichView` keeps the arguments of its last in-game frame (`redraw_frame`) and a callable that repaints whichever screen is up, frame or recap (`redraw_screen`). A rejected key repaints and names the problem above the keys. A belote stop, whose hook draws no frame of its own, repaints the card frame so its log line shows. A line the driver prints under a frame, such as "Round N diverges from the record", goes through `show_replay_notice`. That makes it part of the screen, so a repaint draws it again instead of wiping it.
+
+**Indexing a corpus.** `verify` judges records one at a time; `contrai catalog` indexes what `--record`, the scraper and `verify` have written, so questions across a whole corpus become SQL.
+
+```bash
+uv run contrai catalog                          # $CONTRAI_HOME/records
+uv run contrai catalog ./corpus                 # a records root; ./corpus/games works too
+uv run contrai catalog ./corpus --player NAME   # one player's games, by id or display name
+```
+
+The first two rebuild `ROOT/catalog.sqlite` from scratch and print what it holds: games per source, rounds (all, complete, clean), game and round verdicts, verdict statuses, distinct players, and every file that could not be indexed with its reason. `--player` only *reads* the existing catalog — it never rebuilds it, and never creates one — and prints one line per game: date, game id, player id, name, seat, partner, result (or why the game stopped), the final score, and the verdict, marked when it is stale or missing. Its header names the catalog's build time, because games recorded since are not in it.
+
+Run `contrai verify` first. A game without a fresh verdict contributes no clean round, and the summary says how many games are in that state and which `verify` command fixes it. The command exits `0` on success; `1` when the root has no `games/` directory, when the catalog cannot be replaced (Windows refuses while another program — a `python -m sqlite3` shell, a notebook — holds it open; the old catalog is kept), or when `--player` finds no catalog or no game; `2` on a usage error. It sits here rather than in `contrai-scrape` because it is site-agnostic and indexes engine games too; the index itself is `contrai-data`'s `build_catalog`, whose schema, rules and SQL recipes are in the [data docs](../data/index.md#the-catalog).
 
 **Trump choices.** No trump and all trump are off by default (`contree-domain.md` §9.2). Turn them on with a ruleset file:
 
