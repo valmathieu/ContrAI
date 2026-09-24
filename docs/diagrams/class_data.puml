@@ -46,11 +46,14 @@ package "exceptions.py" as p_exc {
     }
     class UnsupportedFormatError {
     }
+    class VerdictFormatError {
+    }
 }
 
 RecordError --|> ContraiError
 RecordFormatError --|> RecordError
 UnsupportedFormatError --|> RecordError
+VerdictFormatError --|> RecordError
 
 ' =========================================================
 ' events.py
@@ -352,6 +355,7 @@ package "verdict.py" as p_verdict {
         + observed : str?
         --
         + as~_json() : dict
+        + {static} from~_json(payload) : Mismatch
     }
     class RoundVerdict <<frozen dataclass>> {
         + number : int
@@ -362,6 +366,7 @@ package "verdict.py" as p_verdict {
         --
         + {static} decide(number, mismatches, unchecked, *, replayed) : RoundVerdict
         + as~_json() : dict
+        + {static} from~_json(payload) : RoundVerdict
     }
     class GameVerdict <<frozen dataclass>> {
         + game~_id : str
@@ -373,11 +378,13 @@ package "verdict.py" as p_verdict {
         + verdict : Verdict <<property>>
         + counts : dict<Verdict, int> <<property>>
         + as~_json() : dict
+        + {static} from~_json(payload) : GameVerdict
     }
     class "verdict.py" as m_verdict <<module>> {
         + verdicts~_dir(root) : Path
         + verdict~_path(root, game~_id) : Path
         + write~_verdict(root, verdict) : Path
+        + read~_verdict(path) : GameVerdict
     }
 }
 
@@ -386,6 +393,7 @@ RoundVerdict "1" *-- "0..N" Mismatch : mismatches
 RoundVerdict --> Verdict
 Mismatch --> MismatchKind
 m_verdict ..> GameVerdict : <<writes verdicts/<game~_id>.json>>
+m_verdict ..> VerdictFormatError : <<read~_verdict refuses>>
 
 note as N_verdict
   **""partial"" is the interesting verdict.** Every check that
@@ -396,6 +404,8 @@ note as N_verdict
   The model is plain data, so it lives here and
   ""contrai~_engine.replay"" re-exports it: whatever reads
   verdict files back must not need the engine to do it.
+  **Reading back is strict:** exact keys, exact types, and every
+  stored verdict and count re-derived from the rounds.
 end note
 p_verdict .. N_verdict
 

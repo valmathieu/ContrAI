@@ -8,6 +8,7 @@ from .exceptions import (
     RecordError,
     RecordFormatError,
     UnsupportedFormatError,
+    VerdictFormatError,
 )
 from .events import (
     RecordSource,
@@ -81,12 +82,14 @@ from .verdict import (
     verdicts_dir,
     verdict_path,
     write_verdict,
+    read_verdict,
 )
 
 __all__: list[str] = [
     "RecordError",
     "RecordFormatError",
     "UnsupportedFormatError",
+    "VerdictFormatError",
     "RecordSource",
     "SeatKind",
     "JoinPhase",
@@ -148,4 +151,5 @@ __all__: list[str] = [
     "verdicts_dir",
     "verdict_path",
     "write_verdict",
+    "read_verdict",
 ]

@@ -9,13 +9,13 @@ Source lives at `packages/contrai-data/src/contrai_data/`:
 
 | Module          | Contents                                                                                  |
 | --------------- | ----------------------------------------------------------------------------------------- |
-| `exceptions.py` | `RecordError` (base), `RecordFormatError`, `UnsupportedFormatError` — all of them both a `ContraiError` and a `ValueError` |
+| `exceptions.py` | `RecordError` (base), `RecordFormatError`, `UnsupportedFormatError`, `VerdictFormatError` — all of them both a `ContraiError` and a `ValueError` |
 | `events.py`     | One frozen dataclass per event (`Header`, `GameStarted`, `RoundDealt`, `BidMade`, `CardPlayed`, `BeloteHeld`, `RoundScored`, `GameEnded`), the five value objects (`Seat`, `ObservedFrom`, `Ruleset`, `SideMark`, `ContractTerms`), and the eight closed vocabularies |
 | `tokens.py`     | Domain value ⇄ ASCII token, both ways and strictly — seats, sides, cards, contract suits and values, whole bids, whole rulesets, and the UTC timestamp check |
 | `codec.py`      | `encode` / `decode` — one event ⇄ one JSON line — plus `FORMAT` and the major-version gate |
 | `store.py`      | Records on disk: `RecordWriter`, `read_events` / `ReadResult`, `records_root` / `games_dir` / `game_path`, `new_game_id` |
 | `projection.py` | `GameRecord` / `RoundRecord`, and the `project` / `load_game` fold that re-derives the contract, the tricks and their winners |
-| `verdict.py`    | What `contrai verify` concluded: `Verdict` (`verified` / `partial` / `suspect`), the five `MismatchKind` classes, `Mismatch` / `RoundVerdict` / `GameVerdict`, and `verdicts_dir` / `verdict_path` / `write_verdict` |
+| `verdict.py`    | What `contrai verify` concluded: `Verdict` (`verified` / `partial` / `suspect`), the five `MismatchKind` classes, `Mismatch` / `RoundVerdict` / `GameVerdict`, `verdicts_dir` / `verdict_path` / `write_verdict`, and the strict `read_verdict` |
 
 Everything above is re-exported from `contrai_data/__init__.py` and is part of the public API.
 
@@ -217,6 +217,17 @@ sibling of `games/` so a corpus and its verdicts move together. `verdicts_dir()`
 and `write_verdict()` spell that layout; the file is pretty-printed JSON with sorted keys, so
 re-verifying a corpus produces a diff that shows only what changed. It carries the game's id,
 source and preset, the game verdict, per-verdict round counts, the notes, and one object per round.
+
+**Reading one back is as strict as reading a record.** `read_verdict()` (and the `from_json`
+classmethods under it) refuses anything `write_verdict` would not have written: an unknown or
+missing key, a repeated key, a `null` where an inapplicable field should simply be absent, a `bool`
+where a number belongs, an unknown verdict, mismatch-kind or source token, a repeated round number.
+It also **re-derives every conclusion the file stores** — each round's verdict from its own
+mismatches and unchecked checks, the game's verdict and the per-verdict counts from the rounds — and
+refuses a file that disagrees with itself. Whatever indexes a corpus trusts what it reads, so a
+hand-edited or half-written verdict must surface as a `VerdictFormatError` naming the file rather
+than as a plausible row. `VerdictFormatError` is a `RecordError`: a verdict file is part of the
+corpus and is read with the same distrust.
 
 **One line, one flush.** `RecordWriter` appends a single encoded event and flushes it, so a
 producer that dies mid-game — a crashed scraper, an interrupted autoplay — leaves a file that is

@@ -33,3 +33,14 @@ class UnsupportedFormatError(RecordError):
     future format change surfaces here rather than as a confusing pile of
     :class:`RecordFormatError`.
     """
+
+
+class VerdictFormatError(RecordError):
+    """A verdict file does not say what ``write_verdict`` would have written.
+
+    Raised by :func:`~contrai_data.read_verdict` and the ``from_json``
+    readers on an unknown or missing key, a wrong type, an unknown token,
+    a repeated round, or a stored verdict or count that disagrees with the
+    rounds it summarises. A :class:`RecordError`, because a verdict file is
+    part of a corpus and is read with the same distrust as a record.
+    """
