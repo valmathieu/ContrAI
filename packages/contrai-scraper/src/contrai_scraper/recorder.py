@@ -57,6 +57,7 @@ from contrai_data import EndReason, RecordWriter, RoundDealt, game_path
 from .exceptions import ParseError, ScraperError
 from .frames import FrameSource, RawFrame
 from .health import HealthLog
+from .lobby import SEATS, LobbyRoster
 from .parse.session import parse_session, split_visits
 from .parse.snapshot import ScoreRow, Snapshot, read_snapshot
 from .parse.translate import Translator
@@ -76,6 +77,30 @@ class StopReason(StrEnum):
     WINDOW_CLOSED = "window_closed"
     EGRESS_BLOCKED = "egress_blocked"
     SOURCE_ENDED = "source_ended"
+    CHASE_ENDED = "chase_ended"
+    """The chased table was found and watched to the end of its game."""
+
+    CHASE_GAVE_UP = "chase_gave_up"
+    """The chased table was not found in budget, or was found and refused."""
+
+
+@dataclass(frozen=True, slots=True)
+class ChaseTarget:
+    """A game to find: its four players, and how hard to look for it.
+
+    The server seats a spectator wherever it likes, so finding a table is a
+    blind scan — one hop at a time, each landing somewhere the server chose.
+    The walk re-offers tables it has already given and is not a cycle, so a
+    budget counted in hops shrinks silently as repeats eat it; this one counts
+    the *distinct* tables judged instead, and a deadline bounds the rest.
+    """
+
+    roster: LobbyRoster
+    distinct_budget: int
+    """Distinct tables to judge before giving up."""
+
+    deadline_s: float
+    """Seconds to look before giving up, from the recorder's start."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +148,8 @@ class Recorder:
         "_monotonic", "_translator", "_iterator", "_stream", "_buffer",
         "_seen_snapshots", "_records", "_deadline", "_stopped", "_active",
         "_last_activity", "_seated", "_rejected", "_base", "_egress",
-        "_seat_deadline", "_stop_reason", "_left_table", "_claims",
+        "_seat_deadline", "_stop_reason", "_left_table", "_claims", "_target",
+        "_scanned", "_chase_deadline", "_found",
     )
 
     def __init__(
@@ -138,6 +164,7 @@ class Recorder:
         monotonic: Callable[[], float] = time.monotonic,
         egress: Any = None,
         claims: Any = None,
+        target: ChaseTarget | None = None,
     ) -> None:
         """Wire the loop up.
 
@@ -164,6 +191,11 @@ class Recorder:
                 before any other gate, the table being watched is held, and
                 every table judged is added to the census. ``None`` is a
                 recorder alone, which is what ``run`` is.
+            target: A game to chase. Every table is then held against its
+                roster before anything else is read, the one that matches
+                is gated like any other and watched to its end, and the
+                recorder stops there — or gives up, with a reason, when the
+                scan runs out. ``None`` takes whatever the server offers.
         """
 
         self._spectator = spectator
@@ -175,6 +207,10 @@ class Recorder:
         self._monotonic = monotonic
         self._egress = egress
         self._claims = claims
+        self._target = target
+        self._scanned: set[str | None] = set()
+        self._chase_deadline: float | None = None
+        self._found: str | None = None
         self._translator = Translator(profile)
         self._iterator: Any = None
         self._stream: WireStream | None = None
@@ -207,24 +243,36 @@ class Recorder:
 
         self._iterator = self._frames.__aiter__()
         limits = self._limits
-        if limits.max_seconds is not None or limits.seat_until_s is not None:
-            # One reading for both: a second call would shift every scripted
-            # clock in the suite by a tick.
+        target = self._target
+        if (
+            limits.max_seconds is not None
+            or limits.seat_until_s is not None
+            or target is not None
+        ):
+            # One reading for all of them: a second call would shift every
+            # scripted clock in the suite by a tick.
             started = self._monotonic()
             if limits.max_seconds is not None:
                 self._deadline = started + limits.max_seconds
             if limits.seat_until_s is not None:
                 self._seat_deadline = started + limits.seat_until_s
+            if target is not None:
+                self._chase_deadline = started + target.deadline_s
         try:
-            while not self._finished():
+            while not self._finished() and not self._chase_over():
                 seated = await self._seat()
                 if seated is None:
                     continue
                 snapshot, event, tail = seated
                 if not await self._gate(snapshot, event, tail):
-                    await self._hop()
+                    if not self._chase_over():
+                        await self._hop()
                     continue
                 await self._watch(snapshot)
+                if target is not None:
+                    # One game is what a chase is for; the worker goes back
+                    # to the lobby for the next.
+                    self._stop(StopReason.CHASE_ENDED)
         except (asyncio.CancelledError, KeyboardInterrupt):
             self._write(EndReason.INTERRUPTED)
             raise
@@ -262,6 +310,9 @@ class Recorder:
                 return None
             if self._past_seat_deadline():
                 self._stop(StopReason.WINDOW_CLOSED)
+                return None
+            if self._past_chase_deadline():
+                # Left to the loop, which gives the chase up and says why.
                 return None
             remaining = self._capped(
                 timeout - (self._monotonic() - started), seating=True
@@ -461,6 +512,8 @@ class Recorder:
         """
 
         recorder = self._profile.recorder
+        if self._target is not None:
+            self._scanned.add(snapshot.table_id)
         if self._claims is not None:
             self._claims.seen(
                 snapshot.table_id,
@@ -469,12 +522,14 @@ class Recorder:
             )
             # First, because it is the only refusal that prevents corruption
             # rather than waste: two workers at one table would append two
-            # streams to one record file.
-            if not self._claims.claim(snapshot.table_id):
-                return self._reject(
-                    snapshot, "claimed_by_other",
-                    holder=self._claims.holder(snapshot.table_id),
-                )
+            # streams to one record file. Only *asked* here: the claim itself
+            # is taken on acceptance, below, so a scan passing through never
+            # holds a table another worker has come to find.
+            holder = self._claims.holder(snapshot.table_id)
+            if holder is not None and holder != self._claims.worker:
+                return self._reject(snapshot, "claimed_by_other", holder=holder)
+        if self._target is not None and not self._is_target(snapshot):
+            return False
         if not snapshot.is_tournament:
             return self._reject(snapshot, "not_tournament")
         if len(snapshot.score_rows) >= recorder.hop_after_rows:
@@ -513,10 +568,79 @@ class Recorder:
             self._health.counters.tables_rejected += 1
             return False
 
+        if self._claims is not None and not self._claims.claim(snapshot.table_id):
+            # Another worker accepted it while this one was reading the page.
+            return self._reject(
+                snapshot, "claimed_by_other",
+                holder=self._claims.holder(snapshot.table_id),
+            )
         self._seated += 1
         self._health.counters.tables_seated += 1
         self._health.event("table_seated", table=snapshot.table_id)
         self._buffer = [event, *tail]
+        return True
+
+    def _is_target(self, snapshot: Snapshot) -> bool:
+        """Whether this is the chased table: all four accounts, nothing less.
+
+        Held on the wire alone, before anything is read off the page, because
+        a scan is mostly refusals and the page costs seconds a refusal does
+        not. Partial is refused outright: across every roster and every wrong
+        table in the corpus, the best a wrong table scored was two of four,
+        so "most of them" would have found a wrong table forty times.
+
+        Returns:
+            Whether to go on to the table's other gates, which a match must
+            pass as well — a chase is not a way round them.
+        """
+
+        target = self._target
+        assert target is not None
+        matched = _accounts_matched(snapshot, target.roster)
+        if matched < SEATS:
+            return self._reject(
+                snapshot, "roster_mismatch", matched=matched,
+                roster=target.roster.digest,
+            )
+        self._found = snapshot.table_id
+        self._health.event(
+            "chase_matched",
+            table=snapshot.table_id,
+            roster=target.roster.digest,
+            distinct=len(self._scanned),
+            after_s=round(self._frames.elapsed - target.roster.at, 1),
+        )
+        return True
+
+    def _chase_over(self) -> bool:
+        """Whether a chase should stop rather than look at another table.
+
+        Stops it, and says why, when it should. Giving up is an outcome, not
+        an error: the worker goes back to the lobby for the next game.
+
+        Returns:
+            Whether the chase gave up just now. Always ``False`` for a
+            recorder that is not chasing.
+        """
+
+        target = self._target
+        if target is None:
+            return False
+        if self._found is not None:
+            # The table was found and one of its gates refused it; nothing
+            # else can be the game the roster started.
+            reason = "target_refused"
+        elif len(self._scanned) >= target.distinct_budget:
+            reason = "distinct_budget"
+        elif self._past_chase_deadline():
+            reason = "deadline"
+        else:
+            return False
+        self._health.event(
+            "chase_gave_up", reason=reason, roster=target.roster.digest,
+            distinct=len(self._scanned),
+        )
+        self._stop(StopReason.CHASE_GAVE_UP)
         return True
 
     def _reject(self, snapshot: Snapshot, reason: str, **fields: Any) -> bool:
@@ -676,7 +800,9 @@ class Recorder:
                 so a stale table costs one probe rather than two.
         """
 
-        if self._finished():
+        if self._finished() or self._found is not None:
+            # A chase that found its table is over once it is left: the next
+            # table is the lobby's to announce, not the server's to offer.
             return
         if (
             self._egress is not None
@@ -730,12 +856,16 @@ class Recorder:
             for event in result.events:
                 writer.write(event)
 
-        rounds = sum(1 for event in result.events if isinstance(event, RoundDealt))
+        dealt = [event.round for event in result.events if isinstance(event, RoundDealt)]
+        rounds = len(dealt)
         self._health.counters.games_recorded += 1
         self._health.counters.rounds_recorded += rounds
         self._records.append(path)
         self._health.event(
-            "game_recorded", game=header.game_id, rounds=rounds, path=str(path)
+            "game_recorded", game=header.game_id, rounds=rounds, path=str(path),
+            # Whether the record starts where its game did: a chase that
+            # arrives after the first deal loses round 1 however fast it was.
+            first_round=min(dealt, default=None),
         )
         # Emptied, not kept: the interrupt handler writes whatever is in the
         # buffer, and a record written twice is a record with two of every
@@ -890,7 +1020,7 @@ class Recorder:
 
         deadlines = [self._deadline]
         if seating:
-            deadlines.append(self._seat_deadline)
+            deadlines += [self._seat_deadline, self._chase_deadline]
         present = [deadline for deadline in deadlines if deadline is not None]
         if not present:
             return remaining
@@ -907,6 +1037,14 @@ class Recorder:
         return (
             self._seat_deadline is not None
             and self._monotonic() >= self._seat_deadline
+        )
+
+    def _past_chase_deadline(self) -> bool:
+        """Whether a chase has looked for its table for as long as it may."""
+
+        return (
+            self._chase_deadline is not None
+            and self._monotonic() >= self._chase_deadline
         )
 
     def _finished(self) -> bool:
@@ -952,6 +1090,29 @@ class Recorder:
         self._health.event("egress_blocked", **reading.fields())
         self._stop(StopReason.EGRESS_BLOCKED)
         return False
+
+
+def _accounts_matched(snapshot: Snapshot, roster: LobbyRoster) -> int:
+    """How many of a roster's accounts sit at this table.
+
+    The snapshot's account field against the lobby's, as strings, exactly as
+    each spells it — never the per-visit handle, which changes between
+    visits, and never the pseudonym, which is not unique and which a player
+    without one is shown by their account instead.
+
+    Args:
+        snapshot: The table as it described itself.
+        roster: The game being chased.
+
+    Returns:
+        From 0 to 4; only 4 is the table.
+    """
+
+    seated = {
+        player.account for player in snapshot.players.values()
+        if player.account is not None
+    }
+    return len(seated & roster.accounts)
 
 
 def _orientation_holds(

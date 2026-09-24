@@ -388,6 +388,29 @@ which is a record about the wrong players when broken:
   whose account is not one does not count. `LobbyRoster.digest` names a roster in log lines without
   naming its players.
 
+**A chase is a recorder with a target.** Handed a `ChaseTarget` — the roster, a budget of distinct
+tables and a deadline — `Recorder` holds every table it lands on against the roster before reading
+anything off the page: a scan is mostly refusals, and the page costs seconds a wire comparison does
+not. The match is all four accounts or nothing (`roster_mismatch`, with how many matched): across
+every roster and every wrong table in the corpus the best a wrong table scored was two of four, so
+"most of them" would have found a wrong table forty times. A match is announced as `chase_matched`,
+with how many distinct tables it took and how long since the roster was read, and then passes every
+other gate — a chase is not a way round the tournament, options or orientation checks. The recorder
+stops after that one game (`chase_ended`) and never asks for another table: the next one is the
+lobby's to announce. The scan is budgeted on *distinct* tables judged and on a deadline, never on
+hops, because the server's walk re-offers tables it has already given and is not a cycle — a hop
+count shrinks silently as repeats eat it. Running out, or finding the table and seeing a gate refuse
+it, is `chase_gave_up` with its reason (`distinct_budget`, `deadline`, `target_refused`): an outcome,
+not an error. Log lines name a roster by its digest, never by its players.
+
+Two consequences for the registry. The `claimed_by_other` check still comes first, but the claim
+itself is taken only when a table is *accepted*, after its other gates: a scan passing through a
+table never holds it, so it can never keep out the worker that came to find it, and a table accepted
+elsewhere while the page was being read is still refused at the end. And a chase is fast but not
+instant: in one probe run the match came 26.2 s after the roster, after the first deal had gone out,
+and a record joined then starts at round 2. Nothing at the gate can tell, so `game_recorded` carries
+`first_round`, which is what says how often a chase arrives in time.
+
 `return_to_lobby` is the one route nothing has measured: the probes only ever went from the lobby
 to a table. It is written to fail fast — at most `LOBBY_BACK_STEPS` steps back, then a
 `BrowserError` naming the key it was waiting for — so that the caller can rebuild the session, the

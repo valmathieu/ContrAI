@@ -72,6 +72,7 @@ from contrai_scraper.lzstring import compress_to_base64, decompress_from_base64
 from contrai_scraper.registry import Claim, Sighting, TableRegistry, WorkerClaims
 from contrai_scraper.recorder import (
     SCOREBOARD_PANEL,
+    ChaseTarget,
     Recorder,
     RecorderLimits,
     SessionSummary,
@@ -173,6 +174,7 @@ __all__ = [
     "ActiveRange",
     "BrowserError",
     "BrowserSection",
+    "ChaseTarget",
     "Claim",
     "Counters",
     "EgressGate",

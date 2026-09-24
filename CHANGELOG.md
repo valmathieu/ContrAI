@@ -16,6 +16,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) `Spectator` walks the lobby, choosing each back control by the screen it sits on, and `check-profile` walks it too; its seven `[selectors]` keys are optional. See [scraper docs](docs/scraper/index.md).
 - (scraper) `LobbyWatcher` — announces each tournament game's four accounts off the lobby's socket as it starts; its `lobby_table` event and `lobby_*` paths are optional. See [scraper docs](docs/scraper/index.md).
 - (scraper) `TableRegistry` — a fleet claims a chase by roster and a table by id; a table another worker holds is refused first, as `claimed_by_other`. See [scraper docs](docs/scraper/index.md).
+- (scraper) `Recorder(target=ChaseTarget)` chases a lobby roster: all four accounts or refused, a scan budgeted on distinct tables and a deadline, give-ups logged with a reason. See [scraper docs](docs/scraper/index.md).
 
 ### Changed
 
