@@ -1196,6 +1196,87 @@ class TestMixedBuffers:
             [], "several_games")
 
 
+class TestClaims:
+    """The registry at the gate: one worker per table, and the census."""
+
+    def test_a_table_another_worker_holds_is_refused_before_any_other_gate(
+        self, profile, builders
+    ):
+        from contrai_scraper import TableRegistry
+
+        registry = TableRegistry(claim_ttl_s=600)
+        registry.claim_table("t1", "bot02")
+        lines: list[str] = []
+        spectator = FakeSpectator()
+        run_recorder(spectator, [snapshot_frame(builders)], profile,
+                     health=HealthLog(write=lines.append),
+                     claims=registry.for_worker("bot01"))
+        refusal = _only(lines, "table_rejected")
+        assert ((refusal["reason"], refusal["holder"]), spectator.calls) == (
+            ("claimed_by_other", "bot02"), [("next_table",)])
+
+    def test_the_table_being_watched_is_held_and_given_up_after(
+        self, profile, session_frames, source_game
+    ):
+        from contrai_scraper import TableRegistry
+
+        registry = TableRegistry(claim_ttl_s=600)
+        held = []
+        spectator = FakeSpectator(
+            on_resume=lambda: held.append(registry.table_holder("t1")))
+        summary = run_recorder(spectator, session_frames(source_game), profile,
+                               claims=registry.for_worker("bot01"))
+        assert (summary.games_recorded, set(held), registry.table_holder("t1")) == (
+            1, {"bot01"}, None)
+
+    def test_a_long_game_keeps_its_claim_alive(
+        self, profile, session_frames, source_game
+    ):
+        # Longer than the claim lives unrefreshed: every frame refreshes it,
+        # so no second worker is let in mid-game.
+        from contrai_scraper import TableRegistry
+
+        now = [0.0]
+
+        def clock():
+            now[0] += 1.0
+            return now[0]
+
+        registry = TableRegistry(claim_ttl_s=20, monotonic=clock)
+        taken_over = []
+        spectator = FakeSpectator(
+            on_resume=lambda: taken_over.append(registry.claim_table("t1", "bot02")))
+        run_recorder(spectator, session_frames(source_game), profile,
+                     claims=registry.for_worker("bot01"))
+        assert (now[0] > 20, set(taken_over)) == (True, {False})
+
+    def test_every_table_judged_joins_the_census(self, profile, builders,
+                                                  session_frames, source_game):
+        from contrai_scraper import TableRegistry
+
+        registry = TableRegistry(claim_ttl_s=600)
+        script = [snapshot_frame(builders, table_id="t0", tournament=False,
+                                 account="a", frame_id="sa"),
+                  *session_frames(source_game)]
+        run_recorder(FakeSpectator(), script, profile,
+                     claims=registry.for_worker("bot01"))
+        census = registry.census()
+        assert ({table: sighting.is_tournament for table, sighting in census.items()},
+                census["t0"].round_index) == ({"t0": False, "t1": True}, 2)
+
+    def test_an_interrupted_worker_gives_its_table_up(
+        self, profile, session_frames, source_game
+    ):
+        from contrai_scraper import TableRegistry
+
+        registry = TableRegistry(claim_ttl_s=600)
+        spectator = FakeSpectator(on_resume=_interrupt)
+        with pytest.raises(KeyboardInterrupt):
+            run_recorder(spectator, session_frames(source_game), profile,
+                         claims=registry.for_worker("bot01"))
+        assert registry.table_holder("t1") is None
+
+
 def _only(lines, name):
     """The one health line carrying ``name``, parsed."""
 

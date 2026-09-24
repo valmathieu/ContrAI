@@ -69,6 +69,7 @@ from contrai_scraper.frames import (
 from contrai_scraper.health import Counters, HealthLog
 from contrai_scraper.lobby import LobbyRoster, LobbyWatcher, lobby_seats
 from contrai_scraper.lzstring import compress_to_base64, decompress_from_base64
+from contrai_scraper.registry import Claim, Sighting, TableRegistry, WorkerClaims
 from contrai_scraper.recorder import (
     SCOREBOARD_PANEL,
     Recorder,
@@ -172,6 +173,7 @@ __all__ = [
     "ActiveRange",
     "BrowserError",
     "BrowserSection",
+    "Claim",
     "Counters",
     "EgressGate",
     "EgressReading",
@@ -213,10 +215,12 @@ __all__ = [
     "Shift",
     "ShiftError",
     "ShiftSummary",
+    "Sighting",
     "SiteSection",
     "Snapshot",
     "Spectator",
     "StopReason",
+    "TableRegistry",
     "Translator",
     "WireError",
     "WireEvent",
@@ -224,6 +228,7 @@ __all__ = [
     "WireSection",
     "WireStream",
     "WireTokens",
+    "WorkerClaims",
     "bid_events",
     "collect_rounds",
     "compress_to_base64",

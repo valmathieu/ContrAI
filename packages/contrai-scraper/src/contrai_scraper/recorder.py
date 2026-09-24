@@ -123,7 +123,7 @@ class Recorder:
         "_monotonic", "_translator", "_iterator", "_stream", "_buffer",
         "_seen_snapshots", "_records", "_deadline", "_stopped", "_active",
         "_last_activity", "_seated", "_rejected", "_base", "_egress",
-        "_seat_deadline", "_stop_reason", "_left_table",
+        "_seat_deadline", "_stop_reason", "_left_table", "_claims",
     )
 
     def __init__(
@@ -137,6 +137,7 @@ class Recorder:
         raw: RawLogWriter | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         egress: Any = None,
+        claims: Any = None,
     ) -> None:
         """Wire the loop up.
 
@@ -157,6 +158,12 @@ class Recorder:
             egress: Anything with ``async check() -> EgressReading``, asked
                 before every hop and when a table goes quiet. ``None`` skips
                 both checks, which is what a replay or a test wants.
+            claims: One worker's view of a fleet's registry —
+                :class:`~contrai_scraper.registry.WorkerClaims` or anything
+                shaped like it. A table another worker holds is refused
+                before any other gate, the table being watched is held, and
+                every table judged is added to the census. ``None`` is a
+                recorder alone, which is what ``run`` is.
         """
 
         self._spectator = spectator
@@ -167,6 +174,7 @@ class Recorder:
         self._raw = raw
         self._monotonic = monotonic
         self._egress = egress
+        self._claims = claims
         self._translator = Translator(profile)
         self._iterator: Any = None
         self._stream: WireStream | None = None
@@ -220,6 +228,11 @@ class Recorder:
         except (asyncio.CancelledError, KeyboardInterrupt):
             self._write(EndReason.INTERRUPTED)
             raise
+        finally:
+            # Whatever ended the loop, the table it was on is no longer being
+            # watched, and another worker must be free to take it.
+            if self._claims is not None:
+                self._claims.release()
         self._health.heartbeat(closing=True)
         return SessionSummary(
             games_recorded=len(self._records),
@@ -448,6 +461,20 @@ class Recorder:
         """
 
         recorder = self._profile.recorder
+        if self._claims is not None:
+            self._claims.seen(
+                snapshot.table_id,
+                is_tournament=snapshot.is_tournament,
+                round_index=snapshot.round_index,
+            )
+            # First, because it is the only refusal that prevents corruption
+            # rather than waste: two workers at one table would append two
+            # streams to one record file.
+            if not self._claims.claim(snapshot.table_id):
+                return self._reject(
+                    snapshot, "claimed_by_other",
+                    holder=self._claims.holder(snapshot.table_id),
+                )
         if not snapshot.is_tournament:
             return self._reject(snapshot, "not_tournament")
         if len(snapshot.score_rows) >= recorder.hop_after_rows:
@@ -547,6 +574,9 @@ class Recorder:
             frame, event = pulled
             if self._active:
                 self._last_activity = self._monotonic()
+                if self._claims is not None:
+                    # A game runs for longer than any claim lives unrefreshed.
+                    self._claims.hold()
             if event is None:
                 continue
 
@@ -781,8 +811,10 @@ class Recorder:
         return frame, event
 
     def _reset_buffer(self) -> None:
-        """Start a fresh table: empty buffer, fresh de-duplication."""
+        """Start a fresh table: empty buffer, fresh de-duplication, no claim."""
 
+        if self._claims is not None:
+            self._claims.release()
         if self._stream is not None:
             self._base[0] += self._stream.received
             self._base[1] += self._stream.deduped

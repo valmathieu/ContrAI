@@ -27,6 +27,7 @@ the same reason.
 | `contrai_scraper.parse` | `translate`, `deal`, `snapshot`, `live`, `session` — wire events → a record. |
 | `contrai_scraper.browser` | `Spectator` — the only module that touches a page. Login, the walk, the hop, the two panels. `open_browser` / `open_session` — one Chromium, one isolated context per session. |
 | `contrai_scraper.recorder` | `Recorder` — the table loop: seat, gate, watch, write, hop. Imports no Playwright. |
+| `contrai_scraper.registry` | `TableRegistry` — a fleet's claims: a chase by roster, a table by id, and the census of tables seen. |
 | `contrai_scraper.schedule` | `Schedule` — daily ranges in a named timezone; answers "is it open now" and "when does that change". |
 | `contrai_scraper.egress` | `EgressGate` — exit address, country and route device, checked before the site is touched. |
 | `contrai_scraper.shift` | `Shift` — the outer loop: schedule gate, egress gate, one browser session and raw log per window, failure budgets. |
@@ -274,7 +275,8 @@ that is keeping up pays nothing; what arrived after that newest snapshot is hand
 rather than dropped, because it is the beginning of the table about to be judged.
 
 The states, in order: reset the buffer and the stream, wait for a join snapshot, refuse a table
-whose snapshot this profile cannot read, refuse one that is not a tournament or is already
+whose snapshot this profile cannot read, refuse one another worker of a fleet already holds
+(`claimed_by_other`, below), refuse one that is not a tournament or is already
 `hop_after_rows` rounds old, refuse one whose options
 disagree with `[rules.options]`, check that the panel's *us* is the south seat's side, then watch.
 A deal opening a new round triggers the boundary read; the table's own game-over flag closes the
@@ -305,6 +307,20 @@ and handed to the same batch parser `contrai-scrape parse` uses, so "a round is 
 twenty-eight plays" and "skip the round in progress at seating" exist once. It is reset at every
 seat: table discovery joins each candidate and emits one snapshot per visit, and keeping the first
 would seat four players from a table we left.
+
+In a fleet, several recorders share one `TableRegistry`, because none of them chooses its table and
+two are routinely seated at the same one. That is worse than waste: both would write
+`games/obs-<game_id>.jsonl`, and a record is opened for appending, so two streams would interleave
+into one file that is well formed and wrong. So the registry's refusal, `claimed_by_other` with the
+holder's label, is the first gate — the only one that prevents corruption rather than waste — and
+every other gate still runs after it. A recorder holds the table it watches, refreshing the claim on
+every frame, gives it up when it next seats or stops for any reason, and adds every table it judges
+to the fleet's census. Two keys do two jobs and are kept apart: the lobby names who is about to play
+but not where, so a chase is claimed by its **roster**; a seated table carries its own id, so
+exclusion is claimed by **table id**. Every worker runs in one event loop and no claim awaits
+anything between its check and its set, so a claim is atomic without a lock. Claims also expire
+after `claim_ttl_s` unrefreshed — not the mechanism, only the backstop for a worker that wedged
+holding one — and a late release never frees a claim someone else has since taken.
 
 `HealthLog` writes one JSON object per line to stderr — a transition per line plus a counter
 heartbeat — so a shift is `journalctl`-readable without a parser being written for it.

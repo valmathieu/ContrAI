@@ -15,6 +15,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) `HealthLog.worker(label)` — a fleet worker's lines carry `worker` and its own counters; `fleet_heartbeat` adds the workers up. `run`'s lines are unchanged. See [scraper docs](docs/scraper/index.md).
 - (scraper) `Spectator` walks the lobby, choosing each back control by the screen it sits on, and `check-profile` walks it too; its seven `[selectors]` keys are optional. See [scraper docs](docs/scraper/index.md).
 - (scraper) `LobbyWatcher` — announces each tournament game's four accounts off the lobby's socket as it starts; its `lobby_table` event and `lobby_*` paths are optional. See [scraper docs](docs/scraper/index.md).
+- (scraper) `TableRegistry` — a fleet claims a chase by roster and a table by id; a table another worker holds is refused first, as `claimed_by_other`. See [scraper docs](docs/scraper/index.md).
 
 ### Changed
 
