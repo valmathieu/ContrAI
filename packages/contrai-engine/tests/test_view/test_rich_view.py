@@ -2056,9 +2056,9 @@ class TestShowKnobEditor:
         assert result.rules.extended_trump_choices is True
 
     def test_b_walks_back_and_wraps_to_the_last_section(self):
-        # Stepping back from [general] lands on [scoring], whose 11th
+        # Stepping back from [general] lands on [scoring], whose 12th
         # knob is `rounding`.
-        view = _drive_landing(RichView(), ["b", "11", ""])
+        view = _drive_landing(RichView(), ["b", "12", ""])
 
         result = view._show_knob_editor(TableSetup())
 

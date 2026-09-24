@@ -7,7 +7,7 @@ each knob is wired to behaviour in a later step; this module only makes
 the ruleset a nameable, hashable value that a log line, a simulation
 result or a scraped game can carry.
 
-The three enums render as their TOML token (``str(Rounding.EXACT) ==
+The four enums render as their TOML token (``str(Rounding.EXACT) ==
 "exact"``), so the same value spells the member in a config file and in a
 message.
 """
@@ -52,6 +52,29 @@ class Rounding(Enum):
 
     def __str__(self) -> str:
         """Render as the TOML token, e.g. ``"nearest_10"``."""
+        return self.value
+
+
+class DisputeResolution(Enum):
+    """How a dispute settles — an exact tie the attack reached its value with (§7.5).
+
+    Consulted only when the attack must out-score the defense, on an
+    un-doubled numeric contract whose attack reached its value: a doubled
+    tie always fails, and a tie short of the value is an ordinary failure.
+
+    Members:
+        FAILED: The tie fails the contract (the §9 default).
+        SHARED: The tie is made, and each side marks its own points.
+        HELD: The tie is judged made, but the attack's mark is held and
+            paid to whoever wins the next contract.
+    """
+
+    FAILED = "failed"
+    SHARED = "shared"
+    HELD = "held"
+
+    def __str__(self) -> str:
+        """Render as the TOML token, e.g. ``"held"``."""
         return self.value
 
 
@@ -100,6 +123,8 @@ class RuleConfig:
         failed_slam_marks_announced_points: Failed Slam — announced
             component (§9.6).
         attack_must_outscore_defense: A tie fails the contract (§9.6).
+        dispute_resolution: How an exact tie settles once the attack must
+            out-score the defense (§7.5, §9.6).
         rounding: Rounding of marked points (§9.6).
         win_on_belote_points_alone: Belote points can cross the target
             (§9.6).
@@ -137,6 +162,7 @@ class RuleConfig:
     failed_slam_marks_made_points: bool = True
     failed_slam_marks_announced_points: bool = True
     attack_must_outscore_defense: bool = True
+    dispute_resolution: DisputeResolution = DisputeResolution.FAILED
     rounding: Rounding = Rounding.EXACT
     win_on_belote_points_alone: bool = True
 
@@ -175,13 +201,15 @@ class RuleConfig:
     def tournament(cls) -> RuleConfig:
         """The rule set the observed online tournament tables play.
 
-        Six knobs off the §9 defaults, each read off the captured
+        Seven knobs off the §9 defaults, each read off the captured
         tables rather than assumed: play runs clockwise, any failed
         contract marks the flat 160, the double multiplier applies to the
         whole mark rather than to the announced component alone, a Solo
         Slam declarer opens trick 1, an unannounced sweep keeps its
-        substitute when the contract was doubled, and a declarer's solo
-        sweep marks the team's 250 rather than the Solo Slam's 500.
+        substitute when the contract was doubled, a declarer's solo
+        sweep marks the team's 250 rather than the Solo Slam's 500, and a
+        genuine tie holds the attack's points for whoever wins the next
+        contract.
 
         The two sweep knobs were measured over the V5 corpus's 59
         sweeps. obs-579624dd round 7 (140♦ doubled) and obs-7bfd7f3f
@@ -191,6 +219,11 @@ class RuleConfig:
         All 49 unannounced sweeps are marked 250, the two personal ones
         (obs-2629f21c round 8, obs-e44783eb round 6) included, so the
         §7.2 personal-sweep premium is not played here.
+
+        The dispute rule was read off obs-f3c28d3b: round 3, an 81/81 on
+        an 80, marked the defense 81 and the declarer nothing, and round
+        4's winner collected 161 — 81 card points plus the 80 contract —
+        on top of its own marks.
 
         Returns:
             The tournament ruleset.
@@ -202,6 +235,7 @@ class RuleConfig:
             solo_slam_gives_the_lead=True,
             substitute_survives_doubling=True,
             personal_sweep_marks_solo_slam=False,
+            dispute_resolution=DisputeResolution.HELD,
         )
 
 

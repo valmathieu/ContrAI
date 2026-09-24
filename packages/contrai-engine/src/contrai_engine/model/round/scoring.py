@@ -11,11 +11,12 @@ thin ``Round.calculate_round_scores`` wrapper publishes the resulting
 here isolates the scoring rules from the lifecycle orchestrator.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Optional, Sequence, TYPE_CHECKING
 
 from contrai_core.bid import SlamLevel
+from contrai_core.rule_config import DisputeResolution
 from contrai_core.team_side import TeamSide
 
 from .components import Mark, contract_components, marked_total, round_mark
@@ -81,6 +82,10 @@ class RoundScore:
             when no trick was played.
         multiplier: 1, 2 or 4 — needed to reduce ``marks`` back to
             ``scores``.
+        held: What this round put into the dispute pot — the attack's
+            would-be mark on a tie the table holds (§7.5), else 0.
+        carried_over: The dispute pot paid out this round, per side, at
+            most one side non-zero. Empty or all zero on an ordinary round.
     """
 
     scores: Dict[TeamSide, int]
@@ -91,6 +96,13 @@ class RoundScore:
     card_points: Dict[TeamSide, int]
     last_trick_side: Optional[TeamSide]
     multiplier: int
+    held: int = 0
+    carried_over: Dict[TeamSide, int] = field(default_factory=dict)
+
+    @property
+    def is_held(self) -> bool:
+        """Whether this round put its attack's mark into the dispute pot."""
+        return self.held > 0
 
 
 def sweep_substitute(
@@ -204,6 +216,8 @@ def score_round(round_: 'Round') -> RoundScore:
             card_points={side: 0 for side in sides},
             last_trick_side=None,
             multiplier=1,
+            # An all-pass has no winner, so any open pot waits (§7.5).
+            carried_over={side: 0 for side in sides},
         )
 
     # The authoritative play history. ``card_points_by_side`` hands back a
@@ -235,6 +249,7 @@ def score_round(round_: 'Round') -> RoundScore:
     contract_value = contract.get_base_points()
 
     unannounced_slam: Optional[UnannouncedSlam] = None
+    held_dispute = False
 
     if slam_family:
         # Made-ness is a trick predicate — an announced Slam never
@@ -276,9 +291,22 @@ def score_round(round_: 'Round') -> RoundScore:
         contract_made = attack_realized >= contract_value
         if rules.attack_must_outscore_defense:
             # §7.5: reaching C is not enough, and a dispute (an exact
-            # tie) therefore fails the contract — no separate knob
-            # needed, the strict comparison is the whole rule.
+            # tie) therefore fails the contract — unless the table
+            # settles disputes otherwise, just below.
             contract_made = contract_made and attack_realized > defense_realized
+        # §7.5 dispute: an exact tie the attack reached its value with. The
+        # strict comparison above has already failed it; a table that
+        # settles disputes otherwise says so here. Un-doubled only: a
+        # double is settled in its own round, and the defense has priority.
+        disputed = (
+            rules.attack_must_outscore_defense
+            and multiplier == 1
+            and attack_realized >= contract_value
+            and attack_realized == defense_realized
+        )
+        if disputed and rules.dispute_resolution is not DisputeResolution.FAILED:
+            contract_made = True
+            held_dispute = rules.dispute_resolution is DisputeResolution.HELD
         # A sweep can never fail — every trick is already taken, so it
         # out-scores by construction and short-circuits both tests.
         contract_made = unannounced_slam is not None or contract_made
@@ -326,6 +354,28 @@ def score_round(round_: 'Round') -> RoundScore:
     for side in defender_sides:
         marks[side] = defense_mark
 
+    # A held dispute is judged made, then the attack's mark goes into the
+    # pot instead of onto the sheet. What it holds is exactly what it
+    # would have written — made plus announced, rounded as written — and
+    # the belote stays with its holder, as it does everywhere else.
+    held = 0
+    if held_dispute:
+        held = round_mark(
+            marked_total(attack_mark, multiplier, rules), rules.rounding
+        )
+        marks[contract_side] = Mark(0, 0)
+
+    # The pot a held tie left behind is paid, flat, to whoever wins this
+    # contract: the declaring side when it is made, the defense when it
+    # fails. A double does not multiply it — the pot was settled at its
+    # own round's stakes. A round that is itself held has no winner, so
+    # the pot rides on and the Game adds this round's own held points.
+    carried_over = {side: 0 for side in sides}
+    if round_.dispute_pot and not held:
+        # ``defender_sides`` holds exactly one side at a four-player table.
+        winner = contract_side if contract_made else defender_sides[0]
+        carried_over[winner] = round_.dispute_pot
+
     # §7.4 last, on the finished mark: the flat components and the belote
     # are already multiples of ten, so only a shared pile ever moves, and
     # rounding before or after adding belote is the same number.
@@ -346,4 +396,6 @@ def score_round(round_: 'Round') -> RoundScore:
         card_points=card_points,
         last_trick_side=last_trick_side,
         multiplier=multiplier,
+        held=held,
+        carried_over=carried_over,
     )

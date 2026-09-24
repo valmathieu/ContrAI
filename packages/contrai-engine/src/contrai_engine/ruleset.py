@@ -57,6 +57,7 @@ SECTIONS: dict[str, tuple[str, ...]] = {
                 "personal_sweep_marks_solo_slam",
                 "failed_slam_marks_made_points",
                 "failed_slam_marks_announced_points", "attack_must_outscore_defense",
+                "dispute_resolution",
                 "rounding", "win_on_belote_points_alone"),
 }
 

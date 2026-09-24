@@ -27,7 +27,12 @@ from contrai_core.card import Card
 from contrai_core.contract import Contract
 from contrai_core.deck import Deck
 from contrai_core.play import Play, PlayState
-from contrai_core.rule_config import PRESETS, Rounding, RuleConfig
+from contrai_core.rule_config import (
+    DisputeResolution,
+    PRESETS,
+    Rounding,
+    RuleConfig,
+)
 from contrai_core.rules import rules_for
 from contrai_core.team_side import TeamSide
 from contrai_core.types import Rank, Suit
@@ -709,6 +714,8 @@ def _split_round(
     belote=None,
     rules=None,
     declarer="N",
+    doubled=False,
+    dispute_pot=0,
 ):
     """Build a numeric round whose two piles are exactly ``attack``/``defense``.
 
@@ -727,6 +734,8 @@ def _split_round(
         rules: optional table ruleset, handed to the round (and through
             it to the play state).
         declarer: seat letter that bids the contract.
+        doubled: whether the defense doubles the contract.
+        dispute_pot: the open pot the round is handed.
 
     Returns:
         Round with ``contract``, ``play_state`` and ``belote_pairs``
@@ -763,9 +772,15 @@ def _split_round(
             if count
         }
 
+    contract = _contract(players_dict[declarer], value, _SPLIT_TRUMP)
+    if doubled:
+        contract = Contract(
+            ContractBid(players_dict[declarer], value, _SPLIT_TRUMP),
+            double_player=players_dict[defense_seat],
+        )
     round_ = _numeric_round(
         players_dict,
-        contract=_contract(players_dict[declarer], value, _SPLIT_TRUMP),
+        contract=contract,
         team_cards={
             attack_side: [(attack_seat, card) for card in attack_cards],
             defense_side: [(defense_seat, card) for card in defense_cards],
@@ -774,6 +789,7 @@ def _split_round(
         belote_pairs=belote_pairs,
         rules=rules,
     )
+    round_.dispute_pot = dispute_pot
     # Self-check: the synthesised deal really does split 162 the way the
     # test asked, so a wrong expectation can never come from the fixture.
     piles = round_.play_state.card_points_by_side
@@ -897,6 +913,183 @@ class TestOutScoringTheDefense:
         # scorer short-circuits on the tag rather than on the points.
         round_ = _sweep_round(players, 180)
         assert score_round(round_).contract_made is True
+
+
+class TestDisputeResolution:
+    """§7.5 / §9.6 — how a genuine tie settles."""
+
+    @staticmethod
+    def _rules(value, **knobs):
+        return RuleConfig(dispute_resolution=value, **knobs)
+
+    def test_failed_by_default_the_tie_fails(self, players):
+        score = score_round(_split_round(players, 80, attack=81, defense=81))
+        assert score.contract_made is False
+        assert score.held == 0
+
+    def test_shared_each_side_marks_its_own(self, players):
+        rules = self._rules(DisputeResolution.SHARED)
+        score = score_round(
+            _split_round(players, 80, attack=81, defense=81, rules=rules)
+        )
+        assert score.contract_made is True
+        assert score.scores == {TeamSide.NS: 161, TeamSide.EW: 81}
+        assert score.held == 0
+
+    def test_held_the_attack_is_held_and_the_defense_marks_its_own(
+        self, players
+    ):
+        rules = self._rules(DisputeResolution.HELD)
+        score = score_round(
+            _split_round(players, 80, attack=81, defense=81, rules=rules)
+        )
+        assert score.contract_made is True
+        assert score.is_held is True
+        assert score.held == 161                       # 81 + 80
+        assert score.marks[TeamSide.NS] == Mark(0, 0)
+        assert score.scores == {TeamSide.NS: 0, TeamSide.EW: 81}
+
+    def test_a_tie_short_of_the_contract_is_a_plain_failure(self, players):
+        # 81 / 81 on a 90: the attack never reached its value, so there is
+        # no dispute to settle — three of the corpus's four ties.
+        rules = self._rules(DisputeResolution.HELD)
+        score = score_round(
+            _split_round(players, 90, attack=81, defense=81, rules=rules)
+        )
+        assert score.contract_made is False
+        assert score.held == 0
+
+    @pytest.mark.parametrize(
+        "value", [DisputeResolution.SHARED, DisputeResolution.HELD]
+    )
+    def test_a_doubled_tie_fails_whatever_the_option(self, players, value):
+        # A double is settled in its own round; the defense has priority.
+        score = score_round(
+            _split_round(players, 80, attack=81, defense=81, doubled=True,
+                         rules=self._rules(value))
+        )
+        assert score.contract_made is False
+        assert score.held == 0
+
+    def test_inert_when_the_attack_need_not_out_score(self, players):
+        rules = self._rules(
+            DisputeResolution.HELD, attack_must_outscore_defense=False
+        )
+        score = score_round(
+            _split_round(players, 80, attack=81, defense=81, rules=rules)
+        )
+        assert score.contract_made is True
+        assert score.held == 0
+        assert score.scores[TeamSide.NS] == 161
+
+    def test_a_held_91_91_leaves_the_belote_with_its_holder(self, players):
+        # 71 + 20 against 91: the attack holds 71 + 80 and still marks 20.
+        rules = self._rules(DisputeResolution.HELD)
+        score = score_round(
+            _split_round(players, 80, attack=71, defense=91,
+                         belote={TeamSide.NS: 1}, rules=rules)
+        )
+        assert score.held == 151
+        assert score.scores == {TeamSide.NS: 20, TeamSide.EW: 91}
+
+    def test_the_held_amount_is_rounded_as_it_would_be_written(self, players):
+        rules = self._rules(
+            DisputeResolution.HELD, rounding=Rounding.NEAREST_10
+        )
+        score = score_round(
+            _split_round(players, 80, attack=81, defense=81, rules=rules)
+        )
+        assert score.held == 160                       # 161 -> 160
+        assert score.scores[TeamSide.EW] == 80         # 81 -> 80
+
+    def test_a_slam_is_never_a_dispute(self, players):
+        rules = self._rules(DisputeResolution.HELD)
+        contract = _contract(players["N"], SlamLevel.SLAM, Suit.SPADES)
+        round_ = _slam_round(
+            players, contract=contract, trick_winners=["N"] * 8, rules=rules
+        )
+        assert score_round(round_).held == 0
+
+    def test_the_observed_held_round(self, players):
+        # obs-f3c28d3b round 3: W declares 80, 81 / 81, no belote. The site
+        # marked NS 81 / 0 and EW 0 / 0, and 161 went into the pot.
+        rules = PRESETS["tournament"]
+        score = score_round(
+            _split_round(players, 80, attack=81, defense=81, declarer="W",
+                         rules=rules)
+        )
+        assert score.held == 161
+        assert marked_components(
+            score.marks[TeamSide.NS], score.multiplier, rules
+        ) == (81, 0)
+        assert marked_components(
+            score.marks[TeamSide.EW], score.multiplier, rules
+        ) == (0, 0)
+
+
+class TestDisputePot:
+    """§7.5 — a held tie's points go to whoever wins the next contract."""
+
+    def test_a_round_is_handed_the_open_pot(self, players):
+        order = [players[s] for s in _ORDER]
+        assert Round(order, players["N"], None, 1).dispute_pot == 0
+        assert Round(
+            order, players["N"], None, 1, dispute_pot=161
+        ).dispute_pot == 161
+
+    def test_no_pot_pays_nothing(self, players):
+        score = score_round(_split_round(players, 90, attack=148, defense=14))
+        assert score.carried_over == {TeamSide.NS: 0, TeamSide.EW: 0}
+
+    def test_a_made_contract_collects_it(self, players):
+        score = score_round(
+            _split_round(players, 90, attack=148, defense=14, dispute_pot=161)
+        )
+        assert score.carried_over == {TeamSide.NS: 161, TeamSide.EW: 0}
+        # The payout sits beside the round's own marks, not inside them.
+        assert score.scores[TeamSide.NS] == 238        # 148 + 90
+
+    def test_a_failed_contract_pays_it_to_the_defense(self, players):
+        score = score_round(
+            _split_round(players, 90, attack=70, defense=92, dispute_pot=161)
+        )
+        assert score.contract_made is False
+        assert score.carried_over == {TeamSide.NS: 0, TeamSide.EW: 161}
+
+    def test_a_double_does_not_multiply_it(self, players):
+        score = score_round(
+            _split_round(players, 90, attack=148, defense=14, doubled=True,
+                         dispute_pot=161)
+        )
+        assert score.carried_over[TeamSide.NS] == 161  # flat, not 322
+
+    def test_a_held_round_passes_it_on(self, players):
+        rules = RuleConfig(dispute_resolution=DisputeResolution.HELD)
+        score = score_round(
+            _split_round(players, 80, attack=81, defense=81, rules=rules,
+                         dispute_pot=161)
+        )
+        assert sum(score.carried_over.values()) == 0
+        assert score.held == 161
+
+    def test_an_all_pass_pays_nothing(self, players):
+        round_ = _all_pass_round(players)
+        round_.dispute_pot = 161
+        score = score_round(round_)
+        assert sum(score.carried_over.values()) == 0
+        assert score.held == 0
+
+    def test_the_observed_payout_round(self, players):
+        # obs-f3c28d3b round 4: E makes 90, 148 / 14, with the 161 open.
+        rules = PRESETS["tournament"]
+        score = score_round(
+            _split_round(players, 90, attack=148, defense=14, declarer="E",
+                         rules=rules, dispute_pot=161)
+        )
+        assert score.carried_over == {TeamSide.NS: 0, TeamSide.EW: 161}
+        assert marked_components(
+            score.marks[TeamSide.EW], score.multiplier, rules
+        ) == (148, 90)
 
 
 class TestBeloteTowardTheContract:

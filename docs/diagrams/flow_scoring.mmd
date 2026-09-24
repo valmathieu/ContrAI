@@ -14,12 +14,15 @@ flowchart TD
     Judge -- "Slam / Solo Slam" --> SlamMade["made = contract team won all 8<br/>(Solo Slam: bidder personally all 8)<br/>— a trick predicate, points never consulted"]
     Judge -- "numeric" --> Sweep{"contract team won all 8?<br/>(unannounced sweep — doubled or not)"}
     Sweep -- "yes" --> SweepTag["tag GRAND_SLAM (bidder all 8), else SLAM<br/>made = true — a sweep cannot fail"]
-    Sweep -- "no" --> NumMade["P_att ≥ C <b>AND</b> P_att &gt; P_def<br/>(the out-score test, iff <i>attack_must_outscore_defense</i>;<br/>a tie is the §7.5 dispute and fails)<br/>P = pile + own belote, the belote counted<br/>iff <i>belote_counts_toward_contract</i>"]
+    Sweep -- "no" --> NumMade["P_att ≥ C <b>AND</b> P_att &gt; P_def<br/>(the out-score test, iff <i>attack_must_outscore_defense</i>;<br/>a tie reaching C is the §7.5 dispute)<br/>P = pile + own belote, the belote counted<br/>iff <i>belote_counts_toward_contract</i>"]
 
     %% ---------- Belote transfer on a failure ----------
     SlamMade --> Transfer
     SweepTag --> Transfer
-    NumMade --> Transfer
+    NumMade --> Dispute{"dispute?<br/>(tie, P_att ≥ C, M = 1,<br/>out-score test on)"}
+    Dispute -- "no" --> Transfer
+    Dispute -- "yes" --> Settle["<i>dispute_resolution</i>:<br/>failed → stays failed<br/>shared → made<br/>held → made; the attack's mark → <b>held</b>"]
+    Settle --> Transfer
     Transfer["failed <b>and</b> <i>belote_lost_when_contract_fails</i><br/>→ the declarer's belote moves to the defense<br/>(one-directional: a defender's is never taken)"]
 
     %% ---------- The substitute ----------
@@ -37,7 +40,8 @@ flowchart TD
 
     %% ---------- Shared belote footer ----------
     Belote["belote +20 per pair preserved on every shape<br/>→ each pair's holder team (even the round's loser)"]
-    Belote --> End
+    Belote --> Pot["dispute pot handed in (round.dispute_pot):<br/>paid flat to the contract's winner → <b>carried_over</b><br/>— a held round passes it on"]
+    Pot --> End
 
     %% ---------- Engine-orange palette ----------
     classDef entry fill:#FFD9B3,stroke:#B26A28,stroke-width:2px,color:#5C3A14;
@@ -47,7 +51,7 @@ flowchart TD
     classDef belote fill:#FFF8E1,stroke:#F9A825,stroke-width:2px,color:#5F4B00;
 
     class Start,End entry;
-    class HasContract,Judge,Sweep decision;
-    class Zero,Points,SlamMade,SweepTag,NumMade,Transfer,Subst,Reduce step;
+    class HasContract,Judge,Sweep,Dispute decision;
+    class Zero,Points,SlamMade,SweepTag,NumMade,Transfer,Subst,Reduce,Settle,Pot step;
     class MadeComp,AnnComp component;
     class Belote belote;

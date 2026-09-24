@@ -70,8 +70,12 @@ class FakeRound:
     #: The belote the scripted round credits each side, which ``Game``
     #: lifts off ``round_score`` to feed its win gate.
     play_belote: dict[TeamSide, int] = {}
+    #: What the scripted round puts into / pays out of the dispute pot.
+    play_held: int = 0
+    play_carried: dict[TeamSide, int] = {}
 
-    def __init__(self, players_order, dealer, deck, round_number, rules=None):
+    def __init__(self, players_order, dealer, deck, round_number, rules=None,
+                 dispute_pot=0):
         self.players_order = players_order
         self.dealer = dealer
         self.deck = deck
@@ -79,6 +83,7 @@ class FakeRound:
         # The real Round takes the game's RuleConfig; record it so the
         # threading test can assert the Game handed its own down.
         self.rules = rules
+        self.dispute_pot = dispute_pot
         self.calls: list[str] = []
         # Mirrors the attributes the real Round exposes once bidding/scoring
         # runs, so debug_state.round_result_lines (read by Game's debug
@@ -119,6 +124,8 @@ class FakeRound:
             card_points={side: 0 for side in TeamSide},
             last_trick_side=None,
             multiplier=1,
+            held=self.play_held,
+            carried_over=dict(self.play_carried),
         )
         self.round_scores = dict(self.play_scores)
         return dict(self.play_scores)
@@ -1324,3 +1331,91 @@ class TestClockwiseRoundPlaysOut:
                 assert seats[(index + 1) % 4] is seat.next_in(
                     TurnDirection.CLOCKWISE
                 )
+
+
+class TestDisputePot:
+    """§7.5 — the Game keeps a held tie's points until a contract is won."""
+
+    @staticmethod
+    def _script(monkeypatch, *, contract=True, scores=None, held=0,
+                carried=None, belote=None):
+        monkeypatch.setattr(game_module, "Round", FakeRound)
+        monkeypatch.setattr(
+            FakeRound, "bidding_contract", object() if contract else None
+        )
+        monkeypatch.setattr(
+            FakeRound, "play_scores",
+            scores or {TeamSide.NS: 0, TeamSide.EW: 0},
+        )
+        monkeypatch.setattr(
+            FakeRound, "failed_scores", {TeamSide.NS: 0, TeamSide.EW: 0}
+        )
+        monkeypatch.setattr(FakeRound, "play_belote", belote or {})
+        monkeypatch.setattr(FakeRound, "play_held", held)
+        monkeypatch.setattr(FakeRound, "play_carried", carried or {})
+
+    def test_a_fresh_game_holds_no_pot(self, game):
+        assert game.dispute_pot == 0
+
+    def test_each_round_is_handed_the_open_pot(self, game, monkeypatch):
+        self._script(monkeypatch, contract=False)
+        game.dispute_pot = 161
+        game.manage_round()
+        assert game.current_round.dispute_pot == 161
+
+    def test_a_held_round_opens_the_pot(self, game, monkeypatch):
+        self._script(monkeypatch, scores={TeamSide.NS: 81, TeamSide.EW: 0},
+                     held=161)
+        game.manage_round()
+        assert game.dispute_pot == 161
+        assert game.scores == {TeamSide.NS: 81, TeamSide.EW: 0}
+
+    def test_a_payout_reaches_the_totals_and_empties_the_pot(
+        self, game, monkeypatch
+    ):
+        self._script(monkeypatch, scores={TeamSide.NS: 14, TeamSide.EW: 238},
+                     carried={TeamSide.EW: 161})
+        game.dispute_pot = 161
+        game.manage_round()
+        assert game.scores == {TeamSide.NS: 14, TeamSide.EW: 399}
+        assert game.dispute_pot == 0
+
+    def test_a_second_held_round_adds_to_the_pot(self, game, monkeypatch):
+        self._script(monkeypatch, held=161)
+        game.dispute_pot = 161
+        game.manage_round()
+        assert game.dispute_pot == 322
+
+    def test_an_all_pass_leaves_the_pot_waiting(self, game, monkeypatch):
+        self._script(monkeypatch, contract=False)
+        game.dispute_pot = 161
+        game.manage_round()
+        assert game.dispute_pot == 161
+
+    def test_the_observed_ledger(self, game, monkeypatch):
+        # obs-f3c28d3b: 48 / 496 after round 2; round 3 held 161; round 4,
+        # E makes 90 for 238, and EW's total reads 895 = 496 + 238 + 161.
+        game.scores = {TeamSide.NS: 48, TeamSide.EW: 496}
+        self._script(monkeypatch, scores={TeamSide.NS: 81, TeamSide.EW: 0},
+                     held=161)
+        game.manage_round()
+        self._script(monkeypatch, scores={TeamSide.NS: 14, TeamSide.EW: 238},
+                     carried={TeamSide.EW: 161})
+        game.manage_round()
+        assert game.scores == {TeamSide.NS: 143, TeamSide.EW: 895}
+        assert game.dispute_pot == 0
+
+    def test_a_payout_confirms_belote(self, game, monkeypatch):
+        # The pot is card points and a contract value: points from play.
+        game.unconfirmed_belote = {TeamSide.NS: 0, TeamSide.EW: 20}
+        self._script(monkeypatch, carried={TeamSide.EW: 161})
+        game.dispute_pot = 161
+        game.manage_round()
+        assert game.unconfirmed_belote[TeamSide.EW] == 0
+
+    def test_an_open_pot_is_not_score(self, game):
+        # A pot is paid only by a won contract: it never counts toward the
+        # target, so one still open when the game ends simply lapses.
+        game.scores = {TeamSide.NS: 0, TeamSide.EW: 1900}
+        game.dispute_pot = 161
+        assert game.check_game_over().game_over is False

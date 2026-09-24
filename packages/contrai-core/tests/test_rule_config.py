@@ -8,6 +8,7 @@ from contrai_core import (
     PRESETS,
     TARGET_SCORES,
     AllTrumpBelote,
+    DisputeResolution,
     InvalidRuleConfigError,
     Rounding,
     RuleConfig,
@@ -56,14 +57,16 @@ class TestDefaults:
         # same section pays — both catalogue defaults.
         assert cfg.substitute_survives_doubling is False
         assert cfg.personal_sweep_marks_solo_slam is True
+        # §7.5: a dispute fails the contract unless the table says otherwise.
+        assert cfg.dispute_resolution is DisputeResolution.FAILED
         assert (cfg.failed_slam_marks_made_points,
                 cfg.failed_slam_marks_announced_points) == (True, True)
         assert cfg.attack_must_outscore_defense is True
         assert cfg.rounding is Rounding.EXACT
         assert cfg.win_on_belote_points_alone is True
 
-    def test_has_exactly_24_fields(self):
-        assert len(dataclasses.fields(RuleConfig)) == 24
+    def test_has_exactly_25_fields(self):
+        assert len(dataclasses.fields(RuleConfig)) == 25
 
     def test_target_scores_constant(self):
         assert TARGET_SCORES == (500, 1000, 1500, 2000, 3000, 4000, 5000)
@@ -121,7 +124,7 @@ class TestPresets:
         assert set(PRESETS) == {"classic", "tournament"}
         assert PRESETS["classic"] == RuleConfig()
 
-    def test_tournament_moves_exactly_six_knobs_off_classic(self):
+    def test_tournament_moves_exactly_seven_knobs_off_classic(self):
         tournament = RuleConfig.tournament()
         assert PRESETS["tournament"] == tournament
         moved = {
@@ -136,6 +139,7 @@ class TestPresets:
             "solo_slam_gives_the_lead",
             "substitute_survives_doubling",
             "personal_sweep_marks_solo_slam",
+            "dispute_resolution",
         }
         assert tournament.turn_direction is TurnDirection.CLOCKWISE
         assert tournament.any_failure_marks_160 is True
@@ -146,3 +150,14 @@ class TestPresets:
         # declarer's personal sweep rather than the Solo Slam's 500.
         assert tournament.substitute_survives_doubling is True
         assert tournament.personal_sweep_marks_solo_slam is False
+        # obs-f3c28d3b round 3: an 81/81 on an 80 marked the defense 81,
+        # the declarer nothing, and paid its 161 into round 4's winner.
+        assert tournament.dispute_resolution is DisputeResolution.HELD
+
+
+class TestDisputeResolution:
+    def test_renders_its_toml_token(self):
+        assert str(DisputeResolution.HELD) == "held"
+
+    def test_has_exactly_the_three_catalogue_values(self):
+        assert [m.value for m in DisputeResolution] == ["failed", "shared", "held"]

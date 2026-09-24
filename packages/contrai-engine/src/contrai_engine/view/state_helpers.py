@@ -4,7 +4,8 @@ Pure functions that read a slice of round/trick state and answer one
 question the screens need: who is currently winning the trick, which
 trick of the eight is on the table, what constraint applies to the
 human's playable cards, how to order the hand for display, which seats
-have announced belote, and the env-tunable AI pacing delay. No I/O
+have announced belote, how much dispute pot a round leaves open, and
+the env-tunable AI pacing delay. No I/O
 beyond ``os.environ`` (read-only, for pacing).
 """
 
@@ -176,3 +177,24 @@ def _resolve_delay(env_var: str, default: float) -> float:
     except (TypeError, ValueError):
         return default
     return max(0.0, value)
+
+
+def _dispute_pot_after(round_) -> int:
+    """The dispute pot left open once ``round_`` is scored (§7.5).
+
+    What the round was handed, plus what a held tie put in, minus what a
+    won contract paid out — the arithmetic ``Game.manage_round`` folds,
+    read off the round alone so the recap needs no game handle. An
+    unscored round leaves the pot it was handed.
+
+    Args:
+        round_: The just-finished round.
+
+    Returns:
+        The points still waiting for the next contract to be won.
+    """
+    pot = getattr(round_, "dispute_pot", 0)
+    score = getattr(round_, "round_score", None)
+    if score is None:
+        return pot
+    return pot + score.held - sum(score.carried_over.values())

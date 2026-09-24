@@ -52,6 +52,7 @@ CLASSIC_TOML = (
     "failed_slam_marks_made_points      = true\n"
     "failed_slam_marks_announced_points = true\n"
     "attack_must_outscore_defense       = true\n"
+    'dispute_resolution                 = "failed"\n'
     'rounding                           = "exact"\n'
     "win_on_belote_points_alone         = true\n"
 )
@@ -506,3 +507,18 @@ class TestBackwardCompatibleFacade:
 
     def test_resolve_rules_still_returns_a_rule_config(self):
         assert resolve_rules(preset="classic", rules_path=None) == RuleConfig()
+
+
+class TestDisputeResolutionKnob:
+    def test_the_scoring_section_reads_the_token(self):
+        from contrai_core import DisputeResolution
+        from contrai_engine.ruleset import parse_ruleset
+
+        rules = parse_ruleset('[scoring]\ndispute_resolution = "held"\n')
+        assert rules.dispute_resolution is DisputeResolution.HELD
+
+    def test_an_unknown_token_is_refused(self):
+        from contrai_engine.ruleset import RulesetError, parse_ruleset
+
+        with pytest.raises(RulesetError):
+            parse_ruleset('[scoring]\ndispute_resolution = "split"\n')
