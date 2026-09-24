@@ -228,6 +228,7 @@ def parse_session(
     ts = stamp
 
     rules = PRESETS[profile.rules.preset]
+    joined = _observed_from(opening)
     record: list[GameEvent] = [
         Header(
             format=FORMAT,
@@ -239,7 +240,7 @@ def parse_session(
         GameStarted(
             ruleset=Ruleset(preset=profile.rules.preset, config=rules),
             seats=_seats(opening, seat_of_player),
-            observed_from=_observed_from(opening),
+            observed_from=joined,
             ts=ts,
         ),
     ]
@@ -249,7 +250,8 @@ def parse_session(
     for number in sorted(rounds):
         round_ = rounds[number]
         produced = _round(
-            round_, translator, seat_of_player, rules, scores.get(number), ts, notes
+            round_, translator, seat_of_player, rules, scores.get(number),
+            _totals_before(number, scores, joined), ts, notes,
         )
         if produced is None:
             skipped.append(number)
@@ -365,6 +367,7 @@ def _round(
     seat_of_player: Mapping[str, Position],
     rules: RuleConfig,
     score: tuple[ScoreRow, Mapping[TeamSide, int] | None] | None,
+    before: Mapping[TeamSide, int] | None,
     ts: str,
     notes: list[str],
 ) -> list[GameEvent] | None:
@@ -432,7 +435,9 @@ def _round(
         *last,
     ]
     events += _belotes(number, hands, contract.suit, score, ts)
-    scored = _round_scored(number, contract, bids, score, [*plays, *last], ts)
+    scored = _round_scored(
+        number, contract, bids, score, [*plays, *last], ts, before
+    )
     if scored is not None:
         events.append(scored)
     return events
@@ -535,6 +540,65 @@ def _belotes(
     return held
 
 
+def _totals_before(
+    number: int,
+    scores: Mapping[int, tuple[ScoreRow, Mapping[TeamSide, int] | None]],
+    joined: ObservedFrom | None,
+) -> Mapping[TeamSide, int] | None:
+    """The running totals standing just before round ``number`` was played.
+
+    The join snapshot states them for the round being watched when the
+    session began; otherwise they are the totals after the round before,
+    when a snapshot read them. Anything else is unknown, and no carry can
+    be inferred across it.
+    """
+
+    if joined is not None and joined.round == number:
+        return joined.totals
+    previous = scores.get(number - 1)
+    return None if previous is None else previous[1]
+
+
+def _carried_over(
+    row: ScoreRow,
+    totals: Mapping[TeamSide, int] | None,
+    before: Mapping[TeamSide, int] | None,
+) -> dict[TeamSide, int] | None:
+    """What each side was paid beyond its own marks, or ``None`` if unknowable.
+
+    The observed tables pay a held dispute's points (§7.5) into the next
+    contract's winner's *total* and state them nowhere else — not in the
+    row's marks. So the carry is what the totals moved by, less the row's
+    made, announced and credited belote points. Measured over the V5
+    corpus: across 491 inferable rounds it is non-zero exactly once, the
+    161 of obs-f3c28d3b round 4. A negative residual cannot be a payout,
+    so it is reported as unknown rather than written down.
+    """
+
+    if totals is None or before is None:
+        return None
+    carry = {
+        side: totals[side] - before[side]
+        - sum(row.marked[side]) - row.marked_belote[side]
+        for side in TeamSide
+    }
+    if any(points < 0 for points in carry.values()):
+        return None
+    return carry
+
+
+def _held(row: ScoreRow, contract: ContractBid) -> bool:
+    """Whether the row is a held dispute (§7.5).
+
+    The site flags it made, yet marks the declaring side nothing: its
+    points went into a pot for the next contract. A made contract on these
+    tables always marks at least its value as announced points, so a made
+    row with the declarer at 0 / 0 can mean nothing else.
+    """
+
+    return row.made and tuple(row.marked[contract.player.team_side]) == (0, 0)
+
+
 def _round_scored(
     number: int,
     contract: ContractBid,
@@ -542,15 +606,24 @@ def _round_scored(
     score: tuple[ScoreRow, Mapping[TeamSide, int] | None] | None,
     plays: Sequence[CardPlayed],
     ts: str,
+    before: Mapping[TeamSide, int] | None,
 ) -> RoundScored | None:
-    """One round's score, or ``None`` when the wire never scored it."""
+    """One round's score, or ``None`` when the wire never scored it.
+
+    ``before`` is the running total just before the round, from which the
+    carry is inferred.
+    """
 
     if score is None:
         return None
     row, totals = score
     return RoundScored(
         round=number,
-        outcome=RoundOutcome.MADE if row.made else RoundOutcome.FAILED,
+        outcome=(
+            RoundOutcome.HELD if _held(row, contract)
+            else RoundOutcome.MADE if row.made
+            else RoundOutcome.FAILED
+        ),
         declarer=contract.player,
         contract=ContractTerms(
             value=row.contract.value if row.contract.value is not None
@@ -560,11 +633,11 @@ def _round_scored(
         ),
         taken=dict(row.taken),
         belote=dict(row.belote),
-        # Neither is on the wire. Zero is not a guess here: the observed
-        # tables play no announcements, and a carried-over mark would appear
-        # in the row's own marked figures.
+        # Not on the wire: the observed tables play no announcements.
         announcements=dict.fromkeys(TeamSide, 0),
-        carried_over=dict.fromkeys(TeamSide, 0),
+        # A held dispute's pot is paid into the winner's running total and
+        # stated nowhere in the row, so it is inferred from the totals.
+        carried_over=_carried_over(row, totals, before),
         marked={
             side: SideMark(made=made, announced=announced)
             for side, (made, announced) in row.marked.items()

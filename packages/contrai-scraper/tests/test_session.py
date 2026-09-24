@@ -22,7 +22,10 @@ from contrai_data import (
     GameEnded,
     GameStarted,
     Header,
+    JoinPhase,
+    ObservedFrom,
     RoundDealt,
+    RoundOutcome,
     RoundScored,
     SlamOutcome,
     project,
@@ -37,7 +40,15 @@ from contrai_scraper import (
     parse_session,
     split_visits,
 )
-from contrai_scraper.parse.session import _slam, _swept_by
+from contrai_scraper.parse.session import (
+    _carried_over,
+    _held,
+    _round_scored,
+    _slam,
+    _swept_by,
+    _totals_before,
+)
+from contrai_scraper.parse.snapshot import RowContract, ScoreRow
 
 
 def _comparable(events):
@@ -577,3 +588,119 @@ class TestTargetReached:
         )
         ended = _parse(profile, synthesize(game)).events[-1]
         assert ended.reason is EndReason.TARGET_REACHED
+
+
+def _row(*, made=True, marked=None, marked_belote=None):
+    """A score row for W's 80 in diamonds, 81 / 81 unless told otherwise."""
+
+    return ScoreRow(
+        made=made,
+        contract=RowContract(value=80, suit=Suit.DIAMONDS, multiplier=1),
+        taken={TeamSide.NS: 81, TeamSide.EW: 81},
+        belote={side: 0 for side in TeamSide},
+        marked=marked or {TeamSide.NS: (81, 0), TeamSide.EW: (0, 0)},
+        marked_belote=marked_belote or {side: 0 for side in TeamSide},
+    )
+
+
+_W80 = ContractBid(player=Position.WEST, value=80, suit=Suit.DIAMONDS)
+
+
+class TestHeldRows:
+    def test_made_with_the_declarer_marked_nothing_is_held(self):
+        # obs-f3c28d3b round 3, as the site states it.
+        assert _held(_row(), _W80) is True
+
+    def test_an_ordinary_made_row_is_not(self):
+        row = _row(marked={TeamSide.NS: (14, 0), TeamSide.EW: (148, 80)})
+        assert _held(row, _W80) is False
+
+    def test_a_failed_row_is_not(self):
+        row = _row(made=False,
+                   marked={TeamSide.NS: (160, 160), TeamSide.EW: (0, 0)})
+        assert _held(row, _W80) is False
+
+
+class TestCarriedOver:
+    _R4 = dict(marked={TeamSide.NS: (14, 0), TeamSide.EW: (148, 90)})
+
+    def test_the_observed_payout(self):
+        # obs-f3c28d3b round 4: 129 / 496 before, 143 / 895 after.
+        carry = _carried_over(
+            _row(**self._R4),
+            {TeamSide.NS: 143, TeamSide.EW: 895},
+            {TeamSide.NS: 129, TeamSide.EW: 496},
+        )
+        assert carry == {TeamSide.NS: 0, TeamSide.EW: 161}
+
+    def test_an_ordinary_round_carries_nothing(self):
+        carry = _carried_over(
+            _row(**self._R4),
+            {TeamSide.NS: 143, TeamSide.EW: 734},
+            {TeamSide.NS: 129, TeamSide.EW: 496},
+        )
+        assert carry == {TeamSide.NS: 0, TeamSide.EW: 0}
+
+    def test_credited_belote_is_not_a_carry(self):
+        carry = _carried_over(
+            _row(marked={TeamSide.NS: (14, 0), TeamSide.EW: (148, 90)},
+                 marked_belote={TeamSide.NS: 0, TeamSide.EW: 20}),
+            {TeamSide.NS: 143, TeamSide.EW: 754},
+            {TeamSide.NS: 129, TeamSide.EW: 496},
+        )
+        assert carry == {TeamSide.NS: 0, TeamSide.EW: 0}
+
+    @pytest.mark.parametrize("known", ["totals", "before"])
+    def test_unknown_totals_mean_an_unknown_carry(self, known):
+        totals = {TeamSide.NS: 143, TeamSide.EW: 895}
+        before = {TeamSide.NS: 129, TeamSide.EW: 496}
+        carry = _carried_over(
+            _row(**self._R4),
+            totals if known == "totals" else None,
+            before if known == "before" else None,
+        )
+        assert carry is None
+
+    def test_a_negative_residual_is_not_a_payout(self):
+        carry = _carried_over(
+            _row(**self._R4),
+            {TeamSide.NS: 100, TeamSide.EW: 734},
+            {TeamSide.NS: 129, TeamSide.EW: 496},
+        )
+        assert carry is None
+
+
+class TestTotalsBefore:
+    _AFTER_2 = {TeamSide.NS: 48, TeamSide.EW: 496}
+
+    def test_the_join_round_reads_the_join_snapshot(self):
+        joined = ObservedFrom(round=3, phase=JoinPhase.PLAY,
+                              totals=self._AFTER_2)
+        assert _totals_before(3, {}, joined) == self._AFTER_2
+
+    def test_a_later_round_reads_the_round_before(self):
+        scores = {2: (_row(), self._AFTER_2)}
+        assert _totals_before(3, scores, None) == self._AFTER_2
+
+    def test_a_round_before_without_totals_is_unknown(self):
+        assert _totals_before(3, {2: (_row(), None)}, None) is None
+
+    def test_a_missing_round_before_is_unknown(self):
+        assert _totals_before(3, {}, None) is None
+
+
+class TestHeldRoundScored:
+    def test_a_held_row_is_recorded_as_held(self):
+        scored = _round_scored(
+            3, _W80, (), (_row(), {TeamSide.NS: 129, TeamSide.EW: 496}), (),
+            "2026-09-24T00:00:00Z", {TeamSide.NS: 48, TeamSide.EW: 496},
+        )
+        assert scored.outcome is RoundOutcome.HELD
+        assert scored.carried_over == {TeamSide.NS: 0, TeamSide.EW: 0}
+
+    def test_a_round_with_no_totals_before_has_an_unknown_carry(self):
+        scored = _round_scored(
+            3, _W80, (), (_row(), {TeamSide.NS: 129, TeamSide.EW: 496}), (),
+            "2026-09-24T00:00:00Z", None,
+        )
+        assert scored.carried_over is None

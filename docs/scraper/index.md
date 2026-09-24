@@ -117,6 +117,14 @@ cannot be placed on a side is refused as a `ParseError`, because the record has 
 score was when watching began. A score row reads as made when the side it names as the winner is
 the declaring side; the row's status token is only consulted when a row does not name both.
 
+A held dispute (§7.5) reads as made on the site's row while marking its declarer 0 / 0, so that pair
+is recorded as `held`. Its points are paid into the next winner's running total and appear in no
+row, so each round's `carried_over` is inferred: what the totals moved by since the round before,
+less the row's made, announced and credited belote points. Where the totals before a round were
+never read — the round before was not scored by any snapshot — the carry is `null`, not zero.
+Across the V5 corpus the residual is non-zero in exactly one of 491 inferable rounds, and it is
+that 161.
+
 ## Profile
 
 One TOML document, git-ignored; `profile.example.toml` in the package is the committed schema,
