@@ -35,6 +35,16 @@ class UnsupportedFormatError(RecordError):
     """
 
 
+class CatalogError(ContraiError, ValueError):
+    """A file is not a catalog this build can read.
+
+    Raised when a catalog is *read* — a file that is not SQLite, or one
+    written under another schema version. Not a :class:`RecordError`: the
+    catalog is derived, so the remedy is always to rebuild it, never to
+    distrust the corpus.
+    """
+
+
 class VerdictFormatError(RecordError):
     """A verdict file does not say what ``write_verdict`` would have written.
 

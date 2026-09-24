@@ -9,12 +9,13 @@ Source lives at `packages/contrai-data/src/contrai_data/`:
 
 | Module          | Contents                                                                                  |
 | --------------- | ----------------------------------------------------------------------------------------- |
-| `exceptions.py` | `RecordError` (base), `RecordFormatError`, `UnsupportedFormatError`, `VerdictFormatError` — all of them both a `ContraiError` and a `ValueError` |
+| `exceptions.py` | `RecordError` (base), `RecordFormatError`, `UnsupportedFormatError`, `VerdictFormatError`, and `CatalogError` — all of them both a `ContraiError` and a `ValueError` |
 | `events.py`     | One frozen dataclass per event (`Header`, `GameStarted`, `RoundDealt`, `BidMade`, `CardPlayed`, `BeloteHeld`, `RoundScored`, `GameEnded`), the five value objects (`Seat`, `ObservedFrom`, `Ruleset`, `SideMark`, `ContractTerms`), and the eight closed vocabularies |
 | `tokens.py`     | Domain value ⇄ ASCII token, both ways and strictly — seats, sides, cards, contract suits and values, whole bids, whole rulesets, and the UTC timestamp check |
 | `codec.py`      | `encode` / `decode` — one event ⇄ one JSON line — plus `FORMAT` and the major-version gate |
 | `store.py`      | Records on disk: `RecordWriter`, `read_events` / `ReadResult`, `records_root` / `games_dir` / `game_path`, `new_game_id` |
 | `projection.py` | `GameRecord` / `RoundRecord`, and the `project` / `load_game` fold that re-derives the contract, the tricks and their winners |
+| `catalog.py`    | `build_catalog` / `CatalogSummary` / `SkippedFile` — the SQLite index over a records root — and `player_games` / `PlayerReport` / `PlayerGame` to read one player back |
 | `verdict.py`    | What `contrai verify` concluded: `Verdict` (`verified` / `partial` / `suspect`), the five `MismatchKind` classes, `Mismatch` / `RoundVerdict` / `GameVerdict`, `verdicts_dir` / `verdict_path` / `write_verdict`, and the strict `read_verdict` |
 
 Everything above is re-exported from `contrai_data/__init__.py` and is part of the public API.
@@ -205,7 +206,8 @@ $CONTRAI_HOME/records/          (or ~/.contrai/records)
 ├── verdicts/                   (contrai verify's conclusions, one per game)
 │   ├── engine-20260910T181815Z-a1b2c3.json
 │   └── obs-0a1b2c3d.json
-└── raw/                        (the scraper's verbatim wire frames)
+├── raw/                        (the scraper's verbatim wire frames)
+└── catalog.sqlite              (derived index, rebuilt by contrai catalog; local only)
 ```
 
 The engine roots its records at `$CONTRAI_HOME/records`; the scraper uses its profile's output
@@ -333,3 +335,161 @@ the running score at that moment. A spectator sitting down mid-game cannot rescu
 walked in on: the wire's state snapshot describes the last *completed* round, so the round in
 progress is unrecoverable and is skipped entirely. Recording starts at the next deal, and
 `observed_from` is what says so.
+
+## The catalog
+
+`build_catalog(root)` folds every record and verdict file under a records root into
+`<root>/catalog.sqlite`, a SQLite database the corpus questions are asked of: *which games did this
+player play*, *which rounds are clean enough to train on*, *how many rounds a day are landing*,
+*which suspect rounds share a mismatch class*. Each of those is a join over thousands of files, and
+a directory of JSONL cannot answer a join without reading all of it.
+
+**It is an index, never a second copy.** Every row is derived from a record or a verdict, the
+records stay the source of truth, and nothing writes to the catalog except a rebuild. A catalog can
+be deleted at any time. That is also why there are no schema migrations: `PRAGMA user_version`
+names the schema, a catalog of another version is simply rebuilt, and a reader refuses one with
+`CatalogError`.
+
+**It is rebuilt whole, every run.** `load_game` costs 2.0 ms a game (measured on 135 observed
+records), so ten thousand games rebuild in about twenty seconds. An incremental index would need
+change detection, deletion handling and a migration story, for a file that is by construction
+disposable.
+
+**It is swapped in atomically.** The build writes a temporary `catalog.sqlite.*.tmp` beside the old
+catalog, with no journal and no sync — a failed build is thrown away whole — and moves it over the
+old one with `os.replace`. A reader sees the old catalog or the new one, never half of either, and a
+failed build leaves the previous catalog as it was. On Windows `os.replace` is refused while
+another program — a `python -m sqlite3` shell, a notebook — holds the catalog open; the build then
+raises `PermissionError` and removes its temporary file.
+
+**Nothing aborts the build.** An unreadable record (not UTF-8, not the format, an impossible
+ruleset), an unreadable verdict, a verdict naming another game, a verdict with no record, a second
+file claiming a game id — each lands in the `skipped` table with its reason, and the rest of the
+corpus is indexed regardless. Of two files claiming one id, the one named after the id is indexed
+(it is what the producers' `game_path` writes), else the first in sorted order. A record whose last
+line is torn is indexed, with `truncated = 1`.
+
+**It holds personal data.** Seats carry the table's player ids and display names, unaltered, so
+`catalog.sqlite*` is git-ignored and the catalog stays on the machine that built it. When the
+records are pseudonymised, the catalog is simply rebuilt from them.
+
+**Copy a corpus with its modification times.** Staleness is read off file times (below), so a copy
+made with `cp -a` or `robocopy /COPY:DAT` keeps every verdict fresh, while a plain copy re-stamps
+files in copy order and can make fresh verdicts look stale.
+
+### Schema
+
+Tables are `STRICT`, booleans are `0`/`1`, and seats, sides and trumps are the record's own tokens
+(`N`/`W`/`S`/`E`, `NS`/`EW`, `S`/`H`/`D`/`C`/`NT`/`AT`).
+
+| Table | Key | Holds |
+| --- | --- | --- |
+| `meta` | `key` | `schema_version`, `built_at`, `generator`, `root` |
+| `games` | `game_id` | the file (`path`, relative), `source`, `generator`, `created_at`, `ended_at`, `preset`, where a mid-game join landed, round counts, `complete`, `truncated`, `end_reason`, final totals, `winner` and `winner_basis`, the game `verdict`, `verdict_status`, `verdict_notes` |
+| `seats` | `game_id`, `position` | `side`, `player_id`, `name`, `account`, `kind`, `level`, `result` (`won` / `lost`) |
+| `rounds` | `game_id`, `round` | `dealer`, bid / trick / derived-trick / belote counts, `complete`, the contract (`declarer`, `declarer_side`, `contract_value` or `contract_slam`, `trump`, `multiplier`), `outcome`, `slam`, `score_source`, taken / marked / total points per side, and the round's `verdict`, `replayed`, `unchecked` |
+| `mismatches` | `game_id`, `round`, `n` | `kind`, `detail`, `position`, `trick`, `seq`, `expected`, `observed` |
+| `skipped` | — | `path`, `kind` (`record` / `verdict`), `reason` |
+
+Four views sit on top: `players` (one row per player id — games, wins, losses, first and last seen,
+latest name and level, every name as a JSON array), `player_names` and `player_levels` (one row per
+id and name, or id and level, dated), and `clean_rounds` (below).
+
+The contract columns come from the contract the projection derives off the **auction**, not from the
+score line's own claim — the derivation is what the verifier checked. `marked_ns` / `marked_ew` are
+the made and announced marks together. Round verdicts are joined by the record's **round number**,
+never by position, because round numbers are deal counts that may start above one and skip.
+
+### Verdict status and clean rounds
+
+A verdict file carries no timestamp and no hash of the record it judged, so whether it still
+describes its record is inferred:
+
+| `verdict_status` | Meaning |
+| --- | --- |
+| `fresh` | Readable, no older than its record, covering the same round numbers, source and preset |
+| `stale` | Readable, but older than its record, or over other rounds, or naming another source or preset |
+| `missing` | No verdict file — `contrai verify` has not run on this game |
+| `unreadable` | The file fails `read_verdict`, or names another game (also listed in `skipped`) |
+
+A false "stale" only keeps a game's rounds out of `clean_rounds` until the next `contrai verify`; a
+false "fresh" would let an unchecked round in. Every doubt therefore goes the stale way.
+
+A round is **clean** — a row of `clean_rounds` — when its structure finished, its game's verdict is
+`fresh`, it was replayed, and its verdict is `verified` or `partial`. `partial` counts as clean on
+purpose: for an observed record `verified` is unreachable, because the table folds the last-trick
+bonus into the card points and never says which side took it, so `partial` with nothing wrong is
+the best an observed round can be.
+
+Three kinds of clean round are kept in the view and left to the reader to filter, because whether
+they belong in a dataset depends on what it is for:
+
+- **all-pass rounds** — no contract, no cards: `WHERE outcome IS NOT 'all_pass'`, or
+  `trick_count = 8` for play-phase work (`IS NOT`, not `!=`: an unscored round's outcome is `NULL`,
+  and `NULL != 'all_pass'` drops it);
+- **disputed rounds** — two score sources disagreed: `WHERE outcome IS NOT 'disputed'`;
+- **reconstructed tricks** — a trick deduced rather than seen. Every observed round has one today
+  (685 of 685 box rounds: the wire never shows the last trick being played), so
+  `WHERE derived_trick_count = 0` keeps engine rounds only; drop the reconstructed *trick* in the
+  loader instead, where each `RoundRecord.derived_tricks` flag says which one it is.
+
+### The winner
+
+The scraper never records a winner (`game_ended.winner` is always `null` in observed records), so
+the catalog derives one. The recorded winner is used when there is one (`winner_basis =
+'recorded'`). Otherwise a game that ended `target_reached` with known totals is won by the side at
+or above the ruleset's target — but only when **exactly one** side is (`winner_basis = 'totals'`).
+Both sides over the target is a game the belote gate or sudden death decided, rules that live in the
+engine; the catalog leaves it `NULL` rather than guess. `seats.result` follows from the winner.
+
+### Recipes
+
+The catalog is plain SQLite: `uv run python -m sqlite3 <root>/catalog.sqlite` opens a shell, and a
+notebook reads it with `pandas.read_sql(query, sqlite3.connect(path))`. The ids and names below are
+placeholders.
+
+*My own engine games* — engine seats carry no player id, so match the seat name:
+
+```sql
+SELECT g.created_at, g.game_id, s.position, s.result, g.total_ns, g.total_ew
+FROM seats s JOIN games g USING (game_id)
+WHERE g.source = 'engine' AND s.name = 'human'
+ORDER BY g.created_at;
+```
+
+*One player's name history:*
+
+```sql
+SELECT name, games, first_seen, last_seen
+FROM player_names WHERE player_id = 'PLAYER_ID' ORDER BY first_seen;
+```
+
+*Clean rounds for a dataset*, then each one loaded back through the record it came from:
+
+```sql
+SELECT path, round FROM clean_rounds
+WHERE outcome IS NOT 'all_pass' AND outcome IS NOT 'disputed'
+ORDER BY path, round;
+```
+
+```python
+from contrai_data import load_game
+record = load_game(root / path)
+round_ = next(r for r in record.rounds if r.number == number)
+```
+
+*Progress toward a milestone*, rounds per day:
+
+```sql
+SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS rounds
+FROM clean_rounds GROUP BY day ORDER BY day;
+```
+
+*Suspect rounds by mismatch class*, for the verifier's follow-up:
+
+```sql
+SELECT m.kind, COUNT(*) AS rounds, group_concat(m.game_id || '#' || m.round, ' ') AS examples
+FROM mismatches m JOIN games g USING (game_id)
+WHERE g.verdict_status = 'fresh' AND m.n = 1
+GROUP BY m.kind ORDER BY rounds DESC;
+```
