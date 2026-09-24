@@ -54,6 +54,7 @@ from .codec import (
     FORMAT,
     FORMAT_FAMILY,
     FORMAT_MAJOR,
+    READABLE_MAJORS,
     encode,
     decode,
 )
@@ -117,6 +118,7 @@ __all__: list[str] = [
     "FORMAT",
     "FORMAT_FAMILY",
     "FORMAT_MAJOR",
+    "READABLE_MAJORS",
     "encode",
     "decode",
     "ReadResult",

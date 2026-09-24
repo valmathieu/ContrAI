@@ -527,7 +527,7 @@ def _check_score(check: _RoundCheck, round_: Any) -> None:
         return
 
     contract = round_.contract
-    outcome = _outcome(score.contract_made)
+    outcome = _outcome(score)
     if outcome is not recorded.outcome:
         check.fault(
             MismatchKind.SCORE,

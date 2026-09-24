@@ -115,7 +115,7 @@ package "events.py" as p_events {
         + taken : dict<TeamSide, int>
         + belote : dict<TeamSide, int>
         + announcements : dict<TeamSide, int>
-        + carried_over : dict<TeamSide, int>
+        + carried_over : dict<TeamSide, int>?
         + marked : dict<TeamSide, SideMark>
         + totals : dict<TeamSide, int>?
         + last_trick : TeamSide?
@@ -166,7 +166,7 @@ package "events.py" as p_events {
         SeatKind : human | ai | observed
         JoinPhase : bidding | play
         HandsDerivation : self_play | observed | dealt_from_deck
-        RoundOutcome : made | failed | all_pass | disputed
+        RoundOutcome : made | failed | all_pass | disputed | held
         SlamOutcome : none | slam | solo_slam | unannounced
         ScoreSource : engine | snapshot | panel
         EndReason : target_reached | abandoned | observer_left | interrupted
@@ -218,6 +218,7 @@ package "codec.py" as p_codec {
     class "codec.py" as m_codec <<module>> {
         + {static} FORMAT_FAMILY : str
         + {static} FORMAT_MAJOR : int
+        + {static} READABLE_MAJORS : frozenset<int>
         + {static} FORMAT : str
         --
         + encode(event) : str

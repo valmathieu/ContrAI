@@ -16,6 +16,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 ### Changed
 
+- (data) **BREAKING:** Records are `contrai-record/2`: a `held` outcome and a nullable `carried_over`, which the engine now writes for real. `/1` still loads; older builds refuse `/2`. See [data docs](docs/data/index.md).
 - (engine) **BREAKING:** `sweep_substitute(tag)` takes the ruleset, and a doubled sweep is now tagged `UnannouncedSlam`. Call `sweep_substitute(tag, rules)`; re-parse older scraped records.
 
 ### Fixed

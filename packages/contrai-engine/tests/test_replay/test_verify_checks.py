@@ -556,6 +556,16 @@ class TestCheckBelote:
 
 
 class TestCheckScore:
+    def test_a_held_round_agrees_with_a_held_record(self):
+        import dataclasses
+        from contrai_data import RoundOutcome
+
+        check = self._run(
+            _Scored(outcome=RoundOutcome.HELD),
+            score=dataclasses.replace(_score(), held=161),
+        )
+        assert "the round resolved differently" not in _details(check)
+
     @staticmethod
     def _run(recorded, *, score=None, contract=None, rules=None):
         check = _RoundCheck(_Record(score=recorded))
