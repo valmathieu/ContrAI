@@ -10,6 +10,8 @@ produced the record is the one being asked to reproduce it.
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 from contrai_core import (
     Card,
@@ -42,6 +44,7 @@ from contrai_engine.replay import (
     ReplayController,
     RoundExhaustedError,
 )
+from contrai_engine.replay.player import ReplayedBid, ReplayedCard
 
 from .conftest import play_and_record
 
@@ -248,6 +251,103 @@ class TestTable:
 
         for player in controller.players:
             assert player.name == recorded_game.seats[player.position].name
+
+
+# ---------------------------------------------------------------------------
+# Explaining the AI seats
+# ---------------------------------------------------------------------------
+
+
+def _reseated(record, **kinds):
+    """``record`` with some seats re-described, e.g. ``NORTH=SeatKind.HUMAN``.
+
+    A value is a :class:`SeatKind`, or a level string for an AI seat.
+    """
+
+    seats = dict(record.seats)
+    for name, what in kinds.items():
+        seat = Position[name]
+        if isinstance(what, SeatKind):
+            seats[seat] = Seat(None, "someone", None, what, None)
+        else:
+            seats[seat] = Seat(None, f"ai:{what}", None, SeatKind.AI, what)
+    return dataclasses.replace(record, seats=seats)
+
+
+class TestExplain:
+    """``explain=True`` asks each recorded AI seat's strategy why."""
+
+    def test_it_is_off_by_default(self, recorded_game):
+        controller = ReplayController(recorded_game)
+
+        controller.run()
+
+        assert controller.explained == ()
+        decisions = controller.game.current_round.card_decisions
+        assert not any(isinstance(d, ReplayedCard) for d in decisions)
+
+    def test_every_engine_ai_seat_is_explained(self, recorded_game):
+        controller = ReplayController(recorded_game, explain=True)
+
+        assert set(controller.explained) == set(Position)
+
+    def test_the_expert_explains_its_own_game_without_a_disagreement(
+        self, recorded_game
+    ):
+        # The record was played by the same expert strategy that now
+        # explains it, from the same views: every recorded action is
+        # what it would choose again, bar the ones it drew at random,
+        # which the rationale says were draws.
+        controller = ReplayController(recorded_game, explain=True)
+        explained = 0
+
+        for round_ in controller.rounds:
+            controller.replay_round(round_)
+            live = controller.game.current_round
+            for decision in [*live.bid_decisions, *live.card_decisions]:
+                assert isinstance(decision, (ReplayedBid, ReplayedCard))
+                assert decision.preferred is None
+                assert decision.rationale.rule != "recorded action"
+                explained += 1
+
+        assert explained > 100
+
+    def test_explaining_changes_nothing_about_the_game(self, recorded_game):
+        controller = ReplayController(recorded_game, explain=True)
+
+        controller.run()
+
+        assert controller.game.scores == recorded_game.ended.totals
+
+    def test_a_human_or_observed_seat_is_not_explained(self, recorded_game):
+        record = _reseated(
+            recorded_game, NORTH=SeatKind.HUMAN, EAST=SeatKind.OBSERVED
+        )
+
+        controller = ReplayController(record, explain=True)
+
+        assert set(controller.explained) == {Position.SOUTH, Position.WEST}
+
+    def test_a_level_this_engine_does_not_know_is_not_explained(
+        self, recorded_game
+    ):
+        record = _reseated(recorded_game, NORTH="custom", SOUTH="mcts")
+
+        controller = ReplayController(record, explain=True)
+
+        assert Position.NORTH not in controller.explained
+        assert Position.SOUTH not in controller.explained
+
+    def test_a_record_with_no_engine_ai_explains_nothing(self, recorded_game):
+        record = _reseated(
+            recorded_game,
+            NORTH=SeatKind.OBSERVED,
+            EAST=SeatKind.OBSERVED,
+            SOUTH=SeatKind.OBSERVED,
+            WEST=SeatKind.OBSERVED,
+        )
+
+        assert ReplayController(record, explain=True).explained == ()
 
 
 # ---------------------------------------------------------------------------

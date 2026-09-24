@@ -31,8 +31,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from contrai_core.position import Position
+from contrai_data import SeatKind
 
 from ..model.game import Game
+from ..model.player.levels import AI_LEVELS
 from .deal import ScriptedDealSource
 from .player import RecordedPlayer, RoundScript
 
@@ -52,10 +54,17 @@ class ReplayController:
             them.
         players: The four seats, in canonical seating order.
         game: The game they play, already built and seated.
+        explained: The seats whose actions are explained by the strategy
+            the record names for them — empty unless ``explain`` was
+            asked for, and empty for a record that seats no engine AI.
     """
 
     def __init__(
-        self, record: "GameRecord", view: Any | None = None
+        self,
+        record: "GameRecord",
+        view: Any | None = None,
+        *,
+        explain: bool = False,
     ) -> None:
         """Build the table a record will be replayed at.
 
@@ -65,6 +74,10 @@ class ReplayController:
                 live game drives — which is what lets the verifier be the
                 recorder's mirror, and what will let the replay screens
                 render an old game with no new rendering code.
+            explain: Rebuild the strategy of every seat the record marks
+                as an engine AI of a known level, and have it explain
+                that seat's recorded actions. Off by default: the
+                verifier wants the record replayed, not commented on.
         """
 
         self.record = record
@@ -76,8 +89,18 @@ class ReplayController:
             round_ for round_ in record.rounds if not round_.complete
         )
         self.players = [
-            RecordedPlayer(self._name(seat), seat) for seat in Position
+            RecordedPlayer(
+                self._name(seat),
+                seat,
+                strategies=self._strategies(seat) if explain else None,
+            )
+            for seat in Position
         ]
+        self.explained: tuple[Position, ...] = tuple(
+            player.position
+            for player in self.players
+            if player.cardplay is not None
+        )
         self.game = Game(
             self.players,
             rules=record.ruleset,
@@ -98,6 +121,28 @@ class ReplayController:
 
         occupant = self.record.seats.get(seat)
         return occupant.name if occupant is not None else seat.value
+
+    def _strategies(self, seat: Position) -> tuple[Any, Any] | None:
+        """The strategy pair that played ``seat``, if the record says one did.
+
+        Only a seat the record marks :attr:`~contrai_data.SeatKind.AI`
+        *and* whose level this engine registers can be explained. A human
+        or observed seat has no strategy to ask, and a level this engine
+        does not know — a hand-mixed ``custom`` pair, or a level from a
+        newer engine — has none to rebuild; guessing one would put
+        another strategy's words in that seat's mouth.
+
+        Args:
+            seat: The seat to look up.
+
+        Returns:
+            The ``(bidding, cardplay)`` factories, or ``None``.
+        """
+
+        occupant = self.record.seats.get(seat)
+        if occupant is None or occupant.kind is not SeatKind.AI:
+            return None
+        return AI_LEVELS.get(occupant.level)
 
     def run(self) -> None:
         """Replay every complete round, in file order.

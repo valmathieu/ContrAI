@@ -222,6 +222,21 @@ The keys: `[n]` or `[Enter]` for the next action, `[t]` to the end of the trick,
 
 **Replay mode is the debug face-up path with no pacing.** `DebugOptions.replay` shows every seat's hand and collapses every pacing default to zero; an explicitly set `CONTRAI_AI_BID_DELAY` / `CONTRAI_AI_CARD_DELAY` still wins, so a replay can be paced back up for observation. There are no human prompts to suppress — a recorded seat is not a human one, so the engine never asks the view for a bid or a card — but the two frames that *would* have waited for Enter (trick-won, round recap) drop that invitation under replay, since the step prompt below them owns the key.
 
+**A replay can ask a recorded AI why it acted.** A record keeps every action but none of the reasoning. A seat may not even have been an engine, and a rationale invented after the fact would be fiction. What a record *does* keep is who sat where: `Seat.kind` is `ai`, `human` or `observed`, and an engine seat names its level (`ai:expert`). `ReplayController(record, explain=True)` uses that. For every seat marked AI whose level `AI_LEVELS` registers, it builds that level's strategy pair onto the seat's `RecordedPlayer`, the seat itself, so the strategies read exactly its hand, position and team.
+
+At each action the seat asks the strategy what it would do and why, then plays the recorded action anyway, returning a `ReplayedBid` / `ReplayedCard` that carries the strategy's rationale. What happens next depends on the answer:
+
+- **It agrees.** The rationale is simply the AI's.
+- **It prefers something else.** `preferred` names what it would play instead. That is information, not an error: the strategy may have changed since the game was recorded.
+- **It drew at random.** The recorded card was one of the level cards the strategy draws between (see *A random pick says it was random* above). That counts as agreement, and `drawn_from` says it was a draw.
+
+A seat that is human or observed, or whose level this engine doesn't know (a hand-mixed `custom` pair, or a level from a newer engine), is left unexplained rather than given another strategy's words. Two properties keep this safe:
+
+- **No side effects.** The global RNG is saved and restored around every question, because asking is an aside, not a move.
+- **Verification is untouched.** `explain` is off by default and `contrai verify` never turns it on.
+
+Replaying seeded expert games, every recorded decision agreed with the recomputed one, 2029 of 2029 across four games, with about 5% of cards flagged as draws. `test_the_expert_explains_its_own_game_without_a_disagreement` keeps it that way. The same mechanism will explain a stronger AI's recorded games once its level is registered. A strategy that searches with random sampling, such as MCTS, will not answer identically twice, and that is where storing the rationale in the record itself becomes worth doing.
+
 **A replay frame fits one screen.** The replay frame used to stack 42–54 rows, so on a normal terminal the Game score, Round and trick panels at its top scrolled out of sight. Four changes bring every frame to 33–40 rows, including the line the viewer types on. `test_frame_fit.py` checks the 40-row limit on a real recorded game.
 
 - The *AI rationale* panel stays a debug-mode feature. Under replay every entry would read `recorded action`.
