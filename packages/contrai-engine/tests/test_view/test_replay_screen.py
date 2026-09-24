@@ -17,7 +17,7 @@ from rich.console import Console
 from contrai_core import Position, Suit, TeamSide
 from contrai_data.events import RoundOutcome
 from contrai_engine.replay.summary import ReplayRow
-from contrai_engine.replay.verdict import Verdict
+from contrai_data import Verdict
 from contrai_engine.view.screens.replay import (
     _format_replay_contract,
     _format_replay_verdict,

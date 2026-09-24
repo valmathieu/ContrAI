@@ -12,7 +12,7 @@ from contrai_core.position import Position
 from contrai_core.team_side import TeamSide
 from contrai_data.events import RoundOutcome
 from contrai_engine.replay.summary import ReplayRow, replay_rows
-from contrai_engine.replay.verdict import (
+from contrai_data import (
     GameVerdict,
     RoundVerdict,
     Verdict,

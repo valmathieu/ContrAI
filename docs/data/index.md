@@ -13,8 +13,9 @@ Source lives at `packages/contrai-data/src/contrai_data/`:
 | `events.py`     | One frozen dataclass per event (`Header`, `GameStarted`, `RoundDealt`, `BidMade`, `CardPlayed`, `BeloteHeld`, `RoundScored`, `GameEnded`), the five value objects (`Seat`, `ObservedFrom`, `Ruleset`, `SideMark`, `ContractTerms`), and the eight closed vocabularies |
 | `tokens.py`     | Domain value ⇄ ASCII token, both ways and strictly — seats, sides, cards, contract suits and values, whole bids, whole rulesets, and the UTC timestamp check |
 | `codec.py`      | `encode` / `decode` — one event ⇄ one JSON line — plus `FORMAT` and the major-version gate |
-| `store.py`      | The only module that touches the filesystem: `RecordWriter`, `read_events` / `ReadResult`, `records_root` / `games_dir` / `game_path`, `new_game_id` |
+| `store.py`      | Records on disk: `RecordWriter`, `read_events` / `ReadResult`, `records_root` / `games_dir` / `game_path`, `new_game_id` |
 | `projection.py` | `GameRecord` / `RoundRecord`, and the `project` / `load_game` fold that re-derives the contract, the tricks and their winners |
+| `verdict.py`    | What `contrai verify` concluded: `Verdict` (`verified` / `partial` / `suspect`), the five `MismatchKind` classes, `Mismatch` / `RoundVerdict` / `GameVerdict`, and `verdicts_dir` / `verdict_path` / `write_verdict` |
 
 Everything above is re-exported from `contrai_data/__init__.py` and is part of the public API.
 
@@ -44,6 +45,12 @@ dragging Rich, the CLI and the whole orchestration layer into a process whose on
 a table. Putting it inside `contrai-scraper` would force the engine to depend on Playwright.
 Either way the verifier's edge turns into a dependency cycle. So the format is its own package and
 the edge becomes `core ← data ← {engine, scraper}`.
+
+**The verdict model lives here for the same reason.** `contrai verify` is the engine's — it replays
+a record through the real `Game` — but what it *concludes* is plain data about a record, and the
+corpus tooling that reads those conclusions back must not import the engine to do it. So
+`Verdict`, `GameVerdict` and `write_verdict` are `contrai-data`'s, and `contrai_engine.replay`
+re-exports them unchanged.
 
 `contrai-data` depends on `contrai-core` and on **nothing else at runtime** — no third-party wheel,
 not even for JSON. That is not an aesthetic preference: a corpus outlives the code that wrote it,
@@ -195,12 +202,21 @@ $CONTRAI_HOME/records/          (or ~/.contrai/records)
 ├── games/
 │   ├── engine-20260910T181815Z-a1b2c3.jsonl
 │   └── obs-0a1b2c3d.jsonl
+├── verdicts/                   (contrai verify's conclusions, one per game)
+│   ├── engine-20260910T181815Z-a1b2c3.json
+│   └── obs-0a1b2c3d.json
 └── raw/                        (the scraper's verbatim wire frames)
 ```
 
 The engine roots its records at `$CONTRAI_HOME/records`; the scraper uses its profile's output
 root. `records_root()`, `games_dir()`, `game_path()` and `new_game_id()` live in one module so the
 two producers cannot spell the layout differently.
+
+**Verdict files.** `contrai verify` writes one `verdicts/<game_id>.json` per record it checks, a
+sibling of `games/` so a corpus and its verdicts move together. `verdicts_dir()`, `verdict_path()`
+and `write_verdict()` spell that layout; the file is pretty-printed JSON with sorted keys, so
+re-verifying a corpus produces a diff that shows only what changed. It carries the game's id,
+source and preset, the game verdict, per-verdict round counts, the notes, and one object per round.
 
 **One line, one flush.** `RecordWriter` appends a single encoded event and flushes it, so a
 producer that dies mid-game — a crashed scraper, an interrupted autoplay — leaves a file that is

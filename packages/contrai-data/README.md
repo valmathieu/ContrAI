@@ -6,5 +6,6 @@ scraper's observation of an online table, the verifier, the replay screens, and 
 further up the AI ladder.
 
 Pure data: frozen event dataclasses, a strict token codec, an append-and-flush writer, a
-truncation-tolerant reader, and a projection that folds a flat event stream back into rounds.
+truncation-tolerant reader, a projection that folds a flat event stream back into rounds, and the
+verdict model `contrai verify` writes beside the records.
 Depends on `contrai-core` and on nothing else.

@@ -60,7 +60,7 @@ from typing import TYPE_CHECKING, Any, Final
 from contrai_core.exceptions import IllegalBidError, IllegalPlayError
 from contrai_core.position import Position
 from contrai_core.rule_config import PRESETS, RuleConfig
-from contrai_data import RecordError, load_game
+from contrai_data import GameVerdict, RecordError, Verdict, load_game
 from contrai_engine.log_setup import configure_logging
 from contrai_engine.model.game import Game
 from contrai_engine.model.player import AiPlayer, HumanPlayer
@@ -72,12 +72,10 @@ from contrai_engine.recording import (
     finish_recording,
 )
 from contrai_engine.replay import (
-    GameVerdict,
     ReplayController,
     ReplayError,
     ReplayInterrupt,
     SteppingView,
-    Verdict,
     read_step_key,
     replay_rows,
     verify_game,

@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from contrai_engine.replay.verdict import (
+from contrai_data import (
     GameVerdict,
     Mismatch,
     MismatchKind,

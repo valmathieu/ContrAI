@@ -17,6 +17,10 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 - (engine) `contrai replay` frames fit a 40-row terminal (they were 42–54 rows): one-line keys, no rationale panel, a repaint instead of more output. See [engine docs](docs/engine/index.md).
 
+### Changed
+
+- (data) The verdict model — `Verdict`, `GameVerdict`, `write_verdict` and the rest — moves to `contrai_data`; `contrai_engine.replay` still re-exports it. See [data docs](docs/data/index.md).
+
 ## [0.5.0] - 2026-09-17
 
 Observation release: a played game becomes a file. The new `contrai-data` package writes one append-only JSONL record per game, one event per line, and folds it back into rounds; the engine writes records as it plays (`contrai --record`), replays them through its own screens (`contrai replay`) and re-judges them against the real rules (`contrai verify`, per-round `verified` / `partial` / `suspect`); and the scraper is rebuilt around a local `profile.toml` — the v1 browser flow is gone, replaced by a `Spectator`/`Recorder` pair that watches tournament tables unattended on a schedule, behind a checked VPN egress, deployable as a Docker Compose service. The target site's name and DOM vocabulary leave the repository for good.

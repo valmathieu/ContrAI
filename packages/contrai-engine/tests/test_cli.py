@@ -1466,7 +1466,7 @@ class TestRunVerify:
         assert payload[0]["verdict"] == "verified"
 
     def test_a_suspect_record_exits_one(self, record_root, capsys, monkeypatch):
-        from contrai_engine.replay.verdict import (
+        from contrai_data import (
             GameVerdict,
             Mismatch,
             MismatchKind,

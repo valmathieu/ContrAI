@@ -72,6 +72,16 @@ from .projection import (
     project,
     load_game,
 )
+from .verdict import (
+    Verdict,
+    MismatchKind,
+    Mismatch,
+    RoundVerdict,
+    GameVerdict,
+    verdicts_dir,
+    verdict_path,
+    write_verdict,
+)
 
 __all__: list[str] = [
     "RecordError",
@@ -130,4 +140,12 @@ __all__: list[str] = [
     "GameRecord",
     "project",
     "load_game",
+    "Verdict",
+    "MismatchKind",
+    "Mismatch",
+    "RoundVerdict",
+    "GameVerdict",
+    "verdicts_dir",
+    "verdict_path",
+    "write_verdict",
 ]

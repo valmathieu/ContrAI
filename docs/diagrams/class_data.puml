@@ -327,6 +327,79 @@ m_proj ..> Auction : <<derives the contract>>
 m_proj ..> TrickRecord : <<derives the winners>>
 
 ' =========================================================
+' verdict.py — what contrai verify concluded about a record
+' =========================================================
+package "verdict.py" as p_verdict {
+    enum Verdict {
+        VERIFIED
+        PARTIAL
+        SUSPECT
+    }
+    enum MismatchKind {
+        ILLEGAL~_BID
+        ILLEGAL~_PLAY
+        TRICK~_WINNER
+        BELOTE
+        SCORE
+    }
+    class Mismatch <<frozen dataclass>> {
+        + kind : MismatchKind
+        + detail : str
+        + position : str?
+        + trick : int?
+        + seq : int?
+        + expected : str?
+        + observed : str?
+        --
+        + as~_json() : dict
+    }
+    class RoundVerdict <<frozen dataclass>> {
+        + number : int
+        + verdict : Verdict
+        + mismatches : tuple<Mismatch>
+        + unchecked : tuple<str>
+        + replayed : bool = True
+        --
+        + {static} decide(number, mismatches, unchecked, *, replayed) : RoundVerdict
+        + as~_json() : dict
+    }
+    class GameVerdict <<frozen dataclass>> {
+        + game~_id : str
+        + source : str
+        + preset : str
+        + rounds : tuple<RoundVerdict>
+        + notes : tuple<str>
+        --
+        + verdict : Verdict <<property>>
+        + counts : dict<Verdict, int> <<property>>
+        + as~_json() : dict
+    }
+    class "verdict.py" as m_verdict <<module>> {
+        + verdicts~_dir(root) : Path
+        + verdict~_path(root, game~_id) : Path
+        + write~_verdict(root, verdict) : Path
+    }
+}
+
+GameVerdict "1" *-- "0..N" RoundVerdict : rounds
+RoundVerdict "1" *-- "0..N" Mismatch : mismatches
+RoundVerdict --> Verdict
+Mismatch --> MismatchKind
+m_verdict ..> GameVerdict : <<writes verdicts/<game~_id>.json>>
+
+note as N_verdict
+  **""partial"" is the interesting verdict.** Every check that
+  ran passed, but one could not run for want of something to
+  check against — overwhelmingly a round with no
+  ""round~_scored"" event, the //common// case in an observed
+  game. A game takes the **worst** verdict among its rounds.
+  The model is plain data, so it lives here and
+  ""contrai~_engine.replay"" re-exports it: whatever reads
+  verdict files back must not need the engine to do it.
+end note
+p_verdict .. N_verdict
+
+' =========================================================
 ' Layering
 ' =========================================================
 m_codec ..> m_tokens : <<spells every value>>
@@ -341,8 +414,8 @@ note as N_layering
   a card is a ""Card"", a bid is a core ""Bid"". It never sees a token.
   ""tokens.py"" owns the ASCII spelling, and only it does.
   ""codec.py"" owns the JSON line, and only it does.
-  ""store.py"" owns the file — and it is the //only// module
-  in the package that touches the filesystem.
+  ""store.py"" owns the record file, and only it does;
+  verdict files are ""verdict.py""'s.
 
   Nothing here derives anything twice: the contract, the
   tricks and their winners are recomputed by ""projection.py""

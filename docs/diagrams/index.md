@@ -51,14 +51,15 @@ mmdc      -i docs/diagrams/file.mmd -o docs/diagrams/file.png
 ```
 
 **PlantUML silently clips large PNGs at 4096 px** — no error, no warning, just a
-truncated image. `class_core.puml` and `class_engine.puml` both exceed it today,
+truncated image. `class_core.puml`, `class_engine.puml` and `class_data.puml` all exceed it today,
 so render them with the limit raised, then check the result's pixel dimensions (a
 side landing at exactly the limit in force means it was clipped, so raise it and
 re-render until neither side does):
 
 ```bash
 PLANTUML_LIMIT_SIZE=16384 plantuml -tpng docs/diagrams/class_core.puml    # 11807 x 3739
-PLANTUML_LIMIT_SIZE=16384 plantuml -tpng docs/diagrams/class_engine.puml  # 11531 x 5275
+PLANTUML_LIMIT_SIZE=16384 plantuml -tpng docs/diagrams/class_engine.puml  # 11807 x 5170
+PLANTUML_LIMIT_SIZE=16384 plantuml -tpng docs/diagrams/class_data.puml    # 5409 x 1844
 ```
 
 `class_engine.puml` outgrew 8192 when the `replay/` package landed — a reminder
