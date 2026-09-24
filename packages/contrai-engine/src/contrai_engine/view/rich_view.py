@@ -243,6 +243,11 @@ class RichView:
         # underneath, which is what let a frame grow off the top.
         self._last_frame: Optional[dict[str, Any]] = None
         self._last_screen: Optional[Callable[[], None]] = None
+        # Under replay, how the AI's reasons are shown: ``None`` when the
+        # record seats no AI this engine can ask — nothing is shown and
+        # ``[w]`` is not offered — else ``"compact"`` (the latest
+        # decision) or ``"full"`` (the last four), switched by ``[w]``.
+        self.rationale: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Lifecycle wiring (called by the CLI)
@@ -1028,6 +1033,7 @@ class RichView:
         offered = {
             "can_go_back": can_go_back,
             "can_skip_auction": can_skip_auction,
+            "can_explain": self.rationale is not None,
         }
         notice: Optional[Text] = None
         while True:
@@ -1039,6 +1045,14 @@ class RichView:
                 return key
             notice = _replay_step_rejection_text(**offered)
             self.redraw_screen()
+
+    def toggle_rationale(self) -> None:
+        """Switch the replay's AI-rationale panel between compact and full.
+
+        A no-op when the replay has no rationale to show.
+        """
+        if self.rationale is not None:
+            self.rationale = "full" if self.rationale == "compact" else "compact"
 
     def redraw_frame(self, **overrides: Any) -> None:
         """Repaint the last in-game frame, optionally changing some of it.
@@ -1168,11 +1182,25 @@ class RichView:
                 )
             )
             # Why each AI seat played what it played. A human seat has no
-            # entry — Round records no rationale for one. A replay leaves
-            # it off: every entry would read "recorded action", and its
-            # ten rows are what pushed the frame's top off the screen.
+            # entry — Round records no rationale for one. A replay shows it
+            # only when the record seats an AI the replay could ask, and
+            # small by default: the full panel's ten rows are what pushed
+            # the frame's top off the screen.
             if self.options.debug:
                 self.console.print(_panel_ai_rationale(round_))
+            elif self.rationale is not None:
+                full = self.rationale == "full"
+                self.console.print(
+                    _panel_ai_rationale(
+                        round_,
+                        limit=4 if full else 1,
+                        compact=not full,
+                        title=(
+                            "AI rationale — [w] less" if full
+                            else "AI rationale — [w] more"
+                        ),
+                    )
+                )
         # Hand panel — always rendered when a human is seated, so the
         # slot stays put across AI bid frames, AI play frames, and the
         # trick-won pause. ``interactive`` is true only when the human

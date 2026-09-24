@@ -213,6 +213,64 @@ class TestPanelAiRationale:
         panel = _panel_ai_rationale(self._Round([self._decision()]))
         assert "drawn at random" not in panel.renderable.plain
 
+    def test_a_replayed_decision_the_ai_would_not_repeat_says_so(self):
+        from contrai_engine.replay.player import ReplayedCard
+
+        decision = ReplayedCard(
+            Card(Suit.SPADES, Rank.JACK),
+            Rationale("pull trump", "led the strongest trump."),
+            preferred="9 of Spades",
+        )
+
+        body = _panel_ai_rationale(self._Round([decision])).renderable.plain
+
+        assert "the AI now prefers 9 of Spades" in body
+
+    def test_a_decision_with_a_seat_is_prefixed_with_it(self, four_players):
+        from contrai_core import Play
+
+        north, *_ = four_players
+        round_ = self._Round([self._decision()])
+
+        class _PlayState:
+            plays = (Play(north, Card(Suit.SPADES, Rank.JACK)),)
+
+        round_.play_state = _PlayState()
+
+        body = _panel_ai_rationale(round_).renderable.plain
+
+        assert body.startswith("N J♠ pull trump")
+
+    def test_the_compact_form_keeps_the_why_and_drops_the_rest(self):
+        decision = self._decision(
+            considered=("9 ♠", "King ♠"),
+            citations=(RuleCitation("under_trump_exemption", "True", "x"),),
+            drawn_from=("J ♠", "J ♦"),
+        )
+
+        body = _panel_ai_rationale(
+            self._Round([decision]), compact=True
+        ).renderable.plain
+
+        assert "led the strongest trump." in body
+        assert "drawn at random" in body
+        assert "over:" not in body
+        assert "under_trump_exemption" not in body
+
+    def test_the_limit_and_title_are_the_caller_s(self):
+        decisions = [
+            self._decision(rule="first"),
+            self._decision(rule="second"),
+        ]
+
+        panel = _panel_ai_rationale(
+            self._Round(decisions), limit=1, title="AI rationale"
+        )
+
+        assert panel.title.plain == "AI rationale"
+        assert "second" in panel.renderable.plain
+        assert "first" not in panel.renderable.plain
+
     def test_a_citation_renders_knob_value_and_effect(self):
         panel = _panel_ai_rationale(
             self._Round([

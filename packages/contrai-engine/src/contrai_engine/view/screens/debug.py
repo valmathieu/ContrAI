@@ -30,7 +30,7 @@ from contrai_engine.view.formatting import (
     _suit_color,
     _suit_glyph,
 )
-from contrai_engine.view.theme import BORDER, DIM, TITLE, YELLOW
+from contrai_engine.view.theme import BORDER, DIM, RED, TITLE, YELLOW
 
 # Row order for the all-hands panel: the canonical anticlockwise
 # seating (N, W, S, E) that ``Position`` itself defines and that
@@ -163,27 +163,41 @@ def _panel_debug_hands(
 
 
 
-def _panel_ai_rationale(round_) -> Panel:
-    """The debug strip's rationale panel: why each AI seat acted.
+def _panel_ai_rationale(
+    round_,
+    *,
+    limit: int = 4,
+    compact: bool = False,
+    title: str = "Debug — AI rationale",
+) -> Panel:
+    """The rationale panel: why each AI seat acted.
 
     One block per recent AI decision — oldest first, so the newest is
     printed *below* the explanations already on screen — reading the
     Rich-free projection in
-    :func:`~contrai_engine.debug_state.last_decisions`. Each shows what
-    was played or bid, the rule that fired, the sentence explaining it,
-    the alternatives weighed, and any table knob the branch cited.
+    :func:`~contrai_engine.debug_state.last_decisions`. Each shows the
+    seat, what was played or bid, the rule that fired, the sentence
+    explaining it, the alternatives weighed, and any table knob the
+    branch cited. Two warnings close a block when they apply: the choice
+    was **drawn at random** among level options, or — replaying — the AI
+    would now **prefer** something else.
 
     A human seat never appears: ``Round`` records no decision for it, so
     a person's reasoning stays their own.
 
     Args:
         round_: The round to read, or ``None`` before one exists.
+        limit: How many of the latest decisions to show.
+        compact: Leave out the alternatives and the citations, keeping
+            what says *why* and the two warnings — the replay's small
+            always-on form, a few rows tall.
+        title: The panel title.
 
     Returns:
         A single ``Panel``, showing a dim placeholder while no AI seat
         has decided anything yet.
     """
-    entries = last_decisions(round_)
+    entries = last_decisions(round_, limit=limit)
 
     body = Text()
     if not entries:
@@ -191,14 +205,16 @@ def _panel_ai_rationale(round_) -> Panel:
     for index, entry in enumerate(entries):
         if index:
             body.append("\n")
+        if entry["seat"] is not None:
+            body.append(f"{entry['seat']} ", style=f"bold {YELLOW}")
         body.append(f"{entry['action']} ", style="bold")
         body.append(entry["rule"], style=f"bold {TITLE}")
         body.append("\n  ")
         body.append(entry["detail"], style=DIM)
-        if entry["considered"]:
+        if entry["considered"] and not compact:
             body.append("\n  over: ", style=DIM)
             body.append(" · ".join(entry["considered"]), style=DIM)
-        for citation in entry["citations"]:
+        for citation in () if compact else entry["citations"]:
             body.append("\n  ", style=DIM)
             body.append(
                 f"{citation['knob']} = {citation['value']}",
@@ -210,10 +226,16 @@ def _panel_ai_rationale(round_) -> Panel:
             # so another run may well have played a different one.
             body.append("\n  ⚄ drawn at random among: ", style=YELLOW)
             body.append(" · ".join(entry["drawn_from"]), style=YELLOW)
+        if entry["preferred"] is not None:
+            # Replaying: the strategy that played this seat would not
+            # play it today. The reasoning above is for its own choice.
+            body.append("\n  ≠ the AI now prefers ", style=RED)
+            body.append(entry["preferred"], style=f"bold {RED}")
+            body.append(" — the reason above is for that", style=RED)
 
     return Panel(
         body,
-        title=Text("Debug — AI rationale", style=f"bold {TITLE}"),
+        title=Text(title, style=f"bold {TITLE}"),
         border_style=BORDER,
         box=ROUNDED,
         width=70,

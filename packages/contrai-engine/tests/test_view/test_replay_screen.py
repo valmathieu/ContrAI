@@ -181,7 +181,7 @@ class TestPromptText:
             can_go_back=True, can_skip_auction=True
         )
 
-        assert "[a] skip bids" in text.plain
+        assert "[a] skip" in text.plain
 
     def test_the_step_prompt_hides_a_once_the_auction_is_over(self):
         text = _replay_step_prompt_text(can_go_back=True)
@@ -193,9 +193,16 @@ class TestPromptText:
 
         assert "[g] grid" in text.plain
 
+    def test_the_step_prompt_offers_why_only_when_reasons_are_shown(self):
+        assert "[w] why" in _replay_step_prompt_text(
+            can_go_back=True, can_explain=True
+        ).plain
+        assert "[w]" not in _replay_step_prompt_text(can_go_back=True).plain
+
     def test_the_step_prompt_is_one_line_that_fits_80_columns(self):
+        # Every key on offer at once: the widest the line gets.
         text = _replay_step_prompt_text(
-            can_go_back=True, can_skip_auction=True
+            can_go_back=True, can_skip_auction=True, can_explain=True
         )
 
         assert "\n" not in text.plain
@@ -223,6 +230,14 @@ class TestRejectionText:
 
         assert "[p]" not in text.plain
         assert "[g]" in text.plain
+
+    def test_the_step_rejection_names_w_only_when_it_is_on_offer(self):
+        assert "[w]" in _replay_step_rejection_text(
+            can_go_back=True, can_explain=True
+        ).plain
+        assert "[w]" not in _replay_step_rejection_text(
+            can_go_back=True
+        ).plain
 
     def test_the_step_rejection_names_a_only_while_bidding(self):
         assert "[a]" in _replay_step_rejection_text(

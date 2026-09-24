@@ -64,6 +64,9 @@ class _Inner:
     def redraw_screen(self):
         self.calls.append("redraw_screen")
 
+    def toggle_rationale(self):
+        self.calls.append("toggle_rationale")
+
     def show_replay_step(self, *, can_go_back, can_skip_auction=False):
         self.prompts.append(can_go_back)
         self.skips.append(can_skip_auction)
@@ -367,6 +370,19 @@ class TestReadStepKey:
         assert key == "t"
         assert inner.grids == [("round", ["bid"])] * 2
         assert inner.calls.count("redraw_screen") == 2
+
+    def test_w_toggles_the_reasons_repaints_and_asks_again(self):
+        inner = _Inner(["w", "w", "n"])
+
+        key = read_step_key(inner, "round", [], can_go_back=True)
+
+        assert key == "n"
+        assert inner.calls == [
+            "toggle_rationale",
+            "redraw_screen",
+            "toggle_rationale",
+            "redraw_screen",
+        ]
 
     def test_the_offers_reach_the_prompt(self):
         inner = _Inner(["n"])

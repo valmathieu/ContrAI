@@ -261,7 +261,12 @@ def last_decisions(round_, limit: int = 4) -> list[dict]:
         - ``citations`` — the table knobs consulted, each a
           ``{"knob", "value", "effect"}`` dict;
         - ``drawn_from`` — the level options the action was drawn from
-          at random, as strings; empty when the rule settled it.
+          at random, as strings; empty when the rule settled it;
+        - ``seat`` — the deciding seat's letter (``"N"``), or ``None``
+          when the round cannot say whose it was;
+        - ``preferred`` — for a replayed decision, what the AI would
+          choose *now* when that is not what the record holds; ``None``
+          otherwise.
     """
 
     cards = list(getattr(round_, "card_decisions", ()) or ())
@@ -270,11 +275,22 @@ def last_decisions(round_, limit: int = 4) -> list[dict]:
     # Bidding always precedes play within a round, so concatenating the
     # two lists in their natural (append) order *is* chronological order.
     entries: list[dict] = [
-        _decision_entry("bid", str(decision.bid), decision.rationale)
+        _decision_entry(
+            "bid",
+            str(decision.bid),
+            decision,
+            getattr(decision.bid.player, "position", None),
+        )
         for decision in bids
     ]
+    seats = _card_seats(round_)
     entries.extend(
-        _decision_entry("card", _card_label(decision.card), decision.rationale)
+        _decision_entry(
+            "card",
+            _card_label(decision.card),
+            decision,
+            seats.get(decision.card),
+        )
         for decision in cards
     )
     if limit <= 0:
@@ -284,21 +300,51 @@ def last_decisions(round_, limit: int = 4) -> list[dict]:
     return entries[-limit:]
 
 
-def _decision_entry(kind: str, action: str, rationale) -> dict:
-    """Flatten one :class:`Rationale` into plain containers.
+def _card_seats(round_) -> dict[Card, Position]:
+    """Who played each card this round, read off the round's play history.
+
+    A ``CardDecision`` carries its card but not its seat. Each card is
+    played at most once a round, so the play history answers the
+    question exactly.
+
+    Args:
+        round_: The round, or anything without a ``play_state``.
+
+    Returns:
+        Card → the seat that played it; empty before any play.
+    """
+
+    play_state = getattr(round_, "play_state", None)
+    plays = getattr(play_state, "plays", ()) or ()
+    return {
+        play.card: play.player.position
+        for play in plays
+        if getattr(play.player, "position", None) is not None
+    }
+
+
+def _decision_entry(
+    kind: str, action: str, decision, position: Position | None
+) -> dict:
+    """Flatten one decision into plain containers.
 
     Args:
         kind: ``"card"`` or ``"bid"``.
         action: What was played or bid, already rendered.
-        rationale: The decision's rationale.
+        decision: The decision; its rationale, and a replayed decision's
+            ``preferred``, are read.
+        position: The deciding seat, or ``None`` when unknown.
 
     Returns:
         The entry dict :func:`last_decisions` documents.
     """
 
+    rationale = decision.rationale
     return {
         "kind": kind,
         "action": action,
+        "seat": _seat_letter(position) if position is not None else None,
+        "preferred": getattr(decision, "preferred", None),
         "rule": rationale.rule,
         "detail": rationale.detail,
         "considered": list(rationale.considered),

@@ -26,25 +26,33 @@ from .conftest import play_and_record
 #: normal terminal's height with a little to spare.
 MAX_ROWS = 40
 
+#: The same, when the compact AI-rationale panel is on: it costs about
+#: four rows, the price of seeing why the AI acted without asking.
+MAX_ROWS_WITH_RATIONALE = 45
 
-def _frame_heights(record) -> list[int]:
+
+def _frame_heights(record, *, rationale: str | None = None) -> list[int]:
     """Replay every round of ``record`` a key at a time; measure each frame.
 
     Args:
         record: The recorded game.
+        rationale: The view's AI-rationale mode; ``None`` for none.
 
     Returns:
         The height of every frame, in rows, counting the input line.
     """
 
     view = RichView(options=DebugOptions(replay=True))
+    view.rationale = rationale
     buffer = io.StringIO()
     view.console = Console(file=buffer, width=100, no_color=True)
     starts: list[int] = []
     view.console.clear = lambda *a, **k: starts.append(buffer.tell())
     view.console.input = lambda *a, **k: "n"
     stepper = SteppingView(view)
-    controller = ReplayController(record, view=stepper)
+    controller = ReplayController(
+        record, view=stepper, explain=rationale is not None
+    )
     stepper.attach(controller.game, controller.game.rules.target_score)
     stepper.quiet = False
     for round_ in controller.rounds:
@@ -66,3 +74,11 @@ def test_every_frame_of_a_replay_fits_in_forty_rows(tmp_path):
 
     assert len(heights) > 100
     assert max(heights) <= MAX_ROWS
+
+
+def test_the_compact_rationale_panel_keeps_frames_within_bounds(tmp_path):
+    heights = _frame_heights(
+        play_and_record(tmp_path, seed=7, rounds=6), rationale="compact"
+    )
+
+    assert max(heights) <= MAX_ROWS_WITH_RATIONALE

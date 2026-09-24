@@ -392,6 +392,61 @@ class TestLastDecisions:
     def test_a_missing_round_projects_nothing(self):
         assert last_decisions(None) == []
 
+    def test_a_bid_names_its_seat(self, four_players):
+        north, *_ = four_players
+        round_ = _StubDecisionRound(bid_decisions=[
+            BidDecision(PassBid(north), Rationale("pass", "nothing to bid.")),
+        ])
+
+        (entry,) = last_decisions(round_)
+
+        assert entry["seat"] == "N"
+
+    def test_a_card_names_the_seat_that_played_it(self, four_players):
+        from contrai_core import Play
+
+        _north, east, *_ = four_players
+        card = Card(Suit.CLUBS, Rank.SEVEN)
+        round_ = _StubDecisionRound(card_decisions=[
+            CardDecision(card, Rationale("concede cheaply", "gave up.")),
+        ])
+
+        class _PlayState:
+            plays = (Play(east, card),)
+
+        round_.play_state = _PlayState()
+
+        (entry,) = last_decisions(round_)
+
+        assert entry["seat"] == "E"
+
+    def test_a_seat_the_round_cannot_place_is_none(self):
+        # The stub round has no play history and the pass no player.
+        entries = last_decisions(self._round())
+
+        assert all(entry["seat"] is None for entry in entries)
+
+    def test_a_live_decision_prefers_nothing(self):
+        assert all(
+            entry["preferred"] is None
+            for entry in last_decisions(self._round())
+        )
+
+    def test_a_replayed_decision_carries_what_the_ai_would_now_prefer(self):
+        from contrai_engine.replay.player import ReplayedCard
+
+        round_ = _StubDecisionRound(card_decisions=[
+            ReplayedCard(
+                Card(Suit.CLUBS, Rank.SEVEN),
+                Rationale("concede cheaply", "gave up."),
+                preferred="8 of Clubs",
+            ),
+        ])
+
+        (entry,) = last_decisions(round_)
+
+        assert entry["preferred"] == "8 of Clubs"
+
     def test_a_round_without_the_attributes_projects_nothing(self):
         """Defensive: a Round double that predates the decision lists."""
 

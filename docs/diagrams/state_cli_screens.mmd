@@ -18,7 +18,7 @@ stateDiagram-v2
     EndGame : <b>5. End game</b><br/>show_end_game(status)<br/>[n] new · [r] rematch · [q] quit
     ReplayPicker : <b>6. Replay picker</b><br/>show_replay_summary(rows, game_id) -> RoundPick | None<br/>one row per recorded round: # · contract · outcome<br/>· running totals · verification verdict<br/>[1-n] step a round · [g 1-n] trick grid · [q] quit<br/>a round that cannot be replayed is listed and marked, never hidden
     ReplayGrid : <b>8. Replay grid</b><br/>[g 1-n] on the picker, [g] at any step<br/>show_replay_grid(round, bids)<br/>contract + result · 8 tricks, 4 across × 2 down<br/>▸ led · ★ won · points · belote on its own trick<br/>Bidding so far, one row per time round the table<br/>[Enter] back to where it was opened
-    ReplayStep : <b>7. Replay step</b><br/>show_replay_step(can_go_back, can_skip_auction) -> key<br/>[n] / [Enter] action · [t] end of trick · [r] end of round<br/>· [a] skip bids (while bidding) · [g] grid · [p] back · [q] rounds<br/>4 stops per trick, not 5 · one key line under the frame<br/>the frames are the live game's own — Bidding / MidTrick /<br/>TrickWon / RoundRecap — with every hand face up
+    ReplayStep : <b>7. Replay step</b><br/>show_replay_step(can_go_back, can_skip_auction) -> key<br/>[n] / [Enter] action · [t] end of trick · [r] end of round<br/>· [a] skip (while bidding) · [g] grid · [w] why (AI seats)<br/>· [p] back · [q] out<br/>4 stops per trick, not 5 · one key line under the frame<br/>AI seats: compact rationale panel, [w] for the full one<br/>the frames are the live game's own — Bidding / MidTrick /<br/>TrickWon / RoundRecap — with every hand face up
 
     Landing --> PresetPicker : [p]
     PresetPicker --> Landing : a pick,<br/>or [Enter]

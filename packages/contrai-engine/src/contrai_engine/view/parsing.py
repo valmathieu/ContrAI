@@ -181,6 +181,8 @@ _REPLAY_KEYS: Final[dict[str, str]] = {
     "auction": "a",
     "g": "g",
     "grid": "g",
+    "w": "w",
+    "why": "w",
     "p": "p",
     "back": "p",
     "q": "q",
@@ -189,23 +191,29 @@ _REPLAY_KEYS: Final[dict[str, str]] = {
 
 
 def _parse_replay_key(
-    raw: str, *, can_go_back: bool, can_skip_auction: bool = False
+    raw: str,
+    *,
+    can_go_back: bool,
+    can_skip_auction: bool = False,
+    can_explain: bool = False,
 ) -> Optional[str]:
     """Parse a replay step key. ``None`` on anything the screen cannot do.
 
-    ``p`` is refused at a round's first stop, and ``a`` once the auction
-    is over, rather than silently doing nothing: a key that looks like it
-    worked is worse than one that says it did not.
+    ``p`` is refused at a round's first stop, ``a`` once the auction is
+    over, and ``w`` when no seat's reasons can be shown, rather than
+    silently doing nothing: a key that looks like it worked is worse than
+    one that says it did not.
 
     Args:
         raw: What the viewer typed.
         can_go_back: Whether a previous stop exists to return to.
         can_skip_auction: Whether the round is still bidding.
+        can_explain: Whether the replay shows an AI-rationale panel.
 
     Returns:
-        One of ``"n"``, ``"t"``, ``"r"``, ``"a"``, ``"g"``, ``"p"``,
-        ``"q"``, or ``None``. ``g`` is always on offer: every stop has a
-        round to show.
+        One of ``"n"``, ``"t"``, ``"r"``, ``"a"``, ``"g"``, ``"w"``,
+        ``"p"``, ``"q"``, or ``None``. ``g`` is always on offer: every
+        stop has a round to show.
     """
 
     key = _REPLAY_KEYS.get(raw.strip().lower())
@@ -214,5 +222,7 @@ def _parse_replay_key(
     if key == "p" and not can_go_back:
         return None
     if key == "a" and not can_skip_auction:
+        return None
+    if key == "w" and not can_explain:
         return None
     return key

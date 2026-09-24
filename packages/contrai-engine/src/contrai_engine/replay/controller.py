@@ -92,14 +92,14 @@ class ReplayController:
             RecordedPlayer(
                 self._name(seat),
                 seat,
-                strategies=self._strategies(seat) if explain else None,
+                strategies=(
+                    self._strategies(record, seat) if explain else None
+                ),
             )
             for seat in Position
         ]
-        self.explained: tuple[Position, ...] = tuple(
-            player.position
-            for player in self.players
-            if player.cardplay is not None
+        self.explained: tuple[Position, ...] = (
+            self.explainable(record) if explain else ()
         )
         self.game = Game(
             self.players,
@@ -122,7 +122,31 @@ class ReplayController:
         occupant = self.record.seats.get(seat)
         return occupant.name if occupant is not None else seat.value
 
-    def _strategies(self, seat: Position) -> tuple[Any, Any] | None:
+    @classmethod
+    def explainable(cls, record: "GameRecord") -> tuple[Position, ...]:
+        """The seats of ``record`` an ``explain=True`` replay would explain.
+
+        Answerable before any replay is built, which is what lets a
+        screen decide up front whether it has reasons to show at all.
+
+        Args:
+            record: The record.
+
+        Returns:
+            Those seats, in canonical order; empty when the record seats
+            no engine AI of a level this engine knows.
+        """
+
+        return tuple(
+            seat
+            for seat in Position
+            if cls._strategies(record, seat) is not None
+        )
+
+    @staticmethod
+    def _strategies(
+        record: "GameRecord", seat: Position
+    ) -> tuple[Any, Any] | None:
         """The strategy pair that played ``seat``, if the record says one did.
 
         Only a seat the record marks :attr:`~contrai_data.SeatKind.AI`
@@ -133,13 +157,14 @@ class ReplayController:
         another strategy's words in that seat's mouth.
 
         Args:
+            record: The record naming the seat's occupant.
             seat: The seat to look up.
 
         Returns:
             The ``(bidding, cardplay)`` factories, or ``None``.
         """
 
-        occupant = self.record.seats.get(seat)
+        occupant = record.seats.get(seat)
         if occupant is None or occupant.kind is not SeatKind.AI:
             return None
         return AI_LEVELS.get(occupant.level)

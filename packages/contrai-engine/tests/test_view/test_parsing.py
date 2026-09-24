@@ -294,6 +294,17 @@ class TestParseReplayKey:
     def test_an_unknown_key_is_refused(self):
         assert _parse_replay_key("z", can_go_back=True) is None
 
+    def test_w_toggles_the_reasons_when_there_are_some(self):
+        assert _parse_replay_key(
+            "w", can_go_back=True, can_explain=True
+        ) == "w"
+        assert _parse_replay_key(
+            "why", can_go_back=True, can_explain=True
+        ) == "w"
+
+    def test_w_is_refused_when_no_reasons_are_shown(self):
+        assert _parse_replay_key("w", can_go_back=True) is None
+
     def test_a_skips_the_auction_while_it_is_open(self):
         assert _parse_replay_key(
             "a", can_go_back=True, can_skip_auction=True

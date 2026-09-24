@@ -225,21 +225,26 @@ def _replay_summary_rejection_text(rows: Sequence["ReplayRow"]) -> Text:
 
 
 def _replay_step_prompt_text(
-    *, can_go_back: bool, can_skip_auction: bool = False
+    *,
+    can_go_back: bool,
+    can_skip_auction: bool = False,
+    can_explain: bool = False,
 ) -> Text:
     """The step keys, as one line, offering only the keys that apply.
 
     One line, short words and plain two-space gaps, because it is printed
     bare under a frame that already fills most of a terminal and must not
     wrap on an 80-column one: ``trick`` and ``round`` stand for "run to
-    the end of the trick / round", ``skip bids`` for "run to the
-    contract", ``grid`` for "show the round so far as a trick grid".
-    ``[p]`` is omitted at a round's first stop, ``[a]`` once the auction
-    is over.
+    the end of the trick / round", ``skip`` for "skip the rest of the
+    auction", ``grid`` for "show the round so far as a trick grid",
+    ``why`` for "more / less of the AI's reasons". ``[p]`` is omitted at
+    a round's first stop, ``[a]`` once the auction is over, ``[w]`` when
+    no seat's reasons can be shown.
 
     Args:
         can_go_back: Whether a previous stop exists to return to.
         can_skip_auction: Whether the round is still bidding.
+        can_explain: Whether the replay shows an AI-rationale panel.
 
     Returns:
         The key line.
@@ -251,21 +256,28 @@ def _replay_step_prompt_text(
         ("[r]", "round"),
     ]
     if can_skip_auction:
-        keys.append(("[a]", "skip bids"))
+        keys.append(("[a]", "skip"))
     keys.append(("[g]", "grid"))
+    if can_explain:
+        keys.append(("[w]", "why"))
     if can_go_back:
         keys.append(("[p]", "back"))
     text = Text()
     for key, label in keys:
         text.append(key, style=f"bold {FG}")
         text.append(f" {label}  ", style=FG)
+    # ``out`` of the round, back to the picker: "rounds" cost the three
+    # cells that let every key fit 80 columns at once.
     text.append("[q]", style=f"bold {GOLD}")
-    text.append(" rounds", style=FG)
+    text.append(" out", style=FG)
     return text
 
 
 def _replay_step_rejection_text(
-    *, can_go_back: bool, can_skip_auction: bool = False
+    *,
+    can_go_back: bool,
+    can_skip_auction: bool = False,
+    can_explain: bool = False,
 ) -> Text:
     """The notice shown when a step key is not one on offer.
 
@@ -274,6 +286,8 @@ def _replay_step_rejection_text(
             whether ``[p]`` is named as an option.
         can_skip_auction: Whether the round is still bidding, which
             decides whether ``[a]`` is.
+        can_explain: Whether the replay shows an AI-rationale panel,
+            which decides whether ``[w]`` is.
 
     Returns:
         The notice.
@@ -283,6 +297,8 @@ def _replay_step_rejection_text(
     if can_skip_auction:
         keys.append("[a]")
     keys.append("[g]")
+    if can_explain:
+        keys.append("[w]")
     if can_go_back:
         keys.append("[p]")
     keys.append("[q]")

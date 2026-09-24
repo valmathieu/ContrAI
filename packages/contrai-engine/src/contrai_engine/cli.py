@@ -730,7 +730,13 @@ def _step_round(record: "GameRecord", number: int, view: Any) -> None:
     resume_at = 0
     while True:
         stepper = SteppingView(view, resume_at=resume_at)
-        controller = ReplayController(record, view=stepper)
+        # Explained only when the view has a rationale panel to fill —
+        # which ``_run_replay`` decides once, from the record's seats.
+        controller = ReplayController(
+            record,
+            view=stepper,
+            explain=getattr(view, "rationale", None) is not None,
+        )
         index = [r.number for r in controller.rounds].index(number)
         stepper.attach(controller.game, controller.game.rules.target_score)
         try:
@@ -792,6 +798,11 @@ def _run_replay(args: argparse.Namespace) -> int:
         )
         return 1
     view = RichView(options=DebugOptions(replay=True))
+    # The AI's reasons, compact to start with, when the record seats an AI
+    # this engine can ask; a game of humans or observed players shows no
+    # panel at all and offers no ``[w]``.
+    if ReplayController.explainable(record):
+        view.rationale = "compact"
     pick = RoundPick(args.round) if args.round is not None else None
     try:
         while True:

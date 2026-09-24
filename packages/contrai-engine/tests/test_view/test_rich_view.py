@@ -1953,11 +1953,14 @@ class TestReplayMode:
 
         assert any("Debug — all hands" in text for text in captured)
 
-    def _frame_titles(self, monkeypatch, four_players, **options):
+    def _frame_titles(
+        self, monkeypatch, four_players, rationale=None, **options
+    ):
         from contrai_engine.view import rich_view
 
         monkeypatch.setattr(rich_view.time, "sleep", lambda _: None)
         view = RichView(options=DebugOptions(**options))
+        view.rationale = rationale
         view.attach(
             TestDebugStrip._StubGame(list(four_players)), target_score=1500
         )
@@ -1968,11 +1971,57 @@ class TestReplayMode:
     def test_replay_leaves_the_rationale_panel_off(
         self, monkeypatch, four_players
     ):
-        # Every replayed entry would read "recorded action", and the
-        # panel's rows are what pushed the frame's top off the screen.
+        # With no AI seat to ask, every entry would read "recorded
+        # action": the record seats nobody whose reasons can be shown.
         captured = self._frame_titles(monkeypatch, four_players, replay=True)
 
-        assert "Debug — AI rationale" not in captured
+        assert not any("rationale" in text for text in captured)
+
+    def test_replay_shows_the_compact_panel_when_asked(
+        self, monkeypatch, four_players
+    ):
+        captured = self._frame_titles(
+            monkeypatch, four_players, rationale="compact", replay=True
+        )
+
+        assert "AI rationale — [w] more" in captured
+
+    def test_replay_shows_the_full_panel_when_toggled(
+        self, monkeypatch, four_players
+    ):
+        captured = self._frame_titles(
+            monkeypatch, four_players, rationale="full", replay=True
+        )
+
+        assert "AI rationale — [w] less" in captured
+
+    def test_w_toggles_between_the_two_forms(self):
+        view = RichView(options=DebugOptions(replay=True))
+        view.rationale = "compact"
+
+        view.toggle_rationale()
+        assert view.rationale == "full"
+        view.toggle_rationale()
+        assert view.rationale == "compact"
+
+    def test_toggling_with_no_reasons_to_show_does_nothing(self):
+        view = RichView(options=DebugOptions(replay=True))
+
+        view.toggle_rationale()
+
+        assert view.rationale is None
+
+    def test_the_step_prompt_offers_w_only_with_reasons_to_show(self):
+        with_reasons = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["w"]
+        )
+        with_reasons.rationale = "compact"
+        without = _drive_landing(
+            RichView(options=DebugOptions(replay=True)), ["w", "n"]
+        )
+
+        assert with_reasons.show_replay_step(can_go_back=True) == "w"
+        assert without.show_replay_step(can_go_back=True) == "n"
 
     def test_debug_still_shows_it(self, monkeypatch, four_players):
         captured = self._frame_titles(monkeypatch, four_players, debug=True)

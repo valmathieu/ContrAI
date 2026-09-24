@@ -12,7 +12,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 - (engine) `contrai replay` trick grid: `g N` on the picker, or `g` at any stop, shows the round's tricks 4 × 2 with leader, winner, points, belote and auction. See [engine docs](docs/engine/index.md).
 - (engine) `contrai replay` gains `a`: skip the rest of the auction and stop on the contract, one key before the first card. See [engine docs](docs/engine/index.md).
-- (engine) `ReplayController(explain=True)` re-asks each recorded AI seat's strategy why it acted, flagging what it would now play instead. See [engine docs](docs/engine/index.md).
+- (engine) `contrai replay` shows why each recorded AI seat acted, compact with `w` for more, and flags what it would now play instead. See [engine docs](docs/engine/index.md).
 - (engine) `Rationale.drawn_from`: the expert AI names the level cards a discard was drawn from at random; the debug panel shows it. See [engine docs](docs/engine/index.md).
 
 ### Fixed

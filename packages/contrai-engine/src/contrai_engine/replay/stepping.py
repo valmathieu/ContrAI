@@ -47,6 +47,7 @@ TRICK_KEY = "t"
 ROUND_KEY = "r"
 AUCTION_KEY = "a"
 GRID_KEY = "g"
+WHY_KEY = "w"
 BACK_KEY = "p"
 OUT_KEY = "q"
 
@@ -70,8 +71,9 @@ class StepMode(Enum):
 
 
 #: Which mode each continuing key selects. ``p`` and ``q`` leave the
-#: round instead of setting a mode, and ``g`` never reaches the gate —
-#: :func:`read_step_key` serves it — so none of the three appears here.
+#: round instead of setting a mode, and ``g`` and ``w`` never reach the
+#: gate — :func:`read_step_key` serves them — so none of the four
+#: appears here.
 _MODES: dict[str, StepMode] = {
     NEXT_KEY: StepMode.ACTION,
     TRICK_KEY: StepMode.TRICK,
@@ -88,14 +90,15 @@ def read_step_key(
     can_go_back: bool,
     can_skip_auction: bool = False,
 ) -> str:
-    """Read the viewer's key at a stop, serving any trick-grid requests.
+    """Read the viewer's key at a stop, serving the keys that stay put.
 
-    ``g`` is not a way to move on: it shows the round so far as a trick
-    grid, repaints the screen it was pressed on, and asks again — as
-    many times as the viewer likes. So it is served here, below every
-    caller, rather than returned to one: the step gate inside a round
-    and the driver's own prompts after it (the recap, a divergence) all
-    read their key through this.
+    ``g`` and ``w`` are not ways to move on. ``g`` shows the round so far
+    as a trick grid; ``w`` switches the AI-rationale panel between its
+    compact and full forms. Either way the screen it was pressed on is
+    repainted and the viewer asked again — as many times as they like.
+    So both are served here, below every caller, rather than returned to
+    one: the step gate inside a round and the driver's own prompts after
+    it (the recap, a divergence) all read their key through this.
 
     Args:
         view: The view to prompt on and to draw the grid with.
@@ -106,16 +109,19 @@ def read_step_key(
         can_skip_auction: Whether ``[a]`` is offered.
 
     Returns:
-        The first key that is not ``g``.
+        The first key that is neither ``g`` nor ``w``.
     """
 
     while True:
         key = view.show_replay_step(
             can_go_back=can_go_back, can_skip_auction=can_skip_auction
         )
-        if key != GRID_KEY:
+        if key == GRID_KEY:
+            view.show_replay_grid(round_, bids)
+        elif key == WHY_KEY:
+            view.toggle_rationale()
+        else:
             return key
-        view.show_replay_grid(round_, bids)
         view.redraw_screen()
 
 

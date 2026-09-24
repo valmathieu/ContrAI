@@ -1816,6 +1816,59 @@ class TestRunReplay:
         assert view.recaps == 0
         assert view.steps == 1
 
+    def _explains(self, monkeypatch) -> list[bool]:
+        """Record the ``explain`` flag of every controller the CLI builds."""
+
+        flags: list[bool] = []
+
+        class _Watched(cli_module.ReplayController):
+            def __init__(self, record, view=None, *, explain=False):
+                flags.append(explain)
+                super().__init__(record, view, explain=explain)
+
+        monkeypatch.setattr(cli_module, "ReplayController", _Watched)
+        return flags
+
+    def test_a_record_of_engine_ai_seats_shows_their_reasons(
+        self, record_path, monkeypatch
+    ):
+        flags = self._explains(monkeypatch)
+        view = self._view([1, None], ["r"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        _run_replay(self._args(record_path))
+
+        assert view.rationale == "compact"
+        assert flags and all(flags)
+
+    def test_a_record_with_no_engine_ai_shows_no_reasons_at_all(
+        self, record_path, monkeypatch
+    ):
+        import dataclasses
+
+        from contrai_data import Seat, SeatKind
+
+        real_load = cli_module.load_game
+
+        def _observed(path):
+            record = real_load(path)
+            seats = {
+                seat: Seat(None, "someone", None, SeatKind.OBSERVED, None)
+                for seat in record.seats
+            }
+            return dataclasses.replace(record, seats=seats)
+
+        monkeypatch.setattr(cli_module, "load_game", _observed)
+        flags = self._explains(monkeypatch)
+        view = self._view([1, None], ["r"])
+        view.rationale = None
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        _run_replay(self._args(record_path))
+
+        assert view.rationale is None
+        assert flags and not any(flags)
+
     def test_a_suspect_earlier_round_is_stepped_past(
         self, record_path, monkeypatch
     ):
