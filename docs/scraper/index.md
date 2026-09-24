@@ -6,6 +6,11 @@ Playwright spectator-mode scraper for online Contrée games (auth required).
 JSONL file per game, the same format the engine writes, so a scraped game and a played one are
 read by the same code.
 
+Two ways to watch. `contrai-scrape run` is one account sitting wherever the server seats it, which
+is always a game already under way. `contrai-scrape fleet` is several accounts on one browser,
+waiting in the lobby and chasing each tournament game to its table from its first card — see
+[The lobby](#the-lobby) and [Fleets](#fleets).
+
 Site specifics — the target URL, the scraping account, every selector the browser clicks, every
 token the wire speaks — live in a local `profile.toml` that is never committed. Code and docs
 describe *what* each step does, not *where* it clicks; do not add the site's name, its DOM ids
@@ -460,6 +465,9 @@ the same egress gate (one shared `SharedEgressGate`, since every worker and ever
 same retention pruning — but inside an open window it launches one Chromium and opens a session per
 worker on it, logins staggered by `login_stagger_s`.
 
+```mermaid format="svg" source="state_scraper_worker.mmd"
+```
+
 Each worker loops on the same route. It logs in, walks to the lobby, reads the tournament row's
 hash, and waits there on the socket (`in_hall`) until `LobbyWatcher` announces a start. A roster
 older than `roster_max_age_s` when read is left alone (`roster_stale`); otherwise the worker claims
@@ -469,6 +477,13 @@ roster is released either way, and the worker walks back to the lobby. Idle work
 lobby, not at a table: a spectator left at a table after its game is sent back to the menu anyway,
 and a worker already in the lobby spends none of the few seconds before the first deal getting
 there.
+
+One chase, from the lobby's socket to a written record — the claim on the roster, the round trip
+out, the blind scan held against the roster, the table's own gates and the claim on the table, and
+the walk back:
+
+```plantuml format="svg" source="seq_scraper_chase.puml"
+```
 
 The walk back is the one route nothing has measured, so it fails fast, and a failure rebuilds the
 worker's session — a fresh context and a fresh login — logged as `return_rebuilt` and *not* counted

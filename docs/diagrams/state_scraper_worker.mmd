@@ -1,0 +1,56 @@
+---
+title: contrai-scraper — a fleet worker (Worker.run)
+---
+stateDiagram-v2
+    direction TB
+
+    [*] --> Egress : the window opens<br/>after login_stagger_s × its place
+
+    Egress : <b>egress gate</b><br/>one SharedEgressGate for the fleet<br/>refused · wait idle_poll_minutes, ask again
+    Session : <b>session</b><br/>a fresh context on the shared Chromium<br/>a raw log of its own · log in
+    Census : <b>census</b> · once a process<br/>observe · census_hops tables read<br/>into the registry, nothing recorded
+    Hall : <b>in the lobby</b><br/>LobbyWatcher reads the socket until<br/>the tournament row raises its full flag
+    Claim : <b>claim the roster</b><br/>TableRegistry, keyed by the four accounts
+    Chasing : <b>chasing</b><br/>out to observe · a blind scan<br/>four accounts, or roster_mismatch and a hop<br/>gives up on distinct_budget, deadline<br/>or target_refused
+    Recording : <b>recording</b><br/>every other gate · the table claimed<br/>watch to the end · one record
+    Back : <b>walk back</b><br/>return_to_lobby, in the page
+    Failed : <b>session_failed</b>
+    Down : <b>worker_down</b><br/>for the rest of the process
+    Handback : <b>exit 3</b><br/>most of the fleet is down
+
+    Egress --> Session : egress_ok
+    Egress --> Down : 6 refusals in a row
+    Session --> Census : first session, census_enabled
+    Session --> Hall : enter_lobby
+    Census --> Back : the sweep is done
+    Hall --> Claim : roster_announced
+    Claim --> Hall : roster_taken · roster_stale
+    Claim --> Chasing : chase_started
+    Chasing --> Recording : chase_matched
+    Chasing --> Back : chase_gave_up
+    Recording --> Back : chase_ended
+    Back --> Hall : the list is showing
+    Back --> Egress : a step does not land<br/>return_rebuilt · no budget spent
+    Session --> Failed : any step raises
+    Failed --> Egress : after idle_poll_minutes
+    Failed --> Down : 3 in a row
+    Down --> Handback : down × 2 > workers
+    Down --> [*]
+    Hall --> [*] : window closed · limits met
+
+    note right of Failed
+        A chase that ran its course,
+        whatever it found, clears the streak:
+        a profile every chase breaks on
+        cannot keep logging in forever.
+    end note
+
+    classDef gate fill:#DCD2F0,stroke:#5E4495,stroke-width:2px,color:#2E1F52
+    classDef work fill:#EDE7F6,stroke:#5E4495,stroke-width:1px,color:#2E1F52
+    classDef record fill:#E0F5F2,stroke:#2E7D6F,stroke-width:2px,color:#123E36
+    classDef fault fill:#FDECEA,stroke:#B3261E,stroke-width:2px,color:#5F1410
+
+    class Egress,Claim gate
+    class Session,Census,Hall,Chasing,Back work
+    class Recording record
+    class Failed,Down,Handback fault
