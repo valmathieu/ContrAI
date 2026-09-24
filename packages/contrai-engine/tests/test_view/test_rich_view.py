@@ -1986,7 +1986,7 @@ class TestReplayMode:
 
         assert view.LOG_MAX == RichView.REPLAY_LOG_MAX
         assert [line.plain for line in view.event_log] == [
-            "line 7", "line 8", "line 9"
+            "line 6", "line 7", "line 8", "line 9"
         ]
 
     def test_a_live_view_keeps_the_full_log(self):

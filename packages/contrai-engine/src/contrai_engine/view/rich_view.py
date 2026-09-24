@@ -193,11 +193,11 @@ class RichView:
     """
 
     LOG_MAX = 5
-    #: The log's length under replay. Two rows shorter, because a replay
-    #: frame already shows what the log would repeat — the auction in
-    #: "Bidding so far", the trick in its diamond — and those two rows
-    #: are what keep a long auction's frame inside 40.
-    REPLAY_LOG_MAX = 3
+    #: The log's length under replay: one line per seat, so the table's
+    #: last four actions — one full turn round it — are always readable.
+    #: One row shorter than live, which is what keeps a long auction's
+    #: frame inside 40.
+    REPLAY_LOG_MAX = 4
 
     def __init__(
         self,
