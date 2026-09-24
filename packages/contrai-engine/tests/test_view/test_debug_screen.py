@@ -203,6 +203,16 @@ class TestPanelAiRationale:
         panel = _panel_ai_rationale(self._Round([self._decision()]))
         assert "over:" not in panel.renderable.plain
 
+    def test_a_drawn_decision_says_it_was_drawn_at_random(self):
+        panel = _panel_ai_rationale(
+            self._Round([self._decision(drawn_from=("8 ♣", "8 ♦"))])
+        )
+        assert "drawn at random among: 8 ♣ · 8 ♦" in panel.renderable.plain
+
+    def test_a_settled_decision_has_no_draw_line(self):
+        panel = _panel_ai_rationale(self._Round([self._decision()]))
+        assert "drawn at random" not in panel.renderable.plain
+
     def test_a_citation_renders_knob_value_and_effect(self):
         panel = _panel_ai_rationale(
             self._Round([

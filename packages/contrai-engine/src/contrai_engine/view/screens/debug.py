@@ -30,7 +30,7 @@ from contrai_engine.view.formatting import (
     _suit_color,
     _suit_glyph,
 )
-from contrai_engine.view.theme import BORDER, DIM, TITLE
+from contrai_engine.view.theme import BORDER, DIM, TITLE, YELLOW
 
 # Row order for the all-hands panel: the canonical anticlockwise
 # seating (N, W, S, E) that ``Position`` itself defines and that
@@ -205,6 +205,11 @@ def _panel_ai_rationale(round_) -> Panel:
                 style=f"bold {DIM}",
             )
             body.append(f" — {citation['effect']}", style=DIM)
+        if entry["drawn_from"]:
+            # The rule left these level; the pick among them was a draw,
+            # so another run may well have played a different one.
+            body.append("\n  ⚄ drawn at random among: ", style=YELLOW)
+            body.append(" · ".join(entry["drawn_from"]), style=YELLOW)
 
     return Panel(
         body,

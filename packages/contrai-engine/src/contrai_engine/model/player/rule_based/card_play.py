@@ -48,6 +48,7 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         *,
         considered: tuple[str, ...] = (),
         citations: tuple[RuleCitation, ...] = (),
+        drawn_from: tuple[str, ...] = (),
     ) -> CardDecision:
         """Pair a chosen card with the rule that produced it.
 
@@ -62,13 +63,15 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             detail: One sentence on what that meant for this trick.
             considered: The alternatives weighed, already rendered.
             citations: The table knobs this branch consulted.
+            drawn_from: The level options ``card`` was drawn from at
+                random, already rendered, or empty when nothing was.
 
         Returns:
             The :class:`CardDecision` to hand back to the engine.
         """
 
         return CardDecision(
-            card, Rationale(rule, detail, considered, citations)
+            card, Rationale(rule, detail, considered, citations, drawn_from)
         )
 
     @staticmethod
@@ -379,12 +382,14 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             # Use non-trump cards
             cards_to_consider = non_trump_cards
 
+        card, drawn_from = self._cheapest_card(cards_to_consider, hand, rules)
         return self._decide(
-            self._lowest_value_card(cards_to_consider, hand, rules),
+            card,
             "concede cheaply",
             "no opening worth making — gave up the cheapest card, sparing "
             "trump.",
             considered=self._render(cards_to_consider),
+            drawn_from=self._render(drawn_from),
         )
 
     def _play_leading_card(
@@ -502,12 +507,14 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
         # holds nothing else to give.
         non_trump_cards = [c for c in playable_cards if not rules.is_trump(c.suit)]
         candidates = non_trump_cards or playable_cards
+        card, drawn_from = self._cheapest_card(candidates, hand, rules)
         return self._decide(
-            self._lowest_value_card(candidates, hand, rules),
+            card,
             "concede cheaply",
             "nothing here wins the trick — led the cheapest card, sparing "
             "trump.",
             considered=self._render(candidates),
+            drawn_from=self._render(drawn_from),
         )
 
     def _play_following_card(
@@ -758,7 +765,9 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             c for c in affordable if not self._is_master_card(c, rules, fallen)
         ]
         candidates = non_master or affordable
-        chosen = self._lowest_value_card(candidates, observation.hand, rules)
+        chosen, drawn_from = self._cheapest_card(
+            candidates, observation.hand, rules
+        )
 
         # The exemption is what is being *used* whenever a losing trump
         # sits in the legal set beside the plain card we are about to
@@ -789,14 +798,15 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             "sparing trump and keeping the masters.",
             considered=self._render(candidates),
             citations=citations,
+            drawn_from=self._render(drawn_from),
         )
 
-    def _lowest_value_card(
+    def _cheapest_card(
         self,
         candidates: Sequence[Card],
         hand: Sequence[Card],
         rules: TrumpRules,
-    ) -> Card:
+    ) -> tuple[Card, tuple[Card, ...]]:
         """Pick the cheapest card to give up, ties broken by suit length.
 
         The selection ladder, strongest criterion first:
@@ -827,7 +837,10 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
             rules: The round's regime, setting the points scale.
 
         Returns:
-            The chosen card, one of ``candidates``.
+            The chosen card, one of ``candidates``, and — when step 3
+            drew it — the level cards it was drawn from, so the rationale
+            can say the pick was random rather than implying the rule
+            chose it. Empty when the first two criteria settled it.
         """
 
         def rank_key(card: Card) -> tuple[int, int]:
@@ -837,7 +850,10 @@ class RuleBasedCardPlayStrategy(CardPlayStrategy, PlayerStateMixin):
 
         best = min(rank_key(card) for card in candidates)
         tied = [card for card in candidates if rank_key(card) == best]
-        return random.choice(tied)
+        # One draw on the same list as ever, drawn or not: a seeded run
+        # consumes the RNG exactly as it did before the tie was reported.
+        chosen = random.choice(tied)
+        return chosen, tuple(tied) if len(tied) > 1 else ()
 
     def _opponents_might_have_trump(
         self,

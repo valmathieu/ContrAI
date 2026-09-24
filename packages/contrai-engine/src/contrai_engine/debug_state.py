@@ -259,7 +259,9 @@ def last_decisions(round_, limit: int = 4) -> list[dict]:
         - ``detail`` — one sentence on what that meant here;
         - ``considered`` — the alternatives weighed, as strings;
         - ``citations`` — the table knobs consulted, each a
-          ``{"knob", "value", "effect"}`` dict.
+          ``{"knob", "value", "effect"}`` dict;
+        - ``drawn_from`` — the level options the action was drawn from
+          at random, as strings; empty when the rule settled it.
     """
 
     cards = list(getattr(round_, "card_decisions", ()) or ())
@@ -308,4 +310,5 @@ def _decision_entry(kind: str, action: str, rationale) -> dict:
             }
             for citation in rationale.citations
         ],
+        "drawn_from": list(rationale.drawn_from),
     }

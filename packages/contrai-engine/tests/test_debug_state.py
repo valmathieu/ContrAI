@@ -324,6 +324,25 @@ class TestLastDecisions:
                 assert set(citation) == {"knob", "value", "effect"}
                 assert all(isinstance(v, str) for v in citation.values())
 
+    def test_a_settled_decision_draws_from_nothing(self):
+        for entry in last_decisions(self._round()):
+            assert entry["drawn_from"] == []
+
+    def test_a_drawn_decision_names_what_it_was_drawn_from(self):
+        round_ = _StubDecisionRound(card_decisions=[
+            _card_decision(
+                Position.EAST,
+                Card(Suit.CLUBS, Rank.EIGHT),
+                "concede cheaply",
+                "gave up the cheapest card.",
+                drawn_from=("8 of Clubs", "8 of Diamonds"),
+            ),
+        ])
+
+        (entry,) = last_decisions(round_)
+
+        assert entry["drawn_from"] == ["8 of Clubs", "8 of Diamonds"]
+
     def test_oldest_first(self):
         """Play order, so a new decision lands below the previous ones."""
         entries = last_decisions(self._round())
