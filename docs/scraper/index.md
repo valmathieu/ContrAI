@@ -213,7 +213,9 @@ page's sockets is added to the context before its page exists, and the frame sou
 anything navigates, or the join snapshot describing the first table is gone.
 
 The walk follows the site's timing, not only its markup. It lets the landing page settle before
-probing for the first-visit tutorial, opens the address form through its own entry, and, because
+probing for the first-visit tutorial — and, since a cold browser has been measured drawing it after
+that one look, dismisses it and retries once when the login entry refuses a click — opens the
+address form through its own entry, and, because
 the first-use pledge can be drawn a moment after it was looked for, answers it and retries once
 when the spectator menu refuses a click.
 

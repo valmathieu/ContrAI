@@ -234,7 +234,19 @@ class Spectator:
         await self._dismiss("dismiss_tutorial")
         # The site offers several ways in, and the address form appears only
         # once its e-mail entry is chosen.
-        await self._click("login_start")
+        try:
+            await self._click("login_start")
+        except BrowserError:
+            # The tutorial can be drawn after the probe above looked for it —
+            # a cold browser loads the landing page more slowly than the
+            # settle allows for — and then covers the login entry. One
+            # dismissal and one retry, the pattern the pledge has on the
+            # menu; an entry blocked by anything else still fails, naming
+            # its key.
+            if await self._showing("dismiss_tutorial") is None:
+                raise
+            await self._click("dismiss_tutorial")
+            await self._click("login_start")
         await self._fill("login_email", self._profile.account.email)
         await self._click("login_continue")
         await self._fill("code_input", self._profile.account.verification_code)

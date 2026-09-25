@@ -163,6 +163,29 @@ class LatePledgePage(FakePage):
         return super().locator(selector)
 
 
+class LateTutorialPage(FakePage):
+    """A landing page whose tutorial is drawn only after the walk first looked.
+
+    Until it is dismissed it covers the login entry, so the entry's click
+    fails — what a cold browser was measured doing.
+    """
+
+    def __init__(self):
+        super().__init__({"#email": ["input"], "#go": ["Continue"],
+                          "#code": ["input"], "#submit": ["OK"]})
+        self.probes = 0
+
+    def locator(self, selector):
+        dismissed = "#no-thanks" in self.clicks
+        if selector == "#no-thanks":
+            self.probes += 1
+            drawn = self.probes > 1 and not dismissed
+            return FakeLocator(self, selector, ["No thanks"] if drawn else [])
+        if selector == "#by-email":
+            return FakeLocator(self, selector, ["Email"] if dismissed else [])
+        return super().locator(selector)
+
+
 def option_row(name=None, on=False, *, state=True):
     """One options-panel row, laid out as the observed panel lays it out.
 
@@ -341,6 +364,26 @@ class TestLogin:
         indices = [page.trace.index(marker) for marker in markers]
         for earlier, later in zip(indices, indices[1:]):
             assert earlier < later
+
+    def test_a_tutorial_drawn_late_is_dismissed_and_the_login_retried(self, profile):
+        # Measured on 2026-09-25: a cold browser drew the tutorial after the
+        # settle's one look, and it covered the login entry.
+        page = LateTutorialPage()
+
+        async def scenario():
+            await Spectator(page, profile).log_in()
+
+        drain(scenario)
+        assert page.clicks == ["#no-thanks", "#by-email", "#go", "#submit"]
+
+    def test_a_blocked_login_with_no_tutorial_still_names_the_key(self, profile):
+        page = FakePage({"#no-thanks-elsewhere": ["x"], "#email": ["input"]})
+
+        async def scenario():
+            await Spectator(page, profile).log_in()
+
+        with pytest.raises(BrowserError, match="login_start"):
+            drain(scenario)
 
     def test_a_missing_email_entry_names_the_key(self, profile):
         page = FakePage({"#email": ["input"]})
