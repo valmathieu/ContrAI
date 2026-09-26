@@ -25,6 +25,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 ### Fixed
 
 - (engine) `contrai verify` accepts an announced Solo Slam's 500 in a swept round's card-points column, not 250 only. See [engine docs](docs/engine/index.md).
+- (engine) `contrai verify` accepts a defense sweep's card points stated as 250, as the observed tables write them. See [engine docs](docs/engine/index.md).
 - (engine) A doubled sweep is tagged an unannounced slam and always made, so a swept doubled 170 no longer scores as a failure. See [engine docs](docs/engine/index.md).
 - (scraper) A doubled sweep is recorded as an unannounced slam — the multiplier no longer suppresses the classification.
 

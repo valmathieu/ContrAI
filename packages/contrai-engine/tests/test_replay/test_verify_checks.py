@@ -53,6 +53,7 @@ from contrai_engine.replay.verify import (
     _classify,
     _same_bid,
     _taken_agrees,
+    _defense_sweeper,
 )
 
 TS = "2026-09-11T00:00:00Z"
@@ -925,6 +926,71 @@ class TestTakenAgrees:
             )
             is True
         )
+
+    def test_a_defense_sweep_may_state_the_team_substitute(self):
+        # obs-daf245b0 round 6: the defense took all 8 and the site wrote
+        # its card points as 250, as it does for any side that sweeps.
+        # The round carries no slam classification — only the defense's
+        # sweep, which the replay's trick winners establish.
+        assert (
+            _taken_agrees(
+                _score(card_points={TeamSide.NS: 0, TeamSide.EW: 162}),
+                _Scored(taken={TeamSide.NS: 0, TeamSide.EW: 250}),
+                SlamOutcome.NONE,
+                defense_sweeper=TeamSide.EW,
+            )
+            is True
+        )
+
+    def test_a_defense_sweep_substitute_must_sit_on_the_sweepers(self):
+        assert (
+            _taken_agrees(
+                _score(card_points={TeamSide.NS: 0, TeamSide.EW: 162}),
+                _Scored(taken={TeamSide.NS: 250, TeamSide.EW: 0}),
+                SlamOutcome.NONE,
+                defense_sweeper=TeamSide.EW,
+            )
+            is False
+        )
+
+    def test_without_a_sweep_the_250_is_still_a_fault(self):
+        # Only a sweep widens the tolerance: a pile that merely leaves the
+        # other side at zero points is not one.
+        assert (
+            _taken_agrees(
+                _score(card_points={TeamSide.NS: 0, TeamSide.EW: 162}),
+                _Scored(taken={TeamSide.NS: 0, TeamSide.EW: 250}),
+                SlamOutcome.NONE,
+            )
+            is False
+        )
+
+
+class TestDefenseSweeper:
+    """Which side, if any, took all 8 tricks of a contract it did not bid."""
+
+    @staticmethod
+    def _round(winners, declarer=Position.NORTH):
+        return _Round(winners=winners, contract=_Contract(declarer))
+
+    def test_the_defense_taking_every_trick_is_named(self):
+        winners = [Position.WEST] * 5 + [Position.EAST] * 3
+        assert _defense_sweeper(self._round(winners)) is TeamSide.EW
+
+    def test_the_declaring_side_s_sweep_is_not_the_defense_s(self):
+        winners = [Position.NORTH] * 8
+        assert _defense_sweeper(self._round(winners)) is None
+
+    def test_one_trick_to_the_declaring_side_is_no_sweep(self):
+        winners = [Position.WEST] * 7 + [Position.SOUTH]
+        assert _defense_sweeper(self._round(winners)) is None
+
+    def test_a_round_short_of_eight_tricks_is_no_sweep(self):
+        assert _defense_sweeper(self._round([Position.WEST] * 7)) is None
+
+    def test_no_contract_or_no_play_is_no_sweep(self):
+        assert _defense_sweeper(_Round(winners=[Position.WEST] * 8)) is None
+        assert _defense_sweeper(_Round(contract=_Contract(Position.NORTH))) is None
 
 
 # ---------------------------------------------------------------------------
