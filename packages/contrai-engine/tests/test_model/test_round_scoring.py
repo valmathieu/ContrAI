@@ -959,17 +959,50 @@ class TestDisputeResolution:
         assert score.contract_made is False
         assert score.held == 0
 
-    @pytest.mark.parametrize(
-        "value", [DisputeResolution.SHARED, DisputeResolution.HELD]
-    )
-    def test_a_doubled_tie_fails_whatever_the_option(self, players, value):
-        # A double is settled in its own round; the defense has priority.
+    def test_a_doubled_tie_fails_by_default(self, players):
         score = score_round(
-            _split_round(players, 80, attack=81, defense=81, doubled=True,
-                         rules=self._rules(value))
+            _split_round(players, 80, attack=81, defense=81, doubled=True)
         )
         assert score.contract_made is False
         assert score.held == 0
+
+    def test_a_doubled_tie_shared_is_a_made_double(self, players):
+        # Judged made, a double is winner-takes-all: the attack marks the
+        # flat 160 plus 80 × 2 (§9 default placement), the defense nothing.
+        rules = self._rules(DisputeResolution.SHARED)
+        score = score_round(
+            _split_round(players, 80, attack=81, defense=81, doubled=True,
+                         rules=rules)
+        )
+        assert score.contract_made is True
+        assert score.scores == {TeamSide.NS: 320, TeamSide.EW: 0}
+
+    def test_the_observed_doubled_held_round(self, players):
+        # obs-3a3ecf22 round 11: S declares 80 ♥, doubled, 81 / 81. The
+        # site marked both sides 0 / 0 and round 12's winner collected
+        # 480 — the made double's (160 + 80) × 2, held whole.
+        rules = PRESETS["tournament"]
+        score = score_round(
+            _split_round(players, 80, attack=81, defense=81, declarer="S",
+                         doubled=True, rules=rules)
+        )
+        assert score.contract_made is True
+        assert score.held == 480
+        assert score.marks == {TeamSide.NS: Mark(0, 0), TeamSide.EW: Mark(0, 0)}
+        assert score.scores == {TeamSide.NS: 0, TeamSide.EW: 0}
+
+    def test_a_doubled_held_91_91_keeps_the_belote_with_its_holder(
+        self, players
+    ):
+        # obs-b7e6ff07 round 5: S declares 80 ♣ doubled, 71 + 20 against
+        # 91. The pot is still 480; the belote is marked by its holder.
+        rules = PRESETS["tournament"]
+        score = score_round(
+            _split_round(players, 80, attack=71, defense=91, declarer="S",
+                         belote={TeamSide.NS: 1}, doubled=True, rules=rules)
+        )
+        assert score.held == 480
+        assert score.scores == {TeamSide.NS: 20, TeamSide.EW: 0}
 
     def test_inert_when_the_attack_need_not_out_score(self, players):
         rules = self._rules(

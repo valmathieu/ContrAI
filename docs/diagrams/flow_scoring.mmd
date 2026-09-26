@@ -19,7 +19,7 @@ flowchart TD
     %% ---------- Belote transfer on a failure ----------
     SlamMade --> Transfer
     SweepTag --> Transfer
-    NumMade --> Dispute{"dispute?<br/>(tie, P_att ≥ C, M = 1,<br/>out-score test on)"}
+    NumMade --> Dispute{"dispute?<br/>(tie, P_att ≥ C,<br/>out-score test on,<br/>doubled or not)"}
     Dispute -- "no" --> Transfer
     Dispute -- "yes" --> Settle["<i>dispute_resolution</i>:<br/>failed → stays failed<br/>shared → made<br/>held → made; the attack's mark → <b>held</b>"]
     Settle --> Transfer

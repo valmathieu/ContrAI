@@ -434,13 +434,13 @@ A **dispute** is an exact tie. On cards alone that is 81 / 81 (the pile being 16
 - **Off**: only `P_attack ≥ C` matters, so a tie leaves the contract made whenever the attack reached its value, and each team marks its own points as usual. There is no dispute to settle.
 - **On** (default): a tie means the attack has not out-scored the defense. Where the attack did not even reach `C`, that is an ordinary failure. Where it did, the round is a genuine dispute, settled by the next option.
 
-**Table option — dispute resolution** (`failed` by default, §9), consulted only for a dispute on an **un-doubled** numeric contract:
+**Table option — dispute resolution** (`failed` by default, §9), consulted for a dispute on any numeric contract, doubled or not:
 
 - **Failed** (default): the contract fails and ordinary failed-contract marking applies.
 - **Shared**: the contract is made and each team marks its own points — at 81 / 81 on an 80, the attack marks 81 + 80 = 161 and the defense 81.
 - **Held** (*litige*): the contract is judged made, but the attack's mark — its made and announced points as they would have been written — is **held** rather than marked. The defense marks its own points, and any Belote stays with its holder. The held points are paid, flat, to the side that wins the **next** contract: the declaring side if it is made, the defense if it fails, and a double on that contract does not multiply them. A next round that is itself held pays nothing and adds its own held points to the pot, an all-pass redeal leaves the pot waiting, and a pot still open when the game ends is lost.
 
-A dispute on a **doubled or redoubled** contract always fails, whatever the option: a double is settled in its own round, and the defense has priority.
+A **doubled or redoubled** dispute follows the same option. Judged made, it marks what a made double marks — winner-takes-all, so the defense marks nothing — and under *held* that whole doubled mark goes into the pot: at 81 / 81 on an 80 doubled, with the whole mark multiplied, (160 + 80) × 2 = 480.
 
 ### 7.6. Double/ Redouble multiplier
 

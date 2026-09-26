@@ -296,11 +296,12 @@ def score_round(round_: 'Round') -> RoundScore:
             contract_made = contract_made and attack_realized > defense_realized
         # §7.5 dispute: an exact tie the attack reached its value with. The
         # strict comparison above has already failed it; a table that
-        # settles disputes otherwise says so here. Un-doubled only: a
-        # double is settled in its own round, and the defense has priority.
+        # settles disputes otherwise says so here. A doubled tie is a
+        # dispute like any other: judged made, it marks what a made double
+        # marks, so a held one puts the doubled mark in the pot (480 on an
+        # 80 doubled at the observed tables — obs-3a3ecf22 round 11).
         disputed = (
             rules.attack_must_outscore_defense
-            and multiplier == 1
             and attack_realized >= contract_value
             and attack_realized == defense_realized
         )

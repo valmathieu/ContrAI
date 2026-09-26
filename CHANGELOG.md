@@ -11,7 +11,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 ### Added
 
 - (core) `RuleConfig.substitute_survives_doubling` and `personal_sweep_marks_solo_slam` (§9.6) — the observed tables' sweep scoring, both set in the `tournament` preset. See [core docs](docs/core/index.md).
-- (core) `RuleConfig.dispute_resolution` (§9.6): `failed` / `shared` / `held` settles an exact tie; the `tournament` preset holds it. See [core docs](docs/core/index.md).
+- (core) `RuleConfig.dispute_resolution` (§9.6): `failed` / `shared` / `held` settles an exact tie, doubled or not; the `tournament` preset holds it. See [core docs](docs/core/index.md).
 - (engine) A held tie's points go to whoever wins the next contract (`Game.dispute_pot`, `RoundScore.carried_over`); the recap shows the pot. See [engine docs](docs/engine/index.md).
 - (engine) `contrai verify` checks the dispute points a round pays out; a record that cannot say reads `partial`. See [engine docs](docs/engine/index.md).
 - (scraper) A held dispute round is recorded as `held`, and each round's `carried_over` is inferred from the running totals, or `null`. See [scraper docs](docs/scraper/index.md).

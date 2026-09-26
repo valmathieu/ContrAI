@@ -58,9 +58,10 @@ class Rounding(Enum):
 class DisputeResolution(Enum):
     """How a dispute settles — an exact tie the attack reached its value with (§7.5).
 
-    Consulted only when the attack must out-score the defense, on an
-    un-doubled numeric contract whose attack reached its value: a doubled
-    tie always fails, and a tie short of the value is an ordinary failure.
+    Consulted only when the attack must out-score the defense, on a
+    numeric contract whose attack reached its value — doubled or not; a
+    tie short of the value is an ordinary failure. A doubled tie judged
+    made marks what a made double marks.
 
     Members:
         FAILED: The tie fails the contract (the §9 default).
@@ -223,7 +224,10 @@ class RuleConfig:
         The dispute rule was read off obs-f3c28d3b: round 3, an 81/81 on
         an 80, marked the defense 81 and the declarer nothing, and round
         4's winner collected 161 — 81 card points plus the 80 contract —
-        on top of its own marks.
+        on top of its own marks. The observed tables hold a doubled tie
+        the same way: obs-3a3ecf22 round 11, an 81/81 on an 80 doubled,
+        marked both sides nothing and paid round 12's winner 480 — the
+        made double's (160 + 80) × 2.
 
         Returns:
             The tournament ruleset.
