@@ -791,9 +791,10 @@ class Recorder:
     async def _hop(self, *, egress_checked: bool = False) -> None:
         """Ask the server for another table, if the shift still wants one.
 
-        There is no leave: the site's exit control leaves spectating rather
-        than the table, and nothing in-session recovers from that. The egress
-        is re-checked first, because a hop is new traffic to the site.
+        The table control is the only hop. The site's exit control leads to
+        the menus, not to another table, which makes it a way back to the
+        lobby and never a way to change table. The egress is re-checked
+        first, because a hop is new traffic to the site.
 
         Args:
             egress_checked: Whether the caller has just checked the egress,

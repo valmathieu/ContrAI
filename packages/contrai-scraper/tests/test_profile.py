@@ -233,9 +233,9 @@ class TestSelectors:
         assert profile.selectors.scoreboard_row == ".score-row"
 
     def test_the_retired_selectors_are_refused(self, tmp_path, profile_text):
-        # A profile still naming the v1 table list or the exit control is out
-        # of date in a way that matters: the server seats you, and the exit
-        # control is unrecoverable. Refusing is how the operator finds out.
+        # A profile still naming the v1 table list or its leave step is out of
+        # date in a way that matters: the server seats you, and leaving a table
+        # never led to another one. Refusing is how the operator finds out.
         path = tmp_path / "fixture-profile.toml"
         path.write_text(
             profile_text.replace("\nvariant = ", '\ntable_row = ".t"\nvariant = '),
@@ -287,6 +287,18 @@ class TestLobbySelectors:
             encoding="utf-8",
         )
         assert load_profile(path).selectors.lobby_back == ("#tool-back",)
+
+    def test_the_table_exit_is_read(self, profile):
+        assert profile.selectors.table_exit == "#leave"
+
+    def test_a_lobby_without_a_table_exit_still_loads(self, tmp_path, profile_text):
+        # Outside the lobby group: a fleet without one still runs, returning
+        # from each table by rebuilding its session.
+        path = tmp_path / "p.toml"
+        path.write_text(profile_text.replace('table_exit = "#leave"\n', ""),
+                        encoding="utf-8")
+        selectors = load_profile(path).selectors
+        assert (selectors.has_lobby, selectors.table_exit) == (True, None)
 
 
 #: The lobby's four field paths in the fixture profile, removable as one.

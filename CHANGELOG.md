@@ -29,6 +29,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) The live recorder refuses a buffer holding two games or two tables, logged as `record_refused`, instead of merging them into one record. See [scraper docs](docs/scraper/index.md).
 - (scraper) The pre-game draw at round 0 is left out by name (`[wire].draw_verb`) instead of reported as a round joined mid-play. See [scraper docs](docs/scraper/index.md).
 - (scraper) `Spectator.log_in` dismisses a first-visit tutorial drawn after its first look and retries the login entry once, instead of failing the session.
+- (scraper) `return_to_lobby` leaves a table through the optional `[selectors].table_exit`: 3.6 s back to the lobby, no new login, where every return rebuilt the session. See [scraper docs](docs/scraper/index.md).
 
 ## [0.5.0] - 2026-09-17
 

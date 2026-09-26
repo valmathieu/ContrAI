@@ -242,6 +242,15 @@ class SelectorSection:
     lobby_row_hash_attr: str | None
     """The row attribute holding the hash the lobby's socket events are keyed by."""
 
+    table_exit: Selector | None
+    """Optional: the table's own exit control, the way back to the lobby.
+
+    Outside the lobby group, so a profile describing the lobby still loads
+    without it. It sits on a rail, like the panel buttons, and leaves the
+    table for the online menu, from which the lobby's back steps carry on.
+    Without it, a fleet worker returns from a table by rebuilding its session.
+    """
+
     @property
     def has_lobby(self) -> bool:
         """Whether the profile describes the lobby, which a fleet needs."""
@@ -844,6 +853,7 @@ def _selectors(table: _Table) -> SelectorSection:
             table.string("lobby_row_tournament_class") if lobby else None
         ),
         lobby_row_hash_attr=table.string("lobby_row_hash_attr") if lobby else None,
+        table_exit=table.optional_selector("table_exit"),
     )
     table.done()
     return section

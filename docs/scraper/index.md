@@ -195,10 +195,12 @@ have had:
 
 - **There is no table list.** The server decides where a spectator sits, so nothing browses;
   "another table" is a request, not a choice. The walk ends at the variant.
-- **The exit control is unrecoverable.** It leaves *spectating* rather than the table, and the
-  documented route back in is what breaks afterwards. So the only hop is the table control, and
-  `Spectator` has no leave operation at all: a session that cannot reseat rebuilds its browser
-  context.
+- **The exit control leads to the menus, not to another table.** It leaves the table for the
+  online menu, one screen past where the walk in starts, so a walk that begins with the mode menu's
+  first button finds it hidden every time. That is why it was once recorded as unrecoverable. So the
+  only hop is the table control, `Spectator` has no leave operation, and a session that cannot
+  reseat rebuilds its browser context. The exit serves one route only: a fleet worker's way back to
+  the lobby (see [The lobby](#the-lobby)).
 - **The boundary score read is a wire read.** The client can ask for table state without leaving,
   and the answer arrives on the socket as a fresh join snapshot — 0.21 s against 2.58 s for the
   rendered panel, with no replay cost. The panel is the fallback, and it is evidence for the raw
@@ -421,11 +423,23 @@ instant: in one probe run the match came 26.2 s after the roster, after the firs
 and a record joined then starts at round 2. Nothing at the gate can tell, so `game_recorded` carries
 `first_round`, which is what says how often a chase arrives in time.
 
-`return_to_lobby` is the one route nothing has measured: the probes only ever went from the lobby
-to a table. It is written to fail fast — at most `LOBBY_BACK_STEPS` steps back, then a
-`BrowserError` naming the key it was waiting for — so that the caller can rebuild the session, the
-one recovery measured to work. `check-profile` walks the lobby in a session of its own when the
-profile describes one: in, the tournament row, the first lobby event, and back out to a table. The
+**From a table, the way back starts with the table's exit.** The lobby's back controls sit on the
+menu screens, and a table is drawn over those screens rather than as one of them: while a table is
+up, every screen reads as hidden. In the fleet's first live run (two workers, 20 minutes),
+`return_to_lobby` therefore failed on all four returns and every one fell back to a rebuild, about
+26 s and a fresh login each. A live probe then tried every in-page route from a table. Escape does
+nothing, the browser's back button leaves the site for a blank page, a reload signs the session
+out, and the rail holds no lobby control. The table's own exit lands on the online menu, and from
+there the back steps reach the list: 3.6 s, and a table taken from that list 2.6 s later, with no
+login. So when no screen is showing and the profile names `table_exit`, `return_to_lobby` reveals
+the rail, clicks the exit and gives the menu `EXIT_SETTLE_MS` to come up. It then backs out as from
+any menu. Without `table_exit`, a table is left to the back steps, which fail, and the caller
+rebuilds. Either way it fails fast: at most `LOBBY_BACK_STEPS` steps back, then a `BrowserError`
+naming the key it was waiting for, and the caller rebuilds the session.
+
+`check-profile` walks the lobby in a session of its own when the profile describes one: in, the
+tournament row, the first lobby event, out to a table, and back to the list. The last line reads as
+a fact rather than a failure when the profile names no `table_exit`. The
 lobby speaks only when a seat changes — its first event after arriving came 27 s and 82 s later in
 the two runs timed — so a wait that hears nothing passes and says it proved nothing; an event that
 arrives and cannot be read is what fails, naming the path that read nothing.
@@ -487,8 +501,8 @@ the walk back:
 ```plantuml format="svg" source="seq_scraper_chase.puml"
 ```
 
-The walk back is the one route nothing has measured, so it fails fast, and a failure rebuilds the
-worker's session — a fresh context and a fresh login — logged as `return_rebuilt` and *not* counted
+The walk back takes the table's exit when the profile names one, and fails fast. A failure rebuilds
+the worker's session — a fresh context and a fresh login — logged as `return_rebuilt` and *not* counted
 against the worker. Everything else that ends a session is: three sessions in a row that fail, or six
 refused egress checks in a row, and the worker goes down (`worker_down`) and stays down for the
 process. A chase that runs its course, whatever it found, clears the streak, so a profile broken in

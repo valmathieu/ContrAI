@@ -98,6 +98,11 @@ lobby_layer = ".placeholder-layer"
 # lobby's socket events are keyed by in an attribute.
 lobby_row_tournament_class = "placeholder-tournament"
 lobby_row_hash_attr = "data-placeholder-hash"
+# Optional, and outside the group above: the table's own exit control, on the
+# same rail as the panel buttons. It leaves the table for the online menu,
+# from which the lobby's back steps reach the list. Without it, a fleet worker
+# returns from each table by rebuilding its session, with a fresh login.
+table_exit = "#placeholder-exit"
 
 # How a socket frame is recognised, unwrapped and keyed. `deal_key_arity` is
 # how many parts a composite key has when it addresses a deal rather than a

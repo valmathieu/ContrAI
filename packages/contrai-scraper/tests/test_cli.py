@@ -538,6 +538,10 @@ class FakeLobbyWalk(FakeWalk):
         self.steps.append("enter_table_from_lobby")
         self._step("enter_table_from_lobby")
 
+    async def return_to_lobby(self):
+        self.steps.append("return_to_lobby")
+        self._step("return_to_lobby")
+
 
 def _lobby_frame(builders, data=None, frame_id="l1"):
     """A lobby event, in the fixture vocabulary, for the tournament row."""
@@ -556,17 +560,45 @@ class TestLobbyChecks:
         results = asyncio.run(_lobby_checks(walk, frames, profile))
         assert ([(name, passed) for name, passed, _ in results], walk.steps) == (
             [("lobby entered", True), ("tournament row found", True),
-             ("lobby events read", True), ("back to a table from the lobby", True)],
-            ["log_in", "enter_lobby", "read_tournament_hash", "enter_table_from_lobby"],
+             ("lobby events read", True), ("back to a table from the lobby", True),
+             ("back to the lobby from a table", True)],
+            ["log_in", "enter_lobby", "read_tournament_hash", "enter_table_from_lobby",
+             "return_to_lobby", "read_tournament_hash"],
         )
 
-    def test_a_list_with_no_tournament_row_fails_that_line_only(self, profile, builders):
+    def test_a_list_with_no_tournament_row_fails_the_lines_reading_it(
+        self, profile, builders
+    ):
         from contrai_scraper.cli import _lobby_checks
 
         walk = FakeLobbyWalk(table_hash=None)
         frames = Frames(_lobby_frame(builders), _join_frame(builders))
         results = asyncio.run(_lobby_checks(walk, frames, profile))
-        assert [passed for _, passed, _ in results] == [True, False, True, True]
+        assert [passed for _, passed, _ in results] == [True, False, True, True, False]
+
+    def test_a_way_back_that_fails_is_a_line_naming_its_check(self, profile, builders):
+        from contrai_scraper.cli import _lobby_checks
+
+        message = "[selectors].table_exit matched nothing that could be clicked"
+        walk = FakeLobbyWalk(fail={"return_to_lobby": message})
+        frames = Frames(_lobby_frame(builders), _join_frame(builders))
+        results = asyncio.run(_lobby_checks(walk, frames, profile))
+        assert results[-1] == ("back to the lobby from a table", False, message)
+
+    def test_a_lobby_without_a_table_exit_is_told_so_and_not_failed(
+        self, profile, builders
+    ):
+        import dataclasses
+
+        from contrai_scraper.cli import TABLE_EXIT_NOT_DESCRIBED, _lobby_checks
+
+        bare = dataclasses.replace(
+            profile, selectors=dataclasses.replace(profile.selectors, table_exit=None))
+        walk = FakeLobbyWalk()
+        frames = Frames(_lobby_frame(builders), _join_frame(builders))
+        results = asyncio.run(_lobby_checks(walk, frames, bare))
+        assert (results[-1], "return_to_lobby" in walk.steps) == (
+            TABLE_EXIT_NOT_DESCRIBED, False)
 
     def test_a_profile_that_cannot_read_the_lobbys_socket_fails_that_line(
         self, profile, builders

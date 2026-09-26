@@ -459,8 +459,9 @@ async def _check(  # pragma: no cover - needs a real browser
         if not profile.selectors.has_lobby:
             return [*results, LOBBY_NOT_DESCRIBED]
         # A session of its own, logged in afresh: the lobby is checked by the
-        # route a fleet takes into it, never by a way back from the table the
-        # checks above left the page on, which nothing has measured.
+        # route a fleet takes into it, not from the table the checks above
+        # left the page on — the way back is checked from a table the lobby
+        # itself led to, as a fleet meets it.
         async with open_session(browser, profile) as (spectator, frames):
             return [*results, *await _lobby_checks(spectator, frames, profile)]
 
@@ -469,6 +470,13 @@ async def _check(  # pragma: no cover - needs a real browser
 #: only a fleet needs one.
 LOBBY_NOT_DESCRIBED: Final[tuple[str, bool, str]] = (
     "lobby described", True, "no — only `fleet` needs it",
+)
+
+#: The line a lobby without a table exit gets: again a fact, since a fleet
+#: still works without one, only by rebuilding its session after each table.
+TABLE_EXIT_NOT_DESCRIBED: Final[tuple[str, bool, str]] = (
+    "back to the lobby from a table", True,
+    "not checked — no [selectors].table_exit, so each return rebuilds the session",
 )
 
 
@@ -525,6 +533,23 @@ async def _lobby_checks(
             event is not None,
             "the server chose a table" if event is not None
             else "no snapshot within the timeout",
+        ))
+        if event is None:
+            return results
+
+        step = "back to the lobby from a table"
+        if profile.selectors.table_exit is None:
+            results.append(TABLE_EXIT_NOT_DESCRIBED)
+            return results
+        # The route a fleet worker takes after every table, so it is walked
+        # here rather than first met mid-shift.
+        await spectator.return_to_lobby()
+        table_hash = await spectator.read_tournament_hash()
+        results.append((
+            step,
+            table_hash is not None,
+            "the list of games is showing again" if table_hash is not None
+            else "no tournament row in the list reached",
         ))
     except BrowserError as error:
         detail = str(error)

@@ -139,6 +139,9 @@ else claimed
     == 4. Back to the lobby ==
 
     W -> SP : return_to_lobby()
+    opt a table is showing, and the profile names table_exit
+        SP -> PG : reveal the rail · the table's exit\nlands on the online menu
+    end
     alt a step does not land
         W -> W : return_rebuilt · a fresh session, no budget spent
     else

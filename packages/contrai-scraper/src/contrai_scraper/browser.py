@@ -17,10 +17,14 @@ games either: it lists table *slots*, one of which is the tournament's, filling
 and recycling for the next four players — so it says when a game starts and
 who is in it, never where to find it.
 
-**There is no way back in.** The site's exit control leaves *spectating*
-rather than the table, and the documented route back is what breaks
-afterwards — three attempts, zero recoveries. So there is no ``leave``
-operation at all: a session that cannot go on rebuilds its browser context.
+**The way out of a table leads to the menus, not to another table.** The
+site's exit control leaves the table for the online menu, one screen past
+where the walk in starts. A walk that begins with the mode menu's first
+button therefore finds it hidden, every time, and that is why this control
+was once recorded as unrecoverable. So the only hop between tables is the
+table control, and the exit is used for one thing: taking a fleet worker back
+to the lobby, with the lobby's back steps carrying on from the menu it lands
+on.
 
 Nothing in this module spells the site. Every selector, every URL and every
 token is read from the profile, and an error names the **profile key** that
@@ -83,6 +87,10 @@ LOBBY_BACK_STEPS: Final[int] = 4
 #: pause the chase probe measured its round trips with.
 BACK_SETTLE_MS: Final[int] = 600
 
+#: How long the table's exit is given to put the menu up before the back
+#: steps read the page — the pause the lobby-return probe measured it with.
+EXIT_SETTLE_MS: Final[int] = 2_500
+
 #: Reads every control a list of candidates matches, with the geometry and the
 #: *layer* style that decide whether a click on it could land. Read-only.
 #:
@@ -112,6 +120,19 @@ READ_CONTROLS: Final[str] = """
   });
   return found;
 }
+"""
+
+#: Whether one of the menu or lobby screens is showing. Read-only.
+#:
+#: A table is drawn on a page of its own, over those screens rather than as
+#: one of them, so while a table is up every screen reads as hidden. The
+#: opacity floor is :func:`_opaque`'s.
+READ_SCREEN_SHOWN: Final[str] = """
+(layer) => Array.from(document.querySelectorAll(layer)).some((el) => {
+  const style = getComputedStyle(el);
+  return style.display !== 'none' && style.visibility !== 'hidden' &&
+         !(parseFloat(style.opacity) < 0.1);
+})
 """
 
 #: What a click at the screen's centre would land on. Read-only.
@@ -197,9 +218,10 @@ class Spectator:
     """Every Playwright call the scraper makes, and no others.
 
     There is deliberately no ``leave`` operation. The site's exit control
-    leaves *spectating* rather than the table, and the documented way back in
-    is what breaks afterwards — three attempts, zero recoveries. A session
-    that cannot reseat must rebuild its browser context, not retry.
+    leaves the table for the menus, not for another table, so only
+    :meth:`return_to_lobby` uses it, and only on its way to the lobby. A
+    session that cannot reseat rebuilds its browser context rather than
+    retrying.
     """
 
     __slots__ = ("_page", "_profile", "_selectors", "_translator", "_requests")
@@ -456,19 +478,31 @@ class Spectator:
     async def return_to_lobby(self) -> None:
         """Walk from wherever the page stands back to the lobby's list.
 
-        Nothing has measured this route, so it is written to fail fast rather
-        than to recover: back out until the new-games action is in reach, at
-        most :data:`LOBBY_BACK_STEPS` times, then walk in again. A step that
-        does not land raises, and the caller rebuilds the session — the one
-        recovery that has been measured to work.
+        From a table, the first step is the table's exit control. The lobby's
+        own back controls cannot do it: they sit on the menu screens, which
+        the table is drawn over, and the fleet's first live run fell back to a
+        rebuild on every return for exactly that reason. The exit lands on
+        the online menu, and the lobby-return probe timed the whole route at
+        3.6 s with no new login, against about 26 s to rebuild. The exit sits
+        on a rail that can slide away, so it is reached as a panel button is.
+
+        From there, and from any menu screen, back out until the new-games
+        action is in reach, at most :data:`LOBBY_BACK_STEPS` times, then walk
+        in again. A step that does not land raises, and the caller rebuilds
+        the session. A profile naming no ``table_exit`` goes straight to the
+        back steps, as it always did.
 
         Raises:
             ProfileError: If the profile describes no lobby.
-            BrowserError: If the new-games action never comes within reach,
-                or a step after it is not there.
+            BrowserError: If the exit control would not take a click, the
+                new-games action never comes within reach, or a step after
+                it is not there.
         """
 
         self._require_lobby()
+        if self._selectors.table_exit is not None and not await self._screen_shown():
+            await self._click_panel("table_exit")
+            await self._page.wait_for_timeout(EXIT_SETTLE_MS)
         await self._back_until("mode_new_games")
         await self._click("lobby_variant")
         await self.dismiss_overlay()
@@ -879,6 +913,24 @@ class Spectator:
 
         controls = await self._controls(key, self._candidates(key))
         return any(_usable(control) for control in controls)
+
+    async def _screen_shown(self) -> bool:
+        """Whether a menu or lobby screen is showing, rather than a table.
+
+        Raises:
+            BrowserError: If the page's own script could not read
+                ``lobby_layer``, which it takes as plain CSS.
+        """
+
+        try:
+            return bool(
+                await self._page.evaluate(READ_SCREEN_SHOWN, self._selectors.lobby_layer)
+            )
+        except Exception as error:  # noqa: BLE001 - a script error is Playwright's type
+            raise BrowserError(
+                "[selectors].lobby_layer could not be read by the page's own script; "
+                "a lobby step needs plain CSS"
+            ) from error
 
     async def _back_until(self, key: str) -> None:
         """Back out screen by screen until a control is in reach, then click it.

@@ -138,6 +138,7 @@ lobby_back = ["#tool-back", "#tool-close"]
 lobby_layer = ".screen"
 lobby_row_tournament_class = "cup-row"
 lobby_row_hash_attr = "data-key"
+table_exit = "#leave"
 
 [wire]
 socket_url_pattern = "^wss://example\\\\.invalid/sock/\\\\d+$"
