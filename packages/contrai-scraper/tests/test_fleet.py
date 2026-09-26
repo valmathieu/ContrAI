@@ -313,6 +313,21 @@ class TestTheChase:
         result = harness.run()
         assert (result.chases, len(harness.events("roster_taken"))) == (1, 1)
 
+    def test_a_start_heard_on_both_sockets_is_announced_once(self, profile, builders):
+        # The lobby sends every event on both connections. The worker that
+        # finds the roster taken goes back to waiting, and the copy that
+        # arrives next is not a second start. Seen live on 2026-09-25.
+        harness = Harness(profile, workers=2, recorder=Recorders(summary()))
+        harness.script("bot01", (Walker(), Frames([full_row(builders)],
+                                                  on_empty=harness.end)))
+        start = full_row(builders)
+        copy = dataclasses.replace(start, socket=1)
+        harness.script("bot02", (Walker(), Frames([start, copy], on_empty=harness.end)))
+        harness.run()
+        announced = [entry["worker"] for entry in harness.events("roster_announced")]
+        assert (sorted(announced), len(harness.events("roster_taken"))) == (
+            ["bot01", "bot02"], 1)
+
     def test_the_chase_carries_the_fleets_budget_and_its_claims(self, profile, builders):
         recorders = Recorders(summary())
         harness = Harness(profile, recorder=recorders)

@@ -683,10 +683,16 @@ class Worker:
 
         fleet = self._fleet
         registry = fleet.registry
+        # One reader for the whole session, not one per wait. The lobby sends
+        # every event on both sockets, and a wait resumed after a roster was
+        # refused would otherwise meet the second copy as news and announce
+        # the same start twice.
+        watcher = LobbyWatcher(self._profile, table_hash)
+        stream = WireStream(self._profile.wire)
         while True:
             # The wait is where a stopping fleet is noticed, before and
             # between chases alike: it returns no roster once told to stop.
-            roster = await self._await_roster(frames, log, table_hash)
+            roster = await self._await_roster(frames, log, watcher, stream)
             if roster is None:
                 return
             age = frames.elapsed - roster.at
@@ -719,9 +725,15 @@ class Worker:
                 raise _ReturnFailed(str(error)) from error
 
     async def _await_roster(
-        self, frames: Any, log: RawLogWriter, table_hash: str
+        self, frames: Any, log: RawLogWriter, watcher: LobbyWatcher, stream: WireStream
     ) -> LobbyRoster | None:
         """Read the lobby's socket until a tournament game starts.
+
+        Args:
+            frames: The session's frames.
+            log: The session's raw log.
+            watcher: The session's reader of the tournament row.
+            stream: The session's de-duplicating reader of the socket.
 
         Returns:
             The starting roster, or ``None`` once the fleet has stopped.
@@ -731,8 +743,6 @@ class Worker:
         """
 
         fleet = self._fleet
-        watcher = LobbyWatcher(self._profile, table_hash)
-        stream = WireStream(self._profile.wire)
         iterator = aiter(frames)
         interval = self._profile.recorder.health_interval_s
         self._health.event("in_hall")

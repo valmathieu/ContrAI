@@ -391,7 +391,10 @@ which is a record about the wrong players when broken:
 - **The roster is the one the row held when its game started.** Seats change constantly before a
   start (74 changes in half an hour, swaps included) and the row recycles right after. The row
   raises a flag of its own (`lobby_full`) in the event that follows the fourth seat by milliseconds;
-  that event, with its four accounts, is the roster, announced once. Waiting for the row to empty
+  that event, with its four accounts, is the roster, announced once. Once means once per session:
+  the lobby sends every event on both connections, so a worker keeps one reader for as long as its
+  session lasts. A fresh reader per wait took the second copy for a second start in the first live
+  run. Waiting for the row to empty
   instead would wait for the next player to sit down — 35 s after the start in the first case
   measured. Re-read on the stored logs, the watcher announces the clean run's 11 starts, every
   roster the page-polling caught among them, and in each of the four chases exactly the roster that
