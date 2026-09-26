@@ -92,7 +92,7 @@ Each of these rationales names the regime it played under and cites `extended_tr
 
 ## Explainability
 
-Every return path of both strategies is explained. `choose_bid` answers with a `BidDecision` and `choose_card` with a `CardDecision` (`model/player/rationale.py`); each carries a `Rationale` naming four things:
+Every return path of both strategies is explained. `choose_bid` answers with a `BidDecision` and `choose_card` with a `CardDecision` (`model/player/rationale.py`); each carries a `Rationale` naming five things:
 
 | Field | What it holds |
 | --- | --- |
@@ -100,11 +100,16 @@ Every return path of both strategies is explained. `choose_bid` answers with a `
 | `detail` | One sentence, in the §10 English vocabulary, on what that meant for this hand and this trick. |
 | `considered` | The alternatives weighed, already rendered — the runner-up cards or contracts the ladder ranked below the chosen one. |
 | `citations` | The `RuleConfig` knobs consulted, as `RuleCitation(knob, value, effect)` records. |
+| `drawn_from` | The options the choice was **drawn at random** among, when the rule left several exactly level; empty when the rule settled it. |
+
+**A random pick says so.** The expert AI has one random step: when the cheapest discards cost the same and sit in equally long suits, `_cheapest_card` draws between them, so the seat can't be read from its hand order. Without a flag the rationale would credit "concede cheaply" with choosing *this* card over its twin. `drawn_from` names the tied cards instead, which tells a reader both that the rule did not decide between them and that asking again may pick another. The draw itself is one `random.choice` on the same list as ever, so seeded games play identically. The field lives on `Rationale` rather than in the rule-based code because it is where any later level reports its own randomness.
 
 A citation is deliberately narrow: it names the knob, its value, and what it changed **at this decision**. The concede branch under the §9.5 exemption emits `RuleCitation("under_trump_exemption", "True", "discarded instead of under-trumping")` — and only when the exemption actually decided something, i.e. when a losing trump sat in the legal set beside the plain card being thrown. A seat holding no trump was never excused from anything, so it cites nothing.
 
 **Why the return type and not a side-channel.** The obvious alternative — stash the trace on the strategy object and let the caller read it back — is only correct while the strategy is driven in live turn order. A search rolling out a hypothetical world, or a harness scoring one seat's policy against another's, would overwrite the attribute before anyone read it. Routing the trace through the return value also means the rungs above these rules need no second seam: an MCTS level explains itself with visit counts, a win-rate estimate and a principal variation; a learned policy with top-k action probabilities. Both are "why this move", and both fit `considered` / `citations` unchanged. That is the AI roadmap's §6.1 requirement satisfied at the one place it cannot quietly rot.
 
 `Round` keeps what its AI seats decided in `bid_decisions` / `card_decisions`. A human seat contributes nothing — a person's reasoning is not the engine's to record.
+
+**Where the reasons are read.** Live, `contrai --debug` shows the last four decisions under the face-up hands. After the fact, `contrai replay` re-asks them: a record keeps who sat where but not why, so for every seat the record names as an engine AI it rebuilds that level's strategies and asks them at each recorded move, from exactly the view that seat had, then shows the answer beside the move — flagging a draw, or a move today's AI would no longer make. That is only possible because the trace rides the return value: the strategies are asked off the live turn order, which a side-channel would not survive. On games the expert played itself, all 2029 recorded decisions across four games came back the same. See [Replaying a game](../engine/replay.md#the-ais-reasons).
 
 > TODO: rule catalogue; planned extensions (deeper card counting, partner inference, signal-based bidding).

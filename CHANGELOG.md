@@ -10,17 +10,17 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 ### Added
 
-- (engine) `contrai replay` trick grid: `g N` on the picker, or `g` at any stop, shows the round's tricks 4 × 2 with leader, winner, points, belote and auction. See [engine docs](docs/engine/index.md).
-- (engine) `contrai replay` gains `a`: skip the rest of the auction and stop on the contract, one key before the first card. See [engine docs](docs/engine/index.md).
-- (engine) `contrai replay` shows why each recorded AI seat acted, compact with `w` for more, and flags what it would now play instead. See [engine docs](docs/engine/index.md).
-- (engine) `Rationale.drawn_from`: the expert AI names the level cards a discard was drawn from at random; the debug panel shows it. See [engine docs](docs/engine/index.md).
+- (engine) `contrai replay` trick grid: `g N` on the picker, or `g` at any stop, shows the round's tricks 4 × 2 with leader, winner, points, belote and auction. See [Replaying a game](docs/engine/replay.md).
+- (engine) `contrai replay` gains `a`: skip the rest of the auction and stop on the contract, one key before the first card. See [Replaying a game](docs/engine/replay.md).
+- (engine) `contrai replay` shows why each recorded AI seat acted, compact with `w` for more, and flags what it would now play instead. See [Replaying a game](docs/engine/replay.md).
+- (engine) `Rationale.drawn_from`: the expert AI names the level cards a discard was drawn from at random; the debug panel shows it. See [AI ladder docs](docs/ai-ladder/rule_based.md).
 - (data) `read_verdict(path)` and `GameVerdict.from_json` read a verdict file back, refusing anything `write_verdict` would not write. See [data docs](docs/data/index.md).
 - (data) `build_catalog(root)` rebuilds `<root>/catalog.sqlite`, a SQLite index of games, seats, rounds and verdicts with player and clean-round views. See [data docs](docs/data/index.md).
 - (engine) `contrai catalog [ROOT] [--player ID_OR_NAME]` rebuilds the corpus index with a summary, or lists one player's games. See [engine docs](docs/engine/index.md).
 
 ### Fixed
 
-- (engine) `contrai replay` frames fit a 40-row terminal (they were 42–54 rows): one-line keys, no rationale panel, a repaint instead of more output. See [engine docs](docs/engine/index.md).
+- (engine) `contrai replay` frames fit a 40-row terminal (they were 42–54 rows): one-line keys, a shorter log, a repaint instead of more output. See [Replaying a game](docs/engine/replay.md).
 
 ### Changed
 
