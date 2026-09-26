@@ -31,6 +31,7 @@ from typing import Any, Final
 
 from .accounts import LabelledAccount
 from .exceptions import BrowserError, ParseError, ProfileError, ShiftError
+from .frames import RECEIVED
 from .health import HealthLog
 from .lobby import LobbyRoster, LobbyWatcher
 from .parse.snapshot import Snapshot, read_snapshot
@@ -48,6 +49,14 @@ _MINUTE_S: Final[float] = 60.0
 #: How often a worker waiting in the lobby looks up from the socket, to notice
 #: that the fleet has stopped while the lobby said nothing.
 HALL_POLL_S: Final[float] = 5.0
+
+#: How long a worker in the lobby may hear nothing at all before it rebuilds.
+#:
+#: The lobby can stay quiet for over a minute, but the page never does: its
+#: keepalive answers every 20 s, and across the ramp's healthy sessions no
+#: received frame came more than 20.9 s after the last. Three times that also
+#: rides out the 5-8 s reconnections measured in the 5-worker run.
+HALL_SILENCE_S: Final[float] = 60.0
 
 #: The label the one worker of a fleet run without an accounts file goes by.
 SOLE_WORKER: Final[str] = "bot01"
@@ -72,6 +81,15 @@ class _ReturnFailed(BrowserError):
 
     Not a failure of the worker: nothing has measured that walk, and a
     rebuilt session is its documented fallback, so it spends no budget.
+    """
+
+
+class _HallDeaf(BrowserError):
+    """The lobby's page has heard nothing for ``HALL_SILENCE_S``.
+
+    Its sockets closed, or stopped delivering, and a wait for a roster would
+    last until the fleet stops. The first time is the connection's fault, not
+    the account's, so the rebuild spends no budget.
     """
 
 
@@ -424,7 +442,7 @@ class Worker:
     """One account: log in, wait in the lobby, chase, record, and back again."""
 
     __slots__ = ("_fleet", "_label", "_profile", "_browser", "_health", "_claims",
-                 "_failures", "_censused")
+                 "_failures", "_censused", "_deaf_streak")
 
     def __init__(self, fleet: Fleet, account: LabelledAccount) -> None:
         """Bind a worker to its fleet and its account.
@@ -443,6 +461,8 @@ class Worker:
         self._claims = fleet.registry.for_worker(account.label)
         self._failures = 0
         self._censused = False
+        # Free rebuilds of a deaf lobby since a roster was last heard.
+        self._deaf_streak = 0
 
     @property
     def label(self) -> str:
@@ -488,6 +508,10 @@ class Worker:
                 await self._session()
             except _ReturnFailed as error:
                 self._health.event("return_rebuilt", error=str(error))
+            except _HallDeaf:
+                # Logged as `hall_deaf` where it was noticed. Straight back to
+                # the egress check and a fresh context, with no budget spent.
+                self._deaf_streak += 1
             except Exception as error:  # noqa: BLE001 - one session must not end the worker
                 self._failures += 1
                 self._health.event(
@@ -739,31 +763,72 @@ class Worker:
             The starting roster, or ``None`` once the fleet has stopped.
 
         Raises:
-            BrowserError: The frames ended.
+            _HallDeaf: Nothing was received for ``HALL_SILENCE_S``, the first
+                time since a roster was last heard.
+            BrowserError: The frames ended, or the lobby went deaf again
+                before any roster was heard — which counts against the
+                worker, so an account kicked out at every login cannot log
+                in every minute.
         """
 
         fleet = self._fleet
         iterator = aiter(frames)
         interval = self._profile.recorder.health_interval_s
         self._health.event("in_hall")
+        # The watchdog listens to the connection, not to the lobby's events:
+        # any received frame counts, keepalives included, and only what we
+        # sent ourselves does not.
+        heard = fleet.now()
         while not fleet.stopping():
             if self._health.due(interval):
                 self._health.heartbeat(state="hall", lobby_states=watcher.states)
             try:
                 frame = await asyncio.wait_for(anext(iterator), HALL_POLL_S)
             except TimeoutError:
+                self._check_heard(heard, watcher)
                 continue
             except StopAsyncIteration:
                 raise BrowserError("the frame source ended: the page has gone") from None
+            if frame.direction == RECEIVED:
+                heard = fleet.now()
+            self._check_heard(heard, watcher)
             log.write_frame(frame)
             event = stream.ingest(frame.text, frame.socket)
             if event is None:
                 continue
             roster = watcher.read(event, at=frame.at)
             if roster is not None:
+                self._deaf_streak = 0
                 self._health.event("roster_announced", roster=roster.digest)
                 return roster
         return None
+
+    def _check_heard(self, heard: float, watcher: LobbyWatcher) -> None:
+        """Give up on a lobby that has sent nothing for ``HALL_SILENCE_S``.
+
+        Args:
+            heard: When the last frame was received, on the fleet's clock.
+            watcher: The session's reader of the tournament row, whose count
+                of lobby states the event carries.
+
+        Raises:
+            _HallDeaf: The first deafness since a roster was last heard.
+            BrowserError: Another one, which counts against the worker.
+        """
+
+        fleet = self._fleet
+        silent = fleet.now() - heard
+        if silent < HALL_SILENCE_S or fleet.stopping():
+            # A stopping fleet is noticed at the top of the wait, and a clock
+            # moved past every deadline is not a silence.
+            return
+        self._health.event(
+            "hall_deaf", silent_s=round(silent, 1), lobby_states=watcher.states
+        )
+        message = f"the lobby sent nothing for {silent:.0f} s"
+        if self._deaf_streak == 0:
+            raise _HallDeaf(message)
+        raise BrowserError(f"{message}, again, with no roster heard since")
 
     async def _chase(
         self, spectator: Any, frames: Any, log: RawLogWriter, roster: LobbyRoster

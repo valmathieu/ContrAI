@@ -57,6 +57,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) Passed-out rounds are recorded — deal, four passes, an `all_pass` score line — instead of skipped as "dealer unknown". See [scraper docs](docs/scraper/index.md).
 - (scraper) A game whose game-over flag was seen is written `target_reached`, even if the spectator is then sent away; with no final snapshot its totals are null. See [scraper docs](docs/scraper/index.md).
 - (scraper) A score read counts only when its snapshot arrives; an unanswered state request is logged `state_unanswered` and retried once on the other socket. See [scraper docs](docs/scraper/index.md).
+- (scraper) A fleet worker whose lobby sends nothing for 60 s logs `hall_deaf` and rebuilds its session, the first time without spending budget. See [scraper docs](docs/scraper/index.md).
 
 ## [0.5.0] - 2026-09-17
 

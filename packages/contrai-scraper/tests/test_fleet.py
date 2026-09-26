@@ -78,16 +78,22 @@ def full_row(builders, seats=FOUR, *, frame_id="l1", at=0.0):
 class Frames:
     """Scripted frames; once spent, a live socket with nothing to say.
 
+    A live socket still says *something*: its keepalive. Once the script is
+    spent each poll hears one, the way a page with no news still answers its
+    pings — which is what keeps a lobby waiting on a quiet night from being
+    taken for a deaf one. ``deaf`` makes it say nothing at all instead.
+
     ``on_empty`` runs each time the script is found empty, which is how a
     test ends a run once its scenario has played out. ``ends`` makes the
     source stop instead, the way it does when its page has gone.
     """
 
-    def __init__(self, frames=(), *, on_empty=None, ends=False):
+    def __init__(self, frames=(), *, on_empty=None, ends=False, deaf=False):
         self._frames = list(frames)
         self._taken = 0
         self._on_empty = on_empty
         self._ends = ends
+        self._deaf = deaf
 
     @property
     def pending(self):
@@ -108,7 +114,14 @@ class Frames:
             raise StopAsyncIteration
         if self._on_empty is not None:
             self._on_empty()
-        await asyncio.sleep(3600)
+        if self._deaf or self._frames:
+            # Deaf, or ``on_empty`` has just queued frames of its own: this
+            # poll hears nothing, and the next takes what was queued.
+            await asyncio.sleep(3600)
+        # Yield, but take no time: any real sleep can outlast the patched
+        # poll on a coarse timer, and a keepalive cut off there is a silence.
+        await asyncio.sleep(0)
+        return received("tick")
 
 
 class Walker:
@@ -432,6 +445,94 @@ class TestSessions:
         assert sorted(harness.sleeps[:2]) == [20, 40]
 
 
+def _ticking(harness, seconds, *, then=None, after=None):
+    """An ``on_empty`` moving the fleet's clock on by ``seconds`` per poll.
+
+    ``then`` runs instead once ``after`` polls have gone by.
+    """
+
+    polls = [0]
+
+    def advance():
+        polls[0] += 1
+        if after is not None and polls[0] > after:
+            then()
+            return
+        harness.now += seconds
+
+    return advance
+
+
+class TestDeafLobby:
+    def test_a_lobby_gone_silent_rebuilds_the_session_for_free(self, profile):
+        # bot06 in the 10-worker ramp: both sockets closed 36 s into the
+        # lobby and it sat there for 57 minutes. One poll every 5 s here.
+        harness = Harness(profile)
+        harness.script("bot01",
+                       (Walker(), Frames(deaf=True, on_empty=_ticking(harness, 5.0))),
+                       (Walker(), Frames(on_empty=harness.end)))
+        harness.run()
+        deaf = harness.events("hall_deaf")
+        assert (len(deaf), 60.0 <= deaf[0]["silent_s"] <= 65.0,
+                len(harness.opened), harness.saw("session_failed")) == (
+            1, True, 2, False)
+
+    def test_keepalives_with_no_lobby_news_keep_the_worker_waiting(self, profile):
+        # The lobby itself can be quiet for minutes; its page never is.
+        harness = Harness(profile)
+        harness.script("bot01", (Walker(), Frames(
+            on_empty=_ticking(harness, 20.0, then=harness.end, after=10))))
+        harness.run()
+        assert (harness.saw("hall_deaf"), len(harness.opened)) == (False, 1)
+
+    def test_a_second_deafness_in_a_row_counts_against_the_worker(self, profile):
+        # An account the site keeps kicking out must not log in every minute.
+        harness = Harness(profile)
+        harness.script(
+            "bot01",
+            (Walker(), Frames(deaf=True, on_empty=_ticking(harness, 5.0))),
+            (Walker(), Frames(deaf=True, on_empty=_ticking(harness, 5.0))),
+            (Walker(), Frames(on_empty=harness.end)),
+        )
+        harness.run()
+        failed = harness.events("session_failed")
+        assert (len(harness.events("hall_deaf")), [f["attempt"] for f in failed],
+                "again" in failed[0]["error"]) == (2, [1], True)
+
+    def test_a_roster_heard_in_between_makes_the_next_deafness_free(
+        self, profile, builders
+    ):
+        harness = Harness(profile, recorder=Recorders(summary()))
+        harness.script(
+            "bot01",
+            (Walker(), Frames(deaf=True, on_empty=_ticking(harness, 5.0))),
+            (Walker(), Frames([full_row(builders)], deaf=True,
+                              on_empty=_ticking(harness, 5.0))),
+            (Walker(), Frames(on_empty=harness.end)),
+        )
+        harness.run()
+        assert (len(harness.events("hall_deaf")), harness.saw("session_failed"),
+                len(harness.opened)) == (2, False, 3)
+
+    def test_what_the_page_sends_is_not_hearing(self, profile, builders):
+        # Only received frames say the connection is alive; our own sent
+        # frames go out whether anything is listening or not.
+        harness = Harness(profile)
+        sent = RawFrame(socket=0, direction="sent", at=0.0, text="ping")
+        frames = Frames(deaf=True)
+        advance = _ticking(harness, 5.0)
+
+        def send_and_wait():
+            advance()
+            frames._frames.append(sent)
+
+        frames._on_empty = send_and_wait
+        harness.script("bot01", (Walker(), frames),
+                       (Walker(), Frames(on_empty=harness.end)))
+        harness.run()
+        assert harness.saw("hall_deaf")
+
+
 class TestBudgets:
     def test_a_worker_that_keeps_failing_goes_down_alone(self, profile):
         harness = Harness(profile, workers=3)
@@ -680,7 +781,7 @@ class TestCensus:
             if harness.saw("census_done"):
                 harness.end()
 
-        harness.script("bot01", (Walker(), Frames(on_empty=time_passes)))
+        harness.script("bot01", (Walker(), Frames(deaf=True, on_empty=time_passes)))
         harness.run()
         assert harness.events("census_done")[0]["seen"] == 0
 
