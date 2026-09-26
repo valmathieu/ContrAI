@@ -55,6 +55,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) `return_to_lobby` leaves a table through the optional `[selectors].table_exit`: 3.6 s back to the lobby, no new login, where every return rebuilt the session. See [scraper docs](docs/scraper/index.md).
 - (scraper) Score rows no longer shift onto the wrong round after a passed-out round, which has no row on the site's score sheet. See [scraper docs](docs/scraper/index.md).
 - (scraper) Passed-out rounds are recorded — deal, four passes, an `all_pass` score line — instead of skipped as "dealer unknown". See [scraper docs](docs/scraper/index.md).
+- (scraper) A game whose game-over flag was seen is written `target_reached`, even if the spectator is then sent away; with no final snapshot its totals are null. See [scraper docs](docs/scraper/index.md).
 
 ## [0.5.0] - 2026-09-17
 

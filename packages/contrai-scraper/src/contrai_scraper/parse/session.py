@@ -274,7 +274,9 @@ def parse_session(
             continue
         record += produced
 
-    record.append(_game_ended(ordered, translator, snapshots, ts, end_reason))
+    record.append(
+        _game_ended(ordered, translator, snapshots, ts, end_reason, last)
+    )
     return SessionResult(tuple(record), tuple(notes), tuple(skipped))
 
 
@@ -1076,6 +1078,7 @@ def _game_ended(
     snapshots: Sequence[Snapshot],
     ts: str,
     override: EndReason | None,
+    last_round: int,
 ) -> GameEnded:
     """How the game finished, and with what totals.
 
@@ -1083,28 +1086,45 @@ def _game_ended(
     none — a game whose last rounds were never scored has no total, and the
     schema says so rather than the parser adding up what it saw.
 
-    An ``override`` short-circuits the whole reading: the caller saw something
-    the stream cannot carry, and the flags left on the wire would describe a
-    different ending.
+    The table's game-over flag, seen anywhere in the game's updates, decides
+    the reason over everything else: a game that finished and was then left
+    finished, whatever the spectator was told afterwards and whatever the
+    caller guessed. Otherwise an ``override`` stands — the caller saw
+    something the stream cannot carry — and then the table's word that the
+    spectator left, else ``interrupted``.
+
+    A finished game whose final read never came gets ``None`` totals rather
+    than those of an earlier read: they would miss the last round, and a
+    winner derived from them could be the wrong side.
+
+    Args:
+        events: The session's events.
+        translator: The vocabulary layer.
+        snapshots: Every snapshot of the session, in arrival order.
+        ts: The timestamp to stamp it with.
+        override: The caller's end reason, if it has one.
+        last_round: The newest round the wire showed.
+
+    Returns:
+        The record's last line.
     """
 
-    totals = next(
-        (dict(snapshot.totals) for snapshot in reversed(snapshots)
-         if snapshot.totals),
-        None,
+    newest = next(
+        (snapshot for snapshot in reversed(snapshots) if snapshot.totals), None
     )
-    if override is not None:
-        return GameEnded(totals=totals, winner=None, reason=override, ts=ts)
-
-    # The table's own game-over flag wins over the observer leaving: a game
-    # that finished and was then left finished.
-    reason = EndReason.INTERRUPTED
+    totals = None if newest is None else dict(newest.totals)
     name = translator.profile.wire.events.table_update
-    for event in events:
-        if event.kind != name:
-            continue
-        if translator.field(event.data, "ended"):
-            reason = EndReason.TARGET_REACHED
-        elif translator.field(event.data, "left"):
-            reason = EndReason.OBSERVER_LEFT
+    updates = [event.data for event in events if event.kind == name]
+    if any(translator.field(update, "ended") for update in updates):
+        if newest is not None and (newest.round_index or 0) < last_round:
+            totals = None
+        return GameEnded(
+            totals=totals, winner=None, reason=EndReason.TARGET_REACHED, ts=ts
+        )
+    if override is not None:
+        reason = override
+    elif any(translator.field(update, "left") for update in updates):
+        reason = EndReason.OBSERVER_LEFT
+    else:
+        reason = EndReason.INTERRUPTED
     return GameEnded(totals=totals, winner=None, reason=reason, ts=ts)

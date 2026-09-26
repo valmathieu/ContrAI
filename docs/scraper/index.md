@@ -340,6 +340,14 @@ not that the game finished. A table that plays nothing for `stale_after_s` is wr
 `abandoned`, and an interrupted process writes what it saw as `interrupted` — neither is visible
 to the wire, which is why `parse_session` takes an `end_reason` the caller can state.
 
+The game-over flag outranks both. Seen anywhere in a game's updates, it writes `target_reached`
+whatever followed it — the site sends the spectator back to the menu once a game ends, and that
+later observer-left flag used to win — and whatever reason the caller stated. When the game's final
+read never came, its totals are written `null`, not the newest read's: those miss the last round,
+and a catalog would derive a winner from them. In the 10-worker ramp, 8 finished games were written
+`observer_left` behind a closing request the site never answered; a re-parse writes them
+`target_reached`.
+
 The orientation check compares the newest round *both* readings describe, not the last row of
 each. The panel is opened a moment after the join snapshot arrives, so the table can score a round
 in between; holding one reading's last row against the other's then compares two different rounds
