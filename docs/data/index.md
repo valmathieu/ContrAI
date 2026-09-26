@@ -345,6 +345,292 @@ player play*, *which rounds are clean enough to train on*, *how many rounds a da
 a directory of JSONL cannot answer a join without reading all of it. `contrai catalog` runs it
 from the engine CLI (see [engine docs](../engine/index.md#cli)).
 
+This section starts with how to *use* the catalog — building it, reading its summary, following a
+player and replaying their games, querying it — and then explains how it is built and what each
+table means.
+
+### Quick start
+
+A corpus is a **records root**: a directory holding `games/` (one `.jsonl` record per game) and,
+once `contrai verify` has run, `verdicts/` (one `.json` verdict per game). The catalog is written
+next to them as `catalog.sqlite`.
+
+| Games | Records root |
+| --- | --- |
+| Played and recorded by the engine (`contrai --record`) | `$CONTRAI_HOME/records` — `~/.contrai/records` when the variable is unset. It is also the default when `ROOT` is left out. |
+| Recorded with `contrai --record DIR` | `DIR` |
+| Watched by the scraper | the `[output].root` directory of the scraper's profile |
+
+Two commands, in this order, every time new games have landed:
+
+```bash
+uv run contrai verify ROOT      # 1. judge every game — writes ROOT/verdicts/<game_id>.json
+uv run contrai catalog ROOT     # 2. rebuild ROOT/catalog.sqlite and print what it holds
+```
+
+The order matters. The catalog *reads* verdicts, it does not compute them, and a game whose verdict
+is missing or older than its record contributes no clean round (see
+[Verdict status](#verdict-status-and-clean-rounds)). Both commands are safe to re-run as often as you
+like: `verify` overwrites each verdict file, and `catalog` rebuilds from scratch. `ROOT/games` is
+accepted in place of `ROOT`.
+
+**Work on a copy of a remote corpus, and keep its file times.** Whether a verdict is still fresh is
+decided by comparing file modification times, so copy a corpus off the box with a tool that
+preserves them — `cp -a` / `rsync -a`, or on Windows `robocopy SRC DST /E /COPY:DAT /DCOPY:T`. A
+plain copy re-stamps every file in copy order, and some verdicts then look older than their records.
+If that happens, re-running `contrai verify` on the copy fixes it.
+
+### Reading the summary
+
+`contrai catalog ROOT` prints what the new catalog holds. On the 135 games of the first box week:
+
+```text
+catalog: ROOT/catalog.sqlite  (built 2026-09-24T17:59:04Z)
+games: 135 (observed 135)
+rounds: 685, complete 685, clean 679
+game verdicts: partial 129, suspect 6
+verdict status: fresh 135
+round verdicts: partial 679, suspect 6
+players: 324
+```
+
+| Line | What it counts |
+| --- | --- |
+| `games` | Indexed games, split by source — `engine` (played here) or `observed` (watched online). |
+| `rounds` | Every round of every indexed game; those whose structure finished (auction closed, all eight tricks played or a pass-out); and the **clean** ones — finished, up-to-date verdict, replayed, not suspect. Clean rounds are what a training set is drawn from. |
+| `game verdicts` | Games per verdict, among games with a readable verdict. A game takes the worst verdict of its rounds. |
+| `verdict status` | Games per status: `fresh`, `stale`, `missing`, `unreadable`. Anything but `fresh` is followed by a line such as `without a fresh verdict: 3 — run: contrai verify ROOT`. |
+| `round verdicts` | Rounds per verdict, among rounds a readable verdict covers. |
+| `players` | Distinct player ids. Engine seats have none, so a corpus of engine games reports 0. |
+
+For observed games `partial` is the normal, clean verdict — every check that could run passed, and
+`verified` is out of reach because the table never says which side took the last trick. A
+`skipped: N` block, when present, lists every file that could not be indexed and why; everything
+else was indexed regardless.
+
+### Following a player
+
+**Ids and names.** An observed seat carries two things. The **player id** is the table's own
+account identifier: stable across games, and the key everything joins on. The **name** is the
+display name shown in that game: a player can change it, and several players can share one — five
+ids share a single name in the first box week. Engine seats carry no id at all; their names are
+`human` for you and `ai:<level>` for an AI (`ai:expert`, say).
+
+`--player` accepts either. Look a player up by name first, read the id off the output, then keep
+using the id:
+
+```bash
+uv run contrai catalog ROOT --player "Some Name"   # every seat that carried this name
+uv run contrai catalog ROOT --player PLAYER_ID     # every game of this player
+```
+
+The lookup **only reads** the catalog: it never rebuilds it, and it never creates one. Games
+recorded since the last build are not in it, which is why the header names the build time — run
+`contrai catalog ROOT` first to include them. The output has one line per game, oldest first:
+
+```text
+PLAYER_ID — games: 10 (catalog built 2026-09-24T17:59:04Z)
+2026-09-18  obs-0a1b2c3d  PLAYER_ID  Some Name  seat S  partner Other Name  won  NS 2010 – EW 1500  partial
+2026-09-18  obs-5e6f7a8b  PLAYER_ID  Some Name  seat S  partner Third Name  lost  NS 1690 – EW 2030  partial
+```
+
+| Field | Meaning |
+| --- | --- |
+| date | The day the record was opened, in UTC. |
+| game id | The record's id — normally its file name under `games/`. |
+| player id | The seat's id, or `-` for an engine seat. |
+| name | The name the seat carried *in that game*. |
+| `seat N/W/S/E` | Where the player sat — the seat to follow when replaying. |
+| `partner` | The partner's name in that game (`-` if unknown). |
+| outcome | `won` or `lost` when the winner is known; otherwise why the record stops — `observer_left`, `abandoned`, `interrupted`, or `target_reached` when the game ended but its winner cannot be derived — both sides over the target, say (see [The winner](#the-winner)); `unfinished` when the record has no end at all. |
+| score | The final totals, `NS a – EW b`, with `?` when the record does not say. |
+| verdict | `verified`, `partial` or `suspect`; `partial (stale)` when the verdict predates the record; `no verdict` or `unreadable verdict` otherwise. |
+
+When a name sits in more than one seat of a game — an engine game has four `ai:expert` seats — the
+header counts games and seats apart: `games: 1, seats: 4`, with one line per seat.
+
+The command exits `1`, with a message, when there is no catalog under `ROOT` yet, or when it holds
+no game for that id or name.
+
+For more than a list, query the views directly (see [Querying the catalog](#querying-the-catalog)):
+
+```sql
+-- the player's record in one row: games, wins, losses, first and last seen, every name used
+SELECT * FROM players WHERE player_id = 'PLAYER_ID';
+
+-- how their name and their level changed over time
+SELECT name, games, first_seen, last_seen FROM player_names
+WHERE player_id = 'PLAYER_ID' ORDER BY first_seen;
+SELECT level, games, first_seen, last_seen FROM player_levels
+WHERE player_id = 'PLAYER_ID' ORDER BY first_seen;
+
+-- who they play with most, and how that goes
+SELECT p.name AS partner, COUNT(*) AS games,
+       COUNT(*) FILTER (WHERE s.result = 'won') AS wins
+FROM seats s
+JOIN seats p ON p.game_id = s.game_id AND p.side = s.side AND p.position != s.position
+WHERE s.player_id = 'PLAYER_ID'
+GROUP BY p.player_id ORDER BY games DESC;
+```
+
+### Replaying a player's games
+
+The catalog finds the games; `contrai replay` shows them. It opens a record on a list of its
+rounds, each with its verdict, and steps the one you pick through the game's own screens with
+**every hand face up** — so watch the seat `--player` gave for that game. Everything about the
+replay itself — the round list, every key, where it stops, the trick grid — is on
+[Replaying a game](../engine/replay.md); the keys you need first:
+
+| Where | Key | Does |
+| --- | --- | --- |
+| round list | `7` | step round 7 through the game screens |
+| round list | `g 7` | show round 7 whole, as a [trick grid](../engine/replay.md#the-trick-grid) |
+| round list | `q` | close the record |
+| stepping | `n` or Enter | next action (a bid or a card) |
+| stepping | `t` / `r` | to the end of the trick / of the round |
+| stepping | `a` | skip the rest of the auction, stop on the contract |
+| stepping | `p` | back one stop |
+| stepping | `q` | back to the round list |
+
+The [full key table](../engine/replay.md#the-keys) adds `g` (the round so far as a grid) and `w`
+(the AI's reasons, when an engine AI held a seat).
+
+**One game.** Take a game id from the `--player` output:
+
+```bash
+uv run contrai replay ROOT/games/obs-0a1b2c3d.jsonl             # opens on the round list
+uv run contrai replay ROOT/games/obs-0a1b2c3d.jsonl --round 7   # straight into round 7
+```
+
+A game id is the file name for every record a producer wrote. If a file was renamed, ask the
+catalog where it lives: `SELECT path FROM games WHERE game_id = 'obs-0a1b2c3d'` gives the path
+relative to `ROOT`.
+
+**All of a player's games, one after the other.** Save this as `replay_player.py` anywhere outside
+the repository — it is a local helper, not part of the package:
+
+```python
+"""Replay every game one player sat in, oldest first."""
+
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])  # the records root holding catalog.sqlite
+player = sys.argv[2]  # a player id (or a display name)
+extra = sys.argv[3:]  # passed on to contrai replay, e.g. --round 3
+
+with sqlite3.connect(root / "catalog.sqlite") as catalog:
+    games = catalog.execute(
+        """
+        SELECT g.path, g.game_id, s.position, s.name
+        FROM seats s JOIN games g USING (game_id)
+        WHERE s.player_id = ? OR s.name = ?
+        ORDER BY g.created_at, g.game_id
+        """,
+        (player, player),
+    ).fetchall()
+
+try:
+    for index, (path, game_id, position, name) in enumerate(games, start=1):
+        print(f"[{index}/{len(games)}] {game_id}: {name} is seat {position}")
+        subprocess.run(["contrai", "replay", str(root / path), *extra])
+except KeyboardInterrupt:
+    print("stopped")
+```
+
+```bash
+uv run python replay_player.py ROOT PLAYER_ID
+```
+
+Each game opens on its round list; `q` there moves on to the next game, and Ctrl+C stops the
+whole run. Before each game the script prints which seat the player holds in it. It goes through
+`games.path`, so a renamed file is still found.
+
+**Only some rounds.** Ask the catalog which rounds are worth watching, then open each with
+`--round`:
+
+```sql
+-- the rounds where the player's game went suspect, and what the verifier found
+SELECT g.path, m.round, m.kind, m.detail, s.position AS seat
+FROM seats s JOIN games g USING (game_id) JOIN mismatches m USING (game_id)
+WHERE s.player_id = 'PLAYER_ID'
+ORDER BY g.created_at, m.round, m.n;
+
+-- the rounds the player declared, with the contract and how it went
+SELECT g.path, r.round, r.contract_value, r.contract_slam, r.trump, r.multiplier, r.outcome
+FROM seats s JOIN games g USING (game_id)
+JOIN rounds r ON r.game_id = s.game_id AND r.declarer = s.position
+WHERE s.player_id = 'PLAYER_ID'
+ORDER BY g.created_at, r.round;
+```
+
+```bash
+uv run contrai replay ROOT/<path> --round <round>
+```
+
+Two things to know. `contrai replay` checks the record **live** when it opens it, so the verdicts
+in its round list are always current even when the catalog calls a verdict stale. And it writes
+nothing — no record, no verdict, no change to the catalog.
+
+### Querying the catalog
+
+The catalog is a plain SQLite file, so any SQLite client reads it. Three ways that need nothing
+beyond the workspace:
+
+```bash
+uv run python -m sqlite3 ROOT/catalog.sqlite                      # an interactive SQL shell
+uv run python -m sqlite3 ROOT/catalog.sqlite "SELECT * FROM players ORDER BY games DESC LIMIT 10"
+```
+
+```python
+import sqlite3
+import pandas as pd
+
+with sqlite3.connect("ROOT/catalog.sqlite") as catalog:
+    players = pd.read_sql("SELECT * FROM players ORDER BY games DESC", catalog)
+```
+
+The `sqlite3` shell creates an empty database when the path is wrong, so check the path if every
+table seems to be missing. It also prints rows as Python tuples through the console's encoding: on a
+Windows console, a display name outside that code page raises `UnicodeEncodeError` — set
+`$env:PYTHONIOENCODING = "utf-8"` (PowerShell) first, or use a notebook.
+
+Start from the four views; the tables they are built on are described under [Schema](#schema).
+
+| View | One row per | Columns |
+| --- | --- | --- |
+| `players` | player id | `games`, `wins`, `losses`, `first_seen`, `last_seen`, `last_name`, `last_level`, `names` (every name used, as a JSON array) |
+| `player_names` | player id and name | `games`, `first_seen`, `last_seen` |
+| `player_levels` | player id and level | `games`, `first_seen`, `last_seen` |
+| `clean_rounds` | clean round | every `rounds` column, plus the game's `source`, `preset`, `created_at` and `path` |
+
+Dates are the records' own `created_at`, ISO-8601 in UTC, so they sort and compare as text.
+
+**Close your connection before rebuilding.** On Windows a catalog open in a shell or a notebook
+cannot be replaced, and `contrai catalog` stops with a message saying so (below).
+
+### When something goes wrong
+
+| Message or symptom | Cause | What to do |
+| --- | --- | --- |
+| `ROOT: no games/ directory, nothing to index` | `ROOT` is not a records root. | Point at the directory that *contains* `games/`. |
+| `… cannot be replaced (…). Close the program holding it open …` | Windows: a shell, notebook or DB browser still has `catalog.sqlite` open. | Close it and run again. The old catalog is untouched. |
+| `no catalog under ROOT — build it first: contrai catalog ROOT` | `--player` before any build. | Run `contrai catalog ROOT` once. |
+| `NAME: no game in the catalog built …` | The id or name is not in the catalog — misspelt, or recorded since the last build. | Check the spelling (names are exact, case included); rebuild. |
+| `… has schema version N, this build reads M; rebuild it` | The catalog was built by another version of the code. | Run `contrai catalog ROOT`. |
+| `… is not a catalog` | `ROOT/catalog.sqlite` is some other file. | Delete it and rebuild. |
+| `without a fresh verdict: N — run: contrai verify ROOT` | Games with no verdict yet, or a verdict older than its record. | Run the `verify` command it shows, then rebuild. |
+| `skipped: N` lines | A file could not be read, a verdict has no record, or two files claim one game id. | Read each line's reason. The rest of the corpus is indexed regardless. |
+| Clean rounds suddenly drop after copying a corpus | The copy re-stamped file times, so verdicts look stale. | Copy preserving times, or re-run `contrai verify` on the copy. |
+
+`contrai catalog` exits `1` whenever it prints one of the first six messages, `2` on a usage
+error, and `0` otherwise — games without a fresh verdict and skipped files are reported, not
+treated as failures.
+
+### How it is built
+
 **It is an index, never a second copy.** Every row is derived from a record or a verdict, the
 records stay the source of truth, and nothing writes to the catalog except a rebuild. A catalog can
 be deleted at any time. That is also why there are no schema migrations: `PRAGMA user_version`
@@ -458,7 +744,8 @@ WHERE g.source = 'engine' AND s.name = 'human'
 ORDER BY g.created_at;
 ```
 
-*One player's name history:*
+*One player's name history* (more player queries under
+[Following a player](#following-a-player)):
 
 ```sql
 SELECT name, games, first_seen, last_seen

@@ -20,7 +20,9 @@ uv run contrai replay ./corpus/games/obs-0a1b2c3d.jsonl --round 8     # skip the
 ```
 
 Records come from `contrai --record` (games played here) and from the scraper (games watched
-online); see [Recording](index.md#cli) and the [`contrai-data` format](../data/index.md).
+online); see [Recording](index.md#cli) and the [`contrai-data` format](../data/index.md). To find
+the games one player sat in, and replay them one after the other, use the corpus catalog — see
+[Replaying a player's games](../data/index.md#replaying-a-players-games).
 The command exits `0` normally, `1` when the record cannot be read or `--round` names no round
 that can be replayed, and `2` on a usage error.
 

@@ -214,6 +214,8 @@ The first two rebuild `ROOT/catalog.sqlite` from scratch and print what it holds
 
 Run `contrai verify` first. A game without a fresh verdict contributes no clean round, and the summary says how many games are in that state and which `verify` command fixes it. The command exits `0` on success; `1` when the root has no `games/` directory, when the catalog cannot be replaced (Windows refuses while another program — a `python -m sqlite3` shell, a notebook — holds it open; the old catalog is kept), or when `--player` finds no catalog or no game; `2` on a usage error. It sits here rather than in `contrai-scrape` because it is site-agnostic and indexes engine games too; the index itself is `contrai-data`'s `build_catalog`, whose schema, rules and SQL recipes are in the [data docs](../data/index.md#the-catalog).
 
+**Replaying a player's games.** The catalog finds the games, `contrai replay` shows them. `contrai catalog ROOT --player PLAYER_ID` lists each game with the seat the player held, and `contrai replay ROOT/games/<game_id>.jsonl` opens one of them, every hand face up (see [Replaying a game](replay.md)). The data docs walk through it step by step — [following a player](../data/index.md#following-a-player), [replaying their games](../data/index.md#replaying-a-players-games) one after the other or only the rounds that matter — and list what to do [when something goes wrong](../data/index.md#when-something-goes-wrong).
+
 **Trump choices.** No trump and all trump are off by default (`contree-domain.md` §9.2). Turn them on with a ruleset file:
 
 ```toml
