@@ -43,6 +43,7 @@ from contrai_scraper import (
 from contrai_scraper.parse.session import (
     _carried_over,
     _held,
+    _last_trick,
     _round_scored,
     _slam,
     _swept_by,
@@ -485,6 +486,34 @@ class TestUnannouncedSlam:
         contract = ContractBid(player=Position.WEST, value=SlamLevel.SLAM,
                                suit=Suit.SPADES)
         assert _slam(contract, _sweep_plays()) is SlamOutcome.SLAM
+
+
+class TestLastTrick:
+    # With North taking the eighth, West's seven tricks hold 108 and North's
+    # 33 — _sweep_plays reuses a card, so the deck is short of the 152.
+    _SHARED = dict(winner_of_last=Position.NORTH)
+
+    def test_card_points_with_the_bonus_on_the_taker_name_it(self):
+        taken = {TeamSide.NS: 43, TeamSide.EW: 108}
+        assert _last_trick(_sweep_plays(**self._SHARED), Suit.SPADES,
+                           taken) is TeamSide.NS
+
+    def test_card_points_with_the_bonus_elsewhere_name_nobody(self):
+        # Core's rule and the site's split disagree, so neither is written
+        # down: the card-points check is left to say which is wrong.
+        taken = {TeamSide.NS: 33, TeamSide.EW: 118}
+        assert _last_trick(_sweep_plays(**self._SHARED), Suit.SPADES,
+                           taken) is None
+
+    def test_a_sweep_names_the_sweeper_whatever_its_substitute(self):
+        # The site states the flat 250 in place of the pile.
+        taken = {TeamSide.NS: 0, TeamSide.EW: 250}
+        assert _last_trick(_sweep_plays(), Suit.SPADES, taken) is TeamSide.EW
+
+    def test_a_round_short_of_eight_whole_tricks_names_nobody(self):
+        taken = {TeamSide.NS: 43, TeamSide.EW: 108}
+        assert _last_trick(_sweep_plays(**self._SHARED)[:-1], Suit.SPADES,
+                           taken) is None
 
 
 def _snap(table, at=None):

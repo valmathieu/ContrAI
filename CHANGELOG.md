@@ -28,6 +28,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (engine) `contrai verify` accepts a defense sweep's card points stated as 250, as the observed tables write them. See [engine docs](docs/engine/index.md).
 - (engine) A doubled sweep is tagged an unannounced slam and always made, so a swept doubled 170 no longer scores as a failure. See [engine docs](docs/engine/index.md).
 - (scraper) A doubled sweep is recorded as an unannounced slam — the multiplier no longer suppresses the classification.
+- (scraper) Observed rounds record `last_trick`, the rebuilt eighth trick's winner confirmed by the site's card points, so `contrai verify` checks it. See [scraper docs](docs/scraper/index.md).
 
 ## [0.5.0] - 2026-09-17
 

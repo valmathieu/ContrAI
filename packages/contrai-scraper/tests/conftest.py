@@ -31,6 +31,7 @@ from contrai_core import (
     Suit,
     TeamSide,
     TrickRecord,
+    rules_for,
 )
 from contrai_data import (
     FORMAT,
@@ -615,7 +616,18 @@ def round_events(number, dealer, declarer, value, suit, made, totals, *,
                 think_ms=None, ts=TS)
         for seq, bid in enumerate(auction, start=1)
     ]
+    # The card points are the tricks' own piles, the last-trick bonus on the
+    # side that took the eighth — what the site states, and so what lets the
+    # parser name that side.
+    taken = dict.fromkeys(TeamSide, 0)
+    last_trick = None
     for index, trick in enumerate(_tricks(hands, dealer.next_in(DIRECTION), suit), start=1):
+        last_trick = (
+            TrickRecord(ObservedPlay(seat, card) for seat, card in trick)
+            .winner(suit)
+            .position.team_side
+        )
+        taken[last_trick] += sum(rules_for(suit).points(card) for _, card in trick)
         events += [
             CardPlayed(round=number, trick=index, position=seat, card=card,
                        derived=index == 8, think_ms=None, ts=TS)
@@ -631,7 +643,7 @@ def round_events(number, dealer, declarer, value, suit, made, totals, *,
             outcome=RoundOutcome.MADE if made else RoundOutcome.FAILED,
             declarer=declarer,
             contract=ContractTerms(value=value, suit=suit, multiplier=multiplier),
-            taken={TeamSide.NS: 90, TeamSide.EW: 72},
+            taken={**taken, last_trick: taken[last_trick] + 10},
             belote={TeamSide.NS: 0, TeamSide.EW: 0},
             announcements={TeamSide.NS: 0, TeamSide.EW: 0},
             carried_over=None if carried_over is None else dict(carried_over),
@@ -644,7 +656,7 @@ def round_events(number, dealer, declarer, value, suit, made, totals, *,
                     announced=0 if made else marked_points(value)),
             },
             totals=dict(totals),
-            last_trick=None,
+            last_trick=last_trick,
             slam=SlamOutcome.NONE,
             source=ScoreSource.SNAPSHOT,
             ts=TS,

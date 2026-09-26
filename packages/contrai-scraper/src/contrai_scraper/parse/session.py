@@ -42,6 +42,7 @@ from contrai_core import (
     SlamLevel,
     TeamSide,
     TrickRecord,
+    rules_for,
 )
 from contrai_data import (
     FORMAT,
@@ -86,6 +87,9 @@ BELOTE_RANKS = (Rank.KING, Rank.QUEEN)
 
 #: The Belote bonus, which is how a score row says one was announced.
 BELOTE_POINTS = 20
+
+#: The last-trick bonus, which a score row folds into the taker's card points.
+LAST_TRICK_BONUS = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -643,9 +647,7 @@ def _round_scored(
             for side, (made, announced) in row.marked.items()
         },
         totals=None if totals is None else dict(totals),
-        # The last trick's bonus is folded into the row's card points rather
-        # than stated, so which side took it is not recoverable.
-        last_trick=None,
+        last_trick=_last_trick(plays, contract.suit, row.taken),
         slam=_slam(contract, plays),
         source=ScoreSource.SNAPSHOT,
         ts=ts,
@@ -692,10 +694,6 @@ def _swept_by(
 ) -> TeamSide | None:
     """Which side took all eight tricks, or ``None`` when neither did.
 
-    The winner rule is core's — the same :meth:`~contrai_core.TrickRecord.winner`
-    that :func:`_final_trick` leads with and that the record's projection
-    re-derives — so the three readings of one round cannot disagree.
-
     Args:
         plays: Every play of the round, the rebuilt last trick included.
         trump: The contract's trump.
@@ -705,12 +703,79 @@ def _swept_by(
         plays do not make eight whole tricks.
     """
 
+    won = _tricks_won(plays, trump)
+    if won is None:
+        return None
+    sides = {side for side, _ in won}
+    return sides.pop() if len(sides) == 1 else None
+
+
+def _last_trick(
+    plays: Sequence[CardPlayed],
+    trump: ContractSuit,
+    taken: Mapping[TeamSide, int],
+) -> TeamSide | None:
+    """Which side took the last trick, as the row's card points bear out.
+
+    The eighth trick is rebuilt rather than seen, and the site names no
+    side for it — but its card points fold the ten-point bonus into the
+    taker's pile. So the side core's winner rule hands the last trick is
+    written down only when the row's card points are exactly the tricks'
+    piles with the bonus on that side: the claim is then the site's, not
+    the parser's alone. A sweep is the exception, because the site writes
+    the sweeper's flat substitute in place of its pile; a side that took
+    all eight tricks took the last. Measured over the V5 corpus: 3858
+    rounds agree, 338 are sweeps, none disagree.
+
+    Args:
+        plays: Every play of the round, the rebuilt last trick included.
+        trump: The contract's trump.
+        taken: The row's card points by side.
+
+    Returns:
+        The side that took the last trick, or ``None`` when the plays do not
+        make eight whole tricks or the row's card points say otherwise.
+    """
+
+    won = _tricks_won(plays, trump)
+    if won is None:
+        return None
+    last = won[-1][0]
+    if all(side is last for side, _ in won):
+        return last
+    points = rules_for(trump).points
+    piles = dict.fromkeys(TeamSide, 0)
+    for side, trick in won:
+        piles[side] += sum(points(play.card) for play in trick)
+    piles[last] += LAST_TRICK_BONUS
+    stated = {side: taken.get(side, 0) for side in TeamSide}
+    return last if stated == piles else None
+
+
+def _tricks_won(
+    plays: Sequence[CardPlayed], trump: ContractSuit
+) -> list[tuple[TeamSide, list[CardPlayed]]] | None:
+    """Each trick in order, with the side that won it.
+
+    The winner rule is core's — the same :meth:`~contrai_core.TrickRecord.winner`
+    that :func:`_final_trick` leads with and that the record's projection
+    re-derives — so the readings of one round cannot disagree.
+
+    Args:
+        plays: Every play of the round, the rebuilt last trick included.
+        trump: The contract's trump.
+
+    Returns:
+        ``(winning side, plays)`` per trick, first to eighth, or ``None``
+        when the plays do not make eight whole tricks.
+    """
+
     by_trick: dict[int, list[CardPlayed]] = {}
     for play in plays:
         by_trick.setdefault(play.trick, []).append(play)
     if len(by_trick) != TRICKS_PER_ROUND:
         return None
-    swept: TeamSide | None = None
+    won = []
     for _, trick in sorted(by_trick.items()):
         if len(trick) != len(Position):
             return None
@@ -719,10 +784,8 @@ def _swept_by(
             .winner(trump)
             .position.team_side
         )
-        if swept is not None and side is not swept:
-            return None
-        swept = side
-    return swept
+        won.append((side, trick))
+    return won
 
 
 def _game_ended(
