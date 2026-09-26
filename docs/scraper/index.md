@@ -471,6 +471,10 @@ reconciles the two, one browser session at a time.
 - **A closing window ends seating, not the game in hand.** No table is taken after the close; with
   `finish_current_game` the game already being watched runs on for at most `max_overrun_minutes`,
   and one still running then is written `observer_left` — we stopped watching it, it did not end.
+  The watchdog's wait is capped at that deadline, so it runs out there even while the players are
+  still at it. That expiry is therefore read as the deadline, never as a quiet table: in the
+  fleet's first live run it wrote a live game as `abandoned` and asked for another table on the way
+  out.
 - **Budgets hand the process back.** Six refused egress checks in a row, or three failed sessions
   in a row (a browser error, or frames that simply stopped), end the process with exit code 3, so
   its supervisor starts a fresh one. Exit code 130 means it was interrupted — Ctrl+C, or the

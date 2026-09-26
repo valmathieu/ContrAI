@@ -1063,6 +1063,32 @@ class TestLimits:
         assert (summary.games_recorded,
                 records_in(profile)[0].ended.reason) == (1, EndReason.OBSERVER_LEFT)
 
+    def test_a_time_limit_met_in_a_quiet_wait_is_not_an_abandoned_table(
+        self, profile, session_frames, source_game
+    ):
+        # The wait is capped at the deadline, so it runs out there while the
+        # players are still at it. Seen live on 2026-09-25: the window's close
+        # was written as `abandoned`, with a stale line and a hop after it.
+        class QuietAtTheLimit(StallingFrameSource):
+            """Goes quiet just as the clock reaches the shift's end."""
+
+            async def __anext__(self):
+                if not self._script:
+                    clock[0] = 60.0
+                return await super().__anext__()
+
+        clock = [0.0]
+        frames = session_frames(source_game)
+        source = QuietAtTheLimit(
+            [*frames[:-1], lambda: clock.__setitem__(0, 59.99), frames[-1]])
+        spectator = FakeSpectator()
+        summary = run_recorder(spectator, [], profile, source=source,
+                               limits=RecorderLimits(max_seconds=60.0),
+                               monotonic=lambda: clock[0])
+        assert (records_in(profile)[0].ended.reason, summary.stop_reason,
+                ("next_table",) in spectator.calls) == (
+            EndReason.OBSERVER_LEFT, StopReason.TIME_LIMIT, False)
+
     def test_the_counters_track_the_wire_stream(self, profile, session_frames,
                                                 source_game):
         # Every frame is mirrored on a second connection, so a run whose

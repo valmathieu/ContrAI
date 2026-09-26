@@ -676,23 +676,21 @@ class Recorder:
             if self._health.due(recorder.health_interval_s):
                 self._health.heartbeat(table=table_id)
             if self._past_deadline():
-                # The shift is over. The game was not abandoned and did not
-                # finish: we stopped watching it. Only this hard deadline stops
-                # a game in hand; the seat deadline is never checked here.
-                self._stop(StopReason.TIME_LIMIT)
-                self._write(EndReason.OBSERVER_LEFT)
-                return
+                return self._leave_at_deadline()
             remaining = self._capped(
                 recorder.stale_after_s - (self._monotonic() - self._last_activity)
             )
-            if remaining <= 0:
-                return await self._abandon()
-
-            pulled = await self._pull(remaining)
+            pulled = await self._pull(remaining) if remaining > 0 else None
             if self._stopped:
                 self._write(EndReason.INTERRUPTED)
                 return
             if pulled is None:
+                if self._past_deadline():
+                    # The wait is capped at the deadline, so it runs out there
+                    # whether or not the players are still at it: the shift
+                    # ended, not the table. Checked before the watchdog, or
+                    # every window closing mid-game would write `abandoned`.
+                    return self._leave_at_deadline()
                 return await self._abandon()
 
             frame, event = pulled
@@ -775,6 +773,18 @@ class Recorder:
             self._buffer.append(event)
             if event.kind == self._join_name:
                 return
+
+    def _leave_at_deadline(self) -> None:
+        """Close the game in hand because the shift is over.
+
+        The game was not abandoned and did not finish: we stopped watching
+        it. Only the hard deadline stops a game in hand; the seat deadline is
+        never checked while one is watched. No hop follows — the shift that
+        would sit at the next table has ended.
+        """
+
+        self._stop(StopReason.TIME_LIMIT)
+        self._write(EndReason.OBSERVER_LEFT)
 
     async def _abandon(self) -> None:
         """Give up on a table that has stopped playing — or on a tunnel that has."""
