@@ -36,14 +36,14 @@ This matters for association targets: PlantUML auto-creates any class named only
 
 ## Rendering
 
-MkDocs renders both PlantUML and Mermaid **inline at site-build time**:
+MkDocs renders PlantUML **inline at site-build time**, and shows a Mermaid source file **through its committed PNG**:
 
-- PlantUML via the [`plantuml-markdown`](https://pypi.org/project/plantuml-markdown/) extension (`format: svg`, `base_dir: docs/diagrams`). Requires the `plantuml` CLI on PATH (Java jar).
-- Mermaid via the [`mkdocs-mermaid2-plugin`](https://pypi.org/project/mkdocs-mermaid2-plugin/) (no CLI dependency).
+- PlantUML via the [`plantuml-markdown`](https://pypi.org/project/plantuml-markdown/) extension (`format: svg`, `base_dir: docs/diagrams`). Requires the `plantuml` CLI on PATH (Java jar). A page embeds a `.puml` by bare filename with a ```` ```plantuml format="svg" source="…" ```` fence.
+- A `.mmd` file is embedded as an image, `![alt](../diagrams/<name>.png)`, followed by a link to its source. Nothing configured reads a `.mmd` file: the [`mkdocs-mermaid2-plugin`](https://pypi.org/project/mkdocs-mermaid2-plugin/) renders a Mermaid fence written out inline, and pymdownx.superfences rejects a mermaid fence carrying `format` and `source` — the fence left behind opens a code block that swallows the rest of the page, headings and anchors included.
 
-So `mkdocs serve` / `mkdocs build` is enough — no pre-rendering step.
+So `mkdocs serve` / `mkdocs build` is enough for PlantUML, but **every `.mmd` change must re-render its PNG**, or the site keeps showing the old diagram.
 
-A **rendered PNG is committed alongside each `.puml`** in `docs/diagrams/` so the diagrams are previewable offline (in a file browser, an IDE, slides, the LaTeX report) without spinning up `mkdocs serve`. The MkDocs site itself does not read those PNGs — it re-renders from the `.puml` source — so the canonical source of truth is still the `.puml` file. Re-render the PNG whenever the source changes and commit both together in the same atomic commit:
+A **rendered PNG is committed alongside each `.puml` and `.mmd`** in `docs/diagrams/` so the diagrams are previewable offline (in a file browser, an IDE, slides, the LaTeX report) without spinning up `mkdocs serve`. For PlantUML the MkDocs site does not read those PNGs — it re-renders from the `.puml` source; for Mermaid the PNG *is* what the site shows. Either way the canonical source of truth is the source file. Re-render the PNG whenever the source changes and commit both together in the same atomic commit:
 
 ```bash
 plantuml -tpng docs/diagrams/file.puml         # → docs/diagrams/file.png
@@ -81,7 +81,7 @@ VS Code: install the *PlantUML* (`jebbs.plantuml`) and *Markdown Preview Mermaid
 
 ## Conventions
 
-- **Source location:** all `.puml` / `.mmd` sources live in `docs/diagrams/`, even when the rendered diagram is embedded on a per-package page. The `plantuml_markdown` extension's `base_dir` lets per-package pages embed by bare filename (e.g. `source="class_analyzer.puml"`).
+- **Source location:** all `.puml` / `.mmd` sources live in `docs/diagrams/`, even when the rendered diagram is embedded on a per-package page. The `plantuml_markdown` extension's `base_dir` lets per-package pages embed a `.puml` by bare filename (e.g. `source="class_analyzer.puml"`); a `.mmd` is embedded as its PNG, `../diagrams/<name>.png`, with a link to the source.
 - **Embed location:** per-package diagrams are embedded on that package's overview page (`docs/{core,engine,analyzer,scraper}/index.md`); workspace-spanning diagrams go on `docs/architecture.md`. This catalogue page links to each.
 - **Naming:** kind-prefixed filenames — `class_*.puml`, `seq_*.puml`, `comp_*.mmd`, `state_*.mmd`, …
 - **Honest portrayal:** mark unimplemented elements with `<<stub>>` / `<<future>>` stereotypes plus the grey/dashed styling above. The diagram should describe what the code *is*, not what we wish it were.
