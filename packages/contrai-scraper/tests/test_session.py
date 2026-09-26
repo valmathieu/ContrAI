@@ -1,6 +1,7 @@
 """Pins the whole pipeline: a record becomes frames and comes back identical."""
 
 import dataclasses
+import re
 
 import pytest
 from contrai_core import (
@@ -352,7 +353,7 @@ class TestObservedFrom:
 
 
 class TestUnresolvableRounds:
-    def test_a_round_with_no_plays_leaves_the_dealer_unknown(
+    def test_a_contracted_round_with_no_plays_is_skipped_as_unseen(
         self, profile, source_game, synthesize
     ):
         # Four candidate deals and nothing to choose between them. The dealer
@@ -362,7 +363,35 @@ class TestUnresolvableRounds:
                  if '"id": "p1-' not in text]
         result = _parse(profile, texts)
         assert result.skipped_rounds == (1,)
-        assert any("dealer" in note for note in result.notes)
+        assert result.notes == (
+            "round 1: no card of the round was observed — skipped",)
+
+    def test_plays_that_fit_no_rotation_leave_the_dealer_unknown(
+        self, profile, source_game, synthesize
+    ):
+        # One of trick 1's plays moved to the next seat: its card sits in
+        # another hand under every deal the other plays allow.
+        def moved(text):
+            return re.sub(r"(g1,1,1,1,card,p)(\d)",
+                          lambda m: f"{m[1]}{int(m[2]) % 4 + 1}", text)
+
+        result = _parse(profile, [(moved(text), socket)
+                                  for text, socket in synthesize(source_game)])
+        assert result.skipped_rounds == (1,)
+        assert result.notes == (
+            "round 1: no deal rotation fits the observed plays, so the dealer "
+            "is unknown — skipped",)
+
+    def test_the_last_round_cut_short_says_the_record_ended(
+        self, profile, source_game, synthesize
+    ):
+        # Round 2 is still being played when the watching stops: no read of
+        # its score ever comes.
+        texts = [(text, socket) for text, socket in synthesize(source_game)
+                 if ",2,7," not in text and '"id": "s2"' not in text]
+        result = _parse(profile, texts)
+        assert (result.skipped_rounds, result.notes) == (
+            (2,), ("round 2: the record ends before the round did — skipped",))
 
     def test_a_round_whose_auction_reached_no_contract_is_skipped(
         self, profile, source_game, synthesize, builders, game_builders
@@ -603,7 +632,7 @@ def _with_passed_out_third(game_builders):
         b.round_events(2, Position.EAST, Position.SOUTH, 110, Suit.HEARTS, True,
                        {TeamSide.NS: 200, TeamSide.EW: 170},
                        carried_over={TeamSide.NS: 0, TeamSide.EW: 0}),
-        b.passed_round(3, Position.SOUTH),
+        b.passed_round(3, Position.SOUTH, {TeamSide.NS: 200, TeamSide.EW: 170}),
         b.round_events(4, Position.WEST, Position.NORTH, 90, Suit.CLUBS, True,
                        {TeamSide.NS: 380, TeamSide.EW: 170},
                        carried_over={TeamSide.NS: 0, TeamSide.EW: 0}),
@@ -628,6 +657,67 @@ def _bare_snapshot(round_index, rows, totals):
                     at=None)
 
 
+class TestPassedOutRounds:
+    def test_a_passed_out_round_comes_back_whole(
+        self, profile, synthesize, game_builders
+    ):
+        # The deal, the four passes and an all_pass line that marks nothing,
+        # pays nothing and leaves the totals where round 2 put them.
+        game = _with_passed_out_third(game_builders)
+        result = _parse(profile, synthesize(game), game_id="obs-g1")
+        assert (_comparable(result.events), result.notes,
+                result.skipped_rounds) == (_comparable(game), (), ())
+
+    def test_the_dealer_sits_before_the_first_to_pass(
+        self, profile, synthesize, game_builders
+    ):
+        dealt = next(
+            event for event in _parse(
+                profile, synthesize(_with_passed_out_third(game_builders))).events
+            if isinstance(event, RoundDealt) and event.round == 3
+        )
+        assert dealt.dealer is Position.SOUTH
+
+    def test_the_passed_out_round_projects_complete(
+        self, profile, synthesize, game_builders
+    ):
+        parsed = _parse(profile, synthesize(_with_passed_out_third(game_builders)))
+        round_ = project(parsed.events).rounds[2]
+        assert (round_.number, round_.outcome, round_.complete) == (
+            3, RoundOutcome.ALL_PASS, True)
+
+    def test_passes_out_of_turn_are_skipped_with_a_note(
+        self, profile, synthesize, game_builders, builders
+    ):
+        # South deals, so West, North, East and South pass in that order.
+        # East passing second skips North, who had a choice there.
+        swapped = {
+            '"id": "b3-2"': builders.bid_frame(round_=3, seq=2, actor="p2"),
+            '"id": "b3-3"': builders.bid_frame(round_=3, seq=3, actor="p1"),
+        }
+        texts = [
+            (next((frame for id_, frame in swapped.items() if id_ in text), text),
+             socket)
+            for text, socket in synthesize(_with_passed_out_third(game_builders))
+        ]
+        result = _parse(profile, texts)
+        assert result.skipped_rounds == (3,)
+        assert "round 3:" in result.notes[0] and "had a choice" in result.notes[0]
+
+    def test_a_first_speaker_seated_nowhere_is_skipped_with_a_note(
+        self, profile, synthesize, game_builders, builders
+    ):
+        stranger = builders.bid_frame(round_=3, seq=1, actor="p9")
+        texts = [
+            (stranger if '"id": "b3-1"' in text else text, socket)
+            for text, socket in synthesize(_with_passed_out_third(game_builders))
+        ]
+        result = _parse(profile, texts)
+        assert (result.skipped_rounds, result.notes) == ((3,), (
+            "round 3: every seat passed, but the first to speak is seated "
+            "nowhere, so the dealer is unknown — skipped",))
+
+
 class TestScoreRowWalk:
     def test_every_row_lands_on_its_own_round_past_a_passed_out_one(
         self, profile, synthesize, game_builders
@@ -637,7 +727,7 @@ class TestScoreRowWalk:
         # round 2's row on round 3 and round 1's on round 2 (obs-597c7d8a).
         texts = _only_reads(synthesize(_with_passed_out_third(game_builders)), 4)
         scored = [event for event in _parse(profile, texts).events
-                  if isinstance(event, RoundScored)]
+                  if isinstance(event, RoundScored) and event.contract is not None]
         assert [(e.round, e.contract.value, e.contract.suit, e.totals is None)
                 for e in scored] == [
             (1, 80, Suit.SPADES, True),

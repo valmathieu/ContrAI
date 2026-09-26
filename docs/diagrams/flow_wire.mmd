@@ -36,7 +36,7 @@ flowchart TD
     Snapshot --> Session
     LiveEv --> Session
     Deal --> Session
-    Session["parse_session<br/>skip the joining round<br/>no score row → no round_scored"]
+    Session["parse_session<br/>skip the joining round<br/>passed-out rounds kept, dealer from the auction<br/>no score row → no round_scored"]
 
     Session --> Record[("contrai-data record<br/>one JSONL per game")]
     Record --> Verify(["contrai verify"])

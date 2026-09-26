@@ -164,6 +164,20 @@ snapshot taken just after a passed-out round names it as its last, and its total
 row all the same: passing out changes no total. For the same reason the totals standing before a
 round are those before the run of passed-out rounds just ahead of it.
 
+A passed-out round is also **recorded**, not dropped: four seats looked at known hands and none bid,
+which is bidding data like any other. A played round's dealer is resolved from its plays, and this
+one has none, so the dealer comes from the auction instead. Nobody is forced to pass an empty
+auction, so the first transmitted bid is the first speaker's and the dealer sits just before it. A
+round with its deal, exactly four passes and no play is written as its deal, the four passes and an
+`all_pass` score line: every component 0, `carried_over` 0 / 0 — under the held rule a dispute's pot
+goes to the next *contract's* winner — and the totals standing before it where those are known.
+
+Each round the parser still skips says why, in this order: no deal was transmitted (the joining
+round); the record ends before the round did (the visit's last round, short of its plays, with no
+score read reaching it); no card of the round was observed (a round seen only in part); and "no deal
+rotation fits the observed plays", now said only where plays exist and fit no rotation — a real
+inconsistency rather than an empty round.
+
 The eighth trick never reaches the wire, and no row says which side took it: the ten-point bonus
 is folded into the taker's card points. It is still recorded. The rebuilt trick's winner by core's
 rule is written as `last_trick` only when the row's card points are exactly the tricks' piles with

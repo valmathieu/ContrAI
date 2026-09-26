@@ -690,11 +690,13 @@ def round_events(number, dealer, declarer, value, suit, made, totals, *,
     return events
 
 
-def passed_round(number, dealer):
-    """One passed-out round of a record: the deal and four passes, no play.
+def passed_round(number, dealer, totals=None):
+    """One passed-out round of a record: the deal, four passes, no play.
 
-    It carries no score line, which is also what the synthesizer sends for
-    it: the site's score sheet has no row for a round nobody bid.
+    Its score line is the parser's own: nothing marked, nothing paid out,
+    and ``totals`` — the totals standing before the round, or ``None`` when
+    no read covered them. The synthesizer sends no row for it, since the
+    site's score sheet has none for a round nobody bid.
     """
 
     hands = _deal(_deck(number * 5), dealer)
@@ -712,6 +714,25 @@ def passed_round(number, dealer):
         events.append(BidMade(round=number, seq=seq, position=speaker,
                               bid=PassBid(player=speaker), think_ms=None, ts=TS))
         speaker = speaker.next_in(DIRECTION)
+    nothing = {TeamSide.NS: 0, TeamSide.EW: 0}
+    events.append(
+        RoundScored(
+            round=number,
+            outcome=RoundOutcome.ALL_PASS,
+            declarer=None,
+            contract=None,
+            taken=dict(nothing),
+            belote=dict(nothing),
+            announcements=dict(nothing),
+            carried_over=dict(nothing),
+            marked={side: SideMark(made=0, announced=0) for side in TeamSide},
+            totals=None if totals is None else dict(totals),
+            last_trick=None,
+            slam=SlamOutcome.NONE,
+            source=ScoreSource.SNAPSHOT,
+            ts=TS,
+        )
+    )
     return events
 
 
@@ -749,7 +770,7 @@ def game_events(*rounds, reason=EndReason.OBSERVER_LEFT):
     for round_ in rounds:
         events += round_
         for event in round_:
-            if isinstance(event, RoundScored):
+            if isinstance(event, RoundScored) and event.totals is not None:
                 last_totals = event.totals
     events.append(
         GameEnded(totals=last_totals, winner=None, reason=reason, ts=TS)
@@ -856,6 +877,9 @@ def synthesize_frames(events, *, game="g1", table="t1", frame_prefix="",
                         index=_index_in_trick(round_events_, event),
                         actor=HANDLE_OF_SEAT[event.position],
                         card=card_glyph(event.card)))
+                case RoundScored() if event.outcome is RoundOutcome.ALL_PASS:
+                    # No row and no read: the site's sheet skips the round.
+                    continue
                 case RoundScored():
                     rows.append(_wire_row(event))
                     texts.append(envelope(
