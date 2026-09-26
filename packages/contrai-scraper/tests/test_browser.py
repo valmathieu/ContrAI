@@ -13,6 +13,7 @@ from contrai_scraper.browser import (
     PAGE_SETTLE_MS,
     PANEL_ATTEMPT_TIMEOUT_MS,
     PANEL_ATTEMPTS,
+    RAIL_REVEAL_TIMEOUT_MS,
     STEP_TIMEOUT_MS,
     SentRequest,
 )
@@ -139,6 +140,29 @@ def drain(scenario):
     """
 
     return asyncio.run(scenario())
+
+
+class VanishingTogglePage(FakePage):
+    """A page whose rail toggle is there to look at and gone to click."""
+
+    toggle = "#rail-in:visible"
+
+    def __init__(self, matches=None):
+        super().__init__(matches)
+        self.toggle_timeouts: list[int | None] = []
+
+    def locator(self, selector):
+        found = super().locator(selector)
+        if selector != self.toggle:
+            return found
+        page = self
+
+        class Hiding(FakeLocator):
+            async def click(self, timeout=None):
+                page.toggle_timeouts.append(timeout)
+                raise TimeoutError(self.selector)
+
+        return Hiding(self, selector, self.matches[selector])
 
 
 class LatePledgePage(FakePage):
@@ -518,6 +542,22 @@ class TestRails:
 
         drain(scenario)
         assert page.clicks == ["#options", "#close"]
+
+    def test_a_toggle_that_hides_before_the_click_leaves_the_panel_to_open(
+        self, profile
+    ):
+        # bot07 in the 10-worker ramp: the toggle was showing when looked at
+        # and gone when clicked, because the rails came back on their own.
+        # The reveal gives up after a short click, and the panel opens.
+        page = VanishingTogglePage({**option_panel(opt_alpha=True, opt_beta=False),
+                                    "#rail-in:visible": ["<"]})
+
+        async def scenario():
+            await Spectator(page, profile).read_options(profile.rules.options)
+
+        drain(scenario)
+        assert (page.clicks, page.toggle_timeouts[0]) == (
+            ["#options", "#close"], RAIL_REVEAL_TIMEOUT_MS)
 
     def test_the_scoreboard_read_pulls_the_rail_back_too(self, profile):
         page = FakePage({**score_panel((90, 72)), "#rail-in:visible": ["<"]})

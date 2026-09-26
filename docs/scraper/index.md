@@ -300,7 +300,10 @@ not reach into. Measured on 2026-09-16: the options button covered by a modal ho
 were in, dead after 10 s; the same click landed 0.9 s after the rails were revealed a second time.
 The table hop is one of these controls. It reads like a menu step and took the single-shot path
 until 9B's 24-hour run ended two sessions on it: a recorder that hops promptly finds the rails
-still out, and one that watches a table to its end does not.
+still out, and one that watches a table to its end does not. The reveal itself is best-effort: the
+toggle is clicked with a `RAIL_REVEAL_TIMEOUT_MS` (1 s) wait and a miss is ignored, because a rail
+that slides back in between the look and the click hides the toggle, and waiting out the full step
+on it once turned a walk back into a rebuilt session in the 10-worker ramp.
 
 When a browser step does fail, `[browser].screenshot_on_error` saves a PNG and the page's DOM
 beside that session's raw log. An error names the profile key it was on and nothing else, which
