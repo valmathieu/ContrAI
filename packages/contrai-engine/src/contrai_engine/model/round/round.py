@@ -49,6 +49,7 @@ class Round:
         deck: Deck,
         round_number: int,
         rules: RuleConfig | None = None,
+        dispute_pot: int = 0,
     ):
         """
         Initialize a round with the given parameters.
@@ -60,6 +61,9 @@ class Round:
             round_number: The current round number
             rules: The table ruleset this round is played under. ``None``
                 (the default) means the §9 catalogue defaults.
+            dispute_pot: The points a held dispute left waiting for the
+                next contract to be won (§7.5), handed in by the Game.
+                ``0`` when there is none.
         """
         self.players_order = players_order
         self.dealer = dealer
@@ -71,6 +75,10 @@ class Round:
         # reads it back off this attribute rather than being handed one —
         # so no two phases of a round can run under different rulesets.
         self.rules: RuleConfig = rules if rules is not None else RuleConfig()
+        # The dispute pot this round is played for on top of its own
+        # marks. The scorer pays it to the contract's winner, or passes it
+        # on when the round is itself held; the Game keeps what is left.
+        self.dispute_pot: int = dispute_pot
 
         # Round state
         self.contract: Optional[Contract] = None

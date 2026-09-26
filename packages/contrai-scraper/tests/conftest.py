@@ -31,6 +31,7 @@ from contrai_core import (
     Suit,
     TeamSide,
     TrickRecord,
+    rules_for,
 )
 from contrai_data import (
     FORMAT,
@@ -580,13 +581,20 @@ def _after(declarer):
 
 
 def round_events(number, dealer, declarer, value, suit, made, totals, *,
-                 auction=None, multiplier=1):
+                 auction=None, multiplier=1, carried_over=None):
     """One complete round of a record: deal, auction, play, score.
 
     ``auction`` replaces the default auction — the declarer's bid and three
     passes — with bids of its own; ``multiplier`` is the contract's, 2 when
-    doubled and 4 when redoubled.
+    doubled and 4 when redoubled. ``carried_over`` is what the parser can
+    infer for the round: ``None`` when no running total before it was read
+    (a first round), else the per-side carry. The marks go to the declaring
+    side when the contract is made and to the defense when it fails, so a
+    made row never marks its declarer 0 / 0 — the shape of a held dispute.
     """
+
+    declaring = declarer.team_side
+    defending = next(side for side in TeamSide if side is not declaring)
 
     hands = _deal(_deck(number * 5), dealer)
     events = [
@@ -608,7 +616,18 @@ def round_events(number, dealer, declarer, value, suit, made, totals, *,
                 think_ms=None, ts=TS)
         for seq, bid in enumerate(auction, start=1)
     ]
+    # The card points are the tricks' own piles, the last-trick bonus on the
+    # side that took the eighth — what the site states, and so what lets the
+    # parser name that side.
+    taken = dict.fromkeys(TeamSide, 0)
+    last_trick = None
     for index, trick in enumerate(_tricks(hands, dealer.next_in(DIRECTION), suit), start=1):
+        last_trick = (
+            TrickRecord(ObservedPlay(seat, card) for seat, card in trick)
+            .winner(suit)
+            .position.team_side
+        )
+        taken[last_trick] += sum(rules_for(suit).points(card) for _, card in trick)
         events += [
             CardPlayed(round=number, trick=index, position=seat, card=card,
                        derived=index == 8, think_ms=None, ts=TS)
@@ -624,20 +643,20 @@ def round_events(number, dealer, declarer, value, suit, made, totals, *,
             outcome=RoundOutcome.MADE if made else RoundOutcome.FAILED,
             declarer=declarer,
             contract=ContractTerms(value=value, suit=suit, multiplier=multiplier),
-            taken={TeamSide.NS: 90, TeamSide.EW: 72},
+            taken={**taken, last_trick: taken[last_trick] + 10},
             belote={TeamSide.NS: 0, TeamSide.EW: 0},
             announcements={TeamSide.NS: 0, TeamSide.EW: 0},
-            carried_over={TeamSide.NS: 0, TeamSide.EW: 0},
+            carried_over=None if carried_over is None else dict(carried_over),
             marked={
-                TeamSide.NS: SideMark(
+                declaring: SideMark(
                     made=90 if made else 0,
                     announced=marked_points(value) if made else 0),
-                TeamSide.EW: SideMark(
+                defending: SideMark(
                     made=0 if made else 162,
                     announced=0 if made else marked_points(value)),
             },
             totals=dict(totals),
-            last_trick=None,
+            last_trick=last_trick,
             slam=SlamOutcome.NONE,
             source=ScoreSource.SNAPSHOT,
             ts=TS,
@@ -701,8 +720,11 @@ def source_game():
     return game_events(
         round_events(1, Position.SOUTH, Position.WEST, 80, Suit.SPADES, True,
                      {TeamSide.NS: 0, TeamSide.EW: 170}),
+        # Round 1's totals are read, so round 2's carry is inferable: the
+        # totals moved by exactly South's 90 + 110, so nothing was carried.
         round_events(2, Position.EAST, Position.SOUTH, 110, Suit.HEARTS, True,
-                     {TeamSide.NS: 200, TeamSide.EW: 170}),
+                     {TeamSide.NS: 200, TeamSide.EW: 170},
+                     carried_over={TeamSide.NS: 0, TeamSide.EW: 0}),
     )
 
 

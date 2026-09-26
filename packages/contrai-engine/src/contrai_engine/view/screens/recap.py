@@ -35,6 +35,7 @@ from contrai_engine.view.theme import (
     RED,
     YELLOW,
 )
+from contrai_engine.view.state_helpers import _dispute_pot_after
 
 if TYPE_CHECKING:
     from contrai_engine.model.round import Round
@@ -62,6 +63,10 @@ def _panel_round_recap(
     target) a sudden-death notice closes the panel; when ``belote_gated``
     names a side, a notice says that side is past the target on Belote
     the table's §8 option has not let it win on yet.
+
+    A held dispute replaces the made/failed badge, a round that pays a
+    dispute pot adds a ``Carried in`` row, and a pot still open closes the
+    panel with a notice.
     """
     body = Text()
     body.append("\n")
@@ -87,7 +92,13 @@ def _panel_round_recap(
         # Made/failed badge
         made = _contract_made(round_)
         body.append("  Result:    ", style=DIM)
-        if made:
+        if _round_held(round_):
+            body.append(
+                f"Contract tied — {round_.round_score.held} held for the "
+                "next contract",
+                style=f"bold {GOLD}",
+            )
+        elif made:
             body.append("✓ Contract made", style=f"bold {GREEN_CHECK}")
         else:
             body.append("✗ Contract failed", style=f"bold {RED}")
@@ -115,9 +126,11 @@ def _panel_round_recap(
 
     body.append_text(_section_rule("Scoring"))
     body.append("\n")
+    score = getattr(round_, "round_score", None)
     body.append_text(
         _format_recap_table(
-            breakdown, ns_round, ew_round, all_passed=all_passed
+            breakdown, ns_round, ew_round, all_passed=all_passed,
+            carried_over=score.carried_over if score is not None else None,
         )
     )
     body.append("\n")
@@ -146,6 +159,15 @@ def _panel_round_recap(
         body.append(
             f"  {_team_abbr(belote_gated)} past the target on Belote alone"
             " — the game continues",
+            style=f"bold {GOLD}",
+        )
+
+    pot = _dispute_pot_after(round_)
+    if pot:
+        # §7.5: a held tie's points wait for the next contract to be won.
+        body.append("\n\n")
+        body.append(
+            f"  {pot} held — paid to whoever wins the next contract",
             style=f"bold {GOLD}",
         )
 
@@ -444,6 +466,7 @@ def _format_recap_table(
     ew_round: int,
     *,
     all_passed: bool = False,
+    carried_over: dict | None = None,
 ) -> Text:
     """Render the Scoring sub-table inside the recap panel.
 
@@ -457,6 +480,15 @@ def _format_recap_table(
     component is the flat 160 rather than a share of the pile; on a
     failed contract the declarer's is 0, so its row collapses to the
     belote it keeps — or an em-dash when it holds none.
+
+    Args:
+        breakdown: Per-team point components from ``_recap_breakdown``.
+        ns_round: N-S's round score.
+        ew_round: E-W's round score.
+        all_passed: Whether the round was passed out.
+        carried_over: The dispute pot this round paid out, per side, shown
+            as a ``Carried in`` row below ``Round score`` — beside the
+            round's score, not inside it.
     """
     ns = breakdown.get(TeamSide.NS, {})
     ew = breakdown.get(TeamSide.EW, {})
@@ -520,6 +552,20 @@ def _format_recap_table(
     out.append_text(row_points)
     out.append_text(_column_divider())
     out.append_text(row_total)
+    if carried_over and any(carried_over.values()):
+        # A dispute pot paid out sits *beside* the round score, so Round
+        # score stays the sum of the two rows above it.
+        row_carried = Text()
+        row_carried.append(f"  {'Carried in':<22}", style=f"bold {GOLD}")
+        row_carried.append_text(
+            _num_cell(carried_over.get(TeamSide.NS, 0), show_zero=False)
+        )
+        row_carried.append("  ")
+        row_carried.append_text(
+            _num_cell(carried_over.get(TeamSide.EW, 0), show_zero=False)
+        )
+        row_carried.append("\n")
+        out.append_text(row_carried)
     return out
 
 
@@ -534,6 +580,16 @@ def _belote_counts_in_round(round_) -> dict[TeamSide, int]:
     tests.
     """
     return getattr(round_, "belote_counts_by_side", None) or {}
+
+
+def _round_held(round_) -> bool:
+    """Whether ``round_`` was a dispute its table held (§7.5).
+
+    A held round is judged made, so the made/failed flag alone would
+    badge it "made" while its declarer marked nothing.
+    """
+    score = getattr(round_, "round_score", None)
+    return score is not None and score.is_held
 
 
 def _contract_made(round_) -> bool:

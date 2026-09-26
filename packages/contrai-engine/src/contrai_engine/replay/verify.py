@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from contrai_core import PRESETS, Card, Position, Rank, Suit, TeamSide
+from contrai_core.bid import SlamLevel
 from contrai_core.exceptions import IllegalBidError, IllegalPlayError
 from contrai_data import (
     BeloteHeld,
@@ -526,7 +527,7 @@ def _check_score(check: _RoundCheck, round_: Any) -> None:
         return
 
     contract = round_.contract
-    outcome = _outcome(score.contract_made)
+    outcome = _outcome(score)
     if outcome is not recorded.outcome:
         check.fault(
             MismatchKind.SCORE,
@@ -571,7 +572,9 @@ def _check_score(check: _RoundCheck, round_: Any) -> None:
             observed=str({s.value: m for s, m in wanted.items()}),
         )
 
-    if not _taken_agrees(score, recorded, slam):
+    if not _taken_agrees(
+        score, recorded, slam, defense_sweeper=_defense_sweeper(round_)
+    ):
         check.fault(
             MismatchKind.SCORE,
             "the captured card points differ",
@@ -602,6 +605,38 @@ def _check_score(check: _RoundCheck, round_: Any) -> None:
                 expected=str(score.last_trick_side),
                 observed=str(recorded.last_trick),
             )
+
+    _check_carried_over(check, score, recorded)
+
+
+def _check_carried_over(check: _RoundCheck, score: Any, recorded: Any) -> None:
+    """The dispute pot paid out this round must be the one recorded (§7.5).
+
+    A record that cannot say — an observed round whose running total
+    before it was never read — carries ``None``, and a claim never made is
+    not a disagreement: the check is left unchecked, as a missing last
+    trick is, and ``score`` is named unchecked once however many of its
+    parts could not be compared.
+
+    Args:
+        check: The round's accumulating checks.
+        score: The replayed round score.
+        recorded: The recorded score line.
+    """
+
+    if recorded.carried_over is None:
+        if _SCORE not in check.unchecked:
+            check.unchecked.append(_SCORE)
+        return
+    mine = {side: score.carried_over.get(side, 0) for side in TeamSide}
+    theirs = {side: recorded.carried_over.get(side, 0) for side in TeamSide}
+    if mine != theirs:
+        check.fault(
+            MismatchKind.SCORE,
+            "the carried-over points differ",
+            expected=str(_side_totals(mine)),
+            observed=str(_side_totals(theirs)),
+        )
 
 
 def _check_contract_terms(
@@ -637,18 +672,89 @@ def _check_contract_terms(
         )
 
 
-def _taken_agrees(score: Any, recorded: Any, slam: SlamOutcome) -> bool:
-    """Whether the captured card points agree, allowing a sweep's 250.
+def _sweep_substitute(slam: SlamOutcome) -> int | None:
+    """The flat figure an observed table writes in place of a swept pile.
+
+    §7.2: the substitute is the base value of the Slam-family level the
+    round carries — **500** for an announced Solo Slam, **250** for an
+    announced Slam and for an unannounced sweep alike. The engine's own
+    personal-sweep premium (:func:`sweep_substitute`, which pays a
+    declarer's solo sweep the Solo Slam's 500) is a *marking* rule and
+    never reaches this column: an unannounced sweep is written 250
+    whoever took the tricks.
+
+    Args:
+        slam: The round's slam classification.
+
+    Returns:
+        The substitute figure, or ``None`` when the round is no sweep at
+        all and the real pile is the only acceptable answer.
+    """
+
+    if slam is SlamOutcome.SOLO_SLAM:
+        return SlamLevel.SOLO_SLAM.base_value
+    if slam in (SlamOutcome.SLAM, SlamOutcome.UNANNOUNCED):
+        return SlamLevel.SLAM.base_value
+    return None
+
+
+def _defense_sweeper(round_: Any) -> TeamSide | None:
+    """The defending side, when it took every trick of the replayed round.
+
+    Read off the replay's own trick winners rather than the piles: a
+    trick of sevens and eights is worth nothing, so a zero pile does not
+    mean a side won no trick.
+
+    Args:
+        round_: The engine round, played out.
+
+    Returns:
+        The defense's side when it won all 8 tricks, else ``None`` —
+        including when the declaring side swept, which the round's slam
+        classification already covers.
+    """
+
+    contract = getattr(round_, "contract", None)
+    state = getattr(round_, "play_state", None)
+    if contract is None or state is None:
+        return None
+    winners = state.trick_winners
+    if len(winners) != 8:
+        return None
+    sides = {winner.position.team_side for winner in winners}
+    declaring = contract.player.position.team_side
+    if len(sides) != 1 or declaring in sides:
+        return None
+    return sides.pop()
+
+
+def _taken_agrees(
+    score: Any,
+    recorded: Any,
+    slam: SlamOutcome,
+    *,
+    defense_sweeper: TeamSide | None = None,
+) -> bool:
+    """Whether the captured card points agree, allowing a sweep's substitute.
 
     §4.2.1: an observed table records a sweeping side's card points as
-    the **250** of the Slam substitute rather than the 162 actually on
-    the table, while the engine records the real pile. Both are true
-    statements about the same round, so a sweep accepts either.
+    the flat Slam substitute rather than the 162 actually on the table,
+    while the engine records the real pile. Both are true statements
+    about the same round, so a sweep accepts either — but only its *own*
+    substitute, so a Solo Slam's 500 and a Slam's 250 stay distinct and
+    a wrong figure is still a fault.
+
+    The table writes a *defense's* sweep the same way, as the team's 250
+    — a recording convention, whatever the ruleset then marks for it —
+    so a defense that took every trick widens the tolerance too, though
+    the round carries no slam classification.
 
     Args:
         score: The replayed round score.
         recorded: The recorded score line.
         slam: The round's slam classification.
+        defense_sweeper: The defending side when it took all 8 tricks
+            (:func:`_defense_sweeper`), else ``None``.
 
     Returns:
         Whether the two card-point lines describe the same round.
@@ -658,16 +764,23 @@ def _taken_agrees(score: Any, recorded: Any, slam: SlamOutcome) -> bool:
     theirs = {side: recorded.taken.get(side, 0) for side in TeamSide}
     if mine == theirs:
         return True
-    if slam is SlamOutcome.NONE:
-        return False
-    # A sweep: the side that took everything is the one whose pile the
-    # substitute stands in for, and the other side's zero must still be a
-    # zero on both sides of the comparison.
-    sweeper = next((side for side, points in mine.items() if points > 0), None)
+    substitute = _sweep_substitute(slam)
+    if substitute is None:
+        if defense_sweeper is None:
+            return False
+        # The defense swept: its pile is the one the 250 stands in for.
+        substitute, sweeper = SlamLevel.SLAM.base_value, defense_sweeper
+    else:
+        # A sweep: the side that took everything is the one whose pile the
+        # substitute stands in for, and the other side's zero must still be
+        # a zero on both sides of the comparison.
+        sweeper = next(
+            (side for side, points in mine.items() if points > 0), None
+        )
     if sweeper is None:
         return False
     return theirs == {
-        side: (250 if side is sweeper else 0) for side in TeamSide
+        side: (substitute if side is sweeper else 0) for side in TeamSide
     }
 
 

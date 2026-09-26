@@ -95,6 +95,7 @@ class TestVocabularies:
                     "FAILED": "failed",
                     "ALL_PASS": "all_pass",
                     "DISPUTED": "disputed",
+                    "HELD": "held",
                 },
             ),
             (
@@ -384,6 +385,16 @@ def scored(**overrides) -> RoundScored:
 
 
 class TestRoundScored:
+    def test_accepts_a_held_round(self):
+        assert scored(outcome=RoundOutcome.HELD).outcome is RoundOutcome.HELD
+
+    def test_accepts_an_unknown_carry(self):
+        assert scored(carried_over=None).carried_over is None
+
+    def test_a_stated_carry_still_names_both_sides(self):
+        with pytest.raises(RecordFormatError, match="carried_over"):
+            scored(carried_over={TeamSide.NS: 0})
+
     def test_accepts_a_made_contract(self):
         assert scored().marked[TeamSide.NS].announced == 80
 

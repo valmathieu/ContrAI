@@ -282,6 +282,7 @@ package "model/game.py" as p_game {
         + round_number : int
         + scores : dict<TeamSide, int>
         + unconfirmed_belote : dict<TeamSide, int>
+        + dispute_pot : int
         + rules : RuleConfig
         + deal_source : DealSource
         --
@@ -410,6 +411,7 @@ package "model/round/ package" as p_round {
         + dealer : Player
         + deck : Deck
         + round_number : int
+        + dispute_pot : int
         + contract : Contract?
         + auction : Auction?
         + play_state : PlayState?
@@ -426,7 +428,7 @@ package "model/round/ package" as p_round {
         + bid_decisions : list<BidDecision>
         + card_decisions : list<CardDecision>
         --
-        + __init__(players_order, dealer, deck, round_number, rules=None)
+        + __init__(players_order, dealer, deck, round_number, rules=None, dispute_pot=0)
         + deal_cards() : None
         + manage_bidding(view=None) : Contract?
         + play_trick(view=None) : None
@@ -448,7 +450,7 @@ package "model/round/ package" as p_round {
     ' --- scoring.py: the pure scoring transformation ---
     class "scoring.py" as r_scoring <<module>> #FFEFD9 {
         score_round(round) : RoundScore
-        sweep_substitute(tag) : int
+        sweep_substitute(tag, rules) : int
         count_player_tricks(trick_winners, player) : int
         UnannouncedSlam <<enum>> : {SLAM, GRAND_SLAM}
     }
@@ -462,6 +464,9 @@ package "model/round/ package" as p_round {
         + card_points : dict<TeamSide, int>
         + last_trick_side : TeamSide?
         + multiplier : int
+        + held : int
+        + carried_over : dict<TeamSide, int>
+        + is_held : bool <<property>>
     }
 
     ' --- components.py: the §7.2 arithmetic, over plain ints ---

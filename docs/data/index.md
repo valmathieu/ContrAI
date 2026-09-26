@@ -65,10 +65,17 @@ One UTF-8 file per game, one event per line, `.jsonl`. The first line is always 
 file is **append-only**, so a producer never rewrites what it has already written and a reader can
 follow a game as it happens.
 
-The header carries a `format` field spelled `family/major` — `contrai-record/1`. A loader that
-meets a major it does not implement refuses the file outright with `UnsupportedFormatError`, rather
-than working through it and producing a pile of confusing field errors. That is the whole point of
-putting a version in the file: a *format change* and a *corrupt file* must not look alike.
+The header carries a `format` field spelled `family/major` — `contrai-record/2`. A loader reads
+every major it implements — 1 and 2, since a `/1` record is a `/2` record written before the `held`
+outcome and an unknown carry existed — and refuses any other outright with `UnsupportedFormatError`,
+rather than working through it and producing a pile of confusing field errors. That is the whole
+point of putting a version in the file: a *format change* and a *corrupt file* must not look alike.
+
+Two `round_scored` values need reading with care. `held` is §7.5's dispute under the `held` table
+option: the contract tied, the attack's points went into a pot rather than onto the sheet, and they
+surface as the next winning round's `carried_over`. It is *not* `disputed`, which says two score
+sources disagreed about a round. And `carried_over` is `null` when the source could not say — an
+observed round whose running total before it was never read — rather than a zero it never measured.
 
 ## The event vocabulary
 
@@ -189,7 +196,7 @@ plausible.
 | `BidMade`      | `seq >= 1`, and `bid.player is position`        | A bid filed under the wrong seat                       |
 | `CardPlayed`   | `1 <= trick <= 8`                               | A trick counter that ran off its ladder                |
 | `BeloteHeld`   | Exactly the King and Queen of one suit          | A pair assembled from two suits, or a K + J            |
-| `RoundScored`  | Declarer ⇔ contract; `all_pass` ⇔ no contract; every side-keyed field names both sides | A score line that contradicts itself |
+| `RoundScored`  | Declarer ⇔ contract; `all_pass` ⇔ no contract; every side-keyed field names both sides (`totals` and `carried_over` may be null) | A score line that contradicts itself |
 
 The 32-distinct-cards check is the one worth singling out. A parser that repeats a packet produces
 four hands that are the right *shape* — four seats, eight cards each — and wrong. Without this

@@ -7,7 +7,7 @@ each knob is wired to behaviour in a later step; this module only makes
 the ruleset a nameable, hashable value that a log line, a simulation
 result or a scraped game can carry.
 
-The three enums render as their TOML token (``str(Rounding.EXACT) ==
+The four enums render as their TOML token (``str(Rounding.EXACT) ==
 "exact"``), so the same value spells the member in a config file and in a
 message.
 """
@@ -55,6 +55,30 @@ class Rounding(Enum):
         return self.value
 
 
+class DisputeResolution(Enum):
+    """How a dispute settles — an exact tie the attack reached its value with (§7.5).
+
+    Consulted only when the attack must out-score the defense, on a
+    numeric contract whose attack reached its value — doubled or not; a
+    tie short of the value is an ordinary failure. A doubled tie judged
+    made marks what a made double marks.
+
+    Members:
+        FAILED: The tie fails the contract (the §9 default).
+        SHARED: The tie is made, and each side marks its own points.
+        HELD: The tie is judged made, but the attack's mark is held and
+            paid to whoever wins the next contract.
+    """
+
+    FAILED = "failed"
+    SHARED = "shared"
+    HELD = "held"
+
+    def __str__(self) -> str:
+        """Render as the TOML token, e.g. ``"held"``."""
+        return self.value
+
+
 #: The selectable game targets (contree-domain.md §9.1).
 TARGET_SCORES: tuple[int, ...] = (500, 1000, 1500, 2000, 3000, 4000, 5000)
 
@@ -92,10 +116,19 @@ class RuleConfig:
         any_failure_marks_160: Every failure marks a flat 160 (§9.6).
         unannounced_slam_substitute: 250 / 500 replaces the pile on an
             unannounced sweep (§9.6).
+        substitute_survives_doubling: The unannounced sweep's substitute
+            applies to a doubled or redoubled contract too (§9.6).
+        personal_sweep_marks_solo_slam: A declarer's solo sweep marks the
+            Solo Slam's 500 rather than the team's 250 (§9.6).
+        defense_sweep_marks_substitute: A defense that takes all 8 tricks
+            of a numeric contract marks the 250 substitute as its made
+            points rather than the flat 160 (§9.6).
         failed_slam_marks_made_points: Failed Slam — made component (§9.6).
         failed_slam_marks_announced_points: Failed Slam — announced
             component (§9.6).
         attack_must_outscore_defense: A tie fails the contract (§9.6).
+        dispute_resolution: How an exact tie settles once the attack must
+            out-score the defense (§7.5, §9.6).
         rounding: Rounding of marked points (§9.6).
         win_on_belote_points_alone: Belote points can cross the target
             (§9.6).
@@ -128,9 +161,13 @@ class RuleConfig:
     only_announced_points_multiplied: bool = True
     any_failure_marks_160: bool = False
     unannounced_slam_substitute: bool = True
+    substitute_survives_doubling: bool = False
+    personal_sweep_marks_solo_slam: bool = True
+    defense_sweep_marks_substitute: bool = False
     failed_slam_marks_made_points: bool = True
     failed_slam_marks_announced_points: bool = True
     attack_must_outscore_defense: bool = True
+    dispute_resolution: DisputeResolution = DisputeResolution.FAILED
     rounding: Rounding = Rounding.EXACT
     win_on_belote_points_alone: bool = True
 
@@ -169,11 +206,34 @@ class RuleConfig:
     def tournament(cls) -> RuleConfig:
         """The rule set the observed online tournament tables play.
 
-        Four knobs off the §9 defaults, each read off the captured
+        Eight knobs off the §9 defaults, each read off the captured
         tables rather than assumed: play runs clockwise, any failed
         contract marks the flat 160, the double multiplier applies to the
-        whole mark rather than to the announced component alone, and a
-        Solo Slam declarer opens trick 1.
+        whole mark rather than to the announced component alone, a Solo
+        Slam declarer opens trick 1, an unannounced sweep keeps its
+        substitute when the contract was doubled, a declarer's solo
+        sweep marks the team's 250 rather than the Solo Slam's 500, a
+        defense that sweeps marks the same 250 substitute, and a genuine
+        tie holds the attack's points for whoever wins the next contract.
+
+        The two sweep knobs were measured over the V5 corpus's 59
+        sweeps. obs-579624dd round 7 (140♦ doubled) and obs-7bfd7f3f
+        round 13 (120♦ doubled) are the whole doubled population, and
+        both are marked 250 × 2 = 500 — the substitute, multiplied —
+        where §7.2's default would flatten the pile to 160 and mark 320.
+        All 49 unannounced sweeps are marked 250, the two personal ones
+        (obs-2629f21c round 8, obs-e44783eb round 6) included, so the
+        §7.2 personal-sweep premium is not played here. The one defense
+        sweep, obs-daf245b0 round 6 (120♠ doubled), is marked 250 × 2 =
+        500 made for the defense, not the flat 160 × 2.
+
+        The dispute rule was read off obs-f3c28d3b: round 3, an 81/81 on
+        an 80, marked the defense 81 and the declarer nothing, and round
+        4's winner collected 161 — 81 card points plus the 80 contract —
+        on top of its own marks. The observed tables hold a doubled tie
+        the same way: obs-3a3ecf22 round 11, an 81/81 on an 80 doubled,
+        marked both sides nothing and paid round 12's winner 480 — the
+        made double's (160 + 80) × 2.
 
         Returns:
             The tournament ruleset.
@@ -183,6 +243,10 @@ class RuleConfig:
             any_failure_marks_160=True,
             only_announced_points_multiplied=False,
             solo_slam_gives_the_lead=True,
+            substitute_survives_doubling=True,
+            personal_sweep_marks_solo_slam=False,
+            defense_sweep_marks_substitute=True,
+            dispute_resolution=DisputeResolution.HELD,
         )
 
 

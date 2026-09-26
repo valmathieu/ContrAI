@@ -22,7 +22,10 @@ from contrai_data import (
     GameEnded,
     GameStarted,
     Header,
+    JoinPhase,
+    ObservedFrom,
     RoundDealt,
+    RoundOutcome,
     RoundScored,
     SlamOutcome,
     project,
@@ -37,7 +40,16 @@ from contrai_scraper import (
     parse_session,
     split_visits,
 )
-from contrai_scraper.parse.session import _slam, _swept_by
+from contrai_scraper.parse.session import (
+    _carried_over,
+    _held,
+    _last_trick,
+    _round_scored,
+    _slam,
+    _swept_by,
+    _totals_before,
+)
+from contrai_scraper.parse.snapshot import RowContract, ScoreRow
 
 
 def _comparable(events):
@@ -454,30 +466,54 @@ class TestUnannouncedSlam:
     def test_a_declaring_side_that_swept_is_an_unannounced_slam(self):
         # The engine writes UNANNOUNCED for exactly this round, and a record
         # saying "none" is contradicted by its own plays — which is what the
-        # verifier caught live on 2026-09-16 (obs-3bb24810 round 4).
+        # verifier caught live on 2026-09-16 (obs-3bb24810 round 4). There
+        # is no multiplier argument: a doubled sweep is still eight tricks
+        # taken uncalled, and the §9.6 knobs price it, not the parser.
         contract = ContractBid(player=Position.WEST, value=130, suit=Suit.SPADES)
-        assert _slam(contract, 1, _sweep_plays()) is SlamOutcome.UNANNOUNCED
-
-    def test_a_doubled_sweep_is_not_one(self):
-        # Recognised un-doubled only: a doubled sweep keeps the
-        # winner-takes-all shape, as the engine's scoring has it.
-        contract = ContractBid(player=Position.WEST, value=130, suit=Suit.SPADES)
-        assert _slam(contract, 2, _sweep_plays()) is SlamOutcome.NONE
+        assert _slam(contract, _sweep_plays()) is SlamOutcome.UNANNOUNCED
 
     def test_a_sweep_by_the_defence_is_not_the_declarer_s_slam(self):
         contract = ContractBid(player=Position.NORTH, value=130, suit=Suit.SPADES)
-        assert _slam(contract, 1, _sweep_plays()) is SlamOutcome.NONE
+        assert _slam(contract, _sweep_plays()) is SlamOutcome.NONE
 
     def test_an_ordinary_round_stays_none(self):
         contract = ContractBid(player=Position.WEST, value=130, suit=Suit.SPADES)
-        assert _slam(contract, 1,
+        assert _slam(contract,
                      _sweep_plays(winner_of_last=Position.NORTH)) is SlamOutcome.NONE
 
     def test_a_bid_slam_outranks_a_swept_one(self):
         # The declarer announced it, so that is what the round was.
         contract = ContractBid(player=Position.WEST, value=SlamLevel.SLAM,
                                suit=Suit.SPADES)
-        assert _slam(contract, 1, _sweep_plays()) is SlamOutcome.SLAM
+        assert _slam(contract, _sweep_plays()) is SlamOutcome.SLAM
+
+
+class TestLastTrick:
+    # With North taking the eighth, West's seven tricks hold 108 and North's
+    # 33 — _sweep_plays reuses a card, so the deck is short of the 152.
+    _SHARED = dict(winner_of_last=Position.NORTH)
+
+    def test_card_points_with_the_bonus_on_the_taker_name_it(self):
+        taken = {TeamSide.NS: 43, TeamSide.EW: 108}
+        assert _last_trick(_sweep_plays(**self._SHARED), Suit.SPADES,
+                           taken) is TeamSide.NS
+
+    def test_card_points_with_the_bonus_elsewhere_name_nobody(self):
+        # Core's rule and the site's split disagree, so neither is written
+        # down: the card-points check is left to say which is wrong.
+        taken = {TeamSide.NS: 33, TeamSide.EW: 118}
+        assert _last_trick(_sweep_plays(**self._SHARED), Suit.SPADES,
+                           taken) is None
+
+    def test_a_sweep_names_the_sweeper_whatever_its_substitute(self):
+        # The site states the flat 250 in place of the pile.
+        taken = {TeamSide.NS: 0, TeamSide.EW: 250}
+        assert _last_trick(_sweep_plays(), Suit.SPADES, taken) is TeamSide.EW
+
+    def test_a_round_short_of_eight_whole_tricks_names_nobody(self):
+        taken = {TeamSide.NS: 43, TeamSide.EW: 108}
+        assert _last_trick(_sweep_plays(**self._SHARED)[:-1], Suit.SPADES,
+                           taken) is None
 
 
 def _snap(table, at=None):
@@ -581,3 +617,119 @@ class TestTargetReached:
         )
         ended = _parse(profile, synthesize(game)).events[-1]
         assert ended.reason is EndReason.TARGET_REACHED
+
+
+def _row(*, made=True, marked=None, marked_belote=None):
+    """A score row for W's 80 in diamonds, 81 / 81 unless told otherwise."""
+
+    return ScoreRow(
+        made=made,
+        contract=RowContract(value=80, suit=Suit.DIAMONDS, multiplier=1),
+        taken={TeamSide.NS: 81, TeamSide.EW: 81},
+        belote={side: 0 for side in TeamSide},
+        marked=marked or {TeamSide.NS: (81, 0), TeamSide.EW: (0, 0)},
+        marked_belote=marked_belote or {side: 0 for side in TeamSide},
+    )
+
+
+_W80 = ContractBid(player=Position.WEST, value=80, suit=Suit.DIAMONDS)
+
+
+class TestHeldRows:
+    def test_made_with_the_declarer_marked_nothing_is_held(self):
+        # obs-f3c28d3b round 3, as the site states it.
+        assert _held(_row(), _W80) is True
+
+    def test_an_ordinary_made_row_is_not(self):
+        row = _row(marked={TeamSide.NS: (14, 0), TeamSide.EW: (148, 80)})
+        assert _held(row, _W80) is False
+
+    def test_a_failed_row_is_not(self):
+        row = _row(made=False,
+                   marked={TeamSide.NS: (160, 160), TeamSide.EW: (0, 0)})
+        assert _held(row, _W80) is False
+
+
+class TestCarriedOver:
+    _R4 = dict(marked={TeamSide.NS: (14, 0), TeamSide.EW: (148, 90)})
+
+    def test_the_observed_payout(self):
+        # obs-f3c28d3b round 4: 129 / 496 before, 143 / 895 after.
+        carry = _carried_over(
+            _row(**self._R4),
+            {TeamSide.NS: 143, TeamSide.EW: 895},
+            {TeamSide.NS: 129, TeamSide.EW: 496},
+        )
+        assert carry == {TeamSide.NS: 0, TeamSide.EW: 161}
+
+    def test_an_ordinary_round_carries_nothing(self):
+        carry = _carried_over(
+            _row(**self._R4),
+            {TeamSide.NS: 143, TeamSide.EW: 734},
+            {TeamSide.NS: 129, TeamSide.EW: 496},
+        )
+        assert carry == {TeamSide.NS: 0, TeamSide.EW: 0}
+
+    def test_credited_belote_is_not_a_carry(self):
+        carry = _carried_over(
+            _row(marked={TeamSide.NS: (14, 0), TeamSide.EW: (148, 90)},
+                 marked_belote={TeamSide.NS: 0, TeamSide.EW: 20}),
+            {TeamSide.NS: 143, TeamSide.EW: 754},
+            {TeamSide.NS: 129, TeamSide.EW: 496},
+        )
+        assert carry == {TeamSide.NS: 0, TeamSide.EW: 0}
+
+    @pytest.mark.parametrize("known", ["totals", "before"])
+    def test_unknown_totals_mean_an_unknown_carry(self, known):
+        totals = {TeamSide.NS: 143, TeamSide.EW: 895}
+        before = {TeamSide.NS: 129, TeamSide.EW: 496}
+        carry = _carried_over(
+            _row(**self._R4),
+            totals if known == "totals" else None,
+            before if known == "before" else None,
+        )
+        assert carry is None
+
+    def test_a_negative_residual_is_not_a_payout(self):
+        carry = _carried_over(
+            _row(**self._R4),
+            {TeamSide.NS: 100, TeamSide.EW: 734},
+            {TeamSide.NS: 129, TeamSide.EW: 496},
+        )
+        assert carry is None
+
+
+class TestTotalsBefore:
+    _AFTER_2 = {TeamSide.NS: 48, TeamSide.EW: 496}
+
+    def test_the_join_round_reads_the_join_snapshot(self):
+        joined = ObservedFrom(round=3, phase=JoinPhase.PLAY,
+                              totals=self._AFTER_2)
+        assert _totals_before(3, {}, joined) == self._AFTER_2
+
+    def test_a_later_round_reads_the_round_before(self):
+        scores = {2: (_row(), self._AFTER_2)}
+        assert _totals_before(3, scores, None) == self._AFTER_2
+
+    def test_a_round_before_without_totals_is_unknown(self):
+        assert _totals_before(3, {2: (_row(), None)}, None) is None
+
+    def test_a_missing_round_before_is_unknown(self):
+        assert _totals_before(3, {}, None) is None
+
+
+class TestHeldRoundScored:
+    def test_a_held_row_is_recorded_as_held(self):
+        scored = _round_scored(
+            3, _W80, (), (_row(), {TeamSide.NS: 129, TeamSide.EW: 496}), (),
+            "2026-09-24T00:00:00Z", {TeamSide.NS: 48, TeamSide.EW: 496},
+        )
+        assert scored.outcome is RoundOutcome.HELD
+        assert scored.carried_over == {TeamSide.NS: 0, TeamSide.EW: 0}
+
+    def test_a_round_with_no_totals_before_has_an_unknown_carry(self):
+        scored = _round_scored(
+            3, _W80, (), (_row(), {TeamSide.NS: 129, TeamSide.EW: 496}), (),
+            "2026-09-24T00:00:00Z", None,
+        )
+        assert scored.carried_over is None

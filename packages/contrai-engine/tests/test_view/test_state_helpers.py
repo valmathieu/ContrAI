@@ -7,13 +7,17 @@ belote-badge projection, and the env-tunable AI pacing delay.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
-from contrai_core import Card, Play, Position, Rank, Suit
+from contrai_core import Card, Play, Position, Rank, Suit, TeamSide
+from contrai_engine.model.round import RoundScore
 from contrai_engine.view.state_helpers import (
     _belote_badges_by_trick,
     _belote_by_position,
     _current_winner,
+    _dispute_pot_after,
     _explain_constraint,
     _resolve_delay,
     _sort_hand_for_display,
@@ -494,3 +498,31 @@ class TestBeloteBadgesByTrick:
         )
 
         assert _belote_badges_by_trick(round_) == {}
+
+
+def _score(*, held=0, carried=None):
+    return RoundScore(
+        scores={}, contract_made=True, unannounced_slam=None, marks={},
+        belote_points={}, card_points={}, last_trick_side=None, multiplier=1,
+        held=held, carried_over=carried or {},
+    )
+
+
+class TestDisputePotAfter:
+    def test_an_unscored_round_leaves_the_pot_it_was_handed(self):
+        round_ = SimpleNamespace(dispute_pot=161, round_score=None)
+        assert _dispute_pot_after(round_) == 161
+
+    def test_a_held_round_adds_its_points(self):
+        round_ = SimpleNamespace(dispute_pot=161, round_score=_score(held=161))
+        assert _dispute_pot_after(round_) == 322
+
+    def test_a_payout_empties_it(self):
+        round_ = SimpleNamespace(
+            dispute_pot=161, round_score=_score(carried={TeamSide.EW: 161})
+        )
+        assert _dispute_pot_after(round_) == 0
+
+    def test_an_ordinary_round_leaves_no_pot(self):
+        round_ = SimpleNamespace(dispute_pot=0, round_score=_score())
+        assert _dispute_pot_after(round_) == 0

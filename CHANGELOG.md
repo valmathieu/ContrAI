@@ -17,14 +17,27 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (data) `read_verdict(path)` and `GameVerdict.from_json` read a verdict file back, refusing anything `write_verdict` would not write. See [data docs](docs/data/index.md).
 - (data) `build_catalog(root)` rebuilds `<root>/catalog.sqlite`, a SQLite index of games, seats, rounds and verdicts with player and clean-round views. See [data docs](docs/data/index.md).
 - (engine) `contrai catalog [ROOT] [--player ID_OR_NAME]` rebuilds the corpus index with a summary, or lists one player's games. See [engine docs](docs/engine/index.md).
-
-### Fixed
-
-- (engine) `contrai replay` frames fit a 40-row terminal (they were 42–54 rows): one-line keys, a shorter log, a repaint instead of more output. See [Replaying a game](docs/engine/replay.md).
+- (core) `RuleConfig.substitute_survives_doubling` and `personal_sweep_marks_solo_slam` (§9.6) — the observed tables' sweep scoring, both set in the `tournament` preset. See [core docs](docs/core/index.md).
+- (core) `RuleConfig.defense_sweep_marks_substitute` (§9.6): a defense taking all 8 tricks marks 250 made, not 160; on in `tournament`. See [engine docs](docs/engine/index.md).
+- (core) `RuleConfig.dispute_resolution` (§9.6): `failed` / `shared` / `held` settles an exact tie, doubled or not; the `tournament` preset holds it. See [core docs](docs/core/index.md).
+- (engine) A held tie's points go to whoever wins the next contract (`Game.dispute_pot`, `RoundScore.carried_over`); the recap shows the pot. See [engine docs](docs/engine/index.md).
+- (engine) `contrai verify` checks the dispute points a round pays out; a record that cannot say reads `partial`. See [engine docs](docs/engine/index.md).
+- (scraper) A held dispute round is recorded as `held`, and each round's `carried_over` is inferred from the running totals, or `null`. See [scraper docs](docs/scraper/index.md).
 
 ### Changed
 
 - (data) The verdict model — `Verdict`, `GameVerdict`, `write_verdict` and the rest — moves to `contrai_data`; `contrai_engine.replay` still re-exports it. See [data docs](docs/data/index.md).
+- (data) **BREAKING:** Records are `contrai-record/2`: a `held` outcome and a nullable `carried_over`, which the engine now writes for real. `/1` still loads; older builds refuse `/2`. See [data docs](docs/data/index.md).
+- (engine) **BREAKING:** `sweep_substitute(tag)` takes the ruleset, and a doubled sweep is now tagged `UnannouncedSlam`. Call `sweep_substitute(tag, rules)`; re-parse older scraped records.
+
+### Fixed
+
+- (engine) `contrai replay` frames fit a 40-row terminal (they were 42–54 rows): one-line keys, a shorter log, a repaint instead of more output. See [Replaying a game](docs/engine/replay.md).
+- (engine) `contrai verify` accepts an announced Solo Slam's 500 in a swept round's card-points column, not 250 only. See [engine docs](docs/engine/index.md).
+- (engine) `contrai verify` accepts a defense sweep's card points stated as 250, as the observed tables write them. See [engine docs](docs/engine/index.md).
+- (engine) A doubled sweep is tagged an unannounced slam and always made, so a swept doubled 170 no longer scores as a failure. See [engine docs](docs/engine/index.md).
+- (scraper) A doubled sweep is recorded as an unannounced slam — the multiplier no longer suppresses the classification.
+- (scraper) Observed rounds record `last_trick`, the rebuilt eighth trick's winner confirmed by the site's card points, so `contrai verify` checks it. See [scraper docs](docs/scraper/index.md).
 
 ## [0.5.0] - 2026-09-17
 

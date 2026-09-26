@@ -73,9 +73,13 @@ from .tokens import (
 
 #: The format family this build writes and reads.
 FORMAT_FAMILY = "contrai-record"
-#: The major version this build implements. A record naming any other
-#: major is refused outright rather than parsed field by field.
-FORMAT_MAJOR = 1
+#: The major version this build writes.
+FORMAT_MAJOR = 2
+#: Every major this build reads. A ``/1`` record is a ``/2`` record written
+#: before the ``held`` outcome and an unknown carry existed, so it reads
+#: unchanged; any other major is refused outright rather than parsed
+#: field by field.
+READABLE_MAJORS: frozenset[int] = frozenset({1, 2})
 #: The full ``format`` string a header carries.
 FORMAT = f"{FORMAT_FAMILY}/{FORMAT_MAJOR}"
 
@@ -236,7 +240,10 @@ def encode(event: GameEvent) -> str:
                 "taken": _sides(event.taken),
                 "belote": _sides(event.belote),
                 "announcements": _sides(event.announcements),
-                "carried_over": _sides(event.carried_over),
+                "carried_over": (
+                    None if event.carried_over is None
+                    else _sides(event.carried_over)
+                ),
                 "marked": {
                     side_token(side): {"made": mark.made, "announced": mark.announced}
                     for side, mark in event.marked.items()
@@ -769,7 +776,7 @@ def _decode_round_scored(reader: _Reader) -> RoundScored:
         taken=_side_ints(reader.take("taken"), "taken"),
         belote=_side_ints(reader.take("belote"), "belote"),
         announcements=_side_ints(reader.take("announcements"), "announcements"),
-        carried_over=_side_ints(reader.take("carried_over"), "carried_over"),
+        carried_over=_opt_side_ints(reader.take("carried_over"), "carried_over"),
         marked=marked,
         totals=_opt_side_ints(reader.take("totals"), "totals"),
         last_trick=None if raw_last is None else parse_side(raw_last),
@@ -829,7 +836,7 @@ def _check_format(value: object) -> str:
         RecordFormatError: If it is not a ``family/major`` string with a
             numeric major.
         UnsupportedFormatError: If the family is not this one, or the
-            major is not :data:`FORMAT_MAJOR`.
+            major is not in :data:`READABLE_MAJORS`.
     """
 
     if not isinstance(value, str) or value.count("/") != 1:
@@ -847,10 +854,11 @@ def _check_format(value: object) -> str:
             f"Unknown record format {value!r}. This build reads "
             f"{FORMAT_FAMILY!r} records."
         )
-    if int(major) != FORMAT_MAJOR:
+    if int(major) not in READABLE_MAJORS:
+        readable = ", ".join(str(m) for m in sorted(READABLE_MAJORS))
         raise UnsupportedFormatError(
             f"Record format major {major} is not readable by this build, "
-            f"which implements major {FORMAT_MAJOR}."
+            f"which reads majors {readable}."
         )
     return value
 

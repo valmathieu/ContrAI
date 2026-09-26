@@ -117,6 +117,23 @@ cannot be placed on a side is refused as a `ParseError`, because the record has 
 score was when watching began. A score row reads as made when the side it names as the winner is
 the declaring side; the row's status token is only consulted when a row does not name both.
 
+A held dispute (§7.5) reads as made on the site's row while marking its declarer 0 / 0, so that pair
+is recorded as `held`. Its points are paid into the next winner's running total and appear in no
+row, so each round's `carried_over` is inferred: what the totals moved by since the round before,
+less the row's made, announced and credited belote points. Where the totals before a round were
+never read — the round before was not scored by any snapshot — the carry is `null`, not zero.
+Across the V5 corpus the residual is non-zero in exactly one of 491 inferable rounds, and it is
+that 161.
+
+The eighth trick never reaches the wire, and no row says which side took it: the ten-point bonus
+is folded into the taker's card points. It is still recorded. The rebuilt trick's winner by core's
+rule is written as `last_trick` only when the row's card points are exactly the tricks' piles with
+the bonus on that side, so the claim rests on the site's own split rather than on the parser's
+reconstruction alone. A sweep is written for the sweeper, since the row states the flat substitute
+in place of a pile. Any other disagreement leaves `last_trick` `null` and the verifier's
+card-points check to say what is wrong. Across the V5 corpus 3858 rounds agree, 338 are sweeps and
+none disagree.
+
 ## Profile
 
 One TOML document, git-ignored; `profile.example.toml` in the package is the committed schema,
