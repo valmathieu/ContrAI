@@ -66,14 +66,14 @@ note right of SH
   is resolved; the home address is never logged.
 end note
 
-SH -> SP : open_spectator(profile, health)
+SH -> SP : open_spectator(profile, health)\nthat is, open_browser then open_session
 note right of SH
   The frame source is attached
   //before// navigation: the first
   socket opens during the walk,
   and the join snapshot rides it.
 end note
-SP -> PG : add_init_script(INIT_SCRIPT)
+SP -> PG : a new context, add_init_script(INIT_SCRIPT)\nbefore its page exists
 SP -> PG : goto(""[site].url""), log_in()
 SP -> PG : enter_variant()
 note right of SP
@@ -153,6 +153,7 @@ end
 == 7. Write, then hop ==
 
 R -> SP : one final request_state, and wait for its snapshot
+R -> R : split_visits(buffer) · more than one game or table: record_refused, nothing written
 R -> PS : parse_session(order_events(buffer), profile, end_reason)
 activate PS
 PS --> R : SessionResult(events, notes, skipped_rounds)

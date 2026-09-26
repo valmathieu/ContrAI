@@ -79,3 +79,58 @@ class TestStream:
         HealthLog().event("seated")
         stamp = json.loads(capsys.readouterr().err)["at"]
         assert datetime.fromisoformat(stamp).tzinfo is not None
+
+
+class TestWorkers:
+    def test_a_workers_line_carries_its_label_after_the_event(self):
+        lines: list[str] = []
+        fleet = HealthLog(write=lines.append, clock=lambda: AT)
+        fleet.worker("bot01").event("table_seated", table="t1")
+        payload = json.loads(lines[0])
+        assert list(payload) == ["at", "event", "worker", "table"]
+        assert payload["worker"] == "bot01"
+
+    def test_a_workers_heartbeat_carries_its_label_and_its_own_counts(self):
+        lines: list[str] = []
+        fleet = HealthLog(write=lines.append, clock=lambda: AT)
+        first, second = fleet.worker("bot01"), fleet.worker("bot02")
+        first.counters.tables_seated = 3
+        second.counters.tables_seated = 5
+        second.heartbeat()
+        payload = json.loads(lines[0])
+        assert (payload["worker"], payload["tables_seated"]) == ("bot02", 5)
+
+    def test_the_fleet_heartbeat_adds_every_worker_up(self):
+        lines: list[str] = []
+        fleet = HealthLog(write=lines.append, clock=lambda: AT)
+        for label, seated in (("bot01", 3), ("bot02", 5)):
+            fleet.worker(label).counters.tables_seated = seated
+        fleet.fleet_heartbeat()
+        payload = json.loads(lines[0])
+        assert (payload["event"], payload["workers"], payload["tables_seated"],
+                "worker" in payload) == ("fleet_heartbeat", 2, 8, False)
+
+    def test_an_unlabelled_log_writes_what_it_always_wrote(self):
+        # `run` has one worker and no label; its lines must not change shape.
+        lines: list[str] = []
+        HealthLog(write=lines.append, clock=lambda: AT).event("seated", table="t1")
+        assert "worker" not in json.loads(lines[0])
+
+    def test_each_worker_beats_on_its_own_interval(self):
+        # One worker's heartbeat must not reset another's, or a busy worker
+        # would silence a quiet one.
+        now = [0.0]
+        fleet = HealthLog(write=lambda _: None, clock=lambda: AT,
+                          monotonic=lambda: now[0])
+        first, second = fleet.worker("bot01"), fleet.worker("bot02")
+        now[0] = 61.0
+        first.heartbeat()
+        assert (first.due(60.0), second.due(60.0)) == (False, True)
+
+    def test_the_fleet_heartbeat_resets_the_fleets_interval(self):
+        now = [0.0]
+        fleet = HealthLog(write=lambda _: None, clock=lambda: AT,
+                          monotonic=lambda: now[0])
+        now[0] = 61.0
+        fleet.fleet_heartbeat()
+        assert fleet.due(60.0) is False

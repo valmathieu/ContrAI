@@ -15,6 +15,12 @@ not get the other.
 Nothing here opens a file or touches a clock it was not handed: the writer,
 the wall clock and the monotonic clock are all injected, which is what lets
 the cadence be tested without a test that sleeps.
+
+A fleet writes one stream for all its workers, so every line a worker writes
+carries its label — an opaque name such as ``bot01``, never the account's
+address — and each worker counts for itself. A worker that has stopped seating
+tables is then visible as *one* worker's flat counters rather than as a dip in
+a total, and the fleet's own heartbeat adds the workers up.
 """
 
 from __future__ import annotations
@@ -55,11 +61,20 @@ class Counters:
 
         return asdict(self)
 
+    def __add__(self, other: Counters) -> Counters:
+        """Two sets of counts, added name by name."""
+
+        return Counters(**{
+            name: value + getattr(other, name)
+            for name, value in self.as_dict().items()
+        })
+
 
 class HealthLog:
     """One JSON object per line, on its own stream."""
 
-    __slots__ = ("_write", "_clock", "_monotonic", "_last", "counters")
+    __slots__ = ("_write", "_clock", "_monotonic", "_last", "_label", "_workers",
+                 "counters")
 
     def __init__(
         self,
@@ -67,6 +82,7 @@ class HealthLog:
         write: Callable[[str], None] | None = None,
         clock: Callable[[], datetime] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
+        label: str | None = None,
     ) -> None:
         """Build a log.
 
@@ -76,17 +92,44 @@ class HealthLog:
             monotonic: The clock the heartbeat interval is measured on. A
                 wall clock would make a heartbeat land twice, or not at all,
                 the moment the machine's time is corrected.
+            label: The worker every line is written for, or ``None`` for a
+                process with only one. :meth:`worker` is the usual way to
+                get a labelled log.
         """
 
         self._write = write if write is not None else _to_stderr
         self._clock = clock if clock is not None else _utc_now
         self._monotonic = monotonic
         self._last = monotonic()
+        self._label = label
+        self._workers: list[HealthLog] = []
         self.counters = Counters()
         """The session's running counts, shared with whoever bumps them."""
 
+    def worker(self, label: str) -> HealthLog:
+        """A log for one worker, writing to this one's stream.
+
+        Its lines carry ``worker`` right after the event name, its counters
+        are its own, and so is its heartbeat interval: each worker beats on
+        its own cadence, while :meth:`fleet_heartbeat` adds them all up.
+
+        Args:
+            label: The worker's opaque name, such as ``bot01``. Never the
+                account's address: this is what every one of its lines says.
+
+        Returns:
+            The worker's log.
+        """
+
+        log = HealthLog(
+            write=self._write, clock=self._clock, monotonic=self._monotonic,
+            label=label,
+        )
+        self._workers.append(log)
+        return log
+
     def event(self, name: str, **fields: Any) -> None:
-        """Write one line: ``{"at", "event", **fields}``.
+        """Write one line: ``{"at", "event", "worker"?, **fields}``.
 
         Args:
             name: What happened, in the recorder's own vocabulary.
@@ -94,7 +137,7 @@ class HealthLog:
                 rejection reason, a parse note.
         """
 
-        self._line({"at": self._stamp(), "event": name, **fields})
+        self._line(self._head(name) | fields)
 
     def heartbeat(self, **fields: Any) -> None:
         """Write a line carrying every counter, and reset the interval.
@@ -103,13 +146,27 @@ class HealthLog:
             **fields: Context for the beat, such as the game being watched.
         """
 
+        self._line(self._head("heartbeat") | self.counters.as_dict() | fields)
+        self._last = self._monotonic()
+
+    def fleet_heartbeat(self, **fields: Any) -> None:
+        """Write the whole fleet's counters as one line, and reset the interval.
+
+        A separate event from ``heartbeat``, so a reader summing heartbeats
+        per worker never counts a worker twice.
+
+        Args:
+            **fields: Context for the beat.
+        """
+
+        total = self.counters
+        for worker in self._workers:
+            total = total + worker.counters
         self._line(
-            {
-                "at": self._stamp(),
-                "event": "heartbeat",
-                **self.counters.as_dict(),
-                **fields,
-            }
+            self._head("fleet_heartbeat")
+            | {"workers": len(self._workers)}
+            | total.as_dict()
+            | fields
         )
         self._last = self._monotonic()
 
@@ -124,6 +181,14 @@ class HealthLog:
         """
 
         return self._monotonic() - self._last >= interval_s
+
+    def _head(self, name: str) -> dict[str, Any]:
+        """The fields every line starts with: when, what, and for which worker."""
+
+        head: dict[str, Any] = {"at": self._stamp(), "event": name}
+        if self._label is not None:
+            head["worker"] = self._label
+        return head
 
     def _stamp(self) -> str:
         """The current instant, spelled the way a record's stamps are."""

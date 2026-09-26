@@ -25,6 +25,7 @@ import http.client
 import json
 import socket
 import subprocess
+import time
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -167,6 +168,86 @@ class EgressGate:
         if device != section.tunnel_interface:
             return EgressReading(EgressRefusal.ROUTE_OFF_TUNNEL, exit_ip, country, device)
         return EgressReading(None, exit_ip, country, device)
+
+
+class SharedEgressGate:
+    """One egress gate answering a whole fleet, one probe at a time.
+
+    A recorder asks before every hop, and a chase is mostly hops: ten workers
+    scanning at once would send the echo service fifty requests in twenty
+    seconds, all from the one exit address, which is how a free-tier service
+    starts answering ``429`` — and a gate reads that as a refusal. Two rules
+    bring the cost down to one probe without changing what an answer means.
+
+    **Asks that overlap share a probe.** A caller that arrives while a probe
+    is in flight waits for it and takes its answer, good or bad, instead of
+    queueing a second one behind it: the answer is about the same instant.
+
+    **A good answer is reused for a while; a refusal never is.** Within
+    ``max_age_s`` of a probe that passed, a fresh ask gets that reading back.
+    A refusal only ever answers the asks that were waiting on it, so the next
+    caller probes again — fail-closed is untouched, since what is cached is
+    only ever evidence that traffic *was* leaving through the tunnel.
+
+    The window is also what bounds a missed outage, and it is short next to
+    what it guards: a table is written ``abandoned`` only after
+    ``stale_after_s`` of silence, far longer than any reading kept here, so a
+    tunnel that died before the table went quiet has no good reading left to
+    vouch for it.
+    """
+
+    __slots__ = ("_gate", "_max_age_s", "_monotonic", "_lock", "_good", "_good_at",
+                 "_last", "_last_at", "probes")
+
+    def __init__(
+        self,
+        gate: Any,
+        *,
+        max_age_s: float,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        """Wrap a gate.
+
+        Args:
+            gate: Anything with ``async check() -> EgressReading`` — an
+                :class:`EgressGate` outside tests.
+            max_age_s: How long a passing reading answers later asks.
+            monotonic: The clock ages are measured on.
+        """
+
+        self._gate = gate
+        self._max_age_s = max_age_s
+        self._monotonic = monotonic
+        self._lock = asyncio.Lock()
+        self._good: EgressReading | None = None
+        self._good_at = 0.0
+        self._last: EgressReading | None = None
+        self._last_at = 0.0
+        self.probes = 0
+        """How many probes actually went out, for the health log."""
+
+    async def check(self) -> EgressReading:
+        """The egress reading, probed only when nothing current can answer.
+
+        Returns:
+            A probe's reading: the one this ask was waiting on, a recent
+            passing one, or a new one.
+        """
+
+        asked = self._monotonic()
+        async with self._lock:
+            if self._last is not None and self._last_at >= asked:
+                # Finished while this ask was queued behind it.
+                return self._last
+            now = self._monotonic()
+            if self._good is not None and now - self._good_at < self._max_age_s:
+                return self._good
+            reading = await self._gate.check()
+            self.probes += 1
+            self._last, self._last_at = reading, self._monotonic()
+            if reading.ok:
+                self._good, self._good_at = reading, self._last_at
+            return reading
 
 
 def _text(payload: Any, field: str) -> str | None:

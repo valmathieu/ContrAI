@@ -2,6 +2,7 @@
 
 import asyncio
 import dataclasses
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -159,6 +160,29 @@ class LatePledgePage(FakePage):
             return FakeLocator(self, selector, ["Fair play"] if drawn else [])
         if selector == "#observe":
             return FakeLocator(self, selector, ["Watch"] if answered else [])
+        return super().locator(selector)
+
+
+class LateTutorialPage(FakePage):
+    """A landing page whose tutorial is drawn only after the walk first looked.
+
+    Until it is dismissed it covers the login entry, so the entry's click
+    fails — what a cold browser was measured doing.
+    """
+
+    def __init__(self):
+        super().__init__({"#email": ["input"], "#go": ["Continue"],
+                          "#code": ["input"], "#submit": ["OK"]})
+        self.probes = 0
+
+    def locator(self, selector):
+        dismissed = "#no-thanks" in self.clicks
+        if selector == "#no-thanks":
+            self.probes += 1
+            drawn = self.probes > 1 and not dismissed
+            return FakeLocator(self, selector, ["No thanks"] if drawn else [])
+        if selector == "#by-email":
+            return FakeLocator(self, selector, ["Email"] if dismissed else [])
         return super().locator(selector)
 
 
@@ -341,6 +365,26 @@ class TestLogin:
         for earlier, later in zip(indices, indices[1:]):
             assert earlier < later
 
+    def test_a_tutorial_drawn_late_is_dismissed_and_the_login_retried(self, profile):
+        # Measured on 2026-09-25: a cold browser drew the tutorial after the
+        # settle's one look, and it covered the login entry.
+        page = LateTutorialPage()
+
+        async def scenario():
+            await Spectator(page, profile).log_in()
+
+        drain(scenario)
+        assert page.clicks == ["#no-thanks", "#by-email", "#go", "#submit"]
+
+    def test_a_blocked_login_with_no_tutorial_still_names_the_key(self, profile):
+        page = FakePage({"#no-thanks-elsewhere": ["x"], "#email": ["input"]})
+
+        async def scenario():
+            await Spectator(page, profile).log_in()
+
+        with pytest.raises(BrowserError, match="login_start"):
+            drain(scenario)
+
     def test_a_missing_email_entry_names_the_key(self, profile):
         page = FakePage({"#email": ["input"]})
 
@@ -396,8 +440,8 @@ class TestMenu:
             drain(scenario)
 
     def test_the_hop_is_the_table_control(self, profile):
-        # There is no leave operation to test: the exit control leaves
-        # spectating, and nothing in-session recovers from that.
+        # There is no leave operation to test: the exit control leads to the
+        # menus, never to another table, so only the lobby walk uses it.
         page = FakePage({"#next": ["Another table"]})
 
         async def scenario():
@@ -957,3 +1001,565 @@ class TestWalk:
 
         drain(scenario)
         assert page.clicks == ["#by-email", "#go-icon", "#submit"]
+
+
+class SessionLog:
+    """What a fake browser was asked, in the order it was asked."""
+
+    def __init__(self):
+        self.calls: list[tuple] = []
+
+
+class SessionPage:
+    def __init__(self, log, index):
+        self.log = log
+        self.index = index
+
+    def on(self, name, handler):
+        self.log.calls.append(("on", self.index, name))
+
+
+class SessionContext:
+    def __init__(self, log, index):
+        self.log = log
+        self.index = index
+
+    async def add_init_script(self, script):
+        self.log.calls.append(("init_script", self.index, script))
+
+    async def new_page(self):
+        self.log.calls.append(("new_page", self.index))
+        return SessionPage(self.log, self.index)
+
+    async def close(self):
+        self.log.calls.append(("close", self.index))
+
+
+class SessionBrowser:
+    """A browser whose contexts only say what was done to them."""
+
+    def __init__(self):
+        self.log = SessionLog()
+        self.opened = 0
+
+    async def new_context(self):
+        index = self.opened
+        self.opened += 1
+        self.log.calls.append(("new_context", index))
+        return SessionContext(self.log, index)
+
+
+class TestSessions:
+    def test_the_socket_script_precedes_the_page_and_the_listener_precedes_use(
+        self, profile
+    ):
+        # The script must be on the context before the page exists, so it runs
+        # on every document the page loads; the frame source must be listening
+        # before anyone navigates, or the join snapshot is gone.
+        from contrai_scraper import INIT_SCRIPT, open_session
+
+        browser = SessionBrowser()
+
+        async def scenario():
+            async with open_session(browser, profile):
+                return list(browser.log.calls)
+
+        assert drain(scenario) == [
+            ("new_context", 0),
+            ("init_script", 0, INIT_SCRIPT),
+            ("new_page", 0),
+            ("on", 0, "websocket"),
+        ]
+
+    def test_the_context_is_closed_however_the_session_ends(self, profile):
+        from contrai_scraper import open_session
+
+        browser = SessionBrowser()
+
+        async def scenario():
+            async with open_session(browser, profile):
+                raise BrowserError("the walk broke")
+
+        with pytest.raises(BrowserError):
+            drain(scenario)
+        assert browser.log.calls[-1] == ("close", 0)
+
+    def test_two_sessions_on_one_browser_are_two_contexts(self, profile):
+        # One Chromium carries the fleet; each worker still gets a login and
+        # sockets of its own, and closing one leaves the other open.
+        from contrai_scraper import open_session
+
+        browser = SessionBrowser()
+
+        async def scenario():
+            async with open_session(browser, profile) as (first, _):
+                async with open_session(browser, profile) as (second, _):
+                    pass
+                return first is not second, list(browser.log.calls)
+
+        distinct, calls = drain(scenario)
+        assert (distinct, browser.opened, calls[-1], ("close", 0) in calls) == (
+            True, 2, ("close", 1), False
+        )
+
+    def test_the_session_speaks_for_the_profile_it_was_given(self, profile):
+        # A fleet worker's profile is the site's with its own account swapped
+        # in; the spectator must log in as that account, not the site's.
+        from contrai_scraper import AccountSection, open_session
+
+        worker = dataclasses.replace(
+            profile, account=AccountSection("bot@example.invalid", "4242")
+        )
+        page = FakePage({"#by-email": ["Email"], "#email": ["input"],
+                         "#go": ["Continue"], "#code": ["input"], "#submit": ["OK"]})
+
+        class OnePageContext(SessionContext):
+            async def new_page(self):
+                return page
+
+        class OnePageBrowser(SessionBrowser):
+            async def new_context(self):
+                return OnePageContext(self.log, 0)
+
+        async def scenario():
+            async with open_session(OnePageBrowser(), worker) as (spectator, _):
+                await spectator.log_in()
+
+        drain(scenario)
+        assert page.filled == [("#email", "bot@example.invalid"), ("#code", "4242")]
+
+
+# ---------------------------------------------------------------------------
+# The lobby
+# ---------------------------------------------------------------------------
+
+
+class ScreenLocator(FakeLocator):
+    """A locator whose ``nth`` match can be clicked, as a back control is."""
+
+    def nth(self, index):
+        return NthMatch(self.page, self.selector, index)
+
+    async def click(self, timeout=None):
+        await super().click(timeout)
+        # The table's exit puts the online menu up in the table's place.
+        if self.selector == "#leave" and self.page.screens[-1:] == ["table"]:
+            self.page.screens[-1] = "online"
+
+
+class NthMatch:
+    def __init__(self, page, selector, index):
+        self.page = page
+        self.selector = selector
+        self.index = index
+
+    async def click(self, timeout=None):
+        page = self.page
+        page.nth_clicks.append((self.selector, self.index))
+        if page.stuck:
+            raise TimeoutError(self.selector)
+        # A back control takes the page down one screen: the one it sits on.
+        if page.layout[self.selector][self.index] == page.screens[-1]:
+            page.screens.pop()
+
+
+class ScreenPage(FakePage):
+    """A page of stacked screens, of which only the top one shows.
+
+    ``layout`` says which screen each match of a selector sits on, in DOM
+    order — every screen keeps its controls in the DOM, which is the whole
+    difficulty — and the page's own script reports a control's *screen* as
+    displayed only when that screen is on top. A ``table`` on top is drawn
+    over the screens rather than as one, so then none of them shows.
+    """
+
+    def __init__(self, matches=None, *, screens=("online",), layout=None,
+                 centre=None):
+        super().__init__(matches)
+        self.screens = list(screens)
+        self.layout = {key: list(value) for key, value in (layout or {}).items()}
+        self.centre = centre if centre is not None else {
+            "x": 640, "y": 360, "found": True, "inList": True}
+        self.mouse_clicks: list[tuple[float, float]] = []
+        self.mouse = SimpleNamespace(click=self._mouse_click)
+        self.nth_clicks: list[tuple[str, int]] = []
+        self.stuck = False
+        self.script_fails = False
+
+    async def _mouse_click(self, x, y):
+        self.mouse_clicks.append((x, y))
+
+    def locator(self, selector):
+        self.trace.append(("locator", selector))
+        return ScreenLocator(self, selector, self.matches.get(selector, []))
+
+    async def evaluate(self, script, arg=None):
+        from contrai_scraper.browser import READ_CENTRE, READ_CONTROLS, READ_SCREEN_SHOWN
+
+        self.evaluated.append((script, arg))
+        if script == READ_SCREEN_SHOWN:
+            if self.script_fails:
+                raise ValueError("not a selector the page's own script can read")
+            return bool(self.screens) and self.screens[-1] != "table"
+        if script == READ_CONTROLS:
+            if self.script_fails:
+                raise ValueError("not a selector the page's own script can read")
+            selectors, _ = arg
+            top = self.screens[-1] if self.screens else None
+            return [
+                control(rank=rank, index=index,
+                        layerDisplay="block" if screen == top else "none")
+                for rank, selector in enumerate(selectors)
+                for index, screen in enumerate(self.layout.get(selector, []))
+            ]
+        if script == READ_CENTRE:
+            return self.centre
+        return True
+
+
+def control(**overrides):
+    """One entry of the page's control reading, usable unless overridden."""
+
+    entry = {
+        "rank": 0, "index": 0, "onScreen": True,
+        "display": "inline-block", "visibility": "visible", "opacity": "1",
+        "layerDisplay": "block", "layerVisibility": "visible", "layerOpacity": "1",
+    }
+    entry.update(overrides)
+    return entry
+
+
+#: The four screens the lobby stacks, bottom first, and where their back
+#: controls sit: the menus back out through one icon, the list through
+#: another. This is the structure that killed three probe runs.
+FOUR_SCREENS = ("mode", "online", "versions", "tables")
+FOUR_SCREEN_BACKS = {"#tool-back": ["online", "versions"], "#tool-close": ["tables"]}
+
+
+class TestUsable:
+    def test_a_control_on_the_screen_shown_is_usable(self):
+        from contrai_scraper.browser import _usable
+
+        assert _usable(control()) is True
+
+    @pytest.mark.parametrize("overrides", [
+        {"onScreen": False},
+        {"display": "none"},
+        {"visibility": "hidden"},
+        {"layerDisplay": "none"},
+        {"layerVisibility": "hidden"},
+        {"layerOpacity": "0"},
+        {"opacity": "0.05"},
+    ], ids=["off-screen", "not-displayed", "hidden", "screen-not-displayed",
+            "screen-hidden", "screen-faded", "faded"])
+    def test_a_control_a_click_could_not_reach_is_not(self, overrides):
+        from contrai_scraper.browser import _usable
+
+        assert _usable(control(**overrides)) is False
+
+    def test_an_unreadable_opacity_is_not_evidence_of_fading(self):
+        from contrai_scraper.browser import _usable
+
+        assert _usable(control(opacity="auto", layerOpacity=None)) is True
+
+    def test_a_control_on_no_layer_is_judged_by_its_own_style(self):
+        from contrai_scraper.browser import _usable
+
+        loose = control(layerDisplay=None, layerVisibility=None, layerOpacity=None)
+        assert _usable(loose) is True
+
+
+class TestBackControl:
+    def test_the_screen_shown_decides_not_the_ranking(self, profile):
+        # The better-ranked control exists twice over, but on the two menu
+        # screens behind the list: clicking it is what timed the runs out.
+        page = ScreenPage(screens=FOUR_SCREENS, layout=FOUR_SCREEN_BACKS)
+
+        async def scenario():
+            await Spectator(page, profile).back_once()
+
+        drain(scenario)
+        assert (page.nth_clicks, page.screens[-1]) == ([("#tool-close", 0)], "versions")
+
+    def test_two_steps_back_take_two_different_controls(self, profile):
+        page = ScreenPage(screens=FOUR_SCREENS, layout=FOUR_SCREEN_BACKS)
+
+        async def scenario():
+            spectator = Spectator(page, profile)
+            await spectator.back_once()
+            await spectator.back_once()
+
+        drain(scenario)
+        assert page.nth_clicks == [("#tool-close", 0), ("#tool-back", 1)]
+
+    def test_the_best_ranked_usable_control_wins(self, profile):
+        page = ScreenPage(screens=("tables",),
+                          layout={"#tool-back": ["tables"], "#tool-close": ["tables"]})
+
+        async def scenario():
+            await Spectator(page, profile).back_once()
+
+        drain(scenario)
+        assert page.nth_clicks == [("#tool-back", 0)]
+
+    def test_no_control_on_the_screen_shown_is_counted_never_quoted(self, profile):
+        page = ScreenPage(screens=(*FOUR_SCREENS, "table-view"), layout=FOUR_SCREEN_BACKS)
+
+        async def scenario():
+            await Spectator(page, profile).back_once()
+
+        with pytest.raises(BrowserError) as raised:
+            drain(scenario)
+        message = str(raised.value)
+        assert ("lobby_back matched 3 control(s)" in message, "#tool" in message) == (
+            True, False)
+
+    def test_a_chosen_control_that_takes_no_click_is_a_browser_error(self, profile):
+        page = ScreenPage(screens=FOUR_SCREENS, layout=FOUR_SCREEN_BACKS)
+        page.stuck = True
+
+        async def scenario():
+            await Spectator(page, profile).back_once()
+
+        with pytest.raises(BrowserError, match="lobby_back"):
+            drain(scenario)
+
+    def test_a_selector_the_pages_script_cannot_read_names_its_key(self, profile):
+        page = ScreenPage(screens=FOUR_SCREENS, layout=FOUR_SCREEN_BACKS)
+        page.script_fails = True
+
+        async def scenario():
+            await Spectator(page, profile).back_once()
+
+        with pytest.raises(BrowserError, match="lobby_back.*plain CSS"):
+            drain(scenario)
+
+
+class TestOverlay:
+    @pytest.mark.parametrize("centre", [
+        {"x": 640, "y": 360, "found": False, "inList": False},
+        {"x": 640, "y": 360, "found": True, "inList": True},
+    ], ids=["nothing-under-the-centre", "the-list-under-the-centre"])
+    def test_no_overlay_means_no_click(self, profile, centre):
+        # Without the overlay, a click at the centre lands on a table slot
+        # and sits the account down: a click that changes the site.
+        page = ScreenPage(centre=centre)
+
+        async def scenario():
+            return await Spectator(page, profile).dismiss_overlay()
+
+        assert (drain(scenario), page.mouse_clicks) == (False, [])
+
+    def test_an_overlay_over_the_list_is_clicked_away(self, profile):
+        page = ScreenPage(centre={"x": 640, "y": 360, "found": True, "inList": False})
+
+        async def scenario():
+            return await Spectator(page, profile).dismiss_overlay()
+
+        assert (drain(scenario), page.mouse_clicks) == (True, [(640, 360)])
+
+    def test_the_overlay_check_asks_about_the_list(self, profile):
+        from contrai_scraper.browser import READ_CENTRE
+
+        page = ScreenPage()
+
+        async def scenario():
+            await Spectator(page, profile).dismiss_overlay()
+
+        drain(scenario)
+        assert page.evaluated == [(READ_CENTRE, ".slot-list")]
+
+
+class TestLobbyWalk:
+    def test_entering_the_lobby_walks_the_menu(self, profile):
+        page = ScreenPage({"#online": ["Online"], "#new-games": ["New"],
+                           "#new-variant": ["Contree"]})
+
+        async def scenario():
+            return await Spectator(page, profile).enter_lobby()
+
+        assert (drain(scenario), page.clicks) == (
+            False, ["#online", "#new-games", "#new-variant"])
+
+    def test_a_pledge_drawn_late_is_answered_and_the_lobby_retried(self, profile):
+        class LatePledgeLobby(ScreenPage):
+            def __init__(self):
+                super().__init__({"#online": ["Online"], "#pledge-ok": ["OK"],
+                                  "#new-variant": ["Contree"]})
+                self.probes = 0
+
+            def locator(self, selector):
+                answered = "#pledge-ok" in self.clicks
+                if selector == "#pledge":
+                    self.probes += 1
+                    drawn = self.probes > 1 and not answered
+                    return FakeLocator(self, selector, ["Fair play"] if drawn else [])
+                if selector == "#new-games":
+                    return FakeLocator(self, selector, ["New"] if answered else [])
+                return super().locator(selector)
+
+        page = LatePledgeLobby()
+
+        async def scenario():
+            return await Spectator(page, profile).enter_lobby()
+
+        assert (drain(scenario), page.clicks) == (
+            True, ["#online", "#pledge-ok", "#new-games", "#new-variant"])
+
+    def test_a_blocked_lobby_menu_with_no_pledge_names_the_key(self, profile):
+        page = ScreenPage({"#online": ["Online"]})
+
+        async def scenario():
+            await Spectator(page, profile).enter_lobby()
+
+        with pytest.raises(BrowserError, match="mode_new_games"):
+            drain(scenario)
+
+    def test_the_hash_is_read_off_the_tournament_row(self, profile):
+        tournament = Match(attrs={"data-key": "cfg-42"})
+        page = ScreenPage({".slot-list": [Match(children={
+            ":scope > .cup-row": [tournament]})]})
+
+        async def scenario():
+            return await Spectator(page, profile).read_tournament_hash()
+
+        assert drain(scenario) == "cfg-42"
+
+    def test_a_list_with_no_tournament_row_has_no_hash(self, profile):
+        page = ScreenPage({".slot-list": [Match()]})
+
+        async def scenario():
+            return await Spectator(page, profile).read_tournament_hash()
+
+        assert drain(scenario) is None
+
+    def test_the_way_to_a_table_backs_out_until_observe_is_in_reach(self, profile):
+        # Out of the list, out of the picker, then observe and the variant:
+        # the round trip the chase probe timed at about three seconds.
+        from contrai_scraper.browser import BACK_SETTLE_MS
+
+        page = ScreenPage({"#observe": ["Watch"], "#variant": ["Contree"]},
+                          screens=FOUR_SCREENS,
+                          layout={**FOUR_SCREEN_BACKS, "#observe": ["online"]})
+
+        async def scenario():
+            await Spectator(page, profile).enter_table_from_lobby()
+
+        drain(scenario)
+        assert (page.nth_clicks, page.clicks, page.waited) == (
+            [("#tool-close", 0), ("#tool-back", 1)],
+            ["#observe", "#variant"],
+            [BACK_SETTLE_MS, BACK_SETTLE_MS],
+        )
+
+    def test_the_way_back_takes_no_step_when_the_menu_already_shows(self, profile):
+        # Where the site has already put an idle spectator back on the menu.
+        page = ScreenPage({"#new-games": ["New"], "#new-variant": ["Contree"]},
+                          screens=("mode", "online"),
+                          layout={**FOUR_SCREEN_BACKS, "#new-games": ["online"]})
+
+        async def scenario():
+            await Spectator(page, profile).return_to_lobby()
+
+        drain(scenario)
+        assert (page.nth_clicks, page.clicks) == ([], ["#new-games", "#new-variant"])
+
+    def test_the_way_back_gives_up_after_the_last_step(self, profile):
+        # A route nobody has measured fails fast, so the caller can rebuild.
+        deep = ("online", "a", "b", "c", "d", "e")
+        page = ScreenPage({"#new-games": ["New"]}, screens=deep,
+                          layout={"#tool-back": list(deep), "#new-games": ["online"]})
+
+        async def scenario():
+            await Spectator(page, profile).return_to_lobby()
+
+        with pytest.raises(BrowserError, match="mode_new_games.*4 steps back"):
+            drain(scenario)
+        assert len(page.nth_clicks) == 4
+
+    def test_from_a_table_the_exit_leads_back_to_the_lobby(self, profile):
+        # The lobby's back controls sit on the screens the table is drawn
+        # over; the table's own exit lands on the online menu instead, and
+        # the walk carries on from there — the route the probe timed at 3.6 s.
+        from contrai_scraper.browser import EXIT_SETTLE_MS
+
+        page = ScreenPage({"#leave": ["Exit"], "#new-games": ["New"],
+                           "#new-variant": ["Contree"]},
+                          screens=("mode", "table"),
+                          layout={**FOUR_SCREEN_BACKS, "#new-games": ["online"]})
+
+        async def scenario():
+            await Spectator(page, profile).return_to_lobby()
+
+        drain(scenario)
+        assert (page.clicks, page.nth_clicks, page.waited) == (
+            ["#leave", "#new-games", "#new-variant"], [], [EXIT_SETTLE_MS])
+
+    def test_the_screen_check_asks_about_the_profiles_layer(self, profile):
+        from contrai_scraper.browser import READ_SCREEN_SHOWN
+
+        page = ScreenPage({"#new-games": ["New"], "#new-variant": ["Contree"]},
+                          screens=("mode", "online"),
+                          layout={"#new-games": ["online"]})
+
+        async def scenario():
+            await Spectator(page, profile).return_to_lobby()
+
+        drain(scenario)
+        assert page.evaluated[0] == (READ_SCREEN_SHOWN, ".screen")
+
+    def test_without_a_table_exit_a_table_is_left_to_the_back_steps(self, profile):
+        # A profile naming none keeps the old route, and so its old failure:
+        # the caller rebuilds the session.
+        bare = dataclasses.replace(
+            profile, selectors=dataclasses.replace(profile.selectors, table_exit=None))
+        page = ScreenPage({"#leave": ["Exit"]}, screens=("mode", "table"),
+                          layout=FOUR_SCREEN_BACKS)
+
+        async def scenario():
+            await Spectator(page, bare).return_to_lobby()
+
+        with pytest.raises(BrowserError, match="lobby_back"):
+            drain(scenario)
+        assert "#leave" not in page.clicks
+
+    def test_an_exit_that_takes_no_click_names_its_key(self, profile):
+        page = ScreenPage(screens=("mode", "table"), layout=FOUR_SCREEN_BACKS)
+
+        async def scenario():
+            await Spectator(page, profile).return_to_lobby()
+
+        with pytest.raises(BrowserError, match="table_exit"):
+            drain(scenario)
+
+    def test_a_layer_the_pages_script_cannot_read_names_its_key(self, profile):
+        page = ScreenPage(screens=("mode", "table"), layout=FOUR_SCREEN_BACKS)
+        page.script_fails = True
+
+        async def scenario():
+            await Spectator(page, profile).return_to_lobby()
+
+        with pytest.raises(BrowserError, match="lobby_layer.*plain CSS"):
+            drain(scenario)
+
+    def test_a_profile_without_a_lobby_refuses_every_lobby_step(self, profile):
+        from contrai_scraper import ProfileError
+
+        bare = dataclasses.replace(
+            profile,
+            selectors=dataclasses.replace(
+                profile.selectors, mode_new_games=None, lobby_variant=None,
+                lobby_tables=None, lobby_back=None, lobby_layer=None,
+                lobby_row_tournament_class=None, lobby_row_hash_attr=None,
+            ),
+        )
+        spectator = Spectator(ScreenPage(), bare)
+        steps = (spectator.enter_lobby, spectator.read_tournament_hash,
+                 spectator.back_once, spectator.dismiss_overlay,
+                 spectator.enter_table_from_lobby, spectator.return_to_lobby)
+        refused = 0
+        for step in steps:
+            with pytest.raises(ProfileError, match="describes no lobby"):
+                asyncio.run(step())
+            refused += 1
+        assert refused == len(steps)

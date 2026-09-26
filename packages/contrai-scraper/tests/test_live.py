@@ -324,3 +324,32 @@ class TestDealPayloads:
         frames = [builders.envelope("payload", "g1,1,0,0",
                                     compress_to_base64(json.dumps({"beforeDeal": 7})))]
         assert _rounds(profile, frames)[1].deal_stock == ()
+
+
+class TestTheDraw:
+    def test_the_pre_game_draw_opens_no_round(self, profile, builders):
+        # Four real cards, each with its place in the deck, none in a hand.
+        frames = [
+            builders.envelope("payload", f"g1,0,0,{index},lots,p{index + 1}", card,
+                              frame_id=f"draw{index}")
+            for index, card in enumerate(("2w", "5x", "9y", "7z"))
+        ]
+        assert _rounds(profile, frames) == {}
+
+    @pytest.mark.parametrize(("round_", "verb", "draw_verb", "expected"), [
+        (0, "lots", "lots", True),
+        (0, "card", "lots", True),
+        (3, "lots", "lots", True),
+        (0, "card", None, True),
+        (3, "lots", None, False),
+        (3, "card", "lots", False),
+    ], ids=["the-draw", "round-0-other-verb", "draw-verb-elsewhere",
+            "round-0-no-verb-named", "no-verb-named-elsewhere", "a-play"])
+    def test_either_mark_makes_an_event_the_draws(
+        self, round_, verb, draw_verb, expected
+    ):
+        from contrai_scraper import EventKey, is_draw
+
+        key = EventKey(game="g1", round=round_, trick=0, position=0, verb=verb,
+                       player="p1")
+        assert is_draw(key, draw_verb) is expected

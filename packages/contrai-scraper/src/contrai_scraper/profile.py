@@ -73,7 +73,8 @@ _POSITION_BY_NAME: Mapping[str, Position] = {
     "E": Position.EAST,
 }
 
-#: Every logical name ``[wire.fields]`` must bind, and no other. The set spans
+#: Every logical name ``[wire.fields]`` must bind, and no other — bar the
+#: lobby's optional group, :data:`LOBBY_FIELD_NAMES`. The set spans
 #: both halves of the scraper — the browser half reads ``spectators`` and
 #: ``observable_tables``, the parser reads the rest — so the local document is
 #: written once and neither half has to grow the schema later.
@@ -125,6 +126,18 @@ FIELD_NAMES: frozenset[str] = frozenset({
     "left",
     "spectators",
     "observable_tables",
+})
+
+#: The logical names that read the lobby's socket events, all or none of them.
+#: Optional because only a fleet waits in the lobby: ``lobby_hash`` is the row
+#: an event describes, ``lobby_seats`` its whole seat map, ``lobby_seat_account``
+#: the account inside one seat, and ``lobby_full`` the flag the row raises the
+#: moment its game starts.
+LOBBY_FIELD_NAMES: frozenset[str] = frozenset({
+    "lobby_hash",
+    "lobby_seats",
+    "lobby_seat_account",
+    "lobby_full",
 })
 
 
@@ -201,14 +214,75 @@ class SelectorSection:
     player_id_title: Selector
     player_id_prefix: str
 
+    # -- the lobby: optional as a group, and all-or-none -------------------
+    #
+    # A fleet waits for games on the lobby screen rather than being seated by
+    # the server, so it needs the route there and back. `run` does not, which
+    # is why a profile naming none of these keys still loads; one naming only
+    # some of them is refused, since a lobby half-described fails mid-shift.
+
+    mode_new_games: Selector | None
+    """The action beside the observe one that opens the list of games."""
+
+    lobby_variant: Selector | None
+    """The variant inside that list's own picker — not the observe branch's."""
+
+    lobby_tables: str | None
+    """The list container. Read in the page's own script, so plain CSS."""
+
+    lobby_back: tuple[str, ...] | None
+    """Back-ish controls, best first. Plain CSS, and chosen by layer."""
+
+    lobby_layer: str | None
+    """What a screen's controls sit in; its computed style says whether it shows."""
+
+    lobby_row_tournament_class: str | None
+    """The class marking the tournament row among the list's rows."""
+
+    lobby_row_hash_attr: str | None
+    """The row attribute holding the hash the lobby's socket events are keyed by."""
+
+    table_exit: Selector | None
+    """Optional: the table's own exit control, the way back to the lobby.
+
+    Outside the lobby group, so a profile describing the lobby still loads
+    without it. It sits on a rail, like the panel buttons, and leaves the
+    table for the online menu, from which the lobby's back steps carry on.
+    Without it, a fleet worker returns from a table by rebuilding its session.
+    """
+
+    @property
+    def has_lobby(self) -> bool:
+        """Whether the profile describes the lobby, which a fleet needs."""
+
+        return self.mode_new_games is not None
+
+
+#: The ``[selectors]`` keys that describe the lobby, all or none of them.
+LOBBY_SELECTOR_KEYS: tuple[str, ...] = (
+    "mode_new_games",
+    "lobby_variant",
+    "lobby_tables",
+    "lobby_back",
+    "lobby_layer",
+    "lobby_row_tournament_class",
+    "lobby_row_hash_attr",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class WireEvents:
-    """The three event names the parser reacts to."""
+    """The three event names the parser reacts to, and the lobby's own."""
 
     join_snapshot: str
     table_update: str
     counters: str
+    lobby_table: str | None
+    """The lobby's event for one row, or ``None`` where no fleet runs.
+
+    Not a table's event at all: it is what drives the lobby screen, and the
+    only way to see a tournament game's four players before it starts.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,9 +334,24 @@ class WireSection:
     resume_action: str
     resume_room_prefix: str
     resume_param: str
+    draw_verb: str | None
+    """The verb the pre-game draw is keyed by, at round 0.
+
+    Every player draws a real card with its place in the deck, and none of
+    those cards belongs to a hand. Round 0 is left out of every record either
+    way; naming the verb is what lets a parse say so when something *other*
+    than the draw turns up there, rather than dropping it unremarked.
+    """
+
     events: WireEvents
     fields: Mapping[str, str]
     tokens: WireTokens
+
+    @property
+    def has_lobby(self) -> bool:
+        """Whether the profile can read the lobby's socket, which a fleet needs."""
+
+        return self.events.lobby_table is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,6 +403,57 @@ class EgressSection:
             )
 
 
+#: The most workers a fleet may run. Ten is about the whole tournament
+#: population: a courtesy ceiling, since every worker is one more spectator
+#: the tables can count.
+FLEET_CEILING: int = 10
+
+
+@dataclass(frozen=True, slots=True)
+class FleetSection:
+    """How a fleet of workers waits, chases and shares its gates. Optional."""
+
+    workers: int
+    """How many workers to run, at most :data:`FLEET_CEILING`."""
+
+    login_stagger_s: int
+    """Seconds between one worker's first login and the next's."""
+
+    scan_distinct_budget: int
+    """Distinct tables a chase judges before giving up."""
+
+    scan_deadline_s: int
+    """Seconds a chase looks for its table before giving up."""
+
+    roster_max_age_s: int
+    """How old a starting roster may be and still be chased."""
+
+    claim_ttl_s: int
+    """How long an unrefreshed registry claim holds against other workers."""
+
+    egress_cache_s: int
+    """How long a passing egress reading answers the fleet's later checks."""
+
+    census_enabled: bool
+    """Whether each worker sweeps a few tables before its first lobby."""
+
+    census_hops: int
+    """Tables each worker's startup sweep looks at."""
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.workers <= FLEET_CEILING:
+            raise ProfileError(
+                f"[fleet].workers must be between 1 and {FLEET_CEILING}"
+            )
+        for name in ("login_stagger_s", "egress_cache_s"):
+            if getattr(self, name) < 0:
+                raise ProfileError(f"[fleet].{name} may not be negative")
+        for name in ("scan_distinct_budget", "scan_deadline_s", "roster_max_age_s",
+                     "claim_ttl_s", "census_hops"):
+            if getattr(self, name) <= 0:
+                raise ProfileError(f"[fleet].{name} must be positive")
+
+
 @dataclass(frozen=True, slots=True)
 class OutputSection:
     """Where records and raw logs are written, and for how long they are kept."""
@@ -345,6 +485,24 @@ class Profile:
     egress: EgressSection
     output: OutputSection
     privacy: PrivacySection
+    fleet: FleetSection | None
+    """``None`` where no fleet runs; ``run`` never reads it."""
+
+    def fleet_gaps(self) -> tuple[str, ...]:
+        """What the profile lacks for ``contrai-scrape fleet``, by section.
+
+        Returns:
+            One phrase per missing group, empty when a fleet can run.
+        """
+
+        gaps = []
+        if not self.selectors.has_lobby:
+            gaps.append("the lobby's [selectors] keys")
+        if not self.wire.has_lobby:
+            gaps.append("[wire.events].lobby_table and the [wire.fields] lobby paths")
+        if self.fleet is None:
+            gaps.append("a [fleet] section")
+        return tuple(gaps)
 
 
 class _Table:
@@ -441,6 +599,35 @@ class _Table:
         if key not in self._data:
             return None
         return self.string(key)
+
+    def has(self, key: str) -> bool:
+        """Whether a key (or, at the top level, a section) is present."""
+
+        return key in self._data
+
+    def group(self, keys: tuple[str, ...], name: str) -> bool:
+        """Whether an optional group of keys is present — all of it, or none.
+
+        Args:
+            keys: The group's keys.
+            name: What the group describes, for the refusal.
+
+        Returns:
+            Whether every key is there. ``False`` means none of them is.
+
+        Raises:
+            ProfileError: Some of the group's keys are there and some are not.
+                A half-described group loads cleanly and fails the first time
+                it is used, which for a lobby is hours into a shift.
+        """
+
+        present = [key for key in keys if key in self._data]
+        if present and len(present) != len(keys):
+            missing = ", ".join(key for key in keys if key not in self._data)
+            raise ProfileError(
+                f"{self.label} describes {name} only in part; missing: {missing}"
+            )
+        return bool(present)
 
     def optional_selector(self, key: str) -> Selector | None:
         """Read a selector key that may be absent."""
@@ -542,7 +729,7 @@ def _tokens(table: _Table, key: str, vocabulary: Mapping[str, Any]) -> Mapping[s
 
 
 def _fields(table: _Table) -> Mapping[str, str]:
-    """Read ``[wire.fields]``, which must bind exactly :data:`FIELD_NAMES`.
+    """Read ``[wire.fields]``: exactly :data:`FIELD_NAMES`, plus the lobby's or not.
 
     Args:
         table: The ``[wire]`` table the field map hangs off.
@@ -551,12 +738,18 @@ def _fields(table: _Table) -> Mapping[str, str]:
         Logical name to the dotted path that reads it.
 
     Raises:
-        ProfileError: A logical name is unknown or missing, or a path is not
-            a string.
+        ProfileError: A logical name is unknown or missing, the lobby's names
+            are there only in part, or a path is not a string.
     """
 
     raw = table.mapping("fields")
-    unknown = sorted(set(raw) - FIELD_NAMES)
+    lobby = set(raw) & LOBBY_FIELD_NAMES
+    if lobby and lobby != LOBBY_FIELD_NAMES:
+        raise ProfileError(
+            "[wire.fields] describes the lobby only in part; missing: "
+            + ", ".join(sorted(LOBBY_FIELD_NAMES - lobby))
+        )
+    unknown = sorted(set(raw) - FIELD_NAMES - LOBBY_FIELD_NAMES)
     if unknown:
         raise ProfileError(
             f"[wire.fields] names fields this parser does not read: "
@@ -617,6 +810,8 @@ def _selectors(table: _Table) -> SelectorSection:
         raise ProfileError(
             "[selectors].seat_element must carry a {seat} placeholder"
         )
+    lobby = table.group(LOBBY_SELECTOR_KEYS, "the lobby")
+    back = table.selector("lobby_back") if lobby else None
     section = SelectorSection(
         dismiss_tutorial=table.selector("dismiss_tutorial"),
         login_start=table.selector("login_start"),
@@ -647,6 +842,18 @@ def _selectors(table: _Table) -> SelectorSection:
         player_panel=table.selector("player_panel"),
         player_id_title=table.selector("player_id_title"),
         player_id_prefix=table.string("player_id_prefix"),
+        mode_new_games=table.selector("mode_new_games") if lobby else None,
+        lobby_variant=table.selector("lobby_variant") if lobby else None,
+        lobby_tables=table.string("lobby_tables") if lobby else None,
+        # Normalised to a tuple: the list is a ranking, and a single control
+        # is a ranking of one.
+        lobby_back=(back,) if isinstance(back, str) else back,
+        lobby_layer=table.string("lobby_layer") if lobby else None,
+        lobby_row_tournament_class=(
+            table.string("lobby_row_tournament_class") if lobby else None
+        ),
+        lobby_row_hash_attr=table.string("lobby_row_hash_attr") if lobby else None,
+        table_exit=table.optional_selector("table_exit"),
     )
     table.done()
     return section
@@ -668,10 +875,19 @@ def _wire(table: _Table) -> WireSection:
         join_snapshot=events_table.string("join_snapshot"),
         table_update=events_table.string("table_update"),
         counters=events_table.string("counters"),
+        lobby_table=events_table.optional_string("lobby_table"),
     )
     events_table.done()
 
     fields = _fields(table)
+    if (events.lobby_table is None) != LOBBY_FIELD_NAMES.isdisjoint(fields):
+        # The event and the paths that read it are one description: an event
+        # nothing can read, or paths for an event nobody names, both load and
+        # then read nothing at all.
+        raise ProfileError(
+            "[wire.events].lobby_table and the [wire.fields] lobby paths "
+            f"({', '.join(sorted(LOBBY_FIELD_NAMES))}) go together: name all or none"
+        )
 
     tokens_table = table.section("tokens")
     tokens = WireTokens(
@@ -700,6 +916,7 @@ def _wire(table: _Table) -> WireSection:
         resume_action=table.string("resume_action"),
         resume_room_prefix=table.string("resume_room_prefix"),
         resume_param=table.string("resume_param"),
+        draw_verb=table.optional_string("draw_verb"),
         events=events,
         fields=fields,
         tokens=tokens,
@@ -786,6 +1003,24 @@ def _output(table: _Table, base: Path) -> OutputSection:
     return section
 
 
+def _fleet(table: _Table) -> FleetSection:
+    """Read ``[fleet]``."""
+
+    section = FleetSection(
+        workers=table.integer("workers"),
+        login_stagger_s=table.integer("login_stagger_s"),
+        scan_distinct_budget=table.integer("scan_distinct_budget"),
+        scan_deadline_s=table.integer("scan_deadline_s"),
+        roster_max_age_s=table.integer("roster_max_age_s"),
+        claim_ttl_s=table.integer("claim_ttl_s"),
+        egress_cache_s=table.integer("egress_cache_s"),
+        census_enabled=table.boolean("census_enabled"),
+        census_hops=table.integer("census_hops"),
+    )
+    table.done()
+    return section
+
+
 def _privacy(table: _Table) -> PrivacySection:
     """Read ``[privacy]``; the salt may be absent entirely."""
 
@@ -833,6 +1068,7 @@ def load_profile(path: Path | str) -> Profile:
         egress=_egress(root.section("egress")),
         output=_output(root.section("output"), path.parent),
         privacy=_privacy(root.section("privacy")),
+        fleet=_fleet(root.section("fleet")) if root.has("fleet") else None,
     )
     root.done()
     return profile

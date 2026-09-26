@@ -71,10 +71,17 @@ from contrai_data import (
 )
 
 from ..exceptions import ParseError
-from ..profile import Profile
+from ..profile import Profile, WireSection
 from ..wire import WireEvent
 from .deal import DECK_SIZE, deal_hands, final_trick, resolve_dealer
-from .live import LiveRound, bid_events, collect_rounds, play_events
+from .live import (
+    DRAW_ROUND,
+    LiveRound,
+    bid_events,
+    collect_rounds,
+    is_draw,
+    play_events,
+)
 from .snapshot import ScoreRow, Snapshot, read_snapshot
 from .translate import Translator
 
@@ -249,7 +256,7 @@ def parse_session(
         ),
     ]
 
-    notes: list[str] = []
+    notes: list[str] = _draw_notes(ordered, profile.wire)
     skipped: list[int] = []
     for number in sorted(rounds):
         round_ = rounds[number]
@@ -264,6 +271,51 @@ def parse_session(
 
     record.append(_game_ended(ordered, translator, snapshots, ts, end_reason))
     return SessionResult(tuple(record), tuple(notes), tuple(skipped))
+
+
+def _draw_notes(events: Sequence[WireEvent], wire: WireSection) -> list[str]:
+    """What leaving the pre-game draw out left out that was not the draw as named.
+
+    The draw itself goes unremarked: a game caught from its first card always
+    carries one, and a note on every such record would bury the notes that
+    matter. What is said is anything else the exclusion swept up — an event at
+    round 0 under another verb, or the draw's verb somewhere else — because
+    that is the site saying something new, and a stage that quietly drops what
+    it does not recognise is how a change goes unseen.
+
+    Args:
+        events: The session's events.
+        wire: The profile's wire section, for the draw's verb.
+
+    Returns:
+        Zero, one or two notes.
+    """
+
+    draw = [
+        event.key for event in events
+        if event.key is not None and is_draw(event.key, wire.draw_verb)
+    ]
+    if not draw:
+        return []
+    if wire.draw_verb is None:
+        return [
+            f"round 0: {len(draw)} event(s) left out as the pre-game draw, which "
+            "belongs to no hand — the profile names no draw verb to confirm it by"
+        ]
+    notes = []
+    unnamed = sum(1 for key in draw if key.verb != wire.draw_verb)
+    if unnamed:
+        notes.append(
+            f"round 0: {unnamed} event(s) under a verb other than the draw's were "
+            "left out with it"
+        )
+    misplaced = sum(1 for key in draw if key.round != DRAW_ROUND)
+    if misplaced:
+        notes.append(
+            f"{misplaced} event(s) under the draw's verb were addressed outside "
+            "round 0, and left out"
+        )
+    return notes
 
 
 def _snapshots(

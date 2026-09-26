@@ -132,6 +132,14 @@ seat_element = "#seat-{seat}"
 player_panel = ".player-panel"
 player_id_title = ".player-panel .title"
 player_id_prefix = "no. "
+mode_new_games = "#new-games"
+lobby_variant = "#new-variant"
+lobby_tables = ".slot-list"
+lobby_back = ["#tool-back", "#tool-close"]
+lobby_layer = ".screen"
+lobby_row_tournament_class = "cup-row"
+lobby_row_hash_attr = "data-key"
+table_exit = "#leave"
 
 [wire]
 socket_url_pattern = "^wss://example\\\\.invalid/sock/\\\\d+$"
@@ -145,11 +153,13 @@ round_state_prefix = "round."
 resume_action = "resume"
 resume_room_prefix = "room-"
 resume_param = "lastSeen"
+draw_verb = "lots"
 
 [wire.events]
 join_snapshot = "joinTable"
 table_update = "updateTable"
 counters = "counters"
+lobby_table = "slot"
 
 # Dotted paths, each resolved relative to the payload it is looked up in:
 # the table/state names walk from a snapshot's root, the player names from one
@@ -206,6 +216,10 @@ ended = "over"
 left = "gone"
 spectators = "watchers"
 observable_tables = "tables"
+lobby_hash = "key"
+lobby_seats = "chairs"
+lobby_seat_account = "acct"
+lobby_full = "ready"
 
 [wire.tokens]
 seats = { top = "N", right = "E", bottom = "S", left = "W" }
@@ -255,6 +269,17 @@ raw_retention_days = 30
 
 [privacy]
 pseudonym_salt = "unused-in-4a"
+
+[fleet]
+workers = 2
+login_stagger_s = 0
+scan_distinct_budget = 5
+scan_deadline_s = 60
+roster_max_age_s = 30
+claim_ttl_s = 600
+egress_cache_s = 60
+census_enabled = false
+census_hops = 3
 """
 
 

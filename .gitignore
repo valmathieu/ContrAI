@@ -55,8 +55,10 @@ docs/plans/
 # ─── Scraper / engine local material ──────────────────────────────────────
 # The site profile (URL, credentials, selectors, wire vocabulary), the
 # pseudonym salt and map, and every game record or raw wire log written by
-# `contrai --record` or `contrai-scrape` stay on the machine that made them.
+# `contrai --record` or `contrai-scrape` stay on the machine that made them,
+# and so does the fleet's list of spectator accounts.
 profile.toml
+accounts.toml
 *.local.toml
 .env
 pseudonyms.json

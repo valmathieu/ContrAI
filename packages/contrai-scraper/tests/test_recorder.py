@@ -1063,6 +1063,32 @@ class TestLimits:
         assert (summary.games_recorded,
                 records_in(profile)[0].ended.reason) == (1, EndReason.OBSERVER_LEFT)
 
+    def test_a_time_limit_met_in_a_quiet_wait_is_not_an_abandoned_table(
+        self, profile, session_frames, source_game
+    ):
+        # The wait is capped at the deadline, so it runs out there while the
+        # players are still at it. Seen live on 2026-09-25: the window's close
+        # was written as `abandoned`, with a stale line and a hop after it.
+        class QuietAtTheLimit(StallingFrameSource):
+            """Goes quiet just as the clock reaches the shift's end."""
+
+            async def __anext__(self):
+                if not self._script:
+                    clock[0] = 60.0
+                return await super().__anext__()
+
+        clock = [0.0]
+        frames = session_frames(source_game)
+        source = QuietAtTheLimit(
+            [*frames[:-1], lambda: clock.__setitem__(0, 59.99), frames[-1]])
+        spectator = FakeSpectator()
+        summary = run_recorder(spectator, [], profile, source=source,
+                               limits=RecorderLimits(max_seconds=60.0),
+                               monotonic=lambda: clock[0])
+        assert (records_in(profile)[0].ended.reason, summary.stop_reason,
+                ("next_table",) in spectator.calls) == (
+            EndReason.OBSERVER_LEFT, StopReason.TIME_LIMIT, False)
+
     def test_the_counters_track_the_wire_stream(self, profile, session_frames,
                                                 source_game):
         # Every frame is mirrored on a second connection, so a run whose
@@ -1115,6 +1141,378 @@ class TestRefusals:
         run_recorder(FakeSpectator(), script, profile, health=health)
         events = {json.loads(line)["event"] for line in lines}
         assert "parse_note" in events
+
+
+class TestMixedBuffers:
+    """A buffer holding two games is refused, never merged into one record."""
+
+    def test_a_second_games_play_refuses_the_record(
+        self, profile, builders, session_frames, source_game
+    ):
+        # A play keyed to another game, landing mid-watch the way the other
+        # table's events did behind a seat taken one table late.
+        lines: list[str] = []
+        script = session_frames(source_game)
+        script.insert(6, frame(builders.envelope(
+            "payload", "g2,1,1,0,card,p9", "2w", frame_id="foreign")))
+        summary = run_recorder(FakeSpectator(), script, profile,
+                               health=HealthLog(write=lines.append))
+        refusal = _only(lines, "record_refused")
+        assert (summary.games_recorded, records_in(profile),
+                refusal["reason"], refusal["games"]) == (
+            0, [], "several_games", ["g1", "g2"])
+
+    def test_another_tables_snapshot_refuses_the_record(
+        self, profile, builders, session_frames, source_game
+    ):
+        # No play of the other game came along, but its snapshot would still
+        # lend the record its seats and its score rows.
+        lines: list[str] = []
+        script = session_frames(source_game)
+        script.insert(6, snapshot_frame(builders, table_id="t9", frame_id="sx"))
+        summary = run_recorder(FakeSpectator(), script, profile,
+                               health=HealthLog(write=lines.append))
+        refusal = _only(lines, "record_refused")
+        assert (summary.games_recorded, refusal["reason"], refusal["tables"]) == (
+            0, "several_tables", ["t1", "t9"])
+
+    def test_a_table_re_read_at_its_boundaries_is_still_one_game(
+        self, profile, session_frames, source_game
+    ):
+        # The boundary reads answer as fresh snapshots of the seated table,
+        # three of them in this game; none of them opens a second visit.
+        lines: list[str] = []
+        summary = run_recorder(FakeSpectator(), session_frames(source_game),
+                               profile, health=HealthLog(write=lines.append))
+        events = {json.loads(line)["event"] for line in lines}
+        assert (summary.games_recorded, "record_refused" in events) == (1, False)
+
+    def test_a_caught_opening_and_its_draw_are_one_game(
+        self, profile, builders, session_frames, source_game
+    ):
+        # The draw is keyed to the game it opens, so it never reads as a
+        # second game — and it never reaches the record.
+        lines: list[str] = []
+        script = session_frames(source_game)
+        script[2:2] = [
+            frame(builders.envelope("payload", f"g1,0,0,{index},lots,p{index + 1}",
+                                    card, frame_id=f"draw{index}"))
+            for index, card in enumerate(("2w", "5x"))
+        ]
+        summary = run_recorder(FakeSpectator(), script, profile,
+                               health=HealthLog(write=lines.append))
+        events = {json.loads(line)["event"] for line in lines}
+        assert (summary.games_recorded, len(records_in(profile)[0].rounds),
+                "record_refused" in events, "parse_note" in events) == (1, 2, False, False)
+
+    def test_an_interrupted_mixed_buffer_is_refused_too(
+        self, profile, builders, session_frames, source_game
+    ):
+        # The interrupt handler writes whatever the buffer holds, so it goes
+        # through the same refusal rather than around it.
+        lines: list[str] = []
+        script = session_frames(source_game)[:12]
+        script.insert(6, frame(builders.envelope(
+            "payload", "g2,1,1,0,card,p9", "2w", frame_id="foreign")))
+        script.append(_interrupt)
+        with pytest.raises(KeyboardInterrupt):
+            run_recorder(FakeSpectator(), script, profile,
+                         health=HealthLog(write=lines.append))
+        assert (records_in(profile), _only(lines, "record_refused")["reason"]) == (
+            [], "several_games")
+
+
+class TestClaims:
+    """The registry at the gate: one worker per table, and the census."""
+
+    def test_a_table_another_worker_holds_is_refused_before_any_other_gate(
+        self, profile, builders
+    ):
+        from contrai_scraper import TableRegistry
+
+        registry = TableRegistry(claim_ttl_s=600)
+        registry.claim_table("t1", "bot02")
+        lines: list[str] = []
+        spectator = FakeSpectator()
+        run_recorder(spectator, [snapshot_frame(builders)], profile,
+                     health=HealthLog(write=lines.append),
+                     claims=registry.for_worker("bot01"))
+        refusal = _only(lines, "table_rejected")
+        assert ((refusal["reason"], refusal["holder"]), spectator.calls) == (
+            ("claimed_by_other", "bot02"), [("next_table",)])
+
+    def test_the_table_being_watched_is_held_and_given_up_after(
+        self, profile, session_frames, source_game
+    ):
+        from contrai_scraper import TableRegistry
+
+        registry = TableRegistry(claim_ttl_s=600)
+        held = []
+        spectator = FakeSpectator(
+            on_resume=lambda: held.append(registry.table_holder("t1")))
+        summary = run_recorder(spectator, session_frames(source_game), profile,
+                               claims=registry.for_worker("bot01"))
+        assert (summary.games_recorded, set(held), registry.table_holder("t1")) == (
+            1, {"bot01"}, None)
+
+    def test_a_long_game_keeps_its_claim_alive(
+        self, profile, session_frames, source_game
+    ):
+        # Longer than the claim lives unrefreshed: every frame refreshes it,
+        # so no second worker is let in mid-game.
+        from contrai_scraper import TableRegistry
+
+        now = [0.0]
+
+        def clock():
+            now[0] += 1.0
+            return now[0]
+
+        registry = TableRegistry(claim_ttl_s=20, monotonic=clock)
+        taken_over = []
+        spectator = FakeSpectator(
+            on_resume=lambda: taken_over.append(registry.claim_table("t1", "bot02")))
+        run_recorder(spectator, session_frames(source_game), profile,
+                     claims=registry.for_worker("bot01"))
+        assert (now[0] > 20, set(taken_over)) == (True, {False})
+
+    def test_every_table_judged_joins_the_census(self, profile, builders,
+                                                  session_frames, source_game):
+        from contrai_scraper import TableRegistry
+
+        registry = TableRegistry(claim_ttl_s=600)
+        script = [snapshot_frame(builders, table_id="t0", tournament=False,
+                                 account="a", frame_id="sa"),
+                  *session_frames(source_game)]
+        run_recorder(FakeSpectator(), script, profile,
+                     claims=registry.for_worker("bot01"))
+        census = registry.census()
+        assert ({table: sighting.is_tournament for table, sighting in census.items()},
+                census["t0"].round_index) == ({"t0": False, "t1": True}, 2)
+
+    def test_an_interrupted_worker_gives_its_table_up(
+        self, profile, session_frames, source_game
+    ):
+        from contrai_scraper import TableRegistry
+
+        registry = TableRegistry(claim_ttl_s=600)
+        spectator = FakeSpectator(on_resume=_interrupt)
+        with pytest.raises(KeyboardInterrupt):
+            run_recorder(spectator, session_frames(source_game), profile,
+                         claims=registry.for_worker("bot01"))
+        assert registry.table_holder("t1") is None
+
+
+#: The four accounts ``session_frames`` seats at table ``t1``.
+T1_ACCOUNTS = ("1001", "1002", "1003", "1004")
+
+
+def _target(accounts=T1_ACCOUNTS, *, budget=10, deadline=600.0, at=0.0):
+    """A chase for the players the fixture game seats, and its budget."""
+
+    from contrai_scraper import ChaseTarget, LobbyRoster
+
+    seats = dict(zip(("top", "right", "bottom", "left"), accounts, strict=True))
+    return ChaseTarget(
+        roster=LobbyRoster(seats=seats, at=at, received_ms=None),
+        distinct_budget=budget, deadline_s=deadline,
+    )
+
+
+def table_frame(builders, table_id, accounts, *, frame_id, tournament=True):
+    """A join snapshot for a table seating exactly these four accounts."""
+
+    payload = copy.deepcopy(builders.snapshot_payload(table_id=table_id))
+    payload["table"]["cup"] = tournament
+    for block, account in zip(payload["state"]["people"].values(), accounts,
+                              strict=True):
+        block["acct"] = account
+    return frame(builders.envelope("payload", "joinTable", payload, frame_id=frame_id))
+
+
+def _finished_game(game_builders):
+    """One round played to the target, so the table closes the record itself."""
+
+    return game_builders.game_events(
+        game_builders.round_events(1, *_ROUND_ONE), reason=EndReason.TARGET_REACHED)
+
+
+STRANGERS = ("2001", "2002", "2003", "2004")
+
+
+class TestChase:
+    def test_the_chased_table_is_recorded_and_the_chase_ends_there(
+        self, profile, builders, session_frames, game_builders
+    ):
+        # No closing snapshot is scripted, so the closing request is refused
+        # rather than waited on until the script runs out.
+        lines: list[str] = []
+        spectator = FakeSpectator(resume=False)
+        script = [table_frame(builders, "t0", STRANGERS, frame_id="x0"),
+                  *session_frames(_finished_game(game_builders))]
+        summary = run_recorder(spectator, script, profile, target=_target(),
+                               health=HealthLog(write=lines.append))
+        recorded = _only(lines, "game_recorded")
+        assert (summary.games_recorded, summary.stop_reason,
+                spectator.calls.count(("next_table",)), recorded["first_round"]) == (
+            1, StopReason.CHASE_ENDED, 1, 1)
+
+    def test_three_of_four_is_not_the_table(self, profile, builders):
+        # Over every roster and wrong table in the corpus, the best a wrong
+        # table ever scored was two of four; "most of them" is still wrong.
+        lines: list[str] = []
+        spectator = FakeSpectator()
+        near = ("1001", "1002", "1003", "2004")
+        run_recorder(spectator, [table_frame(builders, "t0", near, frame_id="x0")],
+                     profile, target=_target(), health=HealthLog(write=lines.append))
+        refusal = _only(lines, "table_rejected")
+        assert ((refusal["reason"], refusal["matched"]), spectator.calls) == (
+            ("roster_mismatch", 3), [("next_table",)])
+
+    def test_the_scan_counts_distinct_tables_not_hops(self, profile, builders):
+        # The walk re-offers tables: two of these five are repeats, so a
+        # budget of three distinct tables is spent at the fifth, not the third.
+        lines: list[str] = []
+        spectator = FakeSpectator()
+        order = ("tA", "tB", "tA", "tB", "tC", "tD")
+        script = [table_frame(builders, table, STRANGERS, frame_id=f"x{index}")
+                  for index, table in enumerate(order)]
+        summary = run_recorder(spectator, script, profile,
+                               target=_target(budget=3),
+                               health=HealthLog(write=lines.append))
+        gave_up = _only(lines, "chase_gave_up")
+        assert ((gave_up["reason"], gave_up["distinct"]),
+                _gated(lines), spectator.calls.count(("next_table",)),
+                summary.stop_reason) == (
+            ("distinct_budget", 3), list(order[:5]), 4, StopReason.CHASE_GAVE_UP)
+
+    def test_the_scan_gives_up_at_its_deadline(self, profile, builders):
+        lines: list[str] = []
+        ticks = itertools.count(start=0.0, step=10.0)
+        script = [table_frame(builders, f"t{index}", STRANGERS, frame_id=f"x{index}")
+                  for index in range(20)]
+        summary = run_recorder(FakeSpectator(), script, profile,
+                               target=_target(deadline=35.0),
+                               monotonic=lambda: next(ticks),
+                               health=HealthLog(write=lines.append))
+        assert (_only(lines, "chase_gave_up")["reason"], summary.stop_reason) == (
+            "deadline", StopReason.CHASE_GAVE_UP)
+
+    def test_a_seat_that_hears_only_keepalives_stops_at_the_deadline(self, profile):
+        # The socket keeps talking while no table describes itself; the wait
+        # for one must still end when the chase's time does.
+        lines: list[str] = []
+        ticks = itertools.count(start=0.0, step=1.0)
+        summary = run_recorder(FakeSpectator(), [frame("tick")] * 20, profile,
+                               target=_target(deadline=6.0),
+                               monotonic=lambda: next(ticks),
+                               health=HealthLog(write=lines.append))
+        events = [json.loads(line)["event"] for line in lines]
+        assert (_only(lines, "chase_gave_up")["reason"], "seat_timeout" in events,
+                summary.stop_reason) == ("deadline", False, StopReason.CHASE_GAVE_UP)
+
+    def test_a_found_table_its_gates_refuse_ends_the_chase(self, profile, builders):
+        # Found, but not a tournament: no other table can be the game the
+        # roster started, so the scan does not go on.
+        lines: list[str] = []
+        spectator = FakeSpectator()
+        script = [table_frame(builders, "t1", T1_ACCOUNTS, frame_id="x0",
+                              tournament=False),
+                  table_frame(builders, "t2", STRANGERS, frame_id="x1")]
+        run_recorder(spectator, script, profile, target=_target(),
+                     health=HealthLog(write=lines.append))
+        assert (_only(lines, "chase_gave_up")["reason"], spectator.calls) == (
+            "target_refused", [])
+
+    def test_the_match_says_how_many_tables_and_how_long_it_took(
+        self, profile, builders, session_frames, game_builders
+    ):
+        # The fake source's clock is one tick per frame taken: the stranger
+        # and its mirror, then the match.
+        lines: list[str] = []
+        script = [table_frame(builders, "t0", STRANGERS, frame_id="x0"),
+                  *session_frames(_finished_game(game_builders))]
+        run_recorder(FakeSpectator(), script, profile, target=_target(at=0.5),
+                     health=HealthLog(write=lines.append))
+        matched = _only(lines, "chase_matched")
+        assert (matched["table"], matched["distinct"], matched["after_s"]) == (
+            "t1", 2, 1.5)
+
+    def test_no_line_names_the_players_being_chased(
+        self, profile, builders, session_frames, game_builders
+    ):
+        lines: list[str] = []
+        target = _target()
+        script = [table_frame(builders, "t0", STRANGERS, frame_id="x0"),
+                  *session_frames(_finished_game(game_builders))]
+        run_recorder(FakeSpectator(), script, profile, target=target,
+                     health=HealthLog(write=lines.append))
+        named = {json.loads(line).get("roster") for line in lines} - {None}
+        assert named == {target.roster.digest}
+
+    def test_a_scan_never_claims_a_table_it_only_passes_through(
+        self, profile, builders, session_frames, game_builders
+    ):
+        # Held tables are watched tables. A scanner that claimed every table
+        # it passed would, for that moment, keep out the worker that came to
+        # find it.
+        from contrai_scraper import TableRegistry
+
+        claimed: list[str] = []
+
+        class Spy(TableRegistry):
+            def claim_table(self, table_id, worker):
+                claimed.append(table_id)
+                return super().claim_table(table_id, worker)
+
+        registry = Spy(claim_ttl_s=600)
+        script = [table_frame(builders, "t0", STRANGERS, frame_id="x0"),
+                  *session_frames(_finished_game(game_builders))]
+        run_recorder(FakeSpectator(), script, profile, target=_target(),
+                     claims=registry.for_worker("bot01"))
+        assert (set(claimed), set(registry.census())) == ({"t1"}, {"t0", "t1"})
+
+    def test_a_table_accepted_elsewhere_meanwhile_is_still_refused(
+        self, profile, builders
+    ):
+        # The check comes first but the claim comes last, after the page has
+        # been read; another worker can accept the table in between.
+        from contrai_scraper import TableRegistry
+
+        registry = TableRegistry(claim_ttl_s=600)
+        lines: list[str] = []
+        spectator = FakeSpectator()
+
+        async def accepted_elsewhere(expected):
+            registry.claim_table("t1", "bot02")
+            return _matching_options()
+
+        spectator.read_options = accepted_elsewhere
+        run_recorder(spectator, [table_frame(builders, "t1", T1_ACCOUNTS, frame_id="x0")],
+                     profile, claims=registry.for_worker("bot01"),
+                     health=HealthLog(write=lines.append))
+        refusal = _only(lines, "table_rejected")
+        assert (refusal["reason"], refusal["holder"]) == ("claimed_by_other", "bot02")
+
+    def test_a_record_missing_its_first_round_says_so(
+        self, profile, session_frames, source_game
+    ):
+        # A chase that lands after the first deal loses round 1, and nothing
+        # at the gate can tell; the line that reports the record does.
+        lines: list[str] = []
+        script = [item for item in session_frames(source_game)
+                  if ",1,0,0" not in item.text]
+        run_recorder(FakeSpectator(), script, profile,
+                     health=HealthLog(write=lines.append))
+        assert _only(lines, "game_recorded")["first_round"] == 2
+
+
+def _only(lines, name):
+    """The one health line carrying ``name``, parsed."""
+
+    matching = [entry for entry in map(json.loads, lines) if entry["event"] == name]
+    assert len(matching) == 1
+    return matching[0]
 
 
 #: The round the one-round games below are built from: dealer South,

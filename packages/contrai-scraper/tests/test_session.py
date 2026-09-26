@@ -605,6 +605,65 @@ class TestScoreRowWalk:
         assert _parse(profile, texts).events[-1].totals is not None
 
 
+def _with_draw(builders, texts, *extra):
+    """A session caught from its first card: the draw right after the join.
+
+    Two of the four draws, as the chase probe saw: it always arrived with the
+    draw already under way.
+    """
+
+    draw = [
+        (builders.envelope("payload", f"g1,0,0,{index},lots,p{index + 1}", card,
+                           frame_id=f"draw{index}"), 0)
+        for index, card in enumerate(("2w", "5x"))
+    ]
+    extra_texts = [(text, 0) for text in extra]
+    return [*texts[:2], *draw, *extra_texts, *texts[2:]]
+
+
+class TestTheDraw:
+    def test_a_caught_openings_draw_leaves_the_record_as_it_was(
+        self, profile, builders, source_game, synthesize
+    ):
+        result = _parse(profile, _with_draw(builders, synthesize(source_game)),
+                        game_id="obs-g1")
+        assert (_comparable(result.events), result.notes, result.skipped_rounds) == (
+            _comparable(source_game), (), ())
+
+    def test_another_verb_at_round_0_is_left_out_and_said(
+        self, profile, builders, source_game, synthesize
+    ):
+        stray = builders.envelope("payload", "g1,0,0,0,card,p1", "2w", frame_id="odd")
+        result = _parse(profile, _with_draw(builders, synthesize(source_game), stray),
+                        game_id="obs-g1")
+        assert (_comparable(result.events) == _comparable(source_game),
+                result.notes) == (True, (
+                    "round 0: 1 event(s) under a verb other than the draw's were "
+                    "left out with it",))
+
+    def test_the_draws_verb_outside_round_0_is_left_out_and_said(
+        self, profile, builders, source_game, synthesize
+    ):
+        stray = builders.envelope("payload", "g1,2,0,0,lots,p1", "2w", frame_id="odd")
+        result = _parse(profile, _with_draw(builders, synthesize(source_game), stray),
+                        game_id="obs-g1")
+        assert (_comparable(result.events) == _comparable(source_game),
+                result.notes) == (True, (
+                    "1 event(s) under the draw's verb were addressed outside "
+                    "round 0, and left out",))
+
+    def test_with_no_draw_verb_named_round_0_is_left_out_all_the_same(
+        self, profile, builders, source_game, synthesize
+    ):
+        unnamed = dataclasses.replace(
+            profile, wire=dataclasses.replace(profile.wire, draw_verb=None))
+        result = _parse(unnamed, _with_draw(builders, synthesize(source_game)),
+                        game_id="obs-g1")
+        assert (_comparable(result.events) == _comparable(source_game),
+                result.skipped_rounds, "names no draw verb" in result.notes[0]) == (
+            True, (), True)
+
+
 class TestTargetReached:
     def test_a_table_that_finishes_its_game_says_so(
         self, profile, synthesize, game_builders

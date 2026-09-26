@@ -167,4 +167,6 @@ Each row links to the canonical `.puml` source, the rendered `.png` preview, and
 | `state_cli_screens.mmd`| State    | RichView screen flow | [source](state_cli_screens.mmd)       | [png](state_cli_screens.png)         | [Engine — CLI](../engine/#cli)                             |
 | `flow_wire.mmd`        | Flowchart| Scraper wire pipeline| [source](flow_wire.mmd)               | [png](flow_wire.png)                 | [Scraper — pipeline](../scraper/#pipeline)                 |
 | `state_scraper_shift.mmd` | State | Scraper shift loop | [source](state_scraper_shift.mmd) | [png](state_scraper_shift.png) | [Scraper — shifts](../scraper/#shifts) |
+| `state_scraper_worker.mmd` | State | A fleet worker's life | [source](state_scraper_worker.mmd) | [png](state_scraper_worker.png) | [Scraper — fleets](../scraper/#fleets) |
+| `seq_scraper_chase.puml` | Sequence | One chase, lobby to record | [source](seq_scraper_chase.puml) | [png](seq_scraper_chase.png) | [Scraper — fleets](../scraper/#fleets) |
 | `deploy_scraper.mmd` | Deployment | Scraper on the homelab host | [source](deploy_scraper.mmd) | [png](deploy_scraper.png) | [Scraper — deployment](../scraper/#deployment) |

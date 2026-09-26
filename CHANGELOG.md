@@ -23,12 +23,22 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (engine) A held tie's points go to whoever wins the next contract (`Game.dispute_pot`, `RoundScore.carried_over`); the recap shows the pot. See [engine docs](docs/engine/index.md).
 - (engine) `contrai verify` checks the dispute points a round pays out; a record that cannot say reads `partial`. See [engine docs](docs/engine/index.md).
 - (scraper) A held dispute round is recorded as `held`, and each round's `carried_over` is inferred from the running totals, or `null`. See [scraper docs](docs/scraper/index.md).
+- (scraper) `load_accounts` — `accounts.toml` beside the profile lists labelled spectator accounts for a fleet; values may read `env:NAME`, labels never carry the address. See [scraper docs](docs/scraper/index.md).
+- (scraper) `SharedEgressGate` — overlapping egress checks share one probe and a passing reading answers for `max_age_s`; a refusal is never reused. See [scraper docs](docs/scraper/index.md).
+- (scraper) `HealthLog.worker(label)` — a fleet worker's lines carry `worker` and its own counters; `fleet_heartbeat` adds the workers up. `run`'s lines are unchanged. See [scraper docs](docs/scraper/index.md).
+- (scraper) `Spectator` walks the lobby, choosing each back control by the screen it sits on, and `check-profile` walks it too; its seven `[selectors]` keys are optional. See [scraper docs](docs/scraper/index.md).
+- (scraper) `LobbyWatcher` — announces each tournament game's four accounts off the lobby's socket as it starts; its `lobby_table` event and `lobby_*` paths are optional. See [scraper docs](docs/scraper/index.md).
+- (scraper) `TableRegistry` — a fleet claims a chase by roster and a table by id; a table another worker holds is refused first, as `claimed_by_other`. See [scraper docs](docs/scraper/index.md).
+- (scraper) `Recorder(target=ChaseTarget)` chases a lobby roster: all four accounts or refused, a scan budgeted on distinct tables and a deadline, give-ups logged with a reason. See [scraper docs](docs/scraper/index.md).
+- (scraper) `contrai-scrape fleet` — up to ten workers wait in the lobby and chase every tournament game from its first card, with per-worker budgets and an optional `[fleet]` profile section. See [scraper docs](docs/scraper/index.md).
+- (scraper) Fleet startup census — each worker sweeps `census_hops` tables once, recording nothing; a `census` line estimates the tournament population from resightings. See [scraper docs](docs/scraper/index.md).
 
 ### Changed
 
 - (data) The verdict model — `Verdict`, `GameVerdict`, `write_verdict` and the rest — moves to `contrai_data`; `contrai_engine.replay` still re-exports it. See [data docs](docs/data/index.md).
 - (data) **BREAKING:** Records are `contrai-record/2`: a `held` outcome and a nullable `carried_over`, which the engine now writes for real. `/1` still loads; older builds refuse `/2`. See [data docs](docs/data/index.md).
 - (engine) **BREAKING:** `sweep_substitute(tag)` takes the ruleset, and a doubled sweep is now tagged `UnannouncedSlam`. Call `sweep_substitute(tag, rules)`; re-parse older scraped records.
+- (scraper) `open_spectator` is now built on `open_browser` plus `open_session`, so one Chromium can carry several isolated sessions; its behaviour is unchanged. See [scraper docs](docs/scraper/index.md).
 
 ### Fixed
 
@@ -38,6 +48,11 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (engine) A doubled sweep is tagged an unannounced slam and always made, so a swept doubled 170 no longer scores as a failure. See [engine docs](docs/engine/index.md).
 - (scraper) A doubled sweep is recorded as an unannounced slam — the multiplier no longer suppresses the classification.
 - (scraper) Observed rounds record `last_trick`, the rebuilt eighth trick's winner confirmed by the site's card points, so `contrai verify` checks it. See [scraper docs](docs/scraper/index.md).
+- (scraper) The live recorder refuses a buffer holding two games or two tables, logged as `record_refused`, instead of merging them into one record. See [scraper docs](docs/scraper/index.md).
+- (scraper) The pre-game draw at round 0 is left out by name (`[wire].draw_verb`) instead of reported as a round joined mid-play. See [scraper docs](docs/scraper/index.md).
+- (scraper) `Spectator.log_in` dismisses a first-visit tutorial drawn after its first look and retries the login entry once, instead of failing the session.
+- (scraper) A game still being watched when the time limit passes is written `observer_left`, instead of `abandoned` followed by a hop. See [scraper docs](docs/scraper/index.md).
+- (scraper) `return_to_lobby` leaves a table through the optional `[selectors].table_exit`: 3.6 s back to the lobby, no new login, where every return rebuilt the session. See [scraper docs](docs/scraper/index.md).
 
 ## [0.5.0] - 2026-09-17
 

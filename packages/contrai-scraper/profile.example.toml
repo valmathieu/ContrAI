@@ -75,6 +75,34 @@ seat_element = "#placeholder-seat-{seat}"
 player_panel = ".placeholder-player-panel"
 player_id_title = ".placeholder-player-panel .placeholder-title"
 player_id_prefix = "placeholder "
+# The lobby, where a fleet waits for games to start. Optional as a group:
+# `run` never goes there, so leave all seven out if you do not run a fleet —
+# but a profile naming only some of them is refused. The page's own script
+# reads lobby_tables, lobby_back and lobby_layer, so they must be plain CSS
+# (no Playwright-only syntax such as :visible), and so must mode_observe and
+# mode_new_games, whose reach the walk checks before it clicks them.
+#
+# mode_new_games is the action beside mode_observe that opens the list of
+# games; lobby_variant is the variant inside that list's own picker, which is
+# not the observe branch's `variant`.
+mode_new_games = "#placeholder-new-games"
+lobby_variant = "#placeholder-new-games-variant"
+lobby_tables = ".placeholder-table-list"
+# Every screen of the page keeps its controls in the DOM, so a back control
+# is chosen by whether the screen it sits on is the one showing: lobby_layer
+# names what a screen's controls sit in, and lobby_back ranks the back-ish
+# controls best first. Each screen may back out through a different one.
+lobby_back = [".placeholder-toolbar .placeholder-back", ".placeholder-toolbar .placeholder-close"]
+lobby_layer = ".placeholder-layer"
+# The list's tournament row is told apart by a class, and carries the hash the
+# lobby's socket events are keyed by in an attribute.
+lobby_row_tournament_class = "placeholder-tournament"
+lobby_row_hash_attr = "data-placeholder-hash"
+# Optional, and outside the group above: the table's own exit control, on the
+# same rail as the panel buttons. It leaves the table for the online menu,
+# from which the lobby's back steps reach the list. Without it, a fleet worker
+# returns from each table by rebuilding its session, with a fresh login.
+table_exit = "#placeholder-exit"
 
 # How a socket frame is recognised, unwrapped and keyed. `deal_key_arity` is
 # how many parts a composite key has when it addresses a deal rather than a
@@ -95,12 +123,21 @@ round_state_prefix = "placeholder."
 resume_action = "placeholder-resume"
 resume_room_prefix = "placeholder-room-"
 resume_param = "placeholderLastEvent"
+# Optional. The verb the pre-game draw is keyed by, at round 0: each player
+# draws a real card, with its place in the deck, that belongs to no hand.
+# Round 0 is left out of every record whether or not this is named; naming it
+# is what lets a parse say so when something else turns up there.
+draw_verb = "placeholder-draw"
 
-# The three event names the parser reacts to.
+# The three event names the parser reacts to, and the lobby's own.
 [wire.events]
 join_snapshot = "placeholderJoin"
 table_update = "placeholderUpdate"
 counters = "placeholderCounters"
+# Optional, and only with the four lobby paths under [wire.fields]: the event
+# that drives the lobby screen, one per row. A fleet reads it for games
+# starting; `run` never does.
+lobby_table = "placeholderLobbyRow"
 
 # Dotted paths, each resolved relative to the payload it is looked up in: the
 # table/state names walk from a snapshot's root, the player names from one
@@ -161,6 +198,14 @@ ended = "over"
 left = "gone"
 spectators = "watchers"
 observable_tables = "tables"
+# Optional, all four or none, and only with [wire.events].lobby_table. Each
+# walks one lobby event: the row it describes, the row's whole seat map (never
+# a change to it), the account inside one seat, and the flag the row raises
+# the moment its game starts.
+lobby_hash = "placeholder"
+lobby_seats = "placeholder.seats"
+lobby_seat_account = "account"
+lobby_full = "placeholder.full"
 
 # The site's vocabulary, mapped onto core values. Keys are the site's tokens;
 # values are the canonical one-letter names — ranks 7 8 9 10 J Q K A, suits
@@ -247,5 +292,35 @@ raw_retention_days = 30
 
 # Inputs to the pseudonymisation step, which is not built yet. The salt may be
 # omitted entirely, or indirected through the environment.
+# Optional: only `contrai-scrape fleet` reads it, and only a profile that also
+# describes the lobby (the lobby keys under [selectors], [wire.events] and
+# [wire.fields]) can run one. Policy, not site vocabulary.
+[fleet]
+# At most 10 — about the whole tournament population. Without --accounts the
+# fleet is one worker on [account] whatever this says.
+workers = 2
+# Seconds between one worker's first login and the next's.
+login_stagger_s = 20
+# A chase gives up after judging this many *distinct* tables, or after this
+# many seconds — whichever comes first. The walk re-offers tables, so a budget
+# counted in hops would shrink silently; in the probe's four chases the table
+# was found within 7 distinct tables and 26 seconds.
+scan_distinct_budget = 12
+scan_deadline_s = 30
+# A starting roster older than this when read is not chased: its game has
+# begun without the fleet.
+roster_max_age_s = 10
+# How long a table claim holds unrefreshed. A worker watching a table refreshes
+# its claim on every frame; this is only the backstop for a wedged worker.
+claim_ttl_s = 600
+# How long a passing egress check answers the fleet's later ones.
+egress_cache_s = 60
+# Once a process, before its first lobby, each worker hops this many tables
+# the ordinary way, recording nothing, so the fleet starts knowing what is
+# running and logs a `census` line estimating how many tournament tables there
+# are. Set census_enabled = false to go straight to the lobby.
+census_enabled = true
+census_hops = 8
+
 [privacy]
 pseudonym_salt = "env:CONTRAI_SCRAPER_SALT"

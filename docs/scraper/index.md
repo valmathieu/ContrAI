@@ -6,6 +6,11 @@ Playwright spectator-mode scraper for online Contrée games (auth required).
 JSONL file per game, the same format the engine writes, so a scraped game and a played one are
 read by the same code.
 
+Two ways to watch. `contrai-scrape run` is one account sitting wherever the server seats it, which
+is always a game already under way. `contrai-scrape fleet` is several accounts on one browser,
+waiting in the lobby and chasing each tournament game to its table from its first card — see
+[The lobby](#the-lobby) and [Fleets](#fleets).
+
 Site specifics — the target URL, the scraping account, every selector the browser clicks, every
 token the wire speaks — live in a local `profile.toml` that is never committed. Code and docs
 describe *what* each step does, not *where* it clicks; do not add the site's name, its DOM ids
@@ -17,22 +22,27 @@ the same reason.
 | Module | Role |
 | ------ | ---- |
 | `contrai_scraper.profile` | `profile.toml` → frozen, validated sections. The only place the site is named. |
+| `contrai_scraper.accounts` | `accounts.toml` → the labelled spectator accounts a fleet logs in with, one per worker. |
 | `contrai_scraper.exceptions` | `ScraperError` / `ProfileError` / `WireError` / `ParseError`. |
 | `contrai_scraper.frames` | `RawFrame` and the two frame sources: a live Playwright page, or a stored raw log. |
 | `contrai_scraper.rawlog` | The verbatim per-session log: `RawLogWriter`, `read_raw_log`, `raw_path`. |
 | `contrai_scraper.wire` | Envelope, keepalive, de-duplication, composite key → `WireEvent`. |
+| `contrai_scraper.lobby` | `LobbyWatcher` — the lobby's socket events → a `LobbyRoster` the moment a tournament game starts. |
 | `contrai_scraper.lzstring` | The LZ-String base64 codec the deal payload arrives in. |
 | `contrai_scraper.parse` | `translate`, `deal`, `snapshot`, `live`, `session` — wire events → a record. |
-| `contrai_scraper.browser` | `Spectator` — the only module that touches a page. Login, the walk, the hop, the two panels. |
+| `contrai_scraper.browser` | `Spectator` — the only module that touches a page. Login, the walk, the hop, the two panels. `open_browser` / `open_session` — one Chromium, one isolated context per session. |
 | `contrai_scraper.recorder` | `Recorder` — the table loop: seat, gate, watch, write, hop. Imports no Playwright. |
+| `contrai_scraper.registry` | `TableRegistry` — a fleet's claims: a chase by roster, a table by id, and the census of tables seen. |
 | `contrai_scraper.schedule` | `Schedule` — daily ranges in a named timezone; answers "is it open now" and "when does that change". |
 | `contrai_scraper.egress` | `EgressGate` — exit address, country and route device, checked before the site is touched. |
 | `contrai_scraper.shift` | `Shift` — the outer loop: schedule gate, egress gate, one browser session and raw log per window, failure budgets. |
+| `contrai_scraper.fleet` | `Fleet` / `Worker` — the same gates for N workers on one browser, waiting in the lobby and chasing each game; budgets per worker. |
 | `contrai_scraper.health` | `HealthLog` and `Counters` — one JSON line per transition, on stderr. |
 | `contrai_scraper.cli` | `contrai-scrape`: `run` (the default), `check-profile` and `parse`. |
 
 ```bash
 uv run contrai-scrape run --profile profile.toml --headless    # watch tables
+uv run contrai-scrape fleet --profile profile.toml --accounts accounts.toml --workers 5 --headless
 uv run contrai-scrape check-profile profile.toml               # validate before a shift
 uv run contrai-scrape parse RAW... --profile profile.toml      # re-parse stored logs
 ```
@@ -73,6 +83,15 @@ that is well-formed and wrong:
   — the round's plays are replayed through core's own trick-winner rule to decide it. Reading the
   contract alone would write `none`, which the round's own plays contradict and which `contrai
   verify` calls `suspect`.
+- **The pre-game draw is not a round.** Before the first deal each player draws a card to seat the
+  table, and each draw arrives keyed at round 0 with a real card and its place in the deck — cards
+  that belong to no hand. It never wears a deal's key, so it cannot pass for one, but a stage taking
+  "every keyed event of the table" would fold four stray cards into the record. `collect_rounds`
+  leaves round 0 out by name, and the draw's verb (`[wire].draw_verb`) wherever it is addressed; the
+  draw itself goes unremarked, and anything *else* the rule sweeps up is a parse note. It matters
+  only for a game watched from its first card, which `run` never sees and a fleet always does. Do
+  not add a "require a bid before accepting a deal" guard instead: the first bid has been seen
+  1.8 s and 24.6 s after the deal.
 
 One thing the wire leaves out entirely is a **forced pass**. The table skips a seat whose only
 legal bid is a pass — the doubler's partner, the partner of a Slam bidder, everyone after a
@@ -103,10 +122,18 @@ how many visits a log carried. Without the cut a re-parse merged tables — roun
 belonged elsewhere were dropped as undealable, records took whichever game id came first, and
 records appeared for games no recorder ever accepted.
 
-Two limits on "the same path" are worth knowing before a log is used as evidence. The cut belongs
-to `parse`: a live session buffers one table because it seats one table, so `Recorder._write`
-hands `parse_session` the buffer as it stands, and a seat that was one table behind the page
-merged two tables into one record before the seating rule below was in place. And the log is
+The live path makes the same cut, as a check rather than a split. A session buffers one table
+because it seats one table, but that is true only by construction: a seat taken one table behind
+the page once filled a buffer with 108 events of another table against 59 of its own, and the
+parser merged both into a single record. So `Recorder._write` runs `split_visits` over the buffer
+and refuses the record, logged as `record_refused`, when it holds more than one game key
+(`several_games`) or another table's snapshot (`several_tables`). A snapshot alone is enough: it
+would lend the record its seats and its score rows. It refuses rather than splits because a second
+game that arrived without a snapshot of its own leaves nothing to say which half was the table
+seated, and the raw log still holds every frame for `parse` to cut apart. The pre-game draw is keyed
+to the game it opens, so a table caught from its first card is still one game.
+
+One limit on "the same path" is worth knowing before a log is used as evidence. The log is
 de-duplicated by frame identity and never reset, so the mirrored connection's copy of a frame is
 not in the file — a replay is faithful for the parser, which drops those copies anyway, but it
 cannot reproduce a fault whose trigger *is* a mirrored copy.
@@ -146,17 +173,27 @@ silently wrong data.
 | `[site]` | Where the site lives, and which language it answers in. |
 | `[account]` | The spectator account. Values may read `env:NAME` instead of holding the secret. |
 | `[browser]` | Headless or headed, slow-motion, screenshot-on-error. |
-| `[selectors]` | One entry per UI step; a list means "try these in order". `seat_element` is a template filled with a seat token; `scoreboard_cell` is looked up inside each scoreboard row; `options_id_element` and `options_state_element` inside each option row. `rail_show` is optional: it names the control that brings a table's collapsible panel rails back, filtered on visibility so it is clicked only while they are away, and it is clicked again before every attempt at a panel control. |
-| `[wire]` | How a frame is recognised, unwrapped and keyed. |
-| `[wire.events]` | The three event names the parser reacts to. |
-| `[wire.fields]` | Dotted paths, one per logical field the parser reads. The set of names is fixed. |
+| `[selectors]` | One entry per UI step; a list means "try these in order". `seat_element` is a template filled with a seat token; `scoreboard_cell` is looked up inside each scoreboard row; `options_id_element` and `options_state_element` inside each option row. `rail_show` is optional: it names the control that brings a table's collapsible panel rails back, filtered on visibility so it is clicked only while they are away, and it is clicked again before every attempt at a panel control. The seven lobby keys (`mode_new_games`, `lobby_*`) are optional as a group — all or none — since only a fleet goes to the lobby. |
+| `[wire]` | How a frame is recognised, unwrapped and keyed. `draw_verb`, optional, names the pre-game draw's verb. |
+| `[wire.events]` | The three event names the parser reacts to, plus the lobby's own, `lobby_table` — optional, and only together with the lobby's paths below. |
+| `[wire.fields]` | Dotted paths, one per logical field the parser reads. The set of names is fixed, bar the lobby's four (`lobby_hash`, `lobby_seats`, `lobby_seat_account`, `lobby_full`), which are all or none. |
 | `[wire.tokens]` | The site's vocabulary mapped onto core values — cards, seats, team labels, bid values. |
 | `[rules]` | The core preset, plus the table options the browser half checks. |
 | `[recorder]` | The loop's own thresholds — hop, watchdog, heartbeat, seat timeout. Policy, not site vocabulary. |
 | `[schedule]` | When the scraper may watch: a timezone, daily ranges that may cross midnight, and how long a closing range lets the game in hand run on. |
 | `[egress]` | The gate before any site traffic: the home address (through the environment), the expected country, an echo service, and the tunnel device the route must use. |
 | `[output]` | Where records and raw logs go; both roots resolve relative to the profile, and both name the same directory. |
+| `[fleet]` | Optional, read by `fleet` alone: how many workers (at most 10), their login stagger, a chase's distinct-table budget and deadline, how old a roster may be, the registry's and egress gate's timings, and the startup census. |
 | `[privacy]` | Inputs to the pseudonymisation step, which is not built yet. |
+
+A fleet logs in with several accounts, and they do not multiply the profile. They live in a second
+git-ignored document, `accounts.toml` beside `profile.toml` (`accounts.example.toml` is its
+committed schema): one table per account, named by its **label**, holding the same `email` and
+`verification_code` as `[account]` and read as strictly, `env:NAME` included. The label is what a
+worker's health lines carry instead of the address, so it must be a plain token such as `bot01`,
+and a label that is not one is refused by its position rather than repeated. Two labels on one
+address are refused too: two sessions on one account would sign each other out. The profile's own
+`[account]` stays, and `run` still reads it.
 
 Two exceptions are worth knowing. `ProfileError` means the document is wrong — edit it.
 `ParseError` means the wire said something the document does not describe — investigate the
@@ -175,17 +212,29 @@ have had:
 
 - **There is no table list.** The server decides where a spectator sits, so nothing browses;
   "another table" is a request, not a choice. The walk ends at the variant.
-- **The exit control is unrecoverable.** It leaves *spectating* rather than the table, and the
-  documented route back in is what breaks afterwards. So the only hop is the table control, and
-  `Spectator` has no leave operation at all: a session that cannot reseat rebuilds its browser
-  context.
+- **The exit control leads to the menus, not to another table.** It leaves the table for the
+  online menu, one screen past where the walk in starts, so a walk that begins with the mode menu's
+  first button finds it hidden every time. That is why it was once recorded as unrecoverable. So the
+  only hop is the table control, `Spectator` has no leave operation, and a session that cannot
+  reseat rebuilds its browser context. The exit serves one route only: a fleet worker's way back to
+  the lobby (see [The lobby](#the-lobby)).
 - **The boundary score read is a wire read.** The client can ask for table state without leaving,
   and the answer arrives on the socket as a fresh join snapshot — 0.21 s against 2.58 s for the
   rendered panel, with no replay cost. The panel is the fallback, and it is evidence for the raw
   log rather than a score the parser can use.
 
+A session *is* a browser context — its own cookies, so its own login, and its own sockets, so its
+own frames — opened by `open_session` on a browser `open_browser` launched. The browser is the
+expensive half and the context the cheap one, so several sessions can share one Chromium and
+rebuilding one of them costs the others nothing; `open_spectator`, the single-session path `run`
+takes, is simply one of each. The order inside a session is load-bearing: the script that keeps the
+page's sockets is added to the context before its page exists, and the frame source listens before
+anything navigates, or the join snapshot describing the first table is gone.
+
 The walk follows the site's timing, not only its markup. It lets the landing page settle before
-probing for the first-visit tutorial, opens the address form through its own entry, and, because
+probing for the first-visit tutorial — and, since a cold browser has been measured drawing it after
+that one look, dismisses it and retries once when the login entry refuses a click — opens the
+address form through its own entry, and, because
 the first-use pledge can be drawn a moment after it was looked for, answers it and retries once
 when the spectator menu refuses a click.
 
@@ -255,7 +304,8 @@ that is keeping up pays nothing; what arrived after that newest snapshot is hand
 rather than dropped, because it is the beginning of the table about to be judged.
 
 The states, in order: reset the buffer and the stream, wait for a join snapshot, refuse a table
-whose snapshot this profile cannot read, refuse one that is not a tournament or is already
+whose snapshot this profile cannot read, refuse one another worker of a fleet already holds
+(`claimed_by_other`, below), refuse one that is not a tournament or is already
 `hop_after_rows` rounds old, refuse one whose options
 disagree with `[rules.options]`, check that the panel's *us* is the south seat's side, then watch.
 A deal opening a new round triggers the boundary read; the table's own game-over flag closes the
@@ -287,8 +337,132 @@ twenty-eight plays" and "skip the round in progress at seating" exist once. It i
 seat: table discovery joins each candidate and emits one snapshot per visit, and keeping the first
 would seat four players from a table we left.
 
+In a fleet, several recorders share one `TableRegistry`, because none of them chooses its table and
+two are routinely seated at the same one. That is worse than waste: both would write
+`games/obs-<game_id>.jsonl`, and a record is opened for appending, so two streams would interleave
+into one file that is well formed and wrong. So the registry's refusal, `claimed_by_other` with the
+holder's label, is the first gate — the only one that prevents corruption rather than waste — and
+every other gate still runs after it. A recorder holds the table it watches, refreshing the claim on
+every frame, gives it up when it next seats or stops for any reason, and adds every table it judges
+to the fleet's census. Two keys do two jobs and are kept apart: the lobby names who is about to play
+but not where, so a chase is claimed by its **roster**; a seated table carries its own id, so
+exclusion is claimed by **table id**. Every worker runs in one event loop and no claim awaits
+anything between its check and its set, so a claim is atomic without a lock. Claims also expire
+after `claim_ttl_s` unrefreshed — not the mechanism, only the backstop for a worker that wedged
+holding one — and a late release never frees a claim someone else has since taken.
+
 `HealthLog` writes one JSON object per line to stderr — a transition per line plus a counter
 heartbeat — so a shift is `journalctl`-readable without a parser being written for it.
+
+Several workers write one stream, so each gets a log of its own from `HealthLog.worker(label)`:
+every line it writes carries `worker` right after the event name, and its counters and its
+heartbeat interval are its own. A worker that has stopped seating tables then shows as one worker's
+flat counters rather than as a dip in a total. The fleet's own beat is a separate event,
+`fleet_heartbeat`, carrying the workers' counters added up and how many there are, so a reader
+summing `heartbeat` lines per worker never counts one twice. The label is an opaque name such as
+`bot01`, never the account's address. A log with no label — `run`'s — writes exactly what it
+always did.
+
+## The lobby
+
+`run` sits wherever the server puts it, which is always a game already under way. The lobby is
+where a game can be seen *before* it starts: a screen listing table slots, one of them the
+tournament's, which fills with four players, starts, and recycles for the next four. It says when a
+game starts and who is in it, never where to find it — its rows carry a hash that is a
+configuration's fingerprint rather than a table's id, and a table cannot be joined by it — so a
+spectator still reaches the game through the observe branch and a scan.
+
+`Spectator` walks it with the same care as the rest of the flow. `enter_lobby` takes the action
+beside the observe one and the variant inside that list's own picker, meeting the first-use pledge
+the way `enter_variant` does. `read_tournament_hash` reads the tournament row's hash off the page
+once: the lobby's socket says everything about a row except which one is the tournament's.
+`enter_table_from_lobby` backs out to the observe action and takes it; `return_to_lobby` walks from
+wherever the page stands back to the list.
+
+**There is no single back control.** The page stacks its screens — the mode menu, the online menu,
+the variant picker, the list — and each carries its own back control, one icon on the menus and
+another on the list. Every screen keeps its controls in the DOM with a real box, so Playwright's
+`:visible`, which asks about the element, matches the controls of the three screens behind as
+readily as the one in front; a hard-coded control cost the chase probe three live runs, each dying
+on a control that was right for a screen other than the one shown. So `back_once` reads every
+candidate in `lobby_back` together with the computed style of the screen it sits on (`lobby_layer`),
+keeps the ones a click could land on, and clicks the best-ranked of those. `_back_until` asks the
+same question of a menu action before each step, rather than trying a short click that a control on
+a hidden screen would hold for its whole timeout.
+
+**The overlay click is the one click that changes the site.** The lobby's first-visit overlay goes
+away at any click, but without it a click at the centre of the screen lands on a table slot and
+sits the account down. `dismiss_overlay` reads what is under the centre first and clicks only when
+that is not the list.
+
+**The roster comes off the socket, not the page.** The tournament row shows four players for about
+a second and a half, so reading the page every three seconds caught 6 of the 11 games that started
+in a measured half hour; the socket carried all 11. Every row is driven by a `lobby_table` event,
+and `LobbyWatcher` reads the tournament row's (by the hash the page gave) under three rules, each of
+which is a record about the wrong players when broken:
+
+- **An event's seats are the whole seat map, never a change to it.** Nothing in the stream vacates
+  a seat, so adding events up leaves a ghost wherever a player changed chairs — that reading agreed
+  with the page 4.7% of the time and reported 104 complete rosters where the page showed 6, while
+  looking as though it worked.
+- **The roster is the one the row held when its game started.** Seats change constantly before a
+  start (74 changes in half an hour, swaps included) and the row recycles right after. The row
+  raises a flag of its own (`lobby_full`) in the event that follows the fourth seat by milliseconds;
+  that event, with its four accounts, is the roster, announced once. Once means once per session:
+  the lobby sends every event on both connections, so a worker keeps one reader for as long as its
+  session lasts. A fresh reader per wait took the second copy for a second start in the first live
+  run. Waiting for the row to empty
+  instead would wait for the next player to sit down — 35 s after the start in the first case
+  measured. Re-read on the stored logs, the watcher announces the clean run's 11 starts, every
+  roster the page-polling caught among them, and in each of the four chases exactly the roster that
+  was then found at its table.
+- **Accounts are matched as the site spells them**: six digits, zero-padded, kept as strings. A seat
+  whose account is not one does not count. `LobbyRoster.digest` names a roster in log lines without
+  naming its players.
+
+**A chase is a recorder with a target.** Handed a `ChaseTarget` — the roster, a budget of distinct
+tables and a deadline — `Recorder` holds every table it lands on against the roster before reading
+anything off the page: a scan is mostly refusals, and the page costs seconds a wire comparison does
+not. The match is all four accounts or nothing (`roster_mismatch`, with how many matched): across
+every roster and every wrong table in the corpus the best a wrong table scored was two of four, so
+"most of them" would have found a wrong table forty times. A match is announced as `chase_matched`,
+with how many distinct tables it took and how long since the roster was read, and then passes every
+other gate — a chase is not a way round the tournament, options or orientation checks. The recorder
+stops after that one game (`chase_ended`) and never asks for another table: the next one is the
+lobby's to announce. The scan is budgeted on *distinct* tables judged and on a deadline, never on
+hops, because the server's walk re-offers tables it has already given and is not a cycle — a hop
+count shrinks silently as repeats eat it. Running out, or finding the table and seeing a gate refuse
+it, is `chase_gave_up` with its reason (`distinct_budget`, `deadline`, `target_refused`): an outcome,
+not an error. Log lines name a roster by its digest, never by its players.
+
+Two consequences for the registry. The `claimed_by_other` check still comes first, but the claim
+itself is taken only when a table is *accepted*, after its other gates: a scan passing through a
+table never holds it, so it can never keep out the worker that came to find it, and a table accepted
+elsewhere while the page was being read is still refused at the end. And a chase is fast but not
+instant: in one probe run the match came 26.2 s after the roster, after the first deal had gone out,
+and a record joined then starts at round 2. Nothing at the gate can tell, so `game_recorded` carries
+`first_round`, which is what says how often a chase arrives in time.
+
+**From a table, the way back starts with the table's exit.** The lobby's back controls sit on the
+menu screens, and a table is drawn over those screens rather than as one of them: while a table is
+up, every screen reads as hidden. In the fleet's first live run (two workers, 20 minutes),
+`return_to_lobby` therefore failed on all four returns and every one fell back to a rebuild, about
+26 s and a fresh login each. A live probe then tried every in-page route from a table. Escape does
+nothing, the browser's back button leaves the site for a blank page, a reload signs the session
+out, and the rail holds no lobby control. The table's own exit lands on the online menu, and from
+there the back steps reach the list: 3.6 s, and a table taken from that list 2.6 s later, with no
+login. So when no screen is showing and the profile names `table_exit`, `return_to_lobby` reveals
+the rail, clicks the exit and gives the menu `EXIT_SETTLE_MS` to come up. It then backs out as from
+any menu. Without `table_exit`, a table is left to the back steps, which fail, and the caller
+rebuilds. Either way it fails fast: at most `LOBBY_BACK_STEPS` steps back, then a `BrowserError`
+naming the key it was waiting for, and the caller rebuilds the session.
+
+`check-profile` walks the lobby in a session of its own when the profile describes one: in, the
+tournament row, the first lobby event, out to a table, and back to the list. The last line reads as
+a fact rather than a failure when the profile names no `table_exit`. The
+lobby speaks only when a seat changes — its first event after arriving came 27 s and 82 s later in
+the two runs timed — so a wait that hears nothing passes and says it proved nothing; an event that
+arrives and cannot be read is what fails, naming the path that read nothing.
 
 ## Shifts
 
@@ -314,10 +488,71 @@ reconciles the two, one browser session at a time.
 - **A closing window ends seating, not the game in hand.** No table is taken after the close; with
   `finish_current_game` the game already being watched runs on for at most `max_overrun_minutes`,
   and one still running then is written `observer_left` — we stopped watching it, it did not end.
+  The watchdog's wait is capped at that deadline, so it runs out there even while the players are
+  still at it. That expiry is therefore read as the deadline, never as a quiet table: in the
+  fleet's first live run it wrote a live game as `abandoned` and asked for another table on the way
+  out.
 - **Budgets hand the process back.** Six refused egress checks in a row, or three failed sessions
   in a row (a browser error, or frames that simply stopped), end the process with exit code 3, so
   its supervisor starts a fresh one. Exit code 130 means it was interrupted — Ctrl+C, or the
   SIGTERM a service or container stop sends — and the game in hand was written `interrupted`.
+
+## Fleets
+
+`contrai-scrape fleet` runs several workers, each on its own account, and catches games from their
+first card instead of wherever the server seats it. It is a shift in shape — the same schedule gate,
+the same egress gate (one shared `SharedEgressGate`, since every worker and every hop asks it), the
+same retention pruning — but inside an open window it launches one Chromium and opens a session per
+worker on it, logins staggered by `login_stagger_s`.
+
+```mermaid format="svg" source="state_scraper_worker.mmd"
+```
+
+Each worker loops on the same route. It logs in, walks to the lobby, reads the tournament row's
+hash, and waits there on the socket (`in_hall`) until `LobbyWatcher` announces a start. A roster
+older than `roster_max_age_s` when read is left alone (`roster_stale`); otherwise the worker claims
+it in the registry — a second worker that read the same start logs `roster_taken` and keeps waiting
+— walks out to a table and runs a chasing recorder, which records that one game or gives up. The
+roster is released either way, and the worker walks back to the lobby. Idle workers belong in the
+lobby, not at a table: a spectator left at a table after its game is sent back to the menu anyway,
+and a worker already in the lobby spends none of the few seconds before the first deal getting
+there.
+
+One chase, from the lobby's socket to a written record — the claim on the roster, the round trip
+out, the blind scan held against the roster, the table's own gates and the claim on the table, and
+the walk back:
+
+```plantuml format="svg" source="seq_scraper_chase.puml"
+```
+
+The walk back takes the table's exit when the profile names one, and fails fast. A failure rebuilds
+the worker's session — a fresh context and a fresh login — logged as `return_rebuilt` and *not* counted
+against the worker. Everything else that ends a session is: three sessions in a row that fail, or six
+refused egress checks in a row, and the worker goes down (`worker_down`) and stays down for the
+process. A chase that runs its course, whatever it found, clears the streak, so a profile broken in
+a way every chase meets cannot keep logging in forever. The process hands itself back with exit
+code 3 only once a majority of its workers are down — one worker's bad account does not end the
+others' night — which for a fleet of one is exactly `run`'s rule. A worker whose chase was stopped by
+a refused egress sends nothing more on that session and checks the egress again before the next.
+
+Once a process, before its first lobby, each worker can make a **census**: it walks the observe
+branch and hops `census_hops` tables the ordinary way, recording nothing, reading each join snapshot
+into the registry — which tables are running, tournament or not, and how far along. Workers sweep in
+parallel, and after each sweep the fleet writes a `census` line: distinct tournament tables, how many
+sightings, and a resighting-based estimate of the population — the `N` for which uniform draws with
+replacement would leave exactly as many distinct tables as were seen (`estimate_population`). The
+walk is not a uniform draw, so the figure is a sizing indicator, not a count; it is what says whether
+ten workers is about the whole population. Re-read on the chase probe's walks it comes to 12 and 14
+tables of every kind, against "rarely more than about ten tournament tables". A sweep skips the
+table it has just left, so a stale snapshot cannot pose as a resighting; a sweep cut short by a
+stopping fleet or a refused egress still reports what it saw. Set `census_enabled = false` to go
+straight to the lobby.
+
+Without `--accounts` a fleet is one worker, labelled `bot01`, on the profile's own `[account]`; with
+it, `--workers` (default `[fleet].workers`) takes that many accounts from the top of the file, and
+asking for more than the file holds, or more than ten, is a usage error. `--max-games` stops new
+chases once the fleet has recorded that many games, and `--minutes` bounds the run. A profile that
+lacks the lobby keys or a `[fleet]` section is refused with a list of what is missing.
 
 ## Deployment
 
@@ -331,6 +566,15 @@ The egress gate is what makes a failure of that confinement visible rather than 
 runs before every session, before every hop and when a table goes quiet, and a refusal sends nothing
 to the site; but it is visibility, not the guarantee.
 
+Several workers behind one tunnel share one gate, `SharedEgressGate`, because "before every hop"
+multiplies: ten workers scanning would send the echo service about fifty requests in twenty seconds
+from one exit address, which is how a free-tier service starts answering `429` — read by the gate
+as a refusal. Asks that overlap a probe in flight wait for it and take its answer, good or bad, and
+a passing reading answers later asks for `max_age_s`. A refusal is never reused: it answers only the
+asks that were waiting on it, so the next caller probes again and fail-closed is unchanged. The
+window is short next to `stale_after_s`, so a tunnel that died before a table went quiet has no
+passing reading left to vouch for it when the watchdog asks.
+
 The image, the Compose file, the environment templates and the procedures that prove the
 confinement — the exit address, the refusal of the home address, a tunnel outage under a packet
 capture — live in `deploy/install.md`.
@@ -340,8 +584,11 @@ capture — live in `deploy/install.md`.
 
 ## Pending
 
-- Multi-table orchestration: several browser contexts, a shared registry of tables already
-  watched.
+- The fleet's live ramp — two, five, then ten workers — and the memory each browser context
+  costs, which is unmeasured: the 0.8–1.0 GB figure is per *browser*.
+- Recording one game twice: a record file is opened for appending, so a game recorded, abandoned
+  and recorded again later would hold two headers. `run` has always had this; the fleet's registry
+  rules it out for two workers at once, not for one worker twice.
 - Pseudonymisation: records currently carry raw ids, names and account fields — personal data,
   local only.
 - Rate-limiting / ToS considerations.
