@@ -595,3 +595,29 @@ class TestVerifyRecord:
 
     def test_a_record_in_a_games_directory_walks_up_two(self, tmp_path):
         assert default_out_root(tmp_path / "games" / "x.jsonl") == tmp_path
+
+
+class TestPublicApi:
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Verdict",
+            "MismatchKind",
+            "Mismatch",
+            "RoundVerdict",
+            "GameVerdict",
+            "verdicts_dir",
+            "verdict_path",
+            "write_verdict",
+        ],
+    )
+    def test_replay_re_exports_the_verdict_model_from_contrai_data(self, name):
+        # The model moved to ``contrai-data`` so the corpus catalog can read
+        # verdict files without the engine. ``contrai_engine.replay`` keeps
+        # the names, and they must be the *same* objects — a copy would make
+        # ``verdict is Verdict.SUSPECT`` false across the two packages.
+        import contrai_data
+        import contrai_engine.replay
+
+        assert getattr(contrai_engine.replay, name) is getattr(contrai_data, name)
+        assert name in contrai_engine.replay.__all__

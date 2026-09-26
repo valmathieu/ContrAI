@@ -14,10 +14,17 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (engine) `contrai replay` gains `a`: skip the rest of the auction and stop on the contract, one key before the first card. See [engine docs](docs/engine/index.md).
 - (engine) `contrai replay` shows why each recorded AI seat acted, compact with `w` for more, and flags what it would now play instead. See [engine docs](docs/engine/index.md).
 - (engine) `Rationale.drawn_from`: the expert AI names the level cards a discard was drawn from at random; the debug panel shows it. See [engine docs](docs/engine/index.md).
+- (data) `read_verdict(path)` and `GameVerdict.from_json` read a verdict file back, refusing anything `write_verdict` would not write. See [data docs](docs/data/index.md).
+- (data) `build_catalog(root)` rebuilds `<root>/catalog.sqlite`, a SQLite index of games, seats, rounds and verdicts with player and clean-round views. See [data docs](docs/data/index.md).
+- (engine) `contrai catalog [ROOT] [--player ID_OR_NAME]` rebuilds the corpus index with a summary, or lists one player's games. See [engine docs](docs/engine/index.md).
 
 ### Fixed
 
 - (engine) `contrai replay` frames fit a 40-row terminal (they were 42–54 rows): one-line keys, no rationale panel, a repaint instead of more output. See [engine docs](docs/engine/index.md).
+
+### Changed
+
+- (data) The verdict model — `Verdict`, `GameVerdict`, `write_verdict` and the rest — moves to `contrai_data`; `contrai_engine.replay` still re-exports it. See [data docs](docs/data/index.md).
 
 ## [0.5.0] - 2026-09-17
 

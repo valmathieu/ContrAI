@@ -1,12 +1,14 @@
 """``contrai`` CLI entry point.
 
-Three subcommands, and ``play`` is the default. It is inserted by
+Four subcommands, and ``play`` is the default. It is inserted by
 :func:`_normalise_argv` whenever the first argument does not name one, so
 bare ``contrai`` and every flag that predates subcommands parse exactly
 as they did; ``contrai verify PATH...`` replays recorded games and
-reports what does not add up, exiting non-zero on a suspect round, and
+reports what does not add up, exiting non-zero on a suspect round,
 ``contrai replay PATH`` steps one through the game's own screens with
-every hand face up.
+every hand face up, and ``contrai catalog [ROOT]`` rebuilds a records
+root's SQLite index of what the other two write — or, with ``--player``,
+reads one player's games back out of it.
 
 The ``play`` path drives the landing → game loop → end-game flow, wiring
 a :class:`RichView` into ``Game.manage_round``. Pure orchestration —
@@ -54,13 +56,27 @@ import json
 import logging
 import random
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
 from contrai_core.exceptions import IllegalBidError, IllegalPlayError
 from contrai_core.position import Position
 from contrai_core.rule_config import PRESETS, RuleConfig
-from contrai_data import RecordError, load_game
+from contrai_data import (
+    CatalogError,
+    CatalogSummary,
+    GameVerdict,
+    PlayerReport,
+    RecordError,
+    Verdict,
+    build_catalog,
+    catalog_path,
+    games_dir,
+    load_game,
+    player_games,
+    records_root,
+)
 from contrai_engine.log_setup import configure_logging
 from contrai_engine.model.game import Game
 from contrai_engine.model.player import AiPlayer, HumanPlayer
@@ -72,12 +88,10 @@ from contrai_engine.recording import (
     finish_recording,
 )
 from contrai_engine.replay import (
-    GameVerdict,
     ReplayController,
     ReplayError,
     ReplayInterrupt,
     SteppingView,
-    Verdict,
     read_step_key,
     replay_rows,
     verify_game,
@@ -104,7 +118,7 @@ logger = logging.getLogger(__name__)
 
 #: The subcommands ``contrai`` answers to. Anything else in first
 #: position is a flag (or a mistake) belonging to the default one.
-SUBCOMMANDS: Final[tuple[str, ...]] = ("play", "replay", "verify")
+SUBCOMMANDS: Final[tuple[str, ...]] = ("play", "replay", "verify", "catalog")
 
 #: The subcommand a bare ``contrai`` means.
 DEFAULT_SUBCOMMAND: Final[str] = "play"
@@ -151,11 +165,12 @@ def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
         description="Play a game of contrée against three AI seats.",
         # ``contrai --help`` normalises to ``contrai play --help``, so
         # this is where a reader finds out the other subcommand exists.
-        epilog="other subcommands: replay, verify "
+        epilog="other subcommands: replay, verify, catalog "
         "(see: contrai replay --help)",
     )
     _add_replay_parser(subcommands)
     _add_verify_parser(subcommands)
+    _add_catalog_parser(subcommands)
     play.add_argument(
         "--debug",
         action="store_true",
@@ -296,6 +311,45 @@ def _add_verify_parser(subcommands: Any) -> argparse.ArgumentParser:
         help="report only; do not write any verdict file",
     )
     return verify
+
+
+def _add_catalog_parser(subcommands: Any) -> argparse.ArgumentParser:
+    """Register the ``catalog`` subcommand.
+
+    Args:
+        subcommands: The top-level parser's subcommand group.
+
+    Returns:
+        The ``catalog`` subparser.
+    """
+
+    catalog = subcommands.add_parser(
+        "catalog",
+        help="index a records root into catalog.sqlite",
+        description=(
+            "Rebuild ROOT/catalog.sqlite, a SQLite index of every record "
+            "and verdict under a records root, and print what it holds. "
+            "Run contrai verify first: a game without a fresh verdict has "
+            "no clean rounds."
+        ),
+    )
+    catalog.add_argument(
+        "root",
+        nargs="?",
+        type=Path,
+        default=None,
+        metavar="ROOT",
+        help="the records root (default: $CONTRAI_HOME/records); a games/ "
+        "directory stands for its parent",
+    )
+    catalog.add_argument(
+        "--player",
+        default=None,
+        metavar="ID_OR_NAME",
+        help="list this player's games from the existing catalog, without "
+        "rebuilding it",
+    )
+    return catalog
 
 
 def _parse_argv(
@@ -651,6 +705,175 @@ def _run_verify(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def _catalog_root(path: Path | None) -> Path:
+    """The records root a ``catalog`` argument names.
+
+    Args:
+        path: The ``ROOT`` argument, or ``None`` when it was left out.
+
+    Returns:
+        ``$CONTRAI_HOME/records`` for no argument — where the engine
+        records — the parent of a ``games`` directory, since pointing at
+        the records themselves is the obvious mistake to forgive, and the
+        path itself otherwise.
+    """
+
+    if path is None:
+        return records_root()
+    if path.name == "games":
+        return path.parent
+    return path
+
+
+def _tally_text(counts: Mapping[str, int]) -> str:
+    """``{"partial": 130, "suspect": 5}`` as ``partial 130, suspect 5``.
+
+    Args:
+        counts: A token-to-count mapping.
+
+    Returns:
+        The counts in token order, or ``none`` when there are none.
+    """
+
+    if not counts:
+        return "none"
+    return ", ".join(f"{key} {counts[key]}" for key in sorted(counts))
+
+
+def _catalog_lines(summary: CatalogSummary) -> list[str]:
+    """The stdout report for a freshly built catalog.
+
+    Args:
+        summary: What the build produced.
+
+    Returns:
+        One line per figure, a pointer at ``contrai verify`` when some
+        games have no fresh verdict, and one line per skipped file.
+    """
+
+    statuses = summary.verdict_statuses
+    lines = [
+        f"catalog: {summary.path}  (built {summary.built_at})",
+        f"games: {summary.game_count} ({_tally_text(summary.games_by_source)})",
+        f"rounds: {summary.round_count}, complete "
+        f"{summary.complete_round_count}, clean {summary.clean_round_count}",
+        f"game verdicts: {_tally_text(summary.game_verdicts)}",
+        f"verdict status: {_tally_text(statuses)}",
+        f"round verdicts: {_tally_text(summary.round_verdicts)}",
+        f"players: {summary.player_count}",
+    ]
+    unverified = statuses.get("missing", 0) + statuses.get("stale", 0)
+    if unverified:
+        # A game without a fresh verdict contributes no clean round, which
+        # reads as a quiet shortfall unless the report says why.
+        lines.append(
+            f"    without a fresh verdict: {unverified} — run: "
+            f"contrai verify {summary.path.parent}"
+        )
+    if summary.skipped:
+        lines.append(f"skipped: {len(summary.skipped)}")
+        lines.extend(
+            f"    {item.kind} {item.path} — {item.reason}"
+            for item in summary.skipped
+        )
+    return lines
+
+
+def _player_lines(report: PlayerReport) -> list[str]:
+    """The stdout report for one player's games.
+
+    Args:
+        report: What the catalog holds for the player.
+
+    Returns:
+        A header naming the catalog's build time, then one line per game.
+    """
+
+    # A name can sit in several seats of one game — every engine AI seat
+    # is ``ai:<level>`` — so games and seats are counted apart.
+    games = len({game.game_id for game in report.games})
+    seats = "" if games == len(report.games) else f", seats: {len(report.games)}"
+    lines = [
+        f"{report.player} — games: {games}{seats} "
+        f"(catalog built {report.built_at})"
+    ]
+    for game in report.games:
+        outcome = game.result or game.end_reason or "unfinished"
+        ns = "?" if game.total_ns is None else game.total_ns
+        ew = "?" if game.total_ew is None else game.total_ew
+        if game.verdict_status == "missing":
+            verdict = "no verdict"
+        elif game.verdict_status == "unreadable":
+            verdict = "unreadable verdict"
+        elif game.verdict_status == "stale":
+            verdict = f"{game.verdict} (stale)"
+        else:
+            verdict = game.verdict
+        lines.append(
+            f"{game.created_at[:10]}  {game.game_id}  {game.player_id or '-'}  "
+            f"{game.name}  seat {game.position}  partner {game.partner or '-'}  "
+            f"{outcome}  NS {ns} – EW {ew}  {verdict}"
+        )
+    return lines
+
+
+def _run_catalog(args: argparse.Namespace) -> int:
+    """Rebuild a records root's catalog, or read one player back from it.
+
+    Args:
+        args: The parsed ``catalog`` arguments.
+
+    Returns:
+        ``0`` on success; ``1`` when there is nothing to index, when the
+        catalog cannot be replaced, or when ``--player`` finds no catalog
+        or no game.
+    """
+
+    root = _catalog_root(args.root)
+    if args.player is not None:
+        # Read-only by design: a lookup must not cost a rebuild, and must
+        # not quietly create an empty catalog where none was built.
+        try:
+            report = player_games(root, args.player)
+        except FileNotFoundError:
+            print(
+                f"no catalog under {root} — build it first: contrai catalog {root}",
+                file=sys.stderr,
+            )
+            return 1
+        except CatalogError as exc:
+            print(f"{exc}", file=sys.stderr)
+            return 1
+        if not report.games:
+            print(
+                f"{args.player}: no game in the catalog built {report.built_at}",
+                file=sys.stderr,
+            )
+            return 1
+        for line in _player_lines(report):
+            print(line)
+        return 0
+
+    if not games_dir(root).is_dir():
+        print(f"{root}: no games/ directory, nothing to index", file=sys.stderr)
+        return 1
+    try:
+        summary = build_catalog(root)
+    except PermissionError as exc:
+        # Windows refuses to replace a file another process holds open —
+        # a sqlite3 shell or a notebook still connected to the catalog.
+        print(
+            f"{catalog_path(root)} cannot be replaced ({exc}). Close the "
+            "program holding it open and run again; the old catalog is "
+            "unchanged.",
+            file=sys.stderr,
+        )
+        return 1
+    for line in _catalog_lines(summary):
+        print(line)
+    return 0
+
+
 def _replay_quietly(controller: ReplayController, index: int) -> None:
     """Replay the rounds before ``controller.rounds[index]``, unseen.
 
@@ -846,12 +1069,12 @@ def _force_utf8_streams() -> None:
 def main() -> None:
     """Entry point registered as the ``contrai`` console script.
 
-    Dispatches on the subcommand: ``verify`` and ``replay`` each report
-    and exit with their own code, everything else is a game.
+    Dispatches on the subcommand: ``verify``, ``replay`` and ``catalog``
+    each report and exit with their own code, everything else is a game.
 
     Raises:
-        SystemExit: With the ``verify`` or ``replay`` exit code, or on a
-            usage error.
+        SystemExit: With the ``verify``, ``replay`` or ``catalog`` exit
+            code, or on a usage error.
     """
     _force_utf8_streams()
     args, play = _parse_argv()
@@ -859,6 +1082,8 @@ def main() -> None:
         raise SystemExit(_run_verify(args))
     if args.command == "replay":
         raise SystemExit(_run_replay(args))
+    if args.command == "catalog":
+        raise SystemExit(_run_catalog(args))
     options, setup, record = _play_setup(args, play)
     options = _apply_seed(options)
     configure_logging(options)

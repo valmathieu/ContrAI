@@ -56,7 +56,7 @@ from ..model.round import marked_components
 from ..recording import _outcome, _slam
 from .controller import ReplayController
 from .exceptions import ReplayError, ScriptExhaustedError, SeatMismatchError
-from .verdict import (
+from contrai_data import (
     GameVerdict,
     Mismatch,
     MismatchKind,

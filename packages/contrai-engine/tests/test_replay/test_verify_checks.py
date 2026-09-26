@@ -41,7 +41,7 @@ from contrai_engine.replay.exceptions import (
     ScriptExhaustedError,
     SeatMismatchError,
 )
-from contrai_engine.replay.verdict import MismatchKind
+from contrai_data import MismatchKind
 from contrai_engine.replay.verify import (
     _BIDDING,
     _PLAY,

@@ -18,15 +18,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Mapping, Optional
 
-from .verdict import Verdict
+from contrai_data import Verdict
 
 if TYPE_CHECKING:
     from contrai_core.team_side import TeamSide
-    from contrai_data import GameRecord
+    from contrai_data import GameRecord, GameVerdict
     from contrai_data.events import RoundOutcome
     from contrai_core.contract import ObservedContract
-
-    from .verdict import GameVerdict
 
 
 @dataclass(frozen=True, slots=True)

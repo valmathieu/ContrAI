@@ -22,7 +22,7 @@ from rich.table import Table
 from rich.text import Text
 
 from contrai_core import TeamSide
-from contrai_engine.replay.verdict import Verdict
+from contrai_data import Verdict
 from contrai_engine.view.formatting import (
     _format_contract_short,
     _position_short,

@@ -8,6 +8,8 @@ from .exceptions import (
     RecordError,
     RecordFormatError,
     UnsupportedFormatError,
+    VerdictFormatError,
+    CatalogError,
 )
 from .events import (
     RecordSource,
@@ -72,11 +74,35 @@ from .projection import (
     project,
     load_game,
 )
+from .verdict import (
+    Verdict,
+    MismatchKind,
+    Mismatch,
+    RoundVerdict,
+    GameVerdict,
+    verdicts_dir,
+    verdict_path,
+    write_verdict,
+    read_verdict,
+)
+from .catalog import (
+    CATALOG_FILE,
+    CATALOG_SCHEMA_VERSION,
+    catalog_path,
+    SkippedFile,
+    CatalogSummary,
+    build_catalog,
+    PlayerGame,
+    PlayerReport,
+    player_games,
+)
 
 __all__: list[str] = [
     "RecordError",
     "RecordFormatError",
     "UnsupportedFormatError",
+    "VerdictFormatError",
+    "CatalogError",
     "RecordSource",
     "SeatKind",
     "JoinPhase",
@@ -130,4 +156,22 @@ __all__: list[str] = [
     "GameRecord",
     "project",
     "load_game",
+    "Verdict",
+    "MismatchKind",
+    "Mismatch",
+    "RoundVerdict",
+    "GameVerdict",
+    "verdicts_dir",
+    "verdict_path",
+    "write_verdict",
+    "read_verdict",
+    "CATALOG_FILE",
+    "CATALOG_SCHEMA_VERSION",
+    "catalog_path",
+    "SkippedFile",
+    "CatalogSummary",
+    "build_catalog",
+    "PlayerGame",
+    "PlayerReport",
+    "player_games",
 ]

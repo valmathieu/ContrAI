@@ -62,6 +62,9 @@ profile.toml
 pseudonyms.json
 records/
 raw/
+# The corpus catalog indexes player ids and display names: personal data,
+# derived and rebuildable, so it never leaves the machine that built it.
+catalog.sqlite*
 # Deployment secrets live on the host under /etc/contrai; keep stray copies out.
 deploy/*.env
 deploy/wireguard/

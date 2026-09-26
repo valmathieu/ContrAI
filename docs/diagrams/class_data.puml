@@ -46,11 +46,17 @@ package "exceptions.py" as p_exc {
     }
     class UnsupportedFormatError {
     }
+    class VerdictFormatError {
+    }
+    class CatalogError {
+    }
 }
 
 RecordError --|> ContraiError
 RecordFormatError --|> RecordError
 UnsupportedFormatError --|> RecordError
+VerdictFormatError --|> RecordError
+CatalogError --|> ContraiError
 
 ' =========================================================
 ' events.py
@@ -327,6 +333,162 @@ m_proj ..> Auction : <<derives the contract>>
 m_proj ..> TrickRecord : <<derives the winners>>
 
 ' =========================================================
+' verdict.py — what contrai verify concluded about a record
+' =========================================================
+package "verdict.py" as p_verdict {
+    enum Verdict {
+        VERIFIED
+        PARTIAL
+        SUSPECT
+    }
+    enum MismatchKind {
+        ILLEGAL~_BID
+        ILLEGAL~_PLAY
+        TRICK~_WINNER
+        BELOTE
+        SCORE
+    }
+    class Mismatch <<frozen dataclass>> {
+        + kind : MismatchKind
+        + detail : str
+        + position : str?
+        + trick : int?
+        + seq : int?
+        + expected : str?
+        + observed : str?
+        --
+        + as~_json() : dict
+        + {static} from~_json(payload) : Mismatch
+    }
+    class RoundVerdict <<frozen dataclass>> {
+        + number : int
+        + verdict : Verdict
+        + mismatches : tuple<Mismatch>
+        + unchecked : tuple<str>
+        + replayed : bool = True
+        --
+        + {static} decide(number, mismatches, unchecked, *, replayed) : RoundVerdict
+        + as~_json() : dict
+        + {static} from~_json(payload) : RoundVerdict
+    }
+    class GameVerdict <<frozen dataclass>> {
+        + game~_id : str
+        + source : str
+        + preset : str
+        + rounds : tuple<RoundVerdict>
+        + notes : tuple<str>
+        --
+        + verdict : Verdict <<property>>
+        + counts : dict<Verdict, int> <<property>>
+        + as~_json() : dict
+        + {static} from~_json(payload) : GameVerdict
+    }
+    class "verdict.py" as m_verdict <<module>> {
+        + verdicts~_dir(root) : Path
+        + verdict~_path(root, game~_id) : Path
+        + write~_verdict(root, verdict) : Path
+        + read~_verdict(path) : GameVerdict
+    }
+}
+
+GameVerdict "1" *-- "0..N" RoundVerdict : rounds
+RoundVerdict "1" *-- "0..N" Mismatch : mismatches
+RoundVerdict --> Verdict
+Mismatch --> MismatchKind
+m_verdict ..> GameVerdict : <<writes verdicts/<game~_id>.json>>
+m_verdict ..> VerdictFormatError : <<read~_verdict refuses>>
+
+note as N_verdict
+  **""partial"" is the interesting verdict.** Every check that
+  ran passed, but one could not run for want of something to
+  check against — overwhelmingly a round with no
+  ""round~_scored"" event, the //common// case in an observed
+  game. A game takes the **worst** verdict among its rounds.
+  The model is plain data, so it lives here and
+  ""contrai~_engine.replay"" re-exports it: whatever reads
+  verdict files back must not need the engine to do it.
+  **Reading back is strict:** exact keys, exact types, and every
+  stored verdict and count re-derived from the rounds.
+end note
+p_verdict .. N_verdict
+
+' =========================================================
+' catalog.py — the derived SQLite index over a records root
+' =========================================================
+package "catalog.py" as p_catalog {
+    class CatalogSummary <<frozen dataclass>> {
+        + path : Path
+        + built~_at : str
+        + games~_by~_source : dict<str, int>
+        + round~_count : int
+        + complete~_round~_count : int
+        + clean~_round~_count : int
+        + game~_verdicts : dict<str, int>
+        + verdict~_statuses : dict<str, int>
+        + round~_verdicts : dict<str, int>
+        + player~_count : int
+        + skipped : tuple<SkippedFile>
+        --
+        + game~_count : int <<property>>
+    }
+    class SkippedFile <<frozen dataclass>> {
+        + path : str
+        + kind : str
+        + reason : str
+    }
+    class PlayerReport <<frozen dataclass>> {
+        + player : str
+        + built~_at : str
+        + games : tuple<PlayerGame>
+    }
+    class PlayerGame <<frozen dataclass>> {
+        + created~_at : str
+        + game~_id : str
+        + player~_id : str?
+        + name : str
+        + position : str
+        + side : str
+        + partner : str?
+        + result : str?
+        + end~_reason : str?
+        + total~_ns : int?
+        + total~_ew : int?
+        + verdict : str?
+        + verdict~_status : str
+    }
+    class "catalog.py" as m_catalog <<module>> {
+        + {static} CATALOG~_FILE : str
+        + {static} CATALOG~_SCHEMA~_VERSION : int
+        --
+        + catalog~_path(root) : Path
+        + build~_catalog(root, *, now) : CatalogSummary
+        + player~_games(root, player) : PlayerReport
+        - ~_effective~_winner(record) : (TeamSide?, str?)
+        - ~_verdict~_status(record, verdict, *, record~_mtime~_ns, verdict~_mtime~_ns) : str
+        - ~_game~_rows(record, path, verdict, status)
+        - ~_pick~_canonical(game~_id, paths) : Path
+    }
+}
+
+CatalogSummary *-- "0..N" SkippedFile
+PlayerReport *-- "0..N" PlayerGame
+m_catalog ..> CatalogSummary : <<builds>>
+m_catalog ..> PlayerReport : <<reads back>>
+m_catalog ..> m_proj : <<load~_game>>
+m_catalog ..> m_verdict : <<read~_verdict>>
+m_catalog ..> CatalogError : <<refuses a foreign file>>
+
+note as N_catalog
+  **Derived, and rebuilt whole every run.** Nothing writes to
+  ""catalog.sqlite"" except a rebuild, built in a temporary
+  file and moved over the old one with ""os.replace"".
+  An unreadable file lands in the ""skipped"" table and
+  never aborts the build.
+  Holds player ids and display names: **local only**.
+end note
+p_catalog .. N_catalog
+
+' =========================================================
 ' Layering
 ' =========================================================
 m_codec ..> m_tokens : <<spells every value>>
@@ -341,8 +503,8 @@ note as N_layering
   a card is a ""Card"", a bid is a core ""Bid"". It never sees a token.
   ""tokens.py"" owns the ASCII spelling, and only it does.
   ""codec.py"" owns the JSON line, and only it does.
-  ""store.py"" owns the file — and it is the //only// module
-  in the package that touches the filesystem.
+  ""store.py"" owns the record file, and only it does;
+  verdict files are ""verdict.py""'s.
 
   Nothing here derives anything twice: the contract, the
   tricks and their winners are recomputed by ""projection.py""
