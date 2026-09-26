@@ -58,7 +58,7 @@ from .exceptions import BrowserError, ParseError, ScraperError
 from .frames import SENT, FrameSource, RawFrame
 from .health import HealthLog
 from .lobby import SEATS, LobbyRoster
-from .parse.session import parse_session, split_visits
+from .parse.session import parse_session, round_count, split_visits
 from .parse.snapshot import ScoreRow, Snapshot, read_snapshot
 from .parse.translate import Translator
 from .profile import Profile
@@ -1039,6 +1039,13 @@ class Recorder:
         for note in result.notes:
             self._health.event("parse_note", note=note)
         header = result.events[0]
+        if not round_count(result.events):
+            # Seated too late to see a deal — a chase that found its table
+            # seconds before the time limit. A record with no round and no
+            # first round is not a game, and `parse` never wrote one either.
+            self._health.event("record_skipped", game=header.game_id, reason="no_round")
+            self._buffer = []
+            return
         path = game_path(self._profile.output.root, header.game_id)
         with RecordWriter(path) as writer:
             for event in result.events:

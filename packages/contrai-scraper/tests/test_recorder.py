@@ -449,11 +449,14 @@ class TestCatchingUp:
             frame(builders.envelope("payload", "updateTable", {"over": 1},
                                     frame_id="x1")),
         ]
-        summary = run_recorder(FakeSpectator(), script, profile, backlog=3)
+        lines: list[str] = []
+        run_recorder(FakeSpectator(), script, profile, backlog=3,
+                     health=HealthLog(write=lines.append))
         # The table said it had finished while the reader was still catching
         # up. Dropped, that flag never reaches the watch loop, and the game
-        # is never closed as a record.
-        assert summary.games_recorded == 1
+        # is never closed. Closed, it is written — or, having shown no round,
+        # skipped, which says the same.
+        assert [e["reason"] for e in _named(lines, "record_skipped")] == ["no_round"]
 
     def test_a_keepalive_in_the_backlog_is_not_a_table(self, profile, builders):
         # The socket talking, not the game. It is kept as part of the tail
@@ -655,6 +658,25 @@ class TestSeating:
 
 
 class TestRecording:
+    def test_a_table_seated_just_before_the_time_limit_writes_no_record(
+        self, profile, builders
+    ):
+        # obs-4a38a4de and obs-94f0610c: a chase that found its table seconds
+        # before the limit wrote a record with no round and no first round,
+        # and counted it towards --max-games.
+        clock = [0.0]
+        lines: list[str] = []
+        health = HealthLog(write=lines.append)
+        script = [snapshot_frame(builders), _jump(clock, 9999.0), frame("tick")]
+        summary = run_recorder(FakeSpectator(), script, profile, health=health,
+                               limits=RecorderLimits(max_seconds=60.0),
+                               monotonic=lambda: clock[0])
+        skipped = _named(lines, "record_skipped")
+        assert (records_in(profile), summary.games_recorded,
+                health.counters.games_recorded,
+                [(e["game"], e["reason"]) for e in skipped]) == (
+            [], 0, 0, [("obs-unknown", "no_round")])
+
     def test_a_watched_game_is_written_once(self, profile, session_frames,
                                             source_game):
         run_recorder(FakeSpectator(), session_frames(source_game), profile)
@@ -1010,12 +1032,14 @@ class TestClosingRequest:
         self, profile, builders
     ):
         # The resume parameter names the newest frame seen; with none there
-        # is nothing to name, and the game is written as it stands.
+        # is nothing to name, and the game is closed as it stands.
+        lines: list[str] = []
         spectator = FakeSpectator()
         over = frame(json.dumps({"event": "payload", "data": json.dumps(
             {"event": "updateTable", "data": {"over": 1}})}))
-        summary = run_recorder(spectator, [snapshot_frame(builders), over], profile)
-        assert (spectator.avoided, summary.games_recorded) == ([], 1)
+        run_recorder(spectator, [snapshot_frame(builders), over], profile,
+                     health=HealthLog(write=lines.append))
+        assert (spectator.avoided, len(_named(lines, "record_skipped"))) == ([], 1)
 
     def test_a_request_still_out_at_the_close_is_given_up(
         self, profile, builders, session_frames, game_builders

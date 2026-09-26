@@ -280,6 +280,23 @@ def parse_session(
     return SessionResult(tuple(record), tuple(notes), tuple(skipped))
 
 
+def round_count(events: Sequence[GameEvent]) -> int:
+    """How many rounds a record holds.
+
+    A record with none is not a game worth writing: it is a table seated
+    too late to see a deal, and both ``contrai-scrape parse`` and the live
+    recorder leave it out on this one count.
+
+    Args:
+        events: A record's events.
+
+    Returns:
+        The number of rounds dealt in it.
+    """
+
+    return sum(1 for event in events if isinstance(event, RoundDealt))
+
+
 def _draw_notes(events: Sequence[WireEvent], wire: WireSection) -> list[str]:
     """What leaving the pre-game draw out left out that was not the draw as named.
 

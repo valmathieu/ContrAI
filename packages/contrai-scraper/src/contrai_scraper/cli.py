@@ -34,7 +34,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Final
 
-from contrai_data import GameEvent, RecordWriter, RoundDealt, game_path
+from contrai_data import RecordWriter, game_path
 
 from contrai_scraper.accounts import LabelledAccount, load_accounts
 from contrai_scraper.browser import open_browser, open_session, open_spectator
@@ -52,6 +52,7 @@ from contrai_scraper.lobby import lobby_seats
 from contrai_scraper.parse.session import (
     SessionResult,
     parse_session,
+    round_count,
     split_visits,
 )
 from contrai_scraper.parse.snapshot import Snapshot, read_snapshot
@@ -824,7 +825,7 @@ def _run_parse(args: argparse.Namespace) -> int:
         results, visits = _parse_log(log, profile)
         print(f"{log.name}: {visits} table visits, {len(results)} with rounds")
         for result in results:
-            rounds = _round_count(result.events)
+            rounds = round_count(result.events)
             header = result.events[0]
             summary = f"  {header.game_id}, {rounds} rounds"
             if result.skipped_rounds:
@@ -886,7 +887,7 @@ def _parse_log(log: Path, profile: Profile) -> tuple[list[SessionResult], int]:
         except ScraperError as error:
             print(f"  a visit could not be read: {error}")
             continue
-        if _round_count(result.events):
+        if round_count(result.events):
             results.append(result)
     return results, len(visits)
 
@@ -895,12 +896,6 @@ async def _drain(source: RawLogFrameSource) -> list[RawFrame]:
     """Collect every frame a source yields."""
 
     return [frame async for frame in source]
-
-
-def _round_count(events: Sequence[GameEvent]) -> int:
-    """How many rounds a record holds."""
-
-    return sum(1 for event in events if isinstance(event, RoundDealt))
 
 
 def _logs(paths: list[Path], parser: argparse.ArgumentParser) -> list[Path]:
