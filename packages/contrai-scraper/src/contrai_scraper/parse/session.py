@@ -80,6 +80,7 @@ from .live import (
     bid_events,
     collect_rounds,
     is_draw,
+    passed_out,
     play_events,
 )
 from .snapshot import ScoreRow, Snapshot, read_snapshot
@@ -232,7 +233,8 @@ def parse_session(
 
     rounds = collect_rounds(ordered, translator)
     wire_game = _wire_game_id(ordered)
-    scores = _scores_by_round(snapshots, rounds)
+    passed = _passed_out_rounds(rounds, translator)
+    scores = _scores_by_round(snapshots, passed)
     stamp = (now or datetime.now(UTC)).isoformat(timespec="seconds").replace(
         "+00:00", "Z"
     )
@@ -262,7 +264,7 @@ def parse_session(
         round_ = rounds[number]
         produced = _round(
             round_, translator, seat_of_player, rules, scores.get(number),
-            _totals_before(number, scores, joined), ts, notes,
+            _totals_before(number, scores, joined, passed), ts, notes,
         )
         if produced is None:
             skipped.append(number)
@@ -389,8 +391,30 @@ def _observed_from(snapshot: Snapshot) -> ObservedFrom | None:
     )
 
 
+def _passed_out_rounds(
+    rounds: Mapping[int, LiveRound], translator: Translator
+) -> frozenset[int]:
+    """The numbers of every round the wire shows was passed out.
+
+    Args:
+        rounds: The session's rounds, by number.
+        translator: The vocabulary layer, for how a pass is spelled.
+
+    Returns:
+        The passed-out round numbers — see
+        :func:`~contrai_scraper.parse.live.passed_out`.
+    """
+
+    tokens = translator.profile.wire.tokens
+    last = max(rounds, default=0)
+    return frozenset(
+        number for number, round_ in rounds.items()
+        if passed_out(round_, tokens, superseded=number < last)
+    )
+
+
 def _scores_by_round(
-    snapshots: Sequence[Snapshot], rounds: Mapping[int, LiveRound]
+    snapshots: Sequence[Snapshot], passed: frozenset[int]
 ) -> dict[int, tuple[ScoreRow, Mapping[TeamSide, int] | None]]:
     """Map each snapshot's score rows onto the rounds they describe.
 
@@ -399,6 +423,20 @@ def _scores_by_round(
     ever applied to the rows one snapshot carried, so a round that was never
     covered by a snapshot simply has no entry — which is what makes "no score
     row" expressible rather than guessed at.
+
+    A passed-out round has no row on the sheet but does take a round number,
+    so the walk steps over it: a row belongs to the next *played* round
+    down, not to the next number. The snapshot's totals go to the newest row
+    walked even when ``round_index`` itself names a passed-out round, since
+    passing out changes no total.
+
+    Args:
+        snapshots: Every snapshot of the session, in arrival order.
+        passed: The passed-out round numbers.
+
+    Returns:
+        Round number to its row, and the running totals after it when the
+        row was the newest its snapshot carried.
     """
 
     scores: dict[int, tuple[ScoreRow, Mapping[TeamSide, int] | None]] = {}
@@ -406,13 +444,16 @@ def _scores_by_round(
         if snapshot.round_index is None or not snapshot.score_rows:
             continue
         number = snapshot.round_index
+        totals = snapshot.totals
         for row in reversed(snapshot.score_rows):
+            while number in passed:
+                number -= 1
             if number < 1:
                 break
+            scores.setdefault(number, (row, totals))
             # Only the newest row's totals are the totals *after* that round;
             # an older row's running total is not in the payload at all.
-            totals = snapshot.totals if number == snapshot.round_index else None
-            scores.setdefault(number, (row, totals))
+            totals = None
             number -= 1
     return scores
 
@@ -600,6 +641,7 @@ def _totals_before(
     number: int,
     scores: Mapping[int, tuple[ScoreRow, Mapping[TeamSide, int] | None]],
     joined: ObservedFrom | None,
+    passed: frozenset[int],
 ) -> Mapping[TeamSide, int] | None:
     """The running totals standing just before round ``number`` was played.
 
@@ -607,11 +649,27 @@ def _totals_before(
     session began; otherwise they are the totals after the round before,
     when a snapshot read them. Anything else is unknown, and no carry can
     be inferred across it.
+
+    Passed-out rounds just before ``number`` change no total, so the walk
+    steps back over them: the totals before ``number`` are those before the
+    first round of that run.
+
+    Args:
+        number: The round being scored.
+        scores: Round number to its row and the totals after it.
+        joined: Where the session joined, or ``None`` when it saw the start.
+        passed: The passed-out round numbers.
+
+    Returns:
+        The totals, or ``None`` when no read covers them.
     """
 
-    if joined is not None and joined.round == number:
+    start = number
+    while start - 1 in passed and (joined is None or joined.round != start):
+        start -= 1
+    if joined is not None and joined.round == start:
         return joined.totals
-    previous = scores.get(number - 1)
+    previous = scores.get(start - 1)
     return None if previous is None else previous[1]
 
 

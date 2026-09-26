@@ -51,6 +51,7 @@ from contrai_data import BidMade, CardPlayed
 
 from ..exceptions import ParseError
 from ..lzstring import decompress_from_base64
+from ..profile import WireTokens
 from ..wire import DEAL_VERB, EventKey, WireEvent
 from .forced_passes import restore_forced_passes
 from .translate import Translator
@@ -122,6 +123,38 @@ def collect_rounds(
                 event.data,
             )
     return rounds
+
+
+def passed_out(round_: LiveRound, tokens: WireTokens, *, superseded: bool) -> bool:
+    """Whether a round was passed out: every seat passed and the cards went back.
+
+    A passed-out round has no row on the site's score sheet, yet it still
+    advances the round counter — so it has to be recognised before any row
+    is mapped onto a round number, or every row below it lands one round too
+    high.
+
+    The wire shows it as a round with bids and no play in which every bid
+    observed is a pass. Four passes settle it. Fewer settle it too once a
+    later round has begun, because a contract would have been played out
+    first: that is the round the session joined mid-auction, or one whose
+    frames were lost in a gap. A round that was played cannot look like
+    this — it holds a contract bid and twenty-eight plays.
+
+    Args:
+        round_: The round as the wire described it.
+        tokens: The profile's vocabulary, which says whether a pass is the
+            null payload — the only spelling of a pass this can recognise.
+        superseded: Whether a later round of the same game was seen begun.
+
+    Returns:
+        Whether the round was passed out.
+    """
+
+    if round_.plays or not round_.bids or not tokens.pass_is_null:
+        return False
+    if any(payload is not None for _, payload in round_.bids.values()):
+        return False
+    return len(round_.bids) == len(Position) or superseded
 
 
 def is_draw(key: EventKey, draw_verb: str | None) -> bool:

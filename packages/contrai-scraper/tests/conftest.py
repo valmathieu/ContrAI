@@ -690,6 +690,31 @@ def round_events(number, dealer, declarer, value, suit, made, totals, *,
     return events
 
 
+def passed_round(number, dealer):
+    """One passed-out round of a record: the deal and four passes, no play.
+
+    It carries no score line, which is also what the synthesizer sends for
+    it: the site's score sheet has no row for a round nobody bid.
+    """
+
+    hands = _deal(_deck(number * 5), dealer)
+    speaker = dealer.next_in(DIRECTION)
+    events = [
+        RoundDealt(
+            round=number,
+            dealer=dealer,
+            hands=hands,
+            hands_derivation=HandsDerivation.DEALT_FROM_DECK,
+            ts=TS,
+        )
+    ]
+    for seq in range(1, 5):
+        events.append(BidMade(round=number, seq=seq, position=speaker,
+                              bid=PassBid(player=speaker), think_ms=None, ts=TS))
+        speaker = speaker.next_in(DIRECTION)
+    return events
+
+
 def game_events(*rounds, reason=EndReason.OBSERVER_LEFT):
     """A whole record: header, table, the given rounds, and an ending."""
 
@@ -987,6 +1012,7 @@ def game_builders():
 
     return SimpleNamespace(
         round_events=round_events,
+        passed_round=passed_round,
         game_events=game_events,
         card_glyph=card_glyph,
         stock_for=stock_for,

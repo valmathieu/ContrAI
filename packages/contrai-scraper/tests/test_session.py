@@ -45,11 +45,12 @@ from contrai_scraper.parse.session import (
     _held,
     _last_trick,
     _round_scored,
+    _scores_by_round,
     _slam,
     _swept_by,
     _totals_before,
 )
-from contrai_scraper.parse.snapshot import RowContract, ScoreRow
+from contrai_scraper.parse.snapshot import RowContract, ScoreRow, Snapshot
 
 
 def _comparable(events):
@@ -592,7 +593,67 @@ class TestSplitVisits:
         assert split_visits([_played("g1", 1)], profile) == ()
 
 
+def _with_passed_out_third(game_builders):
+    """Four rounds, the third passed out, each played one dealt as usual."""
+
+    b = game_builders
+    return b.game_events(
+        b.round_events(1, Position.SOUTH, Position.WEST, 80, Suit.SPADES, True,
+                       {TeamSide.NS: 0, TeamSide.EW: 170}),
+        b.round_events(2, Position.EAST, Position.SOUTH, 110, Suit.HEARTS, True,
+                       {TeamSide.NS: 200, TeamSide.EW: 170},
+                       carried_over={TeamSide.NS: 0, TeamSide.EW: 0}),
+        b.passed_round(3, Position.SOUTH),
+        b.round_events(4, Position.WEST, Position.NORTH, 90, Suit.CLUBS, True,
+                       {TeamSide.NS: 380, TeamSide.EW: 170},
+                       carried_over={TeamSide.NS: 0, TeamSide.EW: 0}),
+    )
+
+
+def _only_reads(texts, *kept):
+    """The session with every snapshot dropped but the opening one and ``kept``."""
+
+    ids = {'"id": "s0"', *(f'"id": "s{number}"' for number in kept)}
+    return [
+        (text, socket) for text, socket in texts
+        if "joinTable" not in text or any(id_ in text for id_ in ids)
+    ]
+
+
+def _bare_snapshot(round_index, rows, totals):
+    """A snapshot holding nothing but its rows and totals."""
+
+    return Snapshot(table_id="t1", is_tournament=True, round_index=round_index,
+                    seats={}, players={}, score_rows=tuple(rows), totals=totals,
+                    at=None)
+
+
 class TestScoreRowWalk:
+    def test_every_row_lands_on_its_own_round_past_a_passed_out_one(
+        self, profile, synthesize, game_builders
+    ):
+        # The site's sheet has no row for round 3, so the last read's three
+        # rows are rounds 1, 2 and 4. One row per round number would have put
+        # round 2's row on round 3 and round 1's on round 2 (obs-597c7d8a).
+        texts = _only_reads(synthesize(_with_passed_out_third(game_builders)), 4)
+        scored = [event for event in _parse(profile, texts).events
+                  if isinstance(event, RoundScored)]
+        assert [(e.round, e.contract.value, e.contract.suit, e.totals is None)
+                for e in scored] == [
+            (1, 80, Suit.SPADES, True),
+            (2, 110, Suit.HEARTS, True),
+            (4, 90, Suit.CLUBS, False),
+        ]
+
+    def test_the_totals_go_to_the_newest_row_when_the_index_is_passed_out(self):
+        # A read taken just after a passed-out round names that round, and
+        # passing out changes no total: they are the totals after round 2.
+        totals = {TeamSide.NS: 200, TeamSide.EW: 170}
+        first, second = _row(), _row(made=False)
+        scores = _scores_by_round(
+            [_bare_snapshot(3, (first, second), totals)], frozenset({3}))
+        assert scores == {1: (first, None), 2: (second, totals)}
+
     def test_rows_for_rounds_before_the_session_are_dropped(
         self, profile, builders
     ):
@@ -761,20 +822,44 @@ class TestCarriedOver:
 class TestTotalsBefore:
     _AFTER_2 = {TeamSide.NS: 48, TeamSide.EW: 496}
 
+    _NONE: frozenset[int] = frozenset()
+
     def test_the_join_round_reads_the_join_snapshot(self):
         joined = ObservedFrom(round=3, phase=JoinPhase.PLAY,
                               totals=self._AFTER_2)
-        assert _totals_before(3, {}, joined) == self._AFTER_2
+        assert _totals_before(3, {}, joined, self._NONE) == self._AFTER_2
 
     def test_a_later_round_reads_the_round_before(self):
         scores = {2: (_row(), self._AFTER_2)}
-        assert _totals_before(3, scores, None) == self._AFTER_2
+        assert _totals_before(3, scores, None, self._NONE) == self._AFTER_2
 
     def test_a_round_before_without_totals_is_unknown(self):
-        assert _totals_before(3, {2: (_row(), None)}, None) is None
+        assert _totals_before(3, {2: (_row(), None)}, None, self._NONE) is None
 
     def test_a_missing_round_before_is_unknown(self):
-        assert _totals_before(3, {}, None) is None
+        assert _totals_before(3, {}, None, self._NONE) is None
+
+    def test_a_passed_out_round_before_is_stepped_over(self):
+        # Passing out changes no total, so the totals before round 4 are the
+        # ones after round 2.
+        scores = {2: (_row(), self._AFTER_2)}
+        assert _totals_before(4, scores, None, frozenset({3})) == self._AFTER_2
+
+    def test_a_run_of_passed_out_rounds_is_stepped_over(self):
+        scores = {2: (_row(), self._AFTER_2)}
+        assert _totals_before(5, scores, None,
+                              frozenset({3, 4})) == self._AFTER_2
+
+    def test_a_passed_out_join_round_reads_the_join_snapshot(self):
+        # The session joined round 3 mid-auction and everybody passed.
+        joined = ObservedFrom(round=3, phase=JoinPhase.PLAY,
+                              totals=self._AFTER_2)
+        assert _totals_before(4, {}, joined, frozenset({3})) == self._AFTER_2
+
+    def test_the_first_round_stays_unknown_after_passing_out(self):
+        # Before round 1 the totals are 0 / 0, but that seed is not this
+        # parser's to write down.
+        assert _totals_before(2, {}, None, frozenset({1})) is None
 
 
 class TestHeldRoundScored:

@@ -152,6 +152,18 @@ never read — the round before was not scored by any snapshot — the carry is 
 Across the V5 corpus the residual is non-zero in exactly one of 491 inferable rounds, and it is
 that 161.
 
+A **passed-out round** — every seat passes and the cards are dealt again — has no row on the site's
+score sheet, yet it still advances the round counter. A snapshot's rows therefore cannot be walked
+back one per round number: below a passed-out round every row would land one round too high. That
+fault stayed hidden while an earlier snapshot, taken before the passed-out round, filled those rounds
+first, and it reached records once boundary requests went unanswered (two `suspect` games in the
+10-worker ramp). `passed_out` recognises such a round on the wire — bids but no play, every observed
+bid a pass, and either four of them or a later round begun, which covers an auction the session
+joined part-way — and the walk steps over those numbers, so each row lands on a *played* round. A
+snapshot taken just after a passed-out round names it as its last, and its totals go to the newest
+row all the same: passing out changes no total. For the same reason the totals standing before a
+round are those before the run of passed-out rounds just ahead of it.
+
 The eighth trick never reaches the wire, and no row says which side took it: the ten-point bonus
 is folded into the taker's card points. It is still recorded. The rebuilt trick's winner by core's
 rule is written as `last_trick` only when the row's card points are exactly the tricks' piles with
