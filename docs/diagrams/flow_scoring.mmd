@@ -27,7 +27,7 @@ flowchart TD
 
     %% ---------- The substitute ----------
     Transfer --> Subst
-    Subst["substitute = Slam base (250 / 500) — always<br/>| unannounced sweep, iff <i>unannounced_slam_substitute</i><br/>and (M = 1 or <i>substitute_survives_doubling</i>):<br/>500 for the bidder's own sweep iff <i>personal_sweep_marks_solo_slam</i>, else 250<br/>| None → count the pile for real"]
+    Subst["substitute = Slam base (250 / 500) — always<br/>| unannounced sweep, iff <i>unannounced_slam_substitute</i><br/>and (M = 1 or <i>substitute_survives_doubling</i>):<br/>500 for the bidder's own sweep iff <i>personal_sweep_marks_solo_slam</i>, else 250<br/>| the defense swept: 250 to the defense,<br/>iff <i>defense_sweep_marks_substitute</i><br/>| None → count the pile for real"]
 
     %% ---------- The two §7.2 components ----------
     Subst --> MadeComp

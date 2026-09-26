@@ -337,6 +337,7 @@ If the declaring team wins **all 8 tricks** on a numeric contract *without havin
 
 - If the two partners split the 8 tricks between them, the substitute is **250**. If the **declarer** personally took all 8, it is **500** (where the Solo Slam bid is authorized, §9.4) — the sweep the declarer could have bid as a Solo Slam. A *partner's* solo sweep is not that shape and scores the ordinary **250** team substitute.
 - **Declaring team only.** If the *defense* takes all 8 tricks the declarer has simply failed — mark it as an ordinary failed contract, not as a Slam.
+- **Table option — the defense's sweep marks the substitute** (off by default, §9): switched on, a defense that takes all 8 tricks of a numeric contract marks the team's flat **250** as its made points instead of the failure's flat 160 — never the 500, which rewards a bidder's call. The contract still fails, and the announced component is whatever a failure marks. The observed online tournament tables play it on: a 120 doubled swept by the defense was marked 250 × 2 = 500 made.
 - **Table option — the personal sweep marks the Solo Slam** (on by default, §9): switched off, the declarer's solo sweep marks the team's **250** like any other, and the 500 premium above is not played. The observed online tournament tables play it off — all 49 unannounced sweeps in the V5 capture are marked 250, the personal ones included.
 - **Table option — the substitute survives doubling** (off by default, §9): by default a doubled or redoubled sweep uses the winner-takes-all grid above, pile flat at 160, and the substitute does **not** apply. Switched on, the substitute applies to a doubled contract too and is multiplied with the rest of the mark — which is what the observed tables do: a doubled sweep is marked `250 × M`, not `160 × M`.
 - **Table option — unannounced-Slam substitute** (on by default, §9): switched off, a sweep marks the ordinary pile like any other made contract.
@@ -527,6 +528,7 @@ The *documented only* rows are tracked together as a deferred-variants checklist
 | Unannounced-Slam substitute (250 / 500)        | **on** / off                       | configurable | §7.2  |
 | The substitute survives doubling               | **off** / on                       | configurable | §7.2  |
 | The personal sweep marks the Solo Slam         | **on** / off                       | configurable | §7.2  |
+| The defense's sweep marks the substitute       | **off** / on                       | configurable | §7.2  |
 | Failed Slam marks 250 / 500 — made points      | **on** / off                       | configurable | §7.2  |
 | Failed Slam marks 250 / 500 — announced points | **on** / off                       | configurable | §7.2  |
 | The attack must out-score the defense          | **on** / off                       | configurable | §7.5  |

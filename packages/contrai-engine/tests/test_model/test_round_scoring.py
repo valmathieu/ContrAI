@@ -799,9 +799,10 @@ def _split_round(
 
 
 def _sweep_round(
-    players_dict, value, *, personal=False, doubled=False, rules=None
+    players_dict, value, *, personal=False, doubled=False, rules=None,
+    declarer="N",
 ):
-    """Build a numeric round the declaring team sweeps.
+    """Build a numeric round N-S sweeps — the declaring team by default.
 
     All 32 cards land in eight tricks played entirely by the N-S seats,
     so N-S wins every one and captures the whole 152-point pack — 162
@@ -811,12 +812,15 @@ def _sweep_round(
 
     Args:
         players_dict: the ``players`` fixture (seat → Player).
-        value: the numeric contract value, bid by N.
+        value: the numeric contract value, bid by ``declarer``.
         personal: whether N sweeps alone (``UnannouncedSlam.GRAND_SLAM``)
             or the partner takes the last trick (``SLAM``).
         doubled: whether E doubles the contract, so the sweep lands on
             the ×2 path the ``substitute_survives_doubling`` knob rules.
         rules: optional table ruleset.
+        declarer: seat letter that bids the contract. An E-W seat makes
+            the sweep the *defense's*: N-S takes every trick of a
+            contract it did not bid.
 
     Returns:
         Round with ``contract`` and ``play_state`` populated.
@@ -830,9 +834,12 @@ def _sweep_round(
         seat_cards = [("N", card) for card in cards[:28]]
         seat_cards += [("S", card) for card in cards[28:]]
 
+    # The double comes from the other side: E against an N-S contract,
+    # N against an E-W one.
+    doubler = "E" if declarer in ("N", "S") else "N"
     contract = Contract(
-        ContractBid(players_dict["N"], value, _SPLIT_TRUMP),
-        **({"double_player": players_dict["E"]} if doubled else {}),
+        ContractBid(players_dict[declarer], value, _SPLIT_TRUMP),
+        **({"double_player": players_dict[doubler]} if doubled else {}),
     )
     round_ = _numeric_round(
         players_dict,
@@ -1436,6 +1443,76 @@ class TestPersonalSweepMarksSoloSlam:
         assert marked_components(
             score.marks[TeamSide.NS], score.multiplier, rules
         ) == (500, 280)
+
+
+class TestDefenseSweepMarksSubstitute:
+    """§9.6 — whether a defense that takes all 8 tricks marks the 250."""
+
+    def test_off_by_default_the_sweep_is_an_ordinary_failure(self, players):
+        # §7.2 "Declaring team only": E's 100 swept by N-S fails like any
+        # other, the defense marking the flat 160 plus the 100.
+        score = score_round(_sweep_round(players, 100, declarer="E"))
+        assert score.contract_made is False
+        assert score.unannounced_slam is None
+        assert score.marks[TeamSide.NS] == Mark(160, 100)
+
+    def test_on_the_defense_marks_the_substitute(self, players):
+        rules = RuleConfig(defense_sweep_marks_substitute=True)
+        score = score_round(
+            _sweep_round(players, 100, declarer="E", rules=rules)
+        )
+        assert score.contract_made is False
+        assert score.marks[TeamSide.NS] == Mark(250, 100)
+        assert score.marks[TeamSide.EW] == Mark(0, 0)
+        assert score.scores == {TeamSide.NS: 350, TeamSide.EW: 0}
+
+    def test_a_defense_short_of_eight_tricks_marks_the_flat_160(self, players):
+        # 152 + 10 to the defense but one trick to the declarer's side is
+        # not a sweep: the pile rule, not the substitute.
+        rules = RuleConfig(defense_sweep_marks_substitute=True)
+        score = score_round(
+            _split_round(players, 100, attack=10, defense=152, declarer="E",
+                         rules=rules)
+        )
+        assert score.contract_made is False
+        assert score.marks[TeamSide.NS] == Mark(160, 100)
+
+    def test_the_declaring_team_s_sweep_is_not_touched(self, players):
+        rules = RuleConfig(defense_sweep_marks_substitute=True)
+        score = score_round(_sweep_round(players, 100, rules=rules))
+        assert score.contract_made is True
+        assert score.marks[TeamSide.NS] == Mark(250, 100)
+
+    def test_a_failed_slam_keeps_its_own_switch(self, players):
+        # An announced Slam's failure is priced by
+        # failed_slam_marks_made_points, never by this knob.
+        rules = RuleConfig(
+            defense_sweep_marks_substitute=True,
+            failed_slam_marks_made_points=False,
+        )
+        contract = _contract(players["E"], SlamLevel.SLAM, Suit.SPADES)
+        round_ = _slam_round(
+            players, contract=contract, trick_winners=["N"] * 8, rules=rules
+        )
+        score = score_round(round_)
+        assert score.contract_made is False
+        assert score.marks[TeamSide.NS].made == 160
+
+    def test_the_observed_doubled_defense_sweep(self, players):
+        # obs-daf245b0 round 6: N... here E declares 120, doubled, and the
+        # other side takes all 8. The site marked the sweepers 250 × 2 =
+        # 500 made and 160 × 2 = 320 announced.
+        rules = PRESETS["tournament"]
+        score = score_round(
+            _sweep_round(players, 120, declarer="E", doubled=True, rules=rules)
+        )
+        assert score.contract_made is False
+        assert marked_components(
+            score.marks[TeamSide.NS], score.multiplier, rules
+        ) == (500, 320)
+        assert marked_components(
+            score.marks[TeamSide.EW], score.multiplier, rules
+        ) == (0, 0)
 
 
 class TestFailureSwitchesEndToEnd:

@@ -337,6 +337,18 @@ def score_round(round_: 'Round') -> RoundScore:
         and (multiplier == 1 or rules.substitute_survives_doubling)
     ):
         substitute = sweep_substitute(unannounced_slam, rules)
+    elif (
+        rules.defense_sweep_marks_substitute
+        and trick_counts[contract_side] == 0
+        and sum(trick_counts.values()) == 8
+    ):
+        # The defense took every trick of a numeric contract. §7.2 marks
+        # that as an ordinary failure, the defense on the flat 160; a
+        # table that prices the defense's sweep like the declarer's gives
+        # it the team's 250 instead. Never the Solo Slam's 500: that
+        # premium is for the bidder who could have called it. The contract
+        # has failed — a declaring side with no trick has no points.
+        substitute = SlamLevel.SLAM.base_value
 
     attack_mark, defense_mark = contract_components(
         contract_value=contract_value,

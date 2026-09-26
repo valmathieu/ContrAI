@@ -49,6 +49,7 @@ CLASSIC_TOML = (
     "unannounced_slam_substitute        = true\n"
     "substitute_survives_doubling       = false\n"
     "personal_sweep_marks_solo_slam     = true\n"
+    "defense_sweep_marks_substitute     = false\n"
     "failed_slam_marks_made_points      = true\n"
     "failed_slam_marks_announced_points = true\n"
     "attack_must_outscore_defense       = true\n"

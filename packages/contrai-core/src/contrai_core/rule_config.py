@@ -120,6 +120,9 @@ class RuleConfig:
             applies to a doubled or redoubled contract too (§9.6).
         personal_sweep_marks_solo_slam: A declarer's solo sweep marks the
             Solo Slam's 500 rather than the team's 250 (§9.6).
+        defense_sweep_marks_substitute: A defense that takes all 8 tricks
+            of a numeric contract marks the 250 substitute as its made
+            points rather than the flat 160 (§9.6).
         failed_slam_marks_made_points: Failed Slam — made component (§9.6).
         failed_slam_marks_announced_points: Failed Slam — announced
             component (§9.6).
@@ -160,6 +163,7 @@ class RuleConfig:
     unannounced_slam_substitute: bool = True
     substitute_survives_doubling: bool = False
     personal_sweep_marks_solo_slam: bool = True
+    defense_sweep_marks_substitute: bool = False
     failed_slam_marks_made_points: bool = True
     failed_slam_marks_announced_points: bool = True
     attack_must_outscore_defense: bool = True
@@ -202,15 +206,15 @@ class RuleConfig:
     def tournament(cls) -> RuleConfig:
         """The rule set the observed online tournament tables play.
 
-        Seven knobs off the §9 defaults, each read off the captured
+        Eight knobs off the §9 defaults, each read off the captured
         tables rather than assumed: play runs clockwise, any failed
         contract marks the flat 160, the double multiplier applies to the
         whole mark rather than to the announced component alone, a Solo
         Slam declarer opens trick 1, an unannounced sweep keeps its
         substitute when the contract was doubled, a declarer's solo
-        sweep marks the team's 250 rather than the Solo Slam's 500, and a
-        genuine tie holds the attack's points for whoever wins the next
-        contract.
+        sweep marks the team's 250 rather than the Solo Slam's 500, a
+        defense that sweeps marks the same 250 substitute, and a genuine
+        tie holds the attack's points for whoever wins the next contract.
 
         The two sweep knobs were measured over the V5 corpus's 59
         sweeps. obs-579624dd round 7 (140♦ doubled) and obs-7bfd7f3f
@@ -219,7 +223,9 @@ class RuleConfig:
         where §7.2's default would flatten the pile to 160 and mark 320.
         All 49 unannounced sweeps are marked 250, the two personal ones
         (obs-2629f21c round 8, obs-e44783eb round 6) included, so the
-        §7.2 personal-sweep premium is not played here.
+        §7.2 personal-sweep premium is not played here. The one defense
+        sweep, obs-daf245b0 round 6 (120♠ doubled), is marked 250 × 2 =
+        500 made for the defense, not the flat 160 × 2.
 
         The dispute rule was read off obs-f3c28d3b: round 3, an 81/81 on
         an 80, marked the defense 81 and the declarer nothing, and round
@@ -239,6 +245,7 @@ class RuleConfig:
             solo_slam_gives_the_lead=True,
             substitute_survives_doubling=True,
             personal_sweep_marks_solo_slam=False,
+            defense_sweep_marks_substitute=True,
             dispute_resolution=DisputeResolution.HELD,
         )
 
