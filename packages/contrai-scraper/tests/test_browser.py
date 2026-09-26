@@ -14,6 +14,7 @@ from contrai_scraper.browser import (
     PANEL_ATTEMPT_TIMEOUT_MS,
     PANEL_ATTEMPTS,
     STEP_TIMEOUT_MS,
+    SentRequest,
 )
 
 
@@ -914,10 +915,12 @@ class TestResume:
         page = FakePage({})
 
         async def scenario():
-            return await Spectator(page, profile).request_state("t1", "f-42")
+            spectator = Spectator(page, profile)
+            page.evaluate = _sending_on(page, 0)
+            return await spectator.request_state("t1", "f-42")
 
         drain(scenario)
-        sent = page.evaluated[0][1]
+        sent = page.evaluated[0][1]["envelope"]
         assert (sent["action"], sent["data"]["room"],
                 sent["data"]["params"]["lastSeen"]) == ("resume", "room-t1", "f-42")
 
@@ -929,30 +932,78 @@ class TestResume:
 
         async def scenario():
             spectator = Spectator(page, profile)
-            page.evaluate = _refusing(page)
+            page.evaluate = _sending_on(page, -1)
             return await spectator.request_state("t1", "f-42")
 
-        assert drain(scenario) is False
+        assert drain(scenario) is None
+
+    @pytest.mark.parametrize("answer", [True, None, "2"])
+    def test_an_answer_that_is_no_index_reports_failure(self, profile, answer):
+        page = FakePage({})
+
+        async def scenario():
+            spectator = Spectator(page, profile)
+            page.evaluate = _sending_on(page, answer)
+            return await spectator.request_state("t1", "f-42")
+
+        assert drain(scenario) is None
+
+    def test_the_request_names_the_socket_it_went_on(self, profile):
+        page = FakePage({})
+
+        async def scenario():
+            spectator = Spectator(page, profile)
+            page.evaluate = _sending_on(page, 3)
+            return await spectator.request_state("t1", "f-42")
+
+        assert drain(scenario) == SentRequest(id="contrai-1", socket=3)
+
+    def test_the_send_passes_the_socket_to_avoid_and_the_url_pattern(self, profile):
+        # A retry goes out on another socket than the unanswered attempt, and
+        # only ever on one of the site's own.
+        page = FakePage({})
+
+        async def scenario():
+            spectator = Spectator(page, profile)
+            page.evaluate = _sending_on(page, 0)
+            await spectator.request_state("t1", "f-42", avoid=1)
+
+        drain(scenario)
+        sent = page.evaluated[0][1]
+        assert (sent["avoid"], sent["pattern"]) == (
+            1, profile.wire.socket_url_pattern.pattern)
+
+    def test_a_first_attempt_avoids_no_socket(self, profile):
+        page = FakePage({})
+
+        async def scenario():
+            spectator = Spectator(page, profile)
+            page.evaluate = _sending_on(page, 0)
+            await spectator.request_state("t1", "f-42")
+
+        drain(scenario)
+        assert page.evaluated[0][1]["avoid"] is None
 
     def test_each_request_carries_an_id_of_its_own(self, profile):
         page = FakePage({})
 
         async def scenario():
             spectator = Spectator(page, profile)
+            page.evaluate = _sending_on(page, 0)
             await spectator.request_state("t1", "f-1")
             await spectator.request_state("t1", "f-2")
 
         drain(scenario)
-        first, second = (sent["id"] for _, sent in page.evaluated)
+        first, second = (sent["envelope"]["id"] for _, sent in page.evaluated)
         assert first != second
 
 
-def _refusing(page):
-    """A ``page.evaluate`` that reports the send did not go."""
+def _sending_on(page, answer):
+    """A ``page.evaluate`` whose send reports ``answer`` — a socket index, or -1."""
 
     async def evaluate(script, arg=None):
         page.evaluated.append((script, arg))
-        return False
+        return answer
 
     return evaluate
 

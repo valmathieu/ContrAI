@@ -162,15 +162,43 @@ INIT_SCRIPT: Final[str] = """
 })();
 """
 
-#: Sends one envelope on the newest open socket. Returns whether it went.
+#: Sends one envelope on the newest open socket whose URL matches the
+#: profile's pattern and which is not the one to avoid. Returns that socket's
+#: index among every socket the page opened, or -1 when none is left.
+#:
+#: The pattern is the profile's own regex, compiled by the page; one it cannot
+#: compile matches every socket, which is how the send behaved before a socket
+#: could be chosen. ``avoid`` is how a retry goes out on another socket than
+#: the attempt the site never answered.
 SEND_SCRIPT: Final[str] = """
-(envelope) => {
-  const live = (window.__contrai_sockets || []).filter(s => s.readyState === 1);
-  if (!live.length) return false;
-  live[live.length - 1].send(JSON.stringify(envelope));
-  return true;
+({envelope, avoid, pattern}) => {
+  let matches = () => true;
+  try {
+    const compiled = new RegExp(pattern);
+    matches = (socket) => compiled.test(socket.url);
+  } catch (error) {}
+  const all = window.__contrai_sockets || [];
+  for (let index = all.length - 1; index >= 0; index--) {
+    const socket = all[index];
+    if (socket.readyState === 1 && index !== avoid && matches(socket)) {
+      socket.send(JSON.stringify(envelope));
+      return index;
+    }
+  }
+  return -1;
 }
 """
+
+
+@dataclass(frozen=True, slots=True)
+class SentRequest:
+    """A state request that went out, and where."""
+
+    id: str
+    """The envelope's own id, which the socket echoes as the sent frame's."""
+
+    socket: int
+    """The page's index of the socket it went on — what a retry avoids."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -622,7 +650,9 @@ class Spectator:
         await self._close_panel()
         return _number_in(text, self._selectors.player_id_prefix)
 
-    async def request_state(self, table_id: str, last_event_id: str) -> bool:
+    async def request_state(
+        self, table_id: str, last_event_id: str, *, avoid: int | None = None
+    ) -> SentRequest | None:
         """Ask for a fresh state snapshot without leaving the table.
 
         The parameter naming the last frame seen is what makes this work: the
@@ -631,9 +661,13 @@ class Spectator:
         Args:
             table_id: The table's own id, as the join snapshot gave it.
             last_event_id: The id of the newest frame seen on the socket.
+            avoid: A socket not to send on, by the index a previous
+                :class:`SentRequest` named — the one whose request the site
+                acknowledged and never answered.
 
         Returns:
-            Whether the request was sent. The answer arrives on the socket as
+            The request and the socket it went on, or ``None`` when no open
+            socket was left to send it on. The answer arrives on the socket as
             a join snapshot, so the caller reads it off the frame source.
         """
 
@@ -647,7 +681,18 @@ class Spectator:
                 "params": {wire.resume_param: last_event_id},
             },
         }
-        return bool(await self._page.evaluate(SEND_SCRIPT, envelope))
+        index = await self._page.evaluate(
+            SEND_SCRIPT,
+            {
+                "envelope": envelope,
+                "avoid": avoid,
+                "pattern": wire.socket_url_pattern.pattern,
+            },
+        )
+        # Exactly an int: a bool is one too in Python, and is not an index.
+        if type(index) is not int or index < 0:
+            return None
+        return SentRequest(id=envelope["id"], socket=index)
 
     async def capture(self, stem: Path) -> tuple[Path, ...]:
         """Save what the page looked like, as ``<stem>.png`` and ``<stem>.html``.

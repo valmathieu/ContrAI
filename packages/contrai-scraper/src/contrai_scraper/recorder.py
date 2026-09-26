@@ -49,13 +49,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from contrai_core import Position
 from contrai_data import EndReason, RecordWriter, RoundDealt, game_path
 
-from .exceptions import ParseError, ScraperError
-from .frames import FrameSource, RawFrame
+from .exceptions import BrowserError, ParseError, ScraperError
+from .frames import SENT, FrameSource, RawFrame
 from .health import HealthLog
 from .lobby import SEATS, LobbyRoster
 from .parse.session import parse_session, split_visits
@@ -67,6 +67,31 @@ from .wire import DEAL_VERB, WireEvent, WireStream, duplicate_key, order_events
 
 #: The name a scoreboard read is filed under in the raw log.
 SCOREBOARD_PANEL = "scoreboard"
+
+#: How long a state request is given to be answered, in seconds.
+#:
+#: Answers come fast or never: across the ramp's runs every answered request
+#: came back within 0.22 s (p99 0.17 s), and none came late. So waiting the
+#: whole ``snapshot_timeout_s`` for one buys nothing but a later retry.
+STATE_ANSWER_S: Final[float] = 5.0
+
+
+@dataclass(slots=True)
+class _PendingRead:
+    """A state request out on the wire, waiting for its snapshot."""
+
+    request: Any
+    """What ``request_state`` returned: its ``id`` and the page's ``socket``."""
+
+    table_id: str | None
+    last_event_id: str
+    attempt: int
+    """0 for the first request, 1 for the retry on another socket."""
+
+    deadline: float
+    socket: int | None = None
+    """The frame source's index of the socket it went on, from our own sent
+    frame — the index every frame of the raw log is filed under."""
 
 
 class StopReason(StrEnum):
@@ -149,7 +174,7 @@ class Recorder:
         "_seen_snapshots", "_records", "_deadline", "_stopped", "_active",
         "_last_activity", "_seated", "_rejected", "_base", "_egress",
         "_seat_deadline", "_stop_reason", "_left_table", "_claims", "_target",
-        "_scanned", "_chase_deadline", "_found",
+        "_scanned", "_chase_deadline", "_found", "_pending",
     )
 
     def __init__(
@@ -227,6 +252,7 @@ class Recorder:
         self._seated = 0
         self._rejected = 0
         self._base = [0, 0, 0]
+        self._pending: _PendingRead | None = None
 
     async def run(self) -> SessionSummary:
         """Watch tables until the limits are reached or the frames stop.
@@ -670,6 +696,7 @@ class Recorder:
         last_event_id: str | None = None
         last_deal_round: int | None = None
         self._last_activity = self._monotonic()
+        self._pending = None
         recorder = self._profile.recorder
 
         while True:
@@ -677,14 +704,29 @@ class Recorder:
                 self._health.heartbeat(table=table_id)
             if self._past_deadline():
                 return self._leave_at_deadline()
+            pending = self._pending
+            if pending is not None and self._monotonic() >= pending.deadline:
+                await self._unanswered()
+                continue
             remaining = self._capped(
                 recorder.stale_after_s - (self._monotonic() - self._last_activity)
             )
+            # A pending request shortens the wait to its own deadline. A wait
+            # cut short that way is the request's to settle, at the top of the
+            # loop — never a table gone quiet.
+            waiting_on_request = (
+                pending is not None
+                and pending.deadline - self._monotonic() < remaining
+            )
+            if waiting_on_request:
+                remaining = pending.deadline - self._monotonic()
             pulled = await self._pull(remaining) if remaining > 0 else None
             if self._stopped:
                 self._write(EndReason.INTERRUPTED)
                 return
             if pulled is None:
+                if waiting_on_request:
+                    continue
                 if self._past_deadline():
                     # The wait is capped at the deadline, so it runs out there
                     # whether or not the players are still at it: the shift
@@ -703,6 +745,9 @@ class Recorder:
                 continue
 
             self._buffer.append(event)
+            if self._pending is not None and self._answers(event, table_id):
+                self._health.counters.score_reads_wire += 1
+                self._pending = None
             last_event_id = event.frame_id or last_event_id
             if self._says(event, "ended"):
                 return await self._close(table_id, last_event_id)
@@ -722,18 +767,108 @@ class Recorder:
         """Ask the table for a state snapshot, or fall back to the panel.
 
         The request answers on the socket, so the snapshot arrives in the
-        live loop and lands in the buffer like any other event. The panel
-        behind it cannot: the parser reads scores from snapshots only, so a
-        panel read is evidence for the raw log and nothing more.
+        live loop and lands in the buffer like any other event; it counts as
+        a wire read only once it has. A request still unanswered when the
+        next boundary comes is given up: the new one covers the same rows.
+
+        The panel behind it cannot land in the buffer: the parser reads
+        scores from snapshots only, so a panel read is evidence for the raw
+        log and nothing more.
+        """
+
+        if self._pending is not None:
+            self._log_unanswered(self._pending)
+            self._pending = None
+        if last_event_id is not None and await self._request(
+            table_id, last_event_id, attempt=0
+        ):
+            return
+        await self._panel_fallback()
+
+    async def _request(
+        self,
+        table_id: str | None,
+        last_event_id: str,
+        *,
+        attempt: int,
+        avoid: int | None = None,
+    ) -> bool:
+        """Send one state request and remember it as pending.
+
+        Args:
+            table_id: The table being watched.
+            last_event_id: The id of the newest frame seen.
+            attempt: 0 for a first request, 1 for the retry.
+            avoid: The page's socket the unanswered attempt went on.
+
+        Returns:
+            Whether it went out; there was no open socket to send it on if
+            not.
+        """
+
+        sent = await self._spectator.request_state(
+            table_id, last_event_id, avoid=avoid
+        )
+        if sent is None:
+            return False
+        self._pending = _PendingRead(
+            request=sent,
+            table_id=table_id,
+            last_event_id=last_event_id,
+            attempt=attempt,
+            deadline=self._monotonic() + STATE_ANSWER_S,
+        )
+        return True
+
+    async def _unanswered(self) -> None:
+        """Settle a request whose answer did not come in time.
+
+        The first attempt is retried once on another socket: the site
+        acknowledges some requests and never answers them, and ours always
+        went out on the newest socket, which was never the one the page itself
+        had switched to the table's room. Whether that helps is measured by
+        this very retry. After two silences the panel is read instead.
+        """
+
+        pending = self._pending
+        assert pending is not None
+        self._pending = None
+        self._log_unanswered(pending)
+        if pending.attempt == 0 and await self._request(
+            pending.table_id,
+            pending.last_event_id,
+            attempt=1,
+            avoid=pending.request.socket,
+        ):
+            return
+        await self._panel_fallback()
+
+    def _log_unanswered(self, pending: _PendingRead) -> None:
+        """Say that a request went unanswered, and count it."""
+
+        self._health.counters.score_reads_unanswered += 1
+        self._health.event(
+            "state_unanswered",
+            table=pending.table_id,
+            socket=pending.socket,
+            attempt=pending.attempt,
+        )
+
+    async def _panel_fallback(self) -> None:
+        """Read the scoreboard panel, best-effort.
+
+        A failed read costs the evidence, never the game in hand: the record
+        is built from the wire, and a panel click that missed is no reason to
+        stop watching it.
         """
 
         counters = self._health.counters
-        if last_event_id is not None and await self._spectator.request_state(
-            table_id, last_event_id
-        ):
-            counters.score_reads_wire += 1
+        try:
+            board = await self._read_panel()
+        except BrowserError as error:
+            counters.score_reads_failed += 1
+            self._health.event("score_read_failed", error=str(error))
             return
-        board = await self._read_panel()
         if board.rows:
             counters.score_reads_panel += 1
         else:
@@ -747,32 +882,74 @@ class Recorder:
         The last round has had no deal after it, so its score has never been
         asked for. One final request buys it, and the answer is waited for
         rather than fired and forgotten — otherwise the round the game was
-        decided on is the one round with no score.
+        decided on is the one round with no score. It takes the same two
+        attempts a boundary read does, but no panel after them: the end
+        screen covers the page.
         """
 
-        if last_event_id is not None and await self._spectator.request_state(
-            table_id, last_event_id
-        ):
-            self._health.counters.score_reads_wire += 1
-            await self._drain_for_snapshot()
+        if self._pending is not None:
+            self._log_unanswered(self._pending)
+            self._pending = None
+        if last_event_id is not None:
+            avoid: int | None = None
+            for attempt in (0, 1):
+                if not await self._request(
+                    table_id, last_event_id, attempt=attempt, avoid=avoid
+                ):
+                    break
+                pending = self._pending
+                assert pending is not None
+                if await self._drain_for_snapshot(table_id, pending.deadline):
+                    self._health.counters.score_reads_wire += 1
+                    break
+                if self._stopped:
+                    break
+                self._log_unanswered(pending)
+                avoid = pending.request.socket
+            self._pending = None
         self._write(None)
         await self._hop()
 
-    async def _drain_for_snapshot(self) -> None:
-        """Keep reading until the answering snapshot arrives, or time runs out."""
+    async def _drain_for_snapshot(
+        self, table_id: str | None, deadline: float
+    ) -> bool:
+        """Keep reading until this table's snapshot arrives, or time runs out.
 
-        started = self._monotonic()
-        timeout = self._profile.recorder.snapshot_timeout_s
-        while timeout - (self._monotonic() - started) > 0:
-            pulled = await self._pull(timeout - (self._monotonic() - started))
+        Args:
+            table_id: The table being closed.
+            deadline: When the request stops being waited for, on the
+                recorder's clock. The hard deadline cuts it shorter still.
+
+        Returns:
+            Whether the answer came.
+        """
+
+        while True:
+            remaining = self._capped(deadline - self._monotonic())
+            if remaining <= 0:
+                return False
+            pulled = await self._pull(remaining)
             if self._stopped or pulled is None:
-                return
+                return False
             _, event = pulled
             if event is None:
                 continue
             self._buffer.append(event)
-            if event.kind == self._join_name:
-                return
+            if self._answers(event, table_id):
+                return True
+
+    def _answers(self, event: WireEvent, table_id: str | None) -> bool:
+        """Whether an event is a snapshot of the table being watched.
+
+        That is what an answered state request looks like. Another table's
+        snapshot is not, and neither is anything else that happens to arrive
+        while the request is out.
+        """
+
+        return (
+            event.kind == self._join_name
+            and self._translator.field(event.data, "table_id") == table_id
+        )
 
     def _leave_at_deadline(self) -> None:
         """Close the game in hand because the shift is over.
@@ -939,6 +1116,16 @@ class Recorder:
 
         if self._raw is not None:
             self._raw.write_frame(frame)
+        pending = self._pending
+        if (
+            pending is not None
+            and pending.socket is None
+            and frame.direction == SENT
+            and duplicate_key(frame.text) == pending.request.id
+        ):
+            # Our own request, echoed by the frame source: this is where the
+            # page's socket gets the index every logged frame is filed under.
+            pending.socket = frame.socket
         assert self._stream is not None
         before = self._stream.received
         event = self._stream.ingest(frame.text, frame.socket)
