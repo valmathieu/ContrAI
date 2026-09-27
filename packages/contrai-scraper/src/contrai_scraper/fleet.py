@@ -26,6 +26,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
 
@@ -74,6 +75,16 @@ class FleetSummary:
     tables_rejected: int
     records: tuple[Path, ...]
     workers_down: tuple[str, ...]
+
+
+class _Place(StrEnum):
+    """Where a session's page stands, which decides its walk to the lobby."""
+
+    MENU = "menu"
+    """Where a login leaves it: the walk in is ``enter_lobby``, or the census."""
+
+    TABLE = "table"
+    """After a chase: the walk back is ``return_to_lobby``."""
 
 
 class _ReturnFailed(BrowserError):
@@ -524,7 +535,7 @@ class Worker:
                 await fleet.idle()
 
     async def _session(self) -> None:
-        """One browser context: log in, reach the lobby, and serve it.
+        """One browser context: log in, then serve the lobby.
 
         Raises:
             BrowserError: A step of the walk failed; the page is saved first.
@@ -540,19 +551,80 @@ class Worker:
             ) as (spectator, frames):
                 try:
                     await spectator.log_in()
-                    if await self._arrive(spectator, frames, log):
-                        table_hash = await spectator.read_tournament_hash()
-                        if table_hash is None:
-                            raise BrowserError(
-                                "[selectors].lobby_row_tournament_class matched no row"
-                            )
-                        await self._hall(spectator, frames, log, table_hash)
+                    await self._serve(spectator, frames, log)
                 except BrowserError:
                     await self._capture(spectator, log.path)
                     raise
         finally:
             log.close()
         self._health.event("session_ended", session=session)
+
+    async def _serve(self, spectator: Any, frames: Any, log: RawLogWriter) -> None:
+        """Walk the page to the lobby from wherever it stands, and serve it.
+
+        The session is a loop over the page's place rather than one fixed
+        route: a login leaves it on the menu, a chase leaves it at a table,
+        and each place has its own walk to the lobby. The lobby's readers are
+        made on the first arrival and kept for the whole session.
+
+        Raises:
+            BrowserError: A step of the walk failed, or the lobby shows no
+                tournament row.
+            _ReturnFailed: The walk back from a table did not land.
+        """
+
+        at: _Place | None = _Place.MENU
+        reader: tuple[LobbyWatcher, WireStream] | None = None
+        while at is not None:
+            if not await self._reach_lobby(spectator, frames, log, at):
+                return
+            if reader is None:
+                reader = await self._lobby_reader(spectator)
+            at = await self._hall(spectator, frames, log, *reader)
+
+    async def _reach_lobby(
+        self, spectator: Any, frames: Any, log: RawLogWriter, at: _Place
+    ) -> bool:
+        """Take the page to the lobby from the menu or from a table.
+
+        Args:
+            spectator: The worker's browser half, logged in.
+            frames: Its frame source.
+            log: The session's raw log.
+            at: Where the page stands now.
+
+        Returns:
+            Whether the page is in the lobby. ``False`` means the walk stopped
+            short and the session should end where it stands.
+
+        Raises:
+            _ReturnFailed: The walk back from a table did not land.
+        """
+
+        if at is _Place.MENU:
+            return await self._arrive(spectator, frames, log)
+        try:
+            await spectator.return_to_lobby()
+        except BrowserError as error:
+            raise _ReturnFailed(str(error)) from error
+        return True
+
+    async def _lobby_reader(self, spectator: Any) -> tuple[LobbyWatcher, WireStream]:
+        """The session's readers of the lobby, made once on its first arrival.
+
+        One of each for the whole session, not one per wait. The lobby sends
+        every event on both sockets, and a wait resumed after a roster was
+        refused would otherwise meet the second copy as news and announce the
+        same start twice.
+
+        Raises:
+            BrowserError: The lobby shows no tournament row.
+        """
+
+        table_hash = await spectator.read_tournament_hash()
+        if table_hash is None:
+            raise BrowserError("[selectors].lobby_row_tournament_class matched no row")
+        return LobbyWatcher(self._profile, table_hash), WireStream(self._profile.wire)
 
     async def _arrive(self, spectator: Any, frames: Any, log: RawLogWriter) -> bool:
         """Reach the lobby — by way of the startup census, the first time.
@@ -696,29 +768,39 @@ class Worker:
         return None
 
     async def _hall(
-        self, spectator: Any, frames: Any, log: RawLogWriter, table_hash: str
-    ) -> None:
-        """Wait in the lobby, chase what starts, and come back — until told to stop.
+        self,
+        spectator: Any,
+        frames: Any,
+        log: RawLogWriter,
+        watcher: LobbyWatcher,
+        stream: WireStream,
+    ) -> _Place | None:
+        """Wait in the lobby for one start, and chase it.
+
+        Args:
+            spectator: The worker's browser half, in the lobby.
+            frames: Its frame source.
+            log: The session's raw log.
+            watcher: The session's reader of the tournament row.
+            stream: The session's de-duplicating reader of the socket.
+
+        Returns:
+            :attr:`_Place.TABLE` once a chase has run its course, or ``None``
+            when the session should end where it stands: the fleet has
+            stopped, or the chase's egress was refused.
 
         Raises:
-            _ReturnFailed: The walk back from a table did not land.
             BrowserError: The frames ended, which only a closed page does.
         """
 
         fleet = self._fleet
         registry = fleet.registry
-        # One reader for the whole session, not one per wait. The lobby sends
-        # every event on both sockets, and a wait resumed after a roster was
-        # refused would otherwise meet the second copy as news and announce
-        # the same start twice.
-        watcher = LobbyWatcher(self._profile, table_hash)
-        stream = WireStream(self._profile.wire)
         while True:
             # The wait is where a stopping fleet is noticed, before and
             # between chases alike: it returns no roster once told to stop.
             roster = await self._await_roster(frames, log, watcher, stream)
             if roster is None:
-                return
+                return None
             age = frames.elapsed - roster.at
             if age > fleet.section.roster_max_age_s:
                 # Read too late to be the game about to start; chasing it
@@ -742,11 +824,8 @@ class Worker:
             if summary.stop_reason is StopReason.EGRESS_BLOCKED or fleet.stopping():
                 # Nothing more goes to the site on this session: the worker's
                 # own loop checks the egress before the next.
-                return
-            try:
-                await spectator.return_to_lobby()
-            except BrowserError as error:
-                raise _ReturnFailed(str(error)) from error
+                return None
+            return _Place.TABLE
 
     async def _await_roster(
         self, frames: Any, log: RawLogWriter, watcher: LobbyWatcher, stream: WireStream
