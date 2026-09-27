@@ -248,7 +248,7 @@ def parse_session(
             format=FORMAT,
             source=RecordSource.OBSERVED,
             generator=generator,
-            game_id=game_id or f"obs-{wire_game}",
+            game_id=game_id or observed_game_id(wire_game),
             created_at=stamp,
         ),
         GameStarted(
@@ -354,6 +354,20 @@ def _snapshots(
         for event in events
         if event.kind == name
     )
+
+
+def observed_game_id(wire_game: str) -> str:
+    """The record's game id for a game the site calls ``wire_game``.
+
+    Args:
+        wire_game: The site's own id, as its in-game events and its join
+            snapshot's round block carry it.
+
+    Returns:
+        ``obs-`` plus that id: the stem of the game's record file.
+    """
+
+    return f"obs-{wire_game}"
 
 
 def _wire_game_id(events: Sequence[WireEvent]) -> str:

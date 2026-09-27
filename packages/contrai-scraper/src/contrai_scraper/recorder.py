@@ -58,7 +58,7 @@ from .exceptions import BrowserError, ParseError, ScraperError
 from .frames import SENT, FrameSource, RawFrame
 from .health import HealthLog
 from .lobby import SEATS, LobbyRoster
-from .parse.session import parse_session, round_count, split_visits
+from .parse.session import observed_game_id, parse_session, round_count, split_visits
 from .parse.snapshot import ScoreRow, Snapshot, read_snapshot
 from .parse.translate import Translator
 from .profile import Profile
@@ -556,6 +556,12 @@ class Recorder:
                 return self._reject(snapshot, "claimed_by_other", holder=holder)
         if self._target is not None and not self._is_target(snapshot):
             return False
+        if snapshot.game_id is not None and self._record_path(snapshot.game_id).exists():
+            # A game gets one record. Its file already exists when this game
+            # was watched before — seated, left and offered again — and the
+            # rest of it would be appended as a second record in the same
+            # file: two headers, and every round from the first visit twice.
+            return self._reject(snapshot, "already_recorded", game=snapshot.game_id)
         if not snapshot.is_tournament:
             return self._reject(snapshot, "not_tournament")
         if len(snapshot.score_rows) >= recorder.hop_after_rows:
@@ -668,6 +674,11 @@ class Recorder:
         )
         self._stop(StopReason.CHASE_GAVE_UP)
         return True
+
+    def _record_path(self, wire_game: str) -> Path:
+        """Where the record of the game the site calls ``wire_game`` is written."""
+
+        return game_path(self._profile.output.root, observed_game_id(wire_game))
 
     def _reject(self, snapshot: Snapshot, reason: str, **fields: Any) -> bool:
         """Count and log one refused table.
@@ -1055,6 +1066,17 @@ class Recorder:
             self._buffer = []
             return
         path = game_path(self._profile.output.root, header.game_id)
+        if path.exists():
+            # The gate refuses a game already on disk, but it reads the
+            # join snapshot, which can name another game than the one the
+            # buffer holds — at a game's boundary. A record file is opened for
+            # appending, so this is the check that actually keeps it whole;
+            # the raw log still holds every frame of what is skipped.
+            self._health.event(
+                "record_skipped", game=header.game_id, reason="already_recorded"
+            )
+            self._buffer = []
+            return
         with RecordWriter(path) as writer:
             for event in result.events:
                 writer.write(event)
