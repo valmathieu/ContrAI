@@ -75,7 +75,21 @@ class TestRound:
         payload = builders.snapshot_payload()
         del payload["state"]["round.g1"]
         snapshot = read(profile, payload)
-        assert (len(snapshot.seats), snapshot.round_index) == (4, None)
+        assert (len(snapshot.seats), snapshot.round_index, snapshot.game_id) == (
+            4, None, None)
+
+    def test_the_game_is_named_by_the_round_blocks_key(self, profile, builders):
+        # The same id the game's in-game events carry, so a gate can tell a
+        # game it has already recorded before watching it again.
+        assert read(profile, builders.snapshot_payload()).game_id == "g1"
+
+    def test_a_round_block_keyed_by_the_bare_prefix_names_no_game(
+        self, profile, builders
+    ):
+        payload = builders.snapshot_payload()
+        payload["state"]["round."] = payload["state"].pop("round.g1")
+        snapshot = read(profile, payload)
+        assert (snapshot.game_id, snapshot.round_index) == (None, 2)
 
     def test_the_table_is_identified(self, profile, builders):
         snapshot = read(profile, builders.snapshot_payload(table_id="t9"))

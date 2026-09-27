@@ -7,7 +7,7 @@ import json
 
 import pytest
 from contrai_core import Position, Suit, TeamSide
-from contrai_data import EndReason, RoundScored, load_game
+from contrai_data import EndReason, RoundScored, game_path, load_game
 
 from contrai_scraper import (
     BrowserError,
@@ -698,6 +698,37 @@ class TestRecording:
                                             source_game):
         run_recorder(FakeSpectator(), session_frames(source_game), profile)
         assert len(records_in(profile)) == 1
+
+    def test_a_game_already_on_disk_is_refused_at_the_gate(self, profile, builders):
+        # Seated, left and offered again: the rest of the game would be
+        # appended to its first record as a second one, headers and all.
+        path = game_path(profile.output.root, "obs-g1")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("first visit\n", encoding="utf-8")
+        lines: list[str] = []
+        spectator = FakeSpectator()
+        run_recorder(spectator, [snapshot_frame(builders)], profile,
+                     health=HealthLog(write=lines.append))
+        # Refused from the wire alone: no page read, only the hop away.
+        rejected = _named(lines, "table_rejected")
+        assert ([(e["reason"], e["game"]) for e in rejected], spectator.calls,
+                path.read_text(encoding="utf-8")) == (
+            [("already_recorded", "g1")], [("next_table",)], "first visit\n")
+
+    def test_a_game_on_disk_is_never_appended_to(self, profile, session_frames,
+                                                 source_game):
+        # The session's opening snapshot names no game — it has no round
+        # block — so the gate lets it through; the write is what refuses.
+        path = game_path(profile.output.root, "obs-g1")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("first visit\n", encoding="utf-8")
+        lines: list[str] = []
+        summary = run_recorder(FakeSpectator(), session_frames(source_game), profile,
+                               health=HealthLog(write=lines.append))
+        skipped = _named(lines, "record_skipped")
+        assert ([(e["game"], e["reason"]) for e in skipped], summary.games_recorded,
+                path.read_text(encoding="utf-8")) == (
+            [("obs-g1", "already_recorded")], 0, "first visit\n")
 
     def test_the_written_record_holds_every_round(self, profile, session_frames,
                                                    source_game):
