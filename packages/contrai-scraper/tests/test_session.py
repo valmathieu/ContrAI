@@ -473,6 +473,27 @@ class TestObservedFrom:
         assert (started.observed_from.round, started.observed_from.phase) == (
             1, JoinPhase.PLAY)
 
+    def test_a_session_that_walked_in_after_an_unscored_round_one_joined_later(
+        self, profile, source_game, synthesize
+    ):
+        # Round 1 left no score read — as a passed-out round leaves none — so
+        # the join snapshot still knows no scored round, but the session sat
+        # down in round 2, whose deal never arrived.
+        texts = [(text, socket) for text, socket in synthesize(source_game)
+                 if "g1,1," not in text and '"id": "s1"' not in text
+                 and "g1,2,0,0" not in text]
+        started = _parse(profile, texts).events[1]
+        assert started.observed_from == ObservedFrom(
+            round=2, phase=JoinPhase.BIDDING,
+            totals={TeamSide.NS: 0, TeamSide.EW: 0})
+
+    def test_a_session_that_saw_no_round_has_no_join(self, profile, builders):
+        # Only the opening snapshot, and it knows no scored round: nothing
+        # says the game was walked in on.
+        texts = [(builders.envelope("payload", "joinTable",
+                                    builders.snapshot_payload(round_index=None)), 0)]
+        assert _parse(profile, texts).events[1].observed_from is None
+
     def test_a_mid_game_join_is_read_off_the_snapshot_not_round_one(
         self, profile, builders
     ):

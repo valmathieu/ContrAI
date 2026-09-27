@@ -51,7 +51,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 - (scraper) A fleet worker's first failed session retries after 30 s, not a 5-minute poll, so its lobby place is not left empty. See [scraper docs](docs/scraper/index.md).
 - (scraper) A chase whose hop cannot be clicked (a table still loading) gives up as `hop_failed` instead of ending the worker's session. See [scraper docs](docs/scraper/index.md).
-- (scraper) A record that missed round 1's deal (a late chase) now carries `observed_from.round = 1` instead of claiming the game seen whole. See [scraper docs](docs/scraper/index.md).
+- (scraper) A record whose session missed its first round's deal (a late chase, even after passed-out rounds) now carries `observed_from` instead of claiming the game seen whole. See [scraper docs](docs/scraper/index.md).
 - (scraper) A game seated again after it was recorded is refused (`already_recorded`) instead of appended as a second record to the same file. See [scraper docs](docs/scraper/index.md).
 - (engine) `contrai replay` frames fit a 40-row terminal (they were 42–54 rows): one-line keys, a shorter log, a repaint instead of more output. See [Replaying a game](docs/engine/replay.md).
 - (engine) `contrai verify` accepts an announced Solo Slam's 500 in a swept round's card-points column, not 250 only. See [engine docs](docs/engine/index.md).

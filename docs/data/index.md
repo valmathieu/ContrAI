@@ -344,8 +344,9 @@ zero-filled score line would be a claim; no line at all is the truth.
 the running score at that moment. A spectator sitting down mid-game cannot rescue the round it
 walked in on: the wire's state snapshot describes the last *completed* round, so the round in
 progress is unrecoverable and is skipped entirely. Recording starts at the next deal, and
-`observed_from` is what says so — round 1 included: a session that sat down just after the first
-deal carries `observed_from.round = 1` at 0 / 0, so `null` always means the first deal was seen.
+`observed_from` is what says so — before any score too: a session that sat down just after the
+first deal, or after passed-out rounds the sheet never scored, carries the round it walked in on at
+0 / 0, so `null` always means the record starts at a deal it saw.
 
 ## The catalog
 

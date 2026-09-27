@@ -242,7 +242,7 @@ def parse_session(
     ts = stamp
 
     rules = PRESETS[profile.rules.preset]
-    joined = _observed_from(opening) or _joined_in_round_one(rounds)
+    joined = _observed_from(opening) or _joined_before_any_score(rounds)
     record: list[GameEvent] = [
         Header(
             format=FORMAT,
@@ -428,33 +428,37 @@ def _observed_from(snapshot: Snapshot) -> ObservedFrom | None:
     )
 
 
-def _joined_in_round_one(rounds: Mapping[int, LiveRound]) -> ObservedFrom | None:
-    """Round 1 as the join point, when the session walked in on it.
+def _joined_before_any_score(rounds: Mapping[int, LiveRound]) -> ObservedFrom | None:
+    """The session's first round as the join point, when it walked in on it.
 
-    A join snapshot that knows no completed round cannot tell a session seated
+    A join snapshot that knows no scored round cannot tell a session seated
     before the first deal from one seated just after it — a chase that lost
-    the race to the deal. Only the wire can: the second never receives round
-    1's deal, so the round is skipped, and a record that still claimed the
-    game seen whole would be wrong about its own first round.
+    the race to the deal. Nor can it tell round 1 from a later round when
+    every round before was passed out, since the score sheet skips those.
+    Only the wire can: a session that walked in on a round never receives its
+    deal, so the round is skipped, and a record that still claimed the game
+    seen whole would be wrong about where it starts.
 
-    The phase is read off the auction: a session that saw any of round 1's
+    The phase is read off the auction: a session that saw any of the round's
     bids sat down while it was under way; one that saw none arrived once the
-    cards were being played. Nothing is scored before round 1, so the running
+    cards were being played. No round was scored before it, so the running
     score it landed on is nil.
 
     Args:
         rounds: The session's rounds, by number.
 
     Returns:
-        Round 1 as the join point, or ``None`` when its deal was received or
-        the session saw nothing of it.
+        The first round seen as the join point, or ``None`` when its deal was
+        received or the session saw no round at all.
     """
 
-    first = rounds.get(1)
-    if first is None or len(first.deal_stock) == DECK_SIZE:
+    if not rounds:
+        return None
+    first = rounds[min(rounds)]
+    if len(first.deal_stock) == DECK_SIZE:
         return None
     return ObservedFrom(
-        round=1,
+        round=first.number,
         phase=JoinPhase.BIDDING if first.bids else JoinPhase.PLAY,
         totals=dict.fromkeys(TeamSide, 0),
     )
