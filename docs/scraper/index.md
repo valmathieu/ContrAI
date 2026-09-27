@@ -133,6 +133,12 @@ game that arrived without a snapshot of its own leaves nothing to say which half
 seated, and the raw log still holds every frame for `parse` to cut apart. The pre-game draw is keyed
 to the game it opens, so a table caught from its first card is still one game.
 
+Both paths also leave out a game that holds no round, by the same count (`round_count`). `parse`
+always has: most such visits are tables a gate refused seconds after arriving. The recorder now
+does too, logging `record_skipped` with `reason` `no_round` instead of writing a record with no
+round and a null first round — which is what a chase that found its table seconds before the time
+limit used to leave, counted towards `--max-games` as if it were a game.
+
 One limit on "the same path" is worth knowing before a log is used as evidence. The log is
 de-duplicated by frame identity and never reset, so the mirrored connection's copy of a frame is
 not in the file — a replay is faithful for the parser, which drops those copies anyway, but it
