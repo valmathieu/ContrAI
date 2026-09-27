@@ -39,7 +39,7 @@ the same reason.
 | `contrai_scraper.fleet` | `Fleet` / `Worker` — the same gates for N workers on one browser, waiting in the lobby and chasing each game; budgets per worker. |
 | `contrai_scraper.rota` | `Rota` — a fleet's roles: who waits in the lobby, who stands by logged in as the spare, and who is logged out. |
 | `contrai_scraper.health` | `HealthLog` and `Counters` — one JSON line per transition, on stderr. |
-| `contrai_scraper.cli` | `contrai-scrape`: `run` (the default), `check-profile` and `parse`. |
+| `contrai_scraper.cli` | `contrai-scrape`: `run` (the default), `fleet`, `check-profile` and `parse`. |
 
 ```bash
 uv run contrai-scrape run --profile profile.toml --headless    # watch tables
@@ -767,7 +767,8 @@ passing reading left to vouch for it when the watchdog asks.
 
 The image, the Compose file, the environment templates and the procedures that prove the
 confinement — the exit address, the refusal of the home address, a tunnel outage under a packet
-capture — live in `deploy/install.md`.
+capture — live in `deploy/install.md`. The same image runs a fleet through a Compose override,
+`deploy/compose.fleet.yml`, with `accounts.toml` mounted beside the profile (install guide §5).
 
 ![The scraper deployed behind its VPN sidecar](../diagrams/deploy_scraper.png)
 
@@ -775,8 +776,10 @@ capture — live in `deploy/install.md`.
 
 ## Pending
 
-- The fleet's live ramp — two, five, then ten workers — and the memory each browser context
-  costs, which is unmeasured: the 0.8–1.0 GB figure is per *browser*.
+- Sizing the fleet. The ramp ran two, five, then ten workers, and a context costs about 0.43 GB
+  plus 0.2 GB per browser. But the table count varies: at a ~14-table peak seven workers were all
+  at tables or chasing for a quarter of an hour, and the lobby went unwatched. The worker count
+  waits on a full day's table counts from the box.
 - `observed_from.round` is still the join read's round index plus one, which names a passed-out
   round rather than the one being watched when passed-out rounds came just before the join. The
   carry is keyed on rows and unaffected; the field is not.
