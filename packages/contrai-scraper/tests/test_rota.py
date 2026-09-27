@@ -16,13 +16,14 @@ class Clock:
         return self.now
 
 
-def rota(*, watchers=2, spares=1, stagger_s=0.0, stopping=lambda: False, clock=None):
+def rota(*, watchers=2, spares=1, stagger_s=0.0, stopping=lambda: False, clock=None,
+         bootstrap=False):
     """A rota writing to a list, and the list."""
 
     lines: list[str] = []
     made = Rota(watchers=watchers, spares=spares, stagger_s=stagger_s,
                 monotonic=clock if clock is not None else Clock(), stopping=stopping,
-                health=HealthLog(write=lines.append))
+                health=HealthLog(write=lines.append), bootstrap=bootstrap)
     return made, lines
 
 
@@ -201,7 +202,84 @@ class TestLogins:
         made.open(labels(5))
         made.logged_in()
         made.chasing("bot01")
-        assert made.counts() == {"out": 1, "hall": 2, "spare": 1, "chase": 1, "logins": 1}
+        assert made.counts() == {"out": 1, "hall": 2, "spare": 1, "chase": 1, "boot": 0,
+                                 "logins": 1}
+
+
+def phase(lines):
+    """The startup phase's own lines, as ``(event, reason, sent)``."""
+
+    return [(entry["event"], entry.get("reason"), entry.get("sent"))
+            for entry in map(json.loads, lines)
+            if entry["event"] in ("bootstrap_started", "bootstrap_done")]
+
+
+class TestStartup:
+    def test_one_watcher_then_one_startup_worker_at_a_time(self):
+        made, lines = rota(bootstrap=True)
+        made.open(labels(7))
+        opened = roles(made, 7)
+        made.seated("bot02")
+        assert (opened, roles(made, 7)) == (
+            ["hall", "boot", "out", "out", "out", "out", "out"],
+            ["hall", "boot", "boot", "out", "out", "out", "out"])
+
+    def test_the_phase_stops_short_of_leaving_the_lobby_thin(self):
+        # Seven workers: four startup workers, then the second watcher and
+        # the spare — not six startup workers and an empty lobby behind them.
+        made, lines = rota(bootstrap=True)
+        made.open(labels(7))
+        for label in ("bot02", "bot03", "bot04", "bot05"):
+            made.seated(label)
+        assert (roles(made, 7), phase(lines)) == (
+            ["hall", "boot", "boot", "boot", "boot", "hall", "spare"],
+            [("bootstrap_started", None, None), ("bootstrap_done", "exhausted", 4)])
+
+    def test_a_startup_worker_that_finds_no_table_ends_the_phase(self):
+        made, lines = rota(bootstrap=True)
+        made.open(labels(7))
+        back = made.done("bot02")
+        # It goes back to the lobby as the second watcher; the spare is woken.
+        assert (back, roles(made, 7)[:3], phase(lines)[-1]) == (
+            Role.HALL, ["hall", "hall", "spare"], ("bootstrap_done", "empty", 1))
+
+    def test_a_startup_worker_that_fails_ends_the_phase(self):
+        made, lines = rota(bootstrap=True)
+        made.open(labels(7))
+        made.vacate("bot02", "session_failed")
+        assert (roles(made, 7)[:4], phase(lines)[-1]) == (
+            ["hall", "out", "hall", "spare"], ("bootstrap_done", "failed", 1))
+
+    def test_a_stopping_fleet_ends_the_phase(self):
+        stopped = [False]
+        made, lines = rota(bootstrap=True, stopping=lambda: stopped[0])
+        made.open(labels(7))
+        stopped[0] = True
+        made.ask("bot07")
+        assert phase(lines)[-1] == ("bootstrap_done", "stopping", 1)
+
+    def test_a_small_fleet_sends_nobody(self):
+        # Three workers are two watchers and a spare: nobody is left over.
+        made, lines = rota(bootstrap=True)
+        made.open(labels(3))
+        assert (roles(made, 3), phase(lines)) == (
+            ["hall", "hall", "spare"], [("bootstrap_done", "exhausted", 0)])
+
+    def test_only_the_scanning_worker_sends_the_next(self):
+        made, _ = rota(bootstrap=True)
+        made.open(labels(7))
+        made.seated("bot01")
+        assert roles(made, 7)[2] == "out"
+
+    def test_a_startup_worker_back_from_its_game_takes_what_is_open(self):
+        made, _ = rota(bootstrap=True)
+        made.open(labels(5))
+        made.seated("bot02")
+        made.seated("bot03")
+        # Five workers send two; the phase closed on bot03's taking its table,
+        # the lobby and the spare are full, so bot02 is parked after its game.
+        assert (made.done("bot02"), roles(made, 5)) == (
+            Role.OUT, ["hall", "out", "boot", "hall", "spare"])
 
 
 class TestWaiting:

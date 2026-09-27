@@ -17,6 +17,15 @@ spare's place from the queue. A chase therefore costs one login — the worker
 woken to be the next spare — and a chaser that comes back to a full lobby and
 a spare in place is parked.
 
+**The startup phase.** A window opens on games already under way, which no
+lobby will announce. With ``bootstrap`` on, the rule starts differently: one
+watcher first, then logged-out workers sent one at a time to join a running
+table and record it from where they join (:attr:`Role.BOOT`), the next only
+once the last has taken its table. The phase ends at the first worker that
+finds none, or fails, or once the workers left to send would no longer fill
+the second watcher's and the spare's places — so the lobby is never left thin
+for the 8-18 minutes a mid-game recording lasts.
+
 **Clamped to the fleet.** Both numbers are cut down to the workers still up,
 so a fleet of one has one watcher and no spare, which is exactly the fleet
 before the rota.
@@ -52,13 +61,16 @@ class Role(StrEnum):
     CHASE = "chase"
     """Out of the lobby, chasing a start and watching its game."""
 
+    BOOT = "boot"
+    """In a window's startup phase: joining a game already under way."""
+
 
 class Rota:
     """The fleet's roles: who waits in the lobby, who stands by, who is out."""
 
     __slots__ = ("_watchers", "_spares", "_stagger_s", "_monotonic", "_stopping",
-                 "_health", "_live", "_roles", "_queue", "_wakes", "_next_login",
-                 "_logins", "_opening")
+                 "_health", "_bootstrap", "_live", "_roles", "_queue", "_wakes",
+                 "_next_login", "_logins", "_opening", "_phase", "_scanning", "_sent")
 
     def __init__(
         self,
@@ -69,6 +81,7 @@ class Rota:
         monotonic: Callable[[], float],
         stopping: Callable[[], bool],
         health: HealthLog,
+        bootstrap: bool = False,
     ) -> None:
         """A rota with nobody on it until :meth:`open`.
 
@@ -80,6 +93,7 @@ class Rota:
             stopping: Whether the fleet has stopped handing out work; once it
                 has, nobody is woken.
             health: The fleet's log, which every change of role is written to.
+            bootstrap: Whether each window opens with a startup phase.
         """
 
         self._watchers = watchers
@@ -88,6 +102,7 @@ class Rota:
         self._monotonic = monotonic
         self._stopping = stopping
         self._health = health
+        self._bootstrap = bootstrap
         self._live: list[str] = []
         self._roles: dict[str, Role] = {}
         self._queue: deque[str] = deque()
@@ -95,11 +110,18 @@ class Rota:
         self._next_login: float | None = None
         self._logins = 0
         self._opening = False
+        self._phase = False
+        self._scanning: str | None = None
+        self._sent = 0
 
     # -- a window ------------------------------------------------------------
 
     def open(self, live: Sequence[str]) -> None:
         """Start a window: every live worker logged out, queued in fleet order.
+
+        The whole fleet is queued here rather than as each worker first asks:
+        the first worker's task runs its ask before the others are scheduled,
+        and a queue built lazily would look empty to the startup phase.
 
         Args:
             live: The labels of the workers still up, in the order they log in.
@@ -111,6 +133,9 @@ class Rota:
         self._wakes = {label: asyncio.Event() for label in self._live}
         self._next_login = None
         self._opening = True
+        self._phase = self._bootstrap
+        self._scanning = None
+        self._sent = 0
         self._fill()
 
     @property
@@ -191,16 +216,38 @@ class Rota:
         self._assign(label, Role.CHASE, "chase")
         self._fill()
 
-    def done(self, label: str) -> Role:
-        """A chase is over: back to the lobby, off it as the spare, or out.
+    def seated(self, label: str) -> None:
+        """A startup worker has taken its table, so the next one can go.
 
-        A worker already logged in is worth more than one that would have to
-        log in, so a place still open goes to the chaser before anyone queued.
-
-        Returns:
-            The chaser's new role.
+        Sent on the table's claim, not at the end of its game: a mid-game
+        recording lasts until the game does, 8-18 minutes, and the phase is
+        about the few minutes after the window opens.
         """
 
+        if label != self._scanning:
+            return
+        self._scanning = None
+        self._fill()
+
+    def done(self, label: str) -> Role:
+        """A chase or a startup recording is over: back to the lobby, off it, or out.
+
+        A worker already logged in is worth more than one that would have to
+        log in, so a place still open goes to it before anyone queued. A
+        startup worker that took no table ends the startup phase.
+
+        Args:
+            label: The worker coming back.
+
+        Returns:
+            The worker's new role.
+        """
+
+        if label == self._scanning:
+            # Still scanning at its end, so :meth:`seated` never came: it took
+            # no table. The running games are all taken, or too far along.
+            self._scanning = None
+            self._close("empty")
         watchers, spares = self._targets()
         if self._count(Role.HALL) < watchers:
             self._assign(label, Role.HALL, "returned")
@@ -216,6 +263,7 @@ class Rota:
 
         Its place goes to the next in line at once, rather than waiting out
         the failed worker's idle poll. A worker already counted out is let be.
+        A startup worker failing mid-scan ends the startup phase.
 
         Args:
             label: The worker leaving.
@@ -224,6 +272,9 @@ class Rota:
 
         if label not in self._roles:
             return
+        if label == self._scanning:
+            self._scanning = None
+            self._close("failed")
         if label in self._queue:
             self._queue.remove(label)
         self._assign(label, Role.OUT, why)
@@ -256,15 +307,42 @@ class Rota:
     # -- the one rule --------------------------------------------------------
 
     def _fill(self) -> None:
-        """Fill the lobby, from the spare first, then the spare's place.
+        """Fill the lobby, send the next startup worker, then fill the spare's place.
 
         Nobody is woken once the fleet is stopping: a worker logging in then
         would only log out again.
         """
 
         if self._stopping():
+            self._close("stopping")
             return
         watchers, spares = self._targets()
+        # One watcher while the startup phase runs, the rest once it is over.
+        self._fill_lobby(min(1, watchers) if self._phase else watchers)
+        if self._phase and self._scanning is None:
+            # Send another only while the workers queued outnumber the places
+            # still empty once the phase is over: the lobby's second watcher
+            # and the spare must not wait out a mid-game recording.
+            empty = (watchers - self._count(Role.HALL)) + (
+                spares - self._count(Role.SPARE)
+            )
+            if len(self._queue) > empty:
+                label = self._queue.popleft()
+                if not self._sent:
+                    self._health.event("bootstrap_started")
+                self._sent += 1
+                self._scanning = label
+                self._assign(label, Role.BOOT, "bootstrap")
+            else:
+                self._close("exhausted")
+        if not self._phase:
+            self._fill_lobby(watchers)
+            while self._count(Role.SPARE) < spares and self._queue:
+                self._assign(self._queue.popleft(), Role.SPARE, "spare_wanted")
+
+    def _fill_lobby(self, watchers: int) -> None:
+        """Bring the lobby up to ``watchers``: the spare first, then the queue."""
+
         while self._count(Role.HALL) < watchers:
             spare = next(
                 (label for label in self._live if self._roles[label] is Role.SPARE), None
@@ -275,8 +353,14 @@ class Rota:
                 self._assign(self._queue.popleft(), Role.HALL, "watcher_wanted")
             else:
                 break
-        while self._count(Role.SPARE) < spares and self._queue:
-            self._assign(self._queue.popleft(), Role.SPARE, "spare_wanted")
+
+    def _close(self, reason: str) -> None:
+        """End the window's startup phase, saying why and how many were sent."""
+
+        if not self._phase:
+            return
+        self._phase = False
+        self._health.event("bootstrap_done", reason=reason, sent=self._sent)
 
     def _targets(self) -> tuple[int, int]:
         """The watchers and spares wanted, clamped to the workers still up."""

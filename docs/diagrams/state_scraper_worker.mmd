@@ -9,7 +9,8 @@ stateDiagram-v2
     Out : <b>logged out</b><br/>queued for a place, longest-waiting first<br/>no browser context
     Egress : <b>egress gate</b><br/>one SharedEgressGate for the fleet
     Session : <b>session</b><br/>a fresh context on the shared Chromium<br/>a raw log of its own · log in
-    Census : <b>census</b> · once a process<br/>opening watchers only · census_hops tables<br/>read into the registry, nothing recorded
+    Census : <b>census</b> · once a process<br/>opening watchers only · census_hops tables<br/>read into the registry, nothing recorded<br/>skipped while bootstrap_enabled
+    Boot : <b>startup recording</b> · the window's opening<br/>observe · any running tournament table<br/>every gate, already_recorded included<br/>one game from the mid-game join<br/>seats nothing after bootstrap_scan_s
     Spare : <b>standing by</b> · the spare<br/>logged in, off the lobby<br/>frames to the raw log · spare_silent
     Hall : <b>in the lobby</b> · at most lobby_watchers<br/>LobbyWatcher reads the socket until<br/>the tournament row raises its full flag
     Claim : <b>claim the roster</b><br/>TableRegistry, keyed by the four accounts
@@ -28,6 +29,8 @@ stateDiagram-v2
     Session --> Census : a watcher's first session<br/>in the opening wave
     Session --> Hall : watcher · enter_lobby
     Session --> Spare : spare
+    Session --> Boot : startup worker<br/>after the first watcher
+    Boot --> Done : game over · or no table found,<br/>which ends the startup phase
     Census --> Back : the sweep is done
     Spare --> Hall : a watcher chases · promoted<br/>egress, then walk in · no login
     Hall --> Claim : roster_announced
@@ -65,5 +68,5 @@ stateDiagram-v2
     class Egress,Claim gate
     class Session,Census,Hall,Chasing,Back work
     class Out,Spare idle
-    class Recording record
+    class Recording,Boot record
     class Failed,Down,Handback fault

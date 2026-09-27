@@ -210,6 +210,46 @@ class Recorders:
         return Scripted()
 
 
+class Scanners(Recorders):
+    """Recorders that take a table first, as a real one does on accepting it.
+
+    Each script entry is ``(table id or None, summary, seconds)``: a table is
+    claimed through the claims the recorder was given before the pause, which
+    is the moment a startup worker's taking is heard; ``None`` finds none. The
+    pause is how long the game or the scan lasts, in real time.
+    """
+
+    def __call__(self, spectator, frames, profile, health, **kwargs):
+        self.built.append({"account": profile.account.email, **kwargs})
+        table_id, result, seconds = self._summaries.pop(0)
+        claims = kwargs["claims"]
+
+        class Scripted:
+            async def run(self):
+                if table_id is not None:
+                    claims.holder(table_id)
+                    claims.claim(table_id)
+                    claims.claim(table_id)
+                await asyncio.sleep(seconds)
+                return result
+
+        return Scripted()
+
+
+def empty_scan():
+    """A startup worker's recorder that found no table to take."""
+
+    return SessionSummary(games_recorded=0, tables_seated=0, tables_rejected=2,
+                          records=(), stop_reason=StopReason.WINDOW_CLOSED)
+
+
+def starting(profile):
+    """The fixture profile with the startup phase switched on."""
+
+    return dataclasses.replace(profile, fleet=dataclasses.replace(
+        profile.fleet, bootstrap_enabled=True))
+
+
 class Harness:
     """A fleet over fakes: a hand-moved clock, scripted sessions, one log.
 
@@ -1024,6 +1064,56 @@ class TestRota:
         census = harness.events("census")
         assert (census[-1]["pending"], census[-1]["tournament_tables"],
                 harness.walkers["bot03"][0].calls) == (0, 2, ["log_in"])
+
+
+class TestStartup:
+    def test_a_window_records_the_games_already_running_until_a_scan_finds_none(
+        self, profile
+    ):
+        # Five workers: one watcher, then bot02 takes a running table and
+        # bot03 is sent at once; bot03 finds none, so the phase ends and it
+        # walks back to the lobby as the second watcher. bot02's game outlasts
+        # bot03's scan, as a mid-game recording outlasts a minute's scan.
+        scanners = Scanners(("t1", summary(StopReason.MAX_GAMES), 0.2),
+                            (None, empty_scan(), 0.05))
+        harness = Harness(starting(profile), workers=5, recorder=scanners,
+                          idle_sessions=True)
+        harness.until = lambda: "bot02" in parked(harness)
+        result = harness.run()
+        done = harness.events("bootstrap_done")[0]
+        built = scanners.built[0]
+        assert ((result.bootstraps, result.bootstrap_games, result.chases,
+                 result.games_recorded),
+                (done["reason"], done["sent"]),
+                (built["limits"].max_games, built["limits"].seat_until_s,
+                 "target" in built),
+                harness.walkers["bot02"][0].calls,
+                harness.walkers["bot03"][0].calls) == (
+            (2, 1, 0, 1), ("empty", 2), (1, 60, False),
+            ["log_in", "enter_variant"],
+            ["log_in", "enter_variant", "return_to_lobby", "read_tournament_hash"])
+
+    def test_the_next_startup_worker_goes_when_the_last_takes_its_table(self, profile):
+        scanners = Scanners(("t1", summary(StopReason.MAX_GAMES), 0.05),
+                            ("t2", summary(StopReason.MAX_GAMES), 0.05))
+        harness = Harness(starting(profile), workers=5, recorder=scanners,
+                          idle_sessions=True)
+        harness.until = lambda: len(parked(harness)) == 2
+        harness.run()
+        # bot03 was sent on bot02's claim, while bot02's game was still on.
+        sent = [(worker, why) for worker, now, why in harness.roles() if now == "boot"]
+        assert (sent, harness.events("bootstrap_done")[0]["reason"]) == (
+            [("bot02", "bootstrap"), ("bot03", "bootstrap")], "exhausted")
+
+    def test_the_census_gives_way_to_the_startup_phase(self, profile, builders):
+        both = starting(censusing(profile))
+        harness = Harness(both)
+        walker = Walker()
+        harness.script("bot01", (walker, Frames(on_empty=harness.end)))
+        harness.run()
+        assert (harness.events("census_skipped")[0]["reason"], walker.calls,
+                harness.saw("census")) == (
+            "bootstrap", ["log_in", "enter_lobby", "read_tournament_hash"], False)
 
 
 class TestConstruction:

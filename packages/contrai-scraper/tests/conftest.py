@@ -280,6 +280,9 @@ claim_ttl_s = 600
 egress_cache_s = 60
 census_enabled = false
 census_hops = 3
+# Off here, so a fleet test is about the lobby unless it asks for the
+# startup phase; the default is on.
+bootstrap_enabled = false
 """
 
 

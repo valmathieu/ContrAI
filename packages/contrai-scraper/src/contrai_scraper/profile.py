@@ -416,6 +416,12 @@ DEFAULT_LOBBY_WATCHERS: int = 2
 #: Workers kept logged in off the lobby when ``[fleet].spares`` is not set.
 DEFAULT_SPARES: int = 1
 
+#: Seconds a startup worker looks for a running table to join before it gives
+#: up, when ``[fleet].bootstrap_scan_s`` is not set. A chase finds its table
+#: within 26 s across the probe's walks; twice that, for a scan that takes any
+#: table, leaves room for the tables it refuses.
+DEFAULT_BOOTSTRAP_SCAN_S: int = 60
+
 
 @dataclass(frozen=True, slots=True)
 class FleetSection:
@@ -454,6 +460,12 @@ class FleetSection:
     spares: int = DEFAULT_SPARES
     """Workers kept logged in off the lobby, to replace a watcher that chases."""
 
+    bootstrap_enabled: bool = True
+    """Whether a window opens by recording the games already running."""
+
+    bootstrap_scan_s: int = DEFAULT_BOOTSTRAP_SCAN_S
+    """Seconds a startup worker looks for a running table before giving up."""
+
     def __post_init__(self) -> None:
         if not 1 <= self.workers <= FLEET_CEILING:
             raise ProfileError(
@@ -463,7 +475,7 @@ class FleetSection:
             if getattr(self, name) < 0:
                 raise ProfileError(f"[fleet].{name} may not be negative")
         for name in ("scan_distinct_budget", "scan_deadline_s", "roster_max_age_s",
-                     "claim_ttl_s", "census_hops", "lobby_watchers"):
+                     "claim_ttl_s", "census_hops", "lobby_watchers", "bootstrap_scan_s"):
             if getattr(self, name) <= 0:
                 raise ProfileError(f"[fleet].{name} must be positive")
 
@@ -624,6 +636,13 @@ class _Table:
         if key not in self._data:
             return default
         return self.integer(key)
+
+    def optional_boolean(self, key: str, default: bool) -> bool:
+        """Read a boolean key that falls back to a default when absent."""
+
+        if key not in self._data:
+            return default
+        return self.boolean(key)
 
     def has(self, key: str) -> bool:
         """Whether a key (or, at the top level, a section) is present."""
@@ -1043,6 +1062,10 @@ def _fleet(table: _Table) -> FleetSection:
         census_hops=table.integer("census_hops"),
         lobby_watchers=table.optional_integer("lobby_watchers", DEFAULT_LOBBY_WATCHERS),
         spares=table.optional_integer("spares", DEFAULT_SPARES),
+        bootstrap_enabled=table.optional_boolean("bootstrap_enabled", True),
+        bootstrap_scan_s=table.optional_integer(
+            "bootstrap_scan_s", DEFAULT_BOOTSTRAP_SCAN_S
+        ),
     )
     table.done()
     return section

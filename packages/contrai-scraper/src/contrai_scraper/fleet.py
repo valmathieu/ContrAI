@@ -11,7 +11,10 @@ spends none of the few seconds a game's first deal allows on getting there.
 
 Only a few, though: the :class:`~contrai_scraper.rota.Rota` keeps at most
 ``[fleet].lobby_watchers`` in the lobby and ``[fleet].spares`` logged in off
-it, and every other idle worker logs out until a chase needs it.
+it, and every other idle worker logs out until a chase needs it. And a window
+opens on games already under way, which no lobby will announce: once the first
+watcher is placed, the next logins each join one of them and record it from
+where they join, until one finds none to take.
 
 The shape is the shift's, multiplied. The schedule says when, the egress says
 whether — one tunnel and one gate for everyone — and inside an open window one
@@ -44,7 +47,7 @@ from .parse.translate import Translator
 from .profile import FleetSection, Profile
 from .rawlog import RawLogWriter, new_session_id, prune_raw_logs, raw_path
 from .recorder import ChaseTarget, Recorder, RecorderLimits, SessionSummary, StopReason
-from .registry import TableRegistry, estimate_population
+from .registry import TableRegistry, WorkerClaims, estimate_population
 from .rota import Role, Rota
 from .shift import EGRESS_BUDGET, FAILURE_BUDGET, _earliest, _stamp, _utc_now
 from .wire import WireStream
@@ -84,6 +87,11 @@ class FleetSummary:
     tables_rejected: int
     records: tuple[Path, ...]
     workers_down: tuple[str, ...]
+    bootstraps: int = 0
+    """Startup workers sent to join a game already under way."""
+
+    bootstrap_games: int = 0
+    """Games those workers recorded, from where they joined."""
 
 
 class _Place(StrEnum):
@@ -96,6 +104,46 @@ class _Place(StrEnum):
     """At a table after a chase, or just stepped off one onto the online menu:
     the walk back is ``return_to_lobby``, which skips the exit when a menu
     already shows."""
+
+
+class _SeatedClaims:
+    """A worker's claims that also say, once, when a table was taken.
+
+    A startup worker's recorder returns only at the end of its game, 8-18
+    minutes after it took the table; the rota needs to hear at the taking, to
+    send the next one. The recorder claims a table exactly when it accepts it,
+    so the first claim granted is that moment. Everything else is passed
+    through, and the recorder takes its claims by duck type, so neither it
+    nor the registry knows this wrapper exists.
+    """
+
+    __slots__ = ("_claims", "_on_seated", "_told")
+
+    def __init__(self, claims: WorkerClaims, on_seated: Callable[[], None]) -> None:
+        """Wrap one worker's claims.
+
+        Args:
+            claims: The worker's view of the registry.
+            on_seated: Called on the first claim granted, and never again.
+        """
+
+        self._claims = claims
+        self._on_seated = on_seated
+        self._told = False
+
+    def claim(self, table_id: str | None) -> bool:
+        """Take a table, as :meth:`WorkerClaims.claim` does, and say so the first time."""
+
+        granted = self._claims.claim(table_id)
+        if granted and not self._told:
+            self._told = True
+            self._on_seated()
+        return granted
+
+    def __getattr__(self, name: str) -> Any:
+        """Everything else is the wrapped claims'."""
+
+        return getattr(self._claims, name)
 
 
 class _ReturnFailed(BrowserError):
@@ -124,6 +172,7 @@ class Fleet:
         "_recorder", "_workers", "_windows", "_chases", "_gave_up", "_games",
         "_seated", "_rejected", "_records", "_down", "_run_deadline",
         "_seat_deadline", "_hard_deadline", "_census_due", "_census_sightings",
+        "_bootstraps", "_bootstrap_games",
         "_rota",
     )
 
@@ -194,6 +243,7 @@ class Fleet:
         self._recorder = recorder
         self._windows = self._chases = self._gave_up = 0
         self._games = self._seated = self._rejected = 0
+        self._bootstraps = self._bootstrap_games = 0
         self._records: list[Path] = []
         self._down: list[str] = []
         self._run_deadline: float | None = None
@@ -209,6 +259,7 @@ class Fleet:
             monotonic=monotonic,
             stopping=self.stopping,
             health=health,
+            bootstrap=section.bootstrap_enabled,
         )
         # Made once and kept across windows: a worker's log, its claims and
         # its failure streak belong to the account, not to one browser.
@@ -269,6 +320,8 @@ class Fleet:
             tables_rejected=self._rejected,
             records=tuple(self._records),
             workers_down=tuple(self._down),
+            bootstraps=self._bootstraps,
+            bootstrap_games=self._bootstrap_games,
         )
 
     async def _window(self, now: datetime) -> None:
@@ -401,12 +454,24 @@ class Fleet:
             None if self._hard_deadline is None else self._hard_deadline - now,
         )
 
-    def absorb(self, summary: SessionSummary) -> None:
-        """Add one chase's work to the fleet's totals."""
+    def absorb(self, summary: SessionSummary, *, bootstrap: bool = False) -> None:
+        """Add one chase's work, or one startup recording's, to the fleet's totals.
 
-        self._chases += 1
-        if summary.stop_reason is StopReason.CHASE_GAVE_UP:
-            self._gave_up += 1
+        Both count towards the games recorded, and so towards ``max_games``.
+
+        Args:
+            summary: What the recorder did.
+            bootstrap: Whether it was a startup worker's, joined mid-game,
+                rather than a chase's.
+        """
+
+        if bootstrap:
+            self._bootstraps += 1
+            self._bootstrap_games += summary.games_recorded
+        else:
+            self._chases += 1
+            if summary.stop_reason is StopReason.CHASE_GAVE_UP:
+                self._gave_up += 1
         self._games += summary.games_recorded
         self._seated += summary.tables_seated
         self._rejected += summary.tables_rejected
@@ -663,11 +728,16 @@ class Worker:
                 continue
             if not checked and not (await fleet.egress.check()).ok:
                 return "egress_blocked"
-            if not await self._reach_lobby(spectator, frames, log, at, sweep=sweep):
-                return self._ended()
-            if reader is None:
-                reader = await self._lobby_reader(spectator)
-            left = await self._hall(spectator, frames, log, *reader)
+            if role is Role.BOOT:
+                # Only ever handed to a worker logged out, so the page is
+                # where its login left it.
+                left = await self._bootstrap(spectator, frames, log)
+            else:
+                if not await self._reach_lobby(spectator, frames, log, at, sweep=sweep):
+                    return self._ended()
+                if reader is None:
+                    reader = await self._lobby_reader(spectator)
+                left = await self._hall(spectator, frames, log, *reader)
             if left is None:
                 return self._ended()
             at, checked = left, False
@@ -806,6 +876,12 @@ class Worker:
         # Marked before the sweep, not after: a sweep that fails is not one to
         # repeat at the price of every later session's login.
         self._censused = True
+        if fleet.section.bootstrap_enabled:
+            # The startup workers' own gates fill the registry's census as
+            # they scan, and they record what the sweep would only have seen.
+            self._health.event("census_skipped", reason="bootstrap")
+            await spectator.enter_lobby()
+            return True
         fleet.census_started()
         sightings: list[tuple[str, bool | None]] = []
         try:
@@ -982,15 +1058,32 @@ class Worker:
                 registry.release_roster(roster.accounts, self._label)
             fleet.absorb(summary)
             fleet.rota.done(self._label)
-            if summary.stop_reason is StopReason.SOURCE_ENDED:
-                raise BrowserError("the frame source ended: the page has gone")
-            # A chase that ran its course is progress, whatever it found.
-            self._failures = 0
-            if summary.stop_reason is StopReason.EGRESS_BLOCKED or fleet.stopping():
-                # Nothing more goes to the site on this session: the worker's
-                # own loop checks the egress before the next.
-                return None
-            return _Place.TABLE
+            return self._settle(summary)
+
+    def _settle(self, summary: SessionSummary) -> _Place | None:
+        """What a recorder that ran its course leaves the session to do next.
+
+        Args:
+            summary: What the chase or the startup recording did.
+
+        Returns:
+            :attr:`_Place.TABLE`, where the page now stands, or ``None`` when
+            the session should end there: the egress was refused, or the
+            fleet has stopped.
+
+        Raises:
+            BrowserError: The frames ended, which only a closed page does.
+        """
+
+        if summary.stop_reason is StopReason.SOURCE_ENDED:
+            raise BrowserError("the frame source ended: the page has gone")
+        # A recorder that ran its course is progress, whatever it found.
+        self._failures = 0
+        if summary.stop_reason is StopReason.EGRESS_BLOCKED or self._fleet.stopping():
+            # Nothing more goes to the site on this session: the worker's
+            # own loop checks the egress before the next.
+            return None
+        return _Place.TABLE
 
     async def _await_roster(
         self, frames: Any, log: RawLogWriter, watcher: LobbyWatcher, stream: WireStream
@@ -1094,6 +1187,48 @@ class Worker:
             ),
         )
         return await recorder.run()
+
+    async def _bootstrap(
+        self, spectator: Any, frames: Any, log: RawLogWriter
+    ) -> _Place | None:
+        """Join one game already under way and record it from there.
+
+        The ordinary seating, untargeted: the server offers tables and the
+        recorder's own gates keep what is worth taking — one worker per table
+        (``claimed_by_other``), tournaments only, nothing too far along
+        (``hop_after_rows``), no game recorded before. It takes one game, and
+        seats nothing after ``bootstrap_scan_s``. The next startup worker is
+        sent as soon as this one takes its table, not when its game ends.
+
+        Returns:
+            Where the page is left, or ``None`` when the session should end
+            there — as after a chase.
+
+        Raises:
+            BrowserError: A step of the walk failed, or the frames ended.
+        """
+
+        fleet = self._fleet
+        await spectator.enter_variant()
+        seat_in, hard_in = fleet.seconds_left()
+        recorder = fleet.recorder(
+            spectator, frames, self._profile, self._health,
+            limits=RecorderLimits(
+                max_games=1,
+                max_seconds=hard_in,
+                seat_until_s=_earliest(seat_in, fleet.section.bootstrap_scan_s),
+            ),
+            raw=log,
+            egress=fleet.egress,
+            claims=_SeatedClaims(self._claims, lambda: fleet.rota.seated(self._label)),
+        )
+        summary = await recorder.run()
+        fleet.absorb(summary, bootstrap=True)
+        # The rota knows by now whether a table was taken: the claim that
+        # seated one told it. Not the stop reason, since a game seated and
+        # watched can end on the window closing as well as an empty scan.
+        fleet.rota.done(self._label)
+        return self._settle(summary)
 
     async def _capture(self, spectator: Any, raw: Path) -> None:
         """Save the page beside the session's raw log, if the profile asks."""

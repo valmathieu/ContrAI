@@ -261,7 +261,7 @@ silently wrong data.
 | `[schedule]` | When the scraper may watch: a timezone, daily ranges that may cross midnight, and how long a closing range lets the game in hand run on. |
 | `[egress]` | The gate before any site traffic: the home address (through the environment), the expected country, an echo service, and the tunnel device the route must use. |
 | `[output]` | Where records and raw logs go; both roots resolve relative to the profile, and both name the same directory. |
-| `[fleet]` | Optional, read by `fleet` alone: how many workers (at most 10), their login stagger, a chase's distinct-table budget and deadline, how old a roster may be, the registry's and egress gate's timings, the startup census, and the rota's `lobby_watchers` (default 2) and `spares` (default 1), which a profile may leave out. |
+| `[fleet]` | Optional, read by `fleet` alone: how many workers (at most 10), their login stagger, a chase's distinct-table budget and deadline, how old a roster may be, the registry's and egress gate's timings, the startup census, the rota's `lobby_watchers` (default 2) and `spares` (default 1), and the startup phase's `bootstrap_enabled` (default on) and `bootstrap_scan_s` (default 60) — these four a profile may leave out. |
 | `[privacy]` | Inputs to the pseudonymisation step, which is not built yet. |
 
 A fleet logs in with several accounts, and they do not multiply the profile. They live in a second
@@ -662,6 +662,26 @@ hears a roster that would prove its page alive; `spare_silent` records instead, 
 spare page that received nothing for 60 s, because how quiet a page off the lobby is has not been
 measured.
 
+A window also opens on games already under way, which no lobby will ever announce; before, the
+fleet visited them in its census and recorded nothing, and each window lost them. With
+`bootstrap_enabled` (the default) the rota opens on a **startup phase** instead. It places one
+watcher first, then sends logged-out workers one at a time to join a running table the ordinary way
+(`boot`, `bootstrap_started`): an untargeted recorder, one game, seating nothing after
+`bootstrap_scan_s` (60 s), whose own gates keep one worker per table (`claimed_by_other`),
+tournaments only, nothing too far along (`hop_after_rows`) and no game recorded before
+(`already_recorded`). The recorder returns only when its game ends, 8–18 minutes later, so the next
+worker goes as soon as this one *takes* its table — the claim on the table is what tells the rota.
+The phase ends (`bootstrap_done`, with a `reason` and how many were `sent`) at the first worker
+that finds no table (`empty`) or fails (`failed`), when the fleet stops (`stopping`), or once the
+workers still queued would no longer outnumber the second watcher's and the spare's places
+(`exhausted`) — so the lobby is never left thin for a whole mid-game recording. At seven workers that
+is one watcher, four startup workers, then the second watcher and the spare; at three or fewer it
+sends nobody. A startup worker's game over, it takes whatever place is open, like a chaser.
+
+These records are joined mid-game: they carry `observed_from` and a `first_round` above 1, so the
+corpus is no longer round-1 only; the catalog's `games.joined_round` separates the two. The fleet's
+totals count them apart (`bootstraps`, `bootstrap_games`), but `--max-games` counts every game.
+
 One chase, from the lobby's socket to a written record — the claim on the roster, the round trip
 out, the blind scan held against the roster, the table's own gates and the claim on the table, and
 the walk back:
@@ -704,12 +724,15 @@ ten workers is about the whole population. Re-read on the chase probe's walks it
 tables of every kind, against "rarely more than about ten tournament tables". A sweep skips the
 table it has just left, so a stale snapshot cannot pose as a resighting; a sweep cut short by a
 stopping fleet or a refused egress still reports what it saw. Set `census_enabled = false` to go
-straight to the lobby.
+straight to the lobby. With the startup phase on, the sweep is skipped (`census_skipped`, `reason`
+`bootstrap`): the startup workers' gates add every table they judge to the same census, and they
+record what a sweep would only have seen.
 
 Without `--accounts` a fleet is one worker, labelled `bot01`, on the profile's own `[account]`; with
 it, `--workers` (default `[fleet].workers`) takes that many accounts from the top of the file, and
 asking for more than the file holds, or more than ten, is a usage error. `--max-games` stops new
-chases once the fleet has recorded that many games, and `--minutes` bounds the run. A profile that
+chases once the fleet has recorded that many games, mid-game recordings included, and `--minutes`
+bounds the run. A profile that
 lacks the lobby keys or a `[fleet]` section is refused with a list of what is missing.
 
 ## Deployment

@@ -315,10 +315,11 @@ roster_max_age_s = 10
 claim_ttl_s = 600
 # How long a passing egress check answers the fleet's later ones.
 egress_cache_s = 60
-# Once a process, before its first lobby, each worker hops this many tables
-# the ordinary way, recording nothing, so the fleet starts knowing what is
-# running and logs a `census` line estimating how many tournament tables there
-# are. Set census_enabled = false to go straight to the lobby.
+# Once a process, before its first lobby, each opening watcher hops this many
+# tables the ordinary way, recording nothing, so the fleet starts knowing what
+# is running and logs a `census` line estimating how many tournament tables
+# there are. Set census_enabled = false to go straight to the lobby. Skipped
+# while bootstrap_enabled is on, whose startup workers see those tables anyway.
 census_enabled = true
 census_hops = 8
 # Optional. At most this many workers wait in the lobby (default 2), and this
@@ -328,6 +329,15 @@ census_hops = 8
 # workers still up, so a fleet of one is one watcher and no spare.
 lobby_watchers = 2
 spares = 1
+# Optional. A window opens on games already under way, which the lobby will
+# never announce. With this on (the default), once the first watcher is in
+# the lobby the next logins each join one running tournament table and record
+# it from the mid-game join, the next one sent as soon as the last takes its
+# table. It stops at the first that finds none within bootstrap_scan_s
+# (default 60), and before the second watcher and the spare would be kept
+# waiting. These records have first_round above 1.
+bootstrap_enabled = true
+bootstrap_scan_s = 60
 
 [privacy]
 pseudonym_salt = "env:CONTRAI_SCRAPER_SALT"
