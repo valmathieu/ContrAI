@@ -908,6 +908,12 @@ def _parse_log(
     Playwright hands frames over through callbacks. Draining it here is the
     price of the replay and the live run being literally the same path.
 
+    Each record is stamped with the instant its game was last heard from —
+    the latest server clock among its visit's events, else the log's own
+    start — rather than with the moment of the re-parse. That is when the
+    live recorder would have written it, so a re-parsed game keeps the date
+    it was played on, and parsing the same log twice gives the same bytes.
+
     The log is cut into visits before anything is parsed: it holds every
     table the session looked at, and one game is what ``parse_session``
     builds. A visit that yielded no round is not a game and gets no record —
@@ -933,6 +939,7 @@ def _parse_log(
     """
 
     frames = asyncio.run(_drain(RawLogFrameSource(log)))
+    started = _log_started(log)
     stream = WireStream(profile.wire)
     events = [
         event
@@ -947,13 +954,58 @@ def _parse_log(
             refused += 1
             continue
         try:
-            result = parse_session(order_events(visit), profile)
+            result = parse_session(
+                order_events(visit), profile, now=_visit_stamp(visit, started)
+            )
         except ScraperError as error:
             print(f"  a visit could not be read: {error}")
             continue
         if round_count(result.events):
             results.append(result)
     return results, len(visits), refused
+
+
+def _log_started(log: Path) -> datetime | None:
+    """When a raw log's session started, from its header line.
+
+    Args:
+        log: The raw log.
+
+    Returns:
+        The header's ``started_at``, or ``None`` when the first line is not a
+        header carrying a readable one.
+    """
+
+    with log.open(encoding="utf-8") as handle:
+        first = handle.readline()
+    try:
+        header = json.loads(first)
+        return datetime.fromisoformat(header["started_at"])
+    except (ValueError, TypeError, KeyError):
+        # Empty file, a first line that is not JSON or not a header, or a
+        # stamp that does not parse: the caller falls back to the wall clock.
+        return None
+
+
+def _visit_stamp(
+    visit: Sequence[WireEvent], started: datetime | None
+) -> datetime | None:
+    """The instant a visit's game was last heard from, on the server's clock.
+
+    Args:
+        visit: One visit's events.
+        started: The log's own start, for a visit whose events carry no
+            server clock.
+
+    Returns:
+        The latest server instant in the visit, else ``started`` — which may
+        itself be ``None``, leaving the stamp to the wall clock.
+    """
+
+    clocks = [event.received_ms for event in visit if event.received_ms is not None]
+    if not clocks:
+        return started
+    return datetime.fromtimestamp(max(clocks) / 1000, UTC)
 
 
 def _tournament(visit: Sequence[WireEvent], profile: Profile) -> bool:

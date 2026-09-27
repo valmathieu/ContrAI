@@ -986,6 +986,24 @@ class TestParse:
             main(["parse", str(raw_log_path), "--profile", str(bad)])
         assert exc.value.code == 2
 
+    def test_a_record_is_stamped_when_its_game_was_heard_not_when_parsed(
+        self, tmp_path, profile_path, raw_log_path
+    ):
+        # The fixture frames carry no server clock, so the stamp falls back to
+        # the log's own start — the same bytes however often it is re-parsed.
+        import json
+
+        from contrai_data import game_path, read_events
+
+        started = json.loads(raw_log_path.read_text(encoding="utf-8").splitlines()[0])
+        main(["parse", str(raw_log_path), "--profile", str(profile_path),
+              "--out", str(tmp_path / "a")])
+        main(["parse", str(raw_log_path), "--profile", str(profile_path),
+              "--out", str(tmp_path / "b")])
+        first = game_path(tmp_path / "a", "obs-g1")
+        assert read_events(first).events[0].created_at == started["started_at"]
+        assert first.read_bytes() == game_path(tmp_path / "b", "obs-g1").read_bytes()
+
     def test_the_account_variables_are_not_needed(
         self, tmp_path, profile_text, raw_log_path, monkeypatch
     ):
@@ -1022,3 +1040,42 @@ class TestReporting:
         main(["parse", str(partial_raw_log_path), "--profile", str(profile_path),
               "--out", str(tmp_path)])
         assert "skipped" in capsys.readouterr().out
+
+
+class TestParseStamp:
+    def _event(self, received_ms):
+        from contrai_scraper import WireEvent
+
+        return WireEvent(kind="x", key=None, data=None, received_ms=received_ms)
+
+    def test_the_latest_server_instant_of_the_visit_is_the_stamp(self):
+        from datetime import UTC, datetime
+
+        from contrai_scraper.cli import _visit_stamp
+
+        visit = [self._event(1_789_510_540_000), self._event(None),
+                 self._event(1_789_510_543_721)]
+        assert _visit_stamp(visit, None) == datetime.fromtimestamp(
+            1_789_510_543.721, UTC)
+
+    def test_a_visit_without_a_clock_takes_the_log_start(self):
+        from datetime import UTC, datetime
+
+        from contrai_scraper.cli import _visit_stamp
+
+        started = datetime(2026, 9, 15, 22, 15, 18, tzinfo=UTC)
+        assert _visit_stamp([self._event(None)], started) == started
+
+    @pytest.mark.parametrize(
+        "first_line",
+        ["", "not json\n", '{"kind": "frame"}\n', '{"started_at": "someday"}\n'],
+        ids=["empty", "not-json", "no-stamp", "bad-stamp"],
+    )
+    def test_a_log_without_a_readable_start_leaves_the_wall_clock(
+        self, tmp_path, first_line
+    ):
+        from contrai_scraper.cli import _log_started
+
+        log = tmp_path / "raw.jsonl"
+        log.write_text(first_line, encoding="utf-8")
+        assert _log_started(log) is None

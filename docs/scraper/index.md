@@ -108,6 +108,12 @@ The raw log is what makes all of this correctable. Frames are stored verbatim *b
 is interpreted, so a parser fix applies to games already watched — `contrai-scrape parse` is that
 re-run, and it is the same code path a live session takes.
 
+A re-parsed record is stamped with the instant its game was last heard from: the latest server
+clock (`received_ms`) among its visit's events, else the raw log's own `started_at`. The live
+recorder stamps a record when it writes it, which is that same moment, so a re-parse keeps the
+date the game was played on rather than the date of the re-parse — and parsing one log twice
+gives the same bytes, which is what lets `corpus build` rebuild without drift.
+
 A panel read is filed in that same timeline, and stamped with `FrameSource.elapsed` — the clock
 frames themselves are stamped on, so the two are comparable. It matters because a DOM reading is
 taken *away* from the socket: the gap between a panel's stamp and the frames on either side of it
