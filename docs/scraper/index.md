@@ -699,7 +699,10 @@ The walk back asks the egress first, takes the table's exit when the profile nam
 fast. A failure rebuilds the worker's session — a fresh context and a fresh login — logged as
 `return_rebuilt`, *not* counted against the worker, and keeping its place in the rota. Everything
 else that ends a session is counted, and gives the place up at once, so the next worker in line
-takes it during the failed worker's idle poll: three sessions in a row that fail, or six refused
+takes it during the failed worker's idle poll. The first failure of a streak waits only
+`FIRST_RETRY_S` (30 s) rather than the poll: when no other worker is free, the place it gave up
+stays empty, and one failed session once left the lobby unwatched for minutes. A second failure in a
+row waits the whole poll. Three sessions in a row that fail, or six refused
 egress checks in a row, and the worker goes down (`worker_down`), leaves the rota and stays down for
 the process. A chase that runs its course, whatever it found, clears the streak, so a profile broken in
 a way every chase meets cannot keep logging in forever. The process hands itself back with exit

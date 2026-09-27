@@ -30,8 +30,9 @@ from contrai_scraper import (
     TableRegistry,
     parse_range,
 )
+from contrai_scraper.fleet import FIRST_RETRY_S
 
-OPEN = EgressReading(refusal=None, exit_ip="203.0.113.7", country="XX", route_device=None)
+OPEN =EgressReading(refusal=None, exit_ip="203.0.113.7", country="XX", route_device=None)
 BLOCKED = EgressReading(refusal=EgressRefusal.PROBE_FAILED, exit_ip=None, country=None,
                         route_device=None)
 
@@ -503,6 +504,18 @@ class TestSessions:
                        (Walker(), Frames(on_empty=harness.end)))
         harness.run()
         assert harness.events("session_failed")[0]["attempt"] == 1
+
+    def test_a_first_failure_retries_soon_and_a_second_waits_the_poll(self, profile):
+        # One failed session gave up the only lobby place for a 5-minute poll
+        # in a live run; a streak still backs off as far as it did.
+        harness = Harness(profile)
+        harness.script("bot01", (Walker(), Frames(ends=True)),
+                       (Walker(), Frames(ends=True)),
+                       (Walker(), Frames(on_empty=harness.end)))
+        harness.run()
+        assert ([failed["attempt"] for failed in harness.events("session_failed")],
+                [seconds for seconds in harness.sleeps if seconds]) == (
+            [1, 2], [FIRST_RETRY_S, 300.0])
 
     def test_a_chase_stopped_by_the_egress_leaves_the_page_where_it_is(
         self, profile, builders

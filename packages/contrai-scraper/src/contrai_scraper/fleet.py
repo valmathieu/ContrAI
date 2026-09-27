@@ -71,6 +71,13 @@ STANDBY_POLL_S: Final[float] = 1.0
 #: rides out the 5-8 s reconnections measured in the 5-worker run.
 HALL_SILENCE_S: Final[float] = 60.0
 
+#: How long a worker waits after the first failed session of a streak before
+#: asking for a place again; later failures in a row wait a schedule poll.
+#:
+#: The poll is 5 minutes, and a live run lost its only lobby watcher to one
+#: failed session for all of that: nobody else was free to take the place.
+FIRST_RETRY_S: Final[float] = 30.0
+
 #: The label the one worker of a fleet run without an accounts file goes by.
 SOLE_WORKER: Final[str] = "bot01"
 
@@ -540,10 +547,17 @@ class Fleet:
 
         await self._sleep(seconds)
 
-    async def idle(self) -> None:
-        """Sleep one schedule poll, never past the run's own deadline."""
+    async def idle(self, seconds: float | None = None) -> None:
+        """Sleep one schedule poll, never past the run's own deadline.
 
-        wait = self._profile.schedule.idle_poll_minutes * _MINUTE_S
+        Args:
+            seconds: A shorter wait to take instead of the poll.
+        """
+
+        wait = (
+            self._profile.schedule.idle_poll_minutes * _MINUTE_S
+            if seconds is None else seconds
+        )
         if self._run_deadline is not None:
             wait = max(0.0, min(wait, self._run_deadline - self._monotonic()))
         await self._sleep(wait)
@@ -639,7 +653,14 @@ class Worker:
                     if self._failures >= FAILURE_BUDGET:
                         fleet.worker_down(self._label)
                         return
-                    await fleet.idle()
+                    # A first failure is most often one bad page, and when no
+                    # other worker is free the place it gave up stays empty —
+                    # the lobby it held can go unwatched. So it tries again
+                    # soon; a second in a row looks like the site, and waits
+                    # the whole poll as before.
+                    await fleet.idle(
+                        FIRST_RETRY_S if self._failures == 1 else None
+                    )
         finally:
             rota.vacate(self._label, "stopped")
 
