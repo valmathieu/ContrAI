@@ -50,6 +50,8 @@ package "exceptions.py" as p_exc {
     }
     class CatalogError {
     }
+    class CorpusError {
+    }
 }
 
 RecordError --|> ContraiError
@@ -57,6 +59,7 @@ RecordFormatError --|> RecordError
 UnsupportedFormatError --|> RecordError
 VerdictFormatError --|> RecordError
 CatalogError --|> ContraiError
+CorpusError --|> ContraiError
 
 ' =========================================================
 ' events.py
@@ -488,6 +491,98 @@ note as N_catalog
   Holds player ids and display names: **local only**.
 end note
 p_catalog .. N_catalog
+
+' =========================================================
+' corpus.py — every scraped game once, rebuilt from raw logs
+' =========================================================
+package "corpus.py" as p_corpus {
+    class RecordCopy <<frozen dataclass>> {
+        + source : str
+        + origin : str
+        + events : tuple<GameEvent>
+        + game : GameRecord
+        --
+        + {static} of(source, origin, events) : RecordCopy
+        + game~_id : str <<property>>
+        + scored~_rounds : int <<property>>
+        + rounds : int <<property>>
+        + ended~_with~_totals : bool <<property>>
+        + first~_round : int? <<property>>
+    }
+    class Rejection <<frozen dataclass>> {
+        + copy : RecordCopy
+        + reason : str
+    }
+    class CopyChoice <<frozen dataclass>> {
+        + chosen : RecordCopy
+        + rejected : tuple<Rejection>
+        --
+        + game~_id : str <<property>>
+        + as~_report() : dict
+    }
+    enum ImportStatus {
+        COPIED
+        GROWN
+        PRESENT
+        STALE
+    }
+    class RawImport <<frozen dataclass>> {
+        + entries : tuple<(str, str, ImportStatus)>
+        --
+        + counts() : dict<str, dict<str, int>>
+    }
+    class BackupSummary <<frozen dataclass>> {
+        + path : Path
+        + files : int
+        + size : int
+        + raw~_logs : int
+        + games : int
+    }
+    class ArchiveCheck <<frozen dataclass>> {
+        + files : int
+        + problems : tuple<str>
+        --
+        + ok : bool <<property>>
+    }
+    class "corpus.py" as m_corpus <<module>> {
+        + {static} RAW~_DIR : str
+        + {static} BUILD~_FILE : str
+        + {static} MANIFEST~_FILE : str
+        + {static} MANIFEST~_FORMAT : str
+        --
+        + choose~_copy(candidates) : CopyChoice
+        + import~_raw(root, sources) : RawImport
+        + raw~_logs(root) : tuple<(str, Path)>
+        + write~_games(root, copies) : int
+        + backup~_corpus(root, destination, *, now) : BackupSummary
+        + check~_archive(path) : ArchiveCheck
+    }
+}
+
+RecordCopy *-- GameRecord
+Rejection o-- RecordCopy
+CopyChoice o-- "1" RecordCopy : chosen
+CopyChoice *-- "0..N" Rejection
+RawImport ..> ImportStatus
+m_corpus ..> CopyChoice : <<ranks>>
+m_corpus ..> RawImport : <<imports>>
+m_corpus ..> BackupSummary : <<backs up>>
+m_corpus ..> ArchiveCheck : <<checks>>
+m_corpus ..> RecordWriter : <<writes games/>>
+m_corpus ..> m_catalog : <<drops the stale catalog>>
+m_corpus ..> CorpusError : <<refuses a clash>>
+
+note as N_corpus
+  **Raw logs are the only thing kept by hand.** Games,
+  verdicts and the catalog are rebuilt from ""raw/<source>/"".
+  ""choose~_copy"" keeps one record per game: scored rounds,
+  then rounds, then a closing total, then the earliest join.
+  A raw log is only appended to, so a longer log extending the
+  kept one is ""grown""; any other clash is refused.
+  ""games/"" is written to a staging directory and swapped in whole.
+  The wire parsing is ""contrai-scrape corpus build""'s.
+end note
+p_corpus .. N_corpus
 
 ' =========================================================
 ' Layering
