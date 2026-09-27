@@ -56,8 +56,9 @@ profile, so it now fails with usage rather than launching anything.
 Everything between a socket frame and a record, in one direction, each stage knowing only the
 one below it.
 
-```mermaid format="svg" source="flow_wire.mmd"
-```
+![The wire pipeline, from socket frames to a record](../diagrams/flow_wire.png)
+
+*Rendered from [`flow_wire.mmd`](../diagrams/flow_wire.mmd).*
 
 Three properties of the traffic shape the wire layer. It is **double-wrapped** — the frame is
 JSON whose payload is itself a JSON *string*. It is **mirrored** — a second connection repeats
@@ -528,8 +529,9 @@ arrives and cannot be read is what fails, naming the path that read nothing.
 profile's `[schedule]` and only through the tunnel `[egress]` describes. `Shift` is the loop that
 reconciles the two, one browser session at a time.
 
-```mermaid format="svg" source="state_scraper_shift.mmd"
-```
+![A shift's states, from the schedule gate to exit](../diagrams/state_scraper_shift.png)
+
+*Rendered from [`state_scraper_shift.mmd`](../diagrams/state_scraper_shift.mmd).*
 
 - **No browser outside the window.** A closed schedule holds nothing open — a closed browser costs
   nothing and cannot drift. The process logs `schedule_idle` once, naming the next opening, and
@@ -563,8 +565,9 @@ the same egress gate (one shared `SharedEgressGate`, since every worker and ever
 same retention pruning — but inside an open window it launches one Chromium and opens a session per
 worker on it, logins staggered by `login_stagger_s`.
 
-```mermaid format="svg" source="state_scraper_worker.mmd"
-```
+![A fleet worker's states, from the egress gate to the lobby and back](../diagrams/state_scraper_worker.png)
+
+*Rendered from [`state_scraper_worker.mmd`](../diagrams/state_scraper_worker.mmd).*
 
 Each worker loops on the same route. It logs in, walks to the lobby, reads the tournament row's
 hash, and waits there on the socket (`in_hall`) until `LobbyWatcher` announces a start. A roster
@@ -648,8 +651,9 @@ The image, the Compose file, the environment templates and the procedures that p
 confinement — the exit address, the refusal of the home address, a tunnel outage under a packet
 capture — live in `deploy/install.md`.
 
-```mermaid format="svg" source="deploy_scraper.mmd"
-```
+![The scraper deployed behind its VPN sidecar](../diagrams/deploy_scraper.png)
+
+*Rendered from [`deploy_scraper.mmd`](../diagrams/deploy_scraper.mmd).*
 
 ## Pending
 
