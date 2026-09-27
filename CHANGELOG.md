@@ -17,6 +17,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (data) `read_verdict(path)` and `GameVerdict.from_json` read a verdict file back, refusing anything `write_verdict` would not write. See [data docs](docs/data/index.md).
 - (data) `build_catalog(root)` rebuilds `<root>/catalog.sqlite`, a SQLite index of games, seats, rounds and verdicts with player and clean-round views. See [data docs](docs/data/index.md).
 - (engine) `contrai catalog [ROOT] [--player ID_OR_NAME]` rebuilds the corpus index with a summary, or lists one player's games. See [engine docs](docs/engine/index.md).
+- (data) `GameVerdict.replayed_totals` and catalog `games.totals_basis`: a finished game with no stated final totals takes the replay's, `winner_basis = 'replayed'`; catalog schema 2. See [data docs](docs/data/index.md).
 - (core) `RuleConfig.substitute_survives_doubling` and `personal_sweep_marks_solo_slam` (§9.6) — the observed tables' sweep scoring, both set in the `tournament` preset. See [core docs](docs/core/index.md).
 - (core) `RuleConfig.defense_sweep_marks_substitute` (§9.6): a defense taking all 8 tricks marks 250 made, not 160; on in `tournament`. See [engine docs](docs/engine/index.md).
 - (core) `RuleConfig.dispute_resolution` (§9.6): `failed` / `shared` / `held` settles an exact tie, doubled or not; the `tournament` preset holds it. See [core docs](docs/core/index.md).

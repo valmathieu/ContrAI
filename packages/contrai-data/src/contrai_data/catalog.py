@@ -73,7 +73,7 @@ CATALOG_FILE = "catalog.sqlite"
 
 #: The schema this build writes and reads, stored as ``PRAGMA
 #: user_version``. Bumped on any change to a table or a view.
-CATALOG_SCHEMA_VERSION = 1
+CATALOG_SCHEMA_VERSION = 2
 
 
 def catalog_path(root: Path | str) -> Path:
@@ -195,6 +195,7 @@ class _GameRow:
     end_reason: str | None
     total_ns: int | None
     total_ew: int | None
+    totals_basis: str | None
     winner: str | None
     winner_basis: str | None
     verdict: str | None
@@ -302,6 +303,7 @@ CREATE TABLE games (
     end_reason TEXT,
     total_ns INTEGER,
     total_ew INTEGER,
+    totals_basis TEXT,
     winner TEXT,
     winner_basis TEXT,
     verdict TEXT,
@@ -467,22 +469,29 @@ def _insert(table: str, row_type: type) -> str:
 # ----------------------------------------------------------------------
 
 
-def _effective_winner(record: GameRecord) -> tuple[TeamSide | None, str | None]:
+def _effective_winner(
+    record: GameRecord, replayed: Mapping[TeamSide, int] | None = None
+) -> tuple[TeamSide | None, str | None]:
     """The side that won a game, and how that is known.
 
     The recorded winner is used when there is one. Otherwise a game that
-    ended on reaching the target, with known totals, is won by the side
-    at or above the ruleset's target — but only when **exactly one** side
-    is. Both sides over the target is a game the belote gate or sudden
-    death decided, rules that live in the engine; guessing would be
-    worse than saying nothing.
+    ended on reaching the target is won by the side at or above the
+    ruleset's target — but only when **exactly one** side is. Both sides
+    over the target is a game the belote gate or sudden death decided,
+    rules that live in the engine; guessing would be worse than saying
+    nothing.
+
+    The totals are the record's own when it states them. A record that
+    ended without them — its final read never came — falls back on the
+    totals its verdict's replay rebuilt, and says so.
 
     Args:
         record: The game.
+        replayed: The final totals a fresh verdict rebuilt, if any.
 
     Returns:
-        The winning side and ``"recorded"`` or ``"totals"``, or
-        ``(None, None)`` when the winner is unknown.
+        The winning side and ``"recorded"``, ``"totals"`` or
+        ``"replayed"``, or ``(None, None)`` when the winner is unknown.
     """
 
     ended = record.ended
@@ -490,12 +499,37 @@ def _effective_winner(record: GameRecord) -> tuple[TeamSide | None, str | None]:
         return None, None
     if ended.winner is not None:
         return ended.winner, "recorded"
-    if ended.reason is not EndReason.TARGET_REACHED or ended.totals is None:
+    if ended.reason is not EndReason.TARGET_REACHED:
+        return None, None
+    totals, basis = _final_totals(record, replayed)
+    if totals is None:
         return None, None
     target = record.ruleset.target_score
-    over = [side for side in TeamSide if ended.totals[side] >= target]
+    over = [side for side in TeamSide if totals[side] >= target]
     if len(over) == 1:
-        return over[0], "totals"
+        return over[0], "totals" if basis == "recorded" else "replayed"
+    return None, None
+
+
+def _final_totals(
+    record: GameRecord, replayed: Mapping[TeamSide, int] | None
+) -> tuple[Mapping[TeamSide, int] | None, str | None]:
+    """A game's final totals, and where they come from.
+
+    Args:
+        record: The game.
+        replayed: The final totals a fresh verdict rebuilt, if any.
+
+    Returns:
+        The record's own totals and ``"recorded"``; else the replayed
+        ones and ``"replayed"``; else ``(None, None)``.
+    """
+
+    ended = record.ended
+    if ended is not None and ended.totals is not None:
+        return ended.totals, "recorded"
+    if ended is not None and replayed is not None:
+        return replayed, "replayed"
     return None, None
 
 
@@ -654,10 +688,17 @@ def _game_rows(
     """
 
     game_id = record.header.game_id
-    winner, basis = _effective_winner(record)
+    # Only a fresh verdict speaks for this record: a stale one may have
+    # replayed rounds the record no longer holds.
+    replayed = (
+        verdict.replayed_totals
+        if verdict is not None and status == "fresh"
+        else None
+    )
+    winner, basis = _effective_winner(record, replayed)
     ended = record.ended
     joined = record.observed_from
-    totals = ended.totals if ended is not None else None
+    totals, totals_basis = _final_totals(record, replayed)
 
     # Joined by the record's own round number, never by position: round
     # numbers are the source's deal count, may start above one and skip.
@@ -682,6 +723,7 @@ def _game_rows(
         end_reason=str(ended.reason) if ended is not None else None,
         total_ns=totals[TeamSide.NS] if totals is not None else None,
         total_ew=totals[TeamSide.EW] if totals is not None else None,
+        totals_basis=totals_basis,
         winner=side_token(winner) if winner is not None else None,
         winner_basis=basis,
         verdict=str(verdict.verdict) if verdict is not None else None,
@@ -1078,6 +1120,8 @@ class PlayerGame:
         verdict: The game's verdict, when a readable one exists.
         verdict_status: ``fresh``, ``stale``, ``missing`` or
             ``unreadable``.
+        totals_basis: ``recorded`` when the totals are the record's own,
+            ``replayed`` when its verdict rebuilt them, else ``None``.
     """
 
     created_at: str
@@ -1093,6 +1137,7 @@ class PlayerGame:
     total_ew: int | None
     verdict: str | None
     verdict_status: str
+    totals_basis: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1114,7 +1159,7 @@ class PlayerReport:
 _PLAYER_GAMES = """
 SELECT g.created_at, g.game_id, s.player_id, s.name, s.position, s.side,
        p.name, s.result, g.end_reason, g.total_ns, g.total_ew,
-       g.verdict, g.verdict_status
+       g.verdict, g.verdict_status, g.totals_basis
 FROM seats s
 JOIN games g USING (game_id)
 LEFT JOIN seats p

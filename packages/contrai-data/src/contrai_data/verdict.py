@@ -36,13 +36,17 @@ own rounds.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from contrai_core import TeamSide
+
 from .events import RecordSource
 from .exceptions import VerdictFormatError
+from .tokens import side_token
 
 
 class Verdict(Enum):
@@ -175,6 +179,29 @@ def _list(value: object, where: str) -> list[Any]:
     if not isinstance(value, list):
         raise VerdictFormatError(f"{where} is an array, got {value!r}")
     return value
+
+
+def _totals(value: object, where: str) -> dict[TeamSide, int]:
+    """Check ``value`` is one integer per side, keyed by side token.
+
+    Args:
+        value: The decoded JSON value.
+        where: What it is, for the message.
+
+    Returns:
+        The totals, keyed by side.
+
+    Raises:
+        VerdictFormatError: If a side is missing or unknown, or a total is
+            not an integer.
+    """
+
+    data = _object(value, where)
+    _keys(data, _SIDE_KEYS, where)
+    return {
+        side: _int(data[side_token(side)], f"{where} {side_token(side)}")
+        for side in TeamSide
+    }
 
 
 def _token[E: Enum](enum: type[E], value: object, where: str) -> E:
@@ -314,6 +341,12 @@ _GAME_KEYS = frozenset(
     {"game_id", "source", "preset", "verdict", "counts", "notes", "rounds"}
 )
 
+#: Present only when the replay rebuilt a final total the record lacks.
+_GAME_OPTIONAL = frozenset({"replayed_totals"})
+
+#: The keys of a per-side object, as the record spells its sides.
+_SIDE_KEYS = frozenset(side_token(side) for side in TeamSide)
+
 
 @dataclass(frozen=True, slots=True)
 class RoundVerdict:
@@ -451,6 +484,11 @@ class GameVerdict:
         notes: Non-fatal observations — the ruleset drift a stale preset
             produces, say. They never change a verdict; they are there so
             a reader is not left to wonder.
+        replayed_totals: The final totals the replay rebuilt for a record
+            that ended without stating its own, or ``None``. A derived
+            value, never a checked one: it is the last totals the record
+            states plus what the replay marked for every round after
+            them, given only when those rounds leave no room for a pot.
     """
 
     game_id: str
@@ -458,6 +496,7 @@ class GameVerdict:
     preset: str
     rounds: tuple[RoundVerdict, ...] = ()
     notes: tuple[str, ...] = field(default=())
+    replayed_totals: Mapping[TeamSide, int] | None = None
 
     @property
     def verdict(self) -> Verdict:
@@ -494,10 +533,11 @@ class GameVerdict:
 
         Returns:
             The record's identity, its overall verdict, the per-verdict
-            counts and every round.
+            counts and every round, plus the replayed totals when there
+            are any — absent otherwise, never ``null``.
         """
 
-        return {
+        payload: dict[str, Any] = {
             "game_id": self.game_id,
             "source": self.source,
             "preset": self.preset,
@@ -506,6 +546,12 @@ class GameVerdict:
             "notes": list(self.notes),
             "rounds": [round_.as_json() for round_ in self.rounds],
         }
+        if self.replayed_totals is not None:
+            payload["replayed_totals"] = {
+                side_token(side): points
+                for side, points in self.replayed_totals.items()
+            }
+        return payload
 
     @classmethod
     def from_json(cls, payload: object) -> GameVerdict:
@@ -526,7 +572,7 @@ class GameVerdict:
         """
 
         data = _object(payload, "verdict file")
-        _keys(data, _GAME_KEYS, "verdict file")
+        _keys(data, _GAME_KEYS, "verdict file", _GAME_OPTIONAL)
         rounds = tuple(
             RoundVerdict.from_json(item)
             for item in _list(data["rounds"], "rounds")
@@ -541,6 +587,11 @@ class GameVerdict:
             rounds=rounds,
             notes=tuple(
                 _str(note, "note") for note in _list(data["notes"], "notes")
+            ),
+            replayed_totals=(
+                _totals(data["replayed_totals"], "replayed_totals")
+                if "replayed_totals" in data
+                else None
             ),
         )
 
