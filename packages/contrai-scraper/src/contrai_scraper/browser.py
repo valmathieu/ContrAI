@@ -75,6 +75,11 @@ PANEL_ATTEMPTS: Final[int] = 4
 #: the walk.
 PANEL_ATTEMPT_TIMEOUT_MS: Final[int] = STEP_TIMEOUT_MS // PANEL_ATTEMPTS
 
+#: What the click on the rails' toggle waits. The toggle was just seen, so a
+#: click that does not land at once means it has hidden again — the rails
+#: came back on their own — and there is nothing left to wait for.
+RAIL_REVEAL_TIMEOUT_MS: Final[int] = 1_000
+
 #: The attribute a class-membership test reads. Playwright's locator has no
 #: class list of its own, so the attribute is read and split.
 _CLASS_ATTR: Final[str] = "class"
@@ -917,7 +922,14 @@ class Spectator:
 
         if self._selectors.rail_show is None:
             return
-        await self._dismiss("rail_show")
+        # Best-effort, and short. The toggle is probed and then clicked, and a
+        # rail that slides back in between hides it: waiting out the whole
+        # step timeout on it failed a walk back in the 10-worker ramp. A miss
+        # costs nothing, since every panel attempt reveals again.
+        for candidate in self._candidates("rail_show"):
+            if await self._page.locator(candidate).count():
+                await self._click_quietly(candidate, timeout=RAIL_REVEAL_TIMEOUT_MS)
+                return
 
     def _require_lobby(self) -> None:
         """Refuse a lobby step on a profile that does not describe the lobby.
