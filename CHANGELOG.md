@@ -35,6 +35,8 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) `contrai-scrape fleet` — up to ten workers wait in the lobby and chase every tournament game from its first card, with per-worker budgets and an optional `[fleet]` profile section. See [scraper docs](docs/scraper/index.md).
 - (scraper) Fleet startup census — each worker sweeps `census_hops` tables once, recording nothing; a `census` line estimates the tournament population from resightings. See [scraper docs](docs/scraper/index.md).
 - (scraper) `carried_over` is inferred across rounds whose running totals were never read, when the totals around them leave no room for a pot. See [scraper docs](docs/scraper/index.md).
+- (scraper) A fleet keeps at most two workers in the lobby and one logged-in spare; other idle workers log out until needed (`[fleet].lobby_watchers`, `spares`). See [scraper docs](docs/scraper/index.md).
+- (scraper) A fleet window records the tournament games already running when it opens, one worker per table, from the mid-game join (`[fleet].bootstrap_enabled`). See [scraper docs](docs/scraper/index.md).
 
 ### Changed
 

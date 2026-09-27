@@ -2,12 +2,19 @@
 
 ``contrai-scrape run`` sits wherever the server seats it, which is always a
 game already under way. A fleet catches games from their first card instead:
-every worker idles in the lobby, where each tournament game's four players are
+a few workers idle in the lobby, where each tournament game's four players are
 announced on the socket the moment it starts; one worker claims the roster and
-chases it to its table, and the rest go on waiting. Idle workers belong in the
+chases it to its table, and the rest go on waiting. Watchers belong in the
 lobby rather than at a table because a spectator left at a table after its game
 is sent back to the menu anyway, and because a worker already in the lobby
 spends none of the few seconds a game's first deal allows on getting there.
+
+Only a few, though: the :class:`~contrai_scraper.rota.Rota` keeps at most
+``[fleet].lobby_watchers`` in the lobby and ``[fleet].spares`` logged in off
+it, and every other idle worker logs out until a chase needs it. And a window
+opens on games already under way, which no lobby will announce: once the first
+watcher is placed, the next logins each join one of them and record it from
+where they join, until one finds none to take.
 
 The shape is the shift's, multiplied. The schedule says when, the egress says
 whether — one tunnel and one gate for everyone — and inside an open window one
@@ -26,6 +33,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
 
@@ -39,7 +47,8 @@ from .parse.translate import Translator
 from .profile import FleetSection, Profile
 from .rawlog import RawLogWriter, new_session_id, prune_raw_logs, raw_path
 from .recorder import ChaseTarget, Recorder, RecorderLimits, SessionSummary, StopReason
-from .registry import TableRegistry, estimate_population
+from .registry import TableRegistry, WorkerClaims, estimate_population
+from .rota import Role, Rota
 from .shift import EGRESS_BUDGET, FAILURE_BUDGET, _earliest, _stamp, _utc_now
 from .wire import WireStream
 
@@ -49,6 +58,10 @@ _MINUTE_S: Final[float] = 60.0
 #: How often a worker waiting in the lobby looks up from the socket, to notice
 #: that the fleet has stopped while the lobby said nothing.
 HALL_POLL_S: Final[float] = 5.0
+
+#: How often a spare, standing by off the lobby, drains its page's frames into
+#: the raw log and looks at whether it has been sent in.
+STANDBY_POLL_S: Final[float] = 1.0
 
 #: How long a worker in the lobby may hear nothing at all before it rebuilds.
 #:
@@ -74,6 +87,63 @@ class FleetSummary:
     tables_rejected: int
     records: tuple[Path, ...]
     workers_down: tuple[str, ...]
+    bootstraps: int = 0
+    """Startup workers sent to join a game already under way."""
+
+    bootstrap_games: int = 0
+    """Games those workers recorded, from where they joined."""
+
+
+class _Place(StrEnum):
+    """Where a session's page stands, which decides its walk to the lobby."""
+
+    MENU = "menu"
+    """Where a login leaves it: the walk in is ``enter_lobby``, or the census."""
+
+    TABLE = "table"
+    """At a table after a chase, or just stepped off one onto the online menu:
+    the walk back is ``return_to_lobby``, which skips the exit when a menu
+    already shows."""
+
+
+class _SeatedClaims:
+    """A worker's claims that also say, once, when a table was taken.
+
+    A startup worker's recorder returns only at the end of its game, 8-18
+    minutes after it took the table; the rota needs to hear at the taking, to
+    send the next one. The recorder claims a table exactly when it accepts it,
+    so the first claim granted is that moment. Everything else is passed
+    through, and the recorder takes its claims by duck type, so neither it
+    nor the registry knows this wrapper exists.
+    """
+
+    __slots__ = ("_claims", "_on_seated", "_told")
+
+    def __init__(self, claims: WorkerClaims, on_seated: Callable[[], None]) -> None:
+        """Wrap one worker's claims.
+
+        Args:
+            claims: The worker's view of the registry.
+            on_seated: Called on the first claim granted, and never again.
+        """
+
+        self._claims = claims
+        self._on_seated = on_seated
+        self._told = False
+
+    def claim(self, table_id: str | None) -> bool:
+        """Take a table, as :meth:`WorkerClaims.claim` does, and say so the first time."""
+
+        granted = self._claims.claim(table_id)
+        if granted and not self._told:
+            self._told = True
+            self._on_seated()
+        return granted
+
+    def __getattr__(self, name: str) -> Any:
+        """Everything else is the wrapped claims'."""
+
+        return getattr(self._claims, name)
 
 
 class _ReturnFailed(BrowserError):
@@ -102,6 +172,8 @@ class Fleet:
         "_recorder", "_workers", "_windows", "_chases", "_gave_up", "_games",
         "_seated", "_rejected", "_records", "_down", "_run_deadline",
         "_seat_deadline", "_hard_deadline", "_census_due", "_census_sightings",
+        "_bootstraps", "_bootstrap_games",
+        "_rota",
     )
 
     def __init__(
@@ -171,6 +243,7 @@ class Fleet:
         self._recorder = recorder
         self._windows = self._chases = self._gave_up = 0
         self._games = self._seated = self._rejected = 0
+        self._bootstraps = self._bootstrap_games = 0
         self._records: list[Path] = []
         self._down: list[str] = []
         self._run_deadline: float | None = None
@@ -178,6 +251,16 @@ class Fleet:
         self._hard_deadline: float | None = None
         self._census_due = 0
         self._census_sightings: list[tuple[str, bool | None]] = []
+        section = self.section
+        self._rota = Rota(
+            watchers=section.lobby_watchers,
+            spares=section.spares,
+            stagger_s=section.login_stagger_s,
+            monotonic=monotonic,
+            stopping=self.stopping,
+            health=health,
+            bootstrap=section.bootstrap_enabled,
+        )
         # Made once and kept across windows: a worker's log, its claims and
         # its failure streak belong to the account, not to one browser.
         self._workers = [Worker(self, account) for account in accounts]
@@ -237,6 +320,8 @@ class Fleet:
             tables_rejected=self._rejected,
             records=tuple(self._records),
             workers_down=tuple(self._down),
+            bootstraps=self._bootstraps,
+            bootstrap_games=self._bootstrap_games,
         )
 
     async def _window(self, now: datetime) -> None:
@@ -257,21 +342,17 @@ class Fleet:
         )
 
         live = [worker for worker in self._workers if worker.label not in self._down]
-        if self.section.census_enabled:
-            self._census_due = sum(1 for worker in live if not worker.censused)
         self._windows += 1
         self._health.event("fleet_window_opened", workers=len(live))
         async with self._open_browser(self._profile, headless=self._headless) as browser:
+            # Every worker starts the window logged out; the rota hands the
+            # first roles out here, in fleet order, and the rest wait.
+            self._rota.open([worker.label for worker in live])
             done = asyncio.Event()
             try:
                 async with asyncio.TaskGroup() as group:
                     group.create_task(self._beat(done))
-                    tasks = [
-                        group.create_task(
-                            worker.run(browser, delay=index * self.section.login_stagger_s)
-                        )
-                        for index, worker in enumerate(live)
-                    ]
+                    tasks = [group.create_task(worker.run(browser)) for worker in live]
                     await asyncio.wait(tasks)
                     done.set()
             except* ShiftError as raised:
@@ -289,6 +370,7 @@ class Fleet:
                 self._health.fleet_heartbeat(
                     down=len(self._down),
                     egress_probes=getattr(self._egress, "probes", None),
+                    **self._rota.counts(),
                 )
 
     def _over(self) -> bool:
@@ -335,6 +417,12 @@ class Fleet:
 
         return self._registry
 
+    @property
+    def rota(self) -> Rota:
+        """Who is in the lobby, who stands by, and who is logged out."""
+
+        return self._rota
+
     def session(
         self, browser: Any, profile: Profile, health: HealthLog
     ) -> AbstractAsyncContextManager[tuple[Any, Any]]:
@@ -366,16 +454,38 @@ class Fleet:
             None if self._hard_deadline is None else self._hard_deadline - now,
         )
 
-    def absorb(self, summary: SessionSummary) -> None:
-        """Add one chase's work to the fleet's totals."""
+    def absorb(self, summary: SessionSummary, *, bootstrap: bool = False) -> None:
+        """Add one chase's work, or one startup recording's, to the fleet's totals.
 
-        self._chases += 1
-        if summary.stop_reason is StopReason.CHASE_GAVE_UP:
-            self._gave_up += 1
+        Both count towards the games recorded, and so towards ``max_games``.
+
+        Args:
+            summary: What the recorder did.
+            bootstrap: Whether it was a startup worker's, joined mid-game,
+                rather than a chase's.
+        """
+
+        if bootstrap:
+            self._bootstraps += 1
+            self._bootstrap_games += summary.games_recorded
+        else:
+            self._chases += 1
+            if summary.stop_reason is StopReason.CHASE_GAVE_UP:
+                self._gave_up += 1
         self._games += summary.games_recorded
         self._seated += summary.tables_seated
         self._rejected += summary.tables_rejected
         self._records.extend(summary.records)
+
+    def census_started(self) -> None:
+        """Count a startup sweep as under way, until :meth:`census_report` takes it.
+
+        Counted as sweeps start rather than from the workers alive at the
+        window's opening: a worker that begins the window logged out may
+        never sweep at all, and must not leave the report waiting for it.
+        """
+
+        self._census_due += 1
 
     def census_report(self, sightings: list[tuple[str, bool | None]]) -> None:
         """Take one worker's startup sweep, and say what the sweeps have seen so far.
@@ -384,9 +494,9 @@ class Fleet:
         sized against: how many different tournament tables the sweeps met,
         how many times in all, and what population that resighting rate
         suggests — which is what says whether a ceiling of ten is right. It
-        is written after every sweep with the number still out, rather than
-        once at the end, so a worker that goes down before its sweep costs the
-        report one worker's sightings and not the report.
+        is written after every sweep with the number of sweeps still under
+        way, rather than once at the end, so a worker that goes down before
+        its sweep costs the report one worker's sightings and not the report.
 
         Args:
             sightings: ``(table id, is tournament)`` per table the worker's
@@ -399,7 +509,7 @@ class Fleet:
         distinct = len(set(tournament))
         self._health.event(
             "census",
-            pending=max(0, self._census_due),
+            pending=self._census_due,
             tables=len({table for table, _ in self._census_sightings}),
             tournament_tables=distinct,
             sightings=len(tournament),
@@ -421,6 +531,7 @@ class Fleet:
 
         self._down.append(label)
         self._health.event("worker_down", worker=label, down=len(self._down))
+        self._rota.drop(label)
         if len(self._down) * 2 > len(self._workers):
             raise ShiftError(f"{len(self._down)} of {len(self._workers)} workers are down")
 
@@ -470,61 +581,88 @@ class Worker:
 
         return self._label
 
-    @property
-    def censused(self) -> bool:
-        """Whether this worker's startup sweep has been made — once a process."""
-
-        return self._censused
-
-    async def run(self, browser: Any, *, delay: float = 0.0) -> None:
+    async def run(self, browser: Any) -> None:
         """Sessions, one after another, until the fleet stops or this worker is down.
+
+        Each session waits for a role first, logged out: a worker only logs
+        in once the rota has a place for it.
 
         Args:
             browser: The window's shared browser, which sessions open on.
-            delay: Seconds to wait before the first login, so a fleet's
-                logins arrive one at a time rather than all at once.
 
         Raises:
             ShiftError: If this worker going down leaves most of the fleet down.
         """
 
         fleet = self._fleet
+        rota = fleet.rota
         self._browser = browser
+        blocked = 0
+        try:
+            while True:
+                await self._await_slot()
+                if fleet.stopping():
+                    return
+                reading = await fleet.egress.check()
+                if not reading.ok:
+                    blocked += 1
+                    rota.vacate(self._label, "egress_blocked")
+                    self._health.event(
+                        "egress_blocked", attempt=blocked, **reading.fields()
+                    )
+                    if blocked >= EGRESS_BUDGET:
+                        fleet.worker_down(self._label)
+                        return
+                    await fleet.idle()
+                    continue
+                blocked = 0
+                try:
+                    await self._session()
+                except _ReturnFailed as error:
+                    # A free rebuild keeps the worker's place: nobody is woken
+                    # to replace a worker that is only logging in again.
+                    self._health.event("return_rebuilt", error=str(error))
+                except _HallDeaf:
+                    # Logged as `hall_deaf` where it was noticed. Straight back
+                    # to the egress check and a fresh context, with no budget
+                    # spent and the place kept.
+                    self._deaf_streak += 1
+                except Exception as error:  # noqa: BLE001 - one session must not end the worker
+                    self._failures += 1
+                    self._health.event(
+                        "session_failed", attempt=self._failures,
+                        error=f"{type(error).__name__}: {error}",
+                    )
+                    # Given up before the idle poll, not after: the next
+                    # worker in line takes the place now.
+                    rota.vacate(self._label, "session_failed")
+                    if self._failures >= FAILURE_BUDGET:
+                        fleet.worker_down(self._label)
+                        return
+                    await fleet.idle()
+        finally:
+            rota.vacate(self._label, "stopped")
+
+    async def _await_slot(self) -> None:
+        """Wait logged out until the rota has a place, then take a login's turn.
+
+        The wait is on real time and is cut short when the worker is woken;
+        the login stagger that follows is on the fleet's clock, as it always
+        was. Returns early, with no role, once the fleet is stopping.
+        """
+
+        fleet = self._fleet
+        rota = fleet.rota
+        while rota.ask(self._label) is Role.OUT:
+            if fleet.stopping():
+                return
+            await rota.wait(self._label, HALL_POLL_S)
+        delay = rota.login_delay()
         if delay:
             await fleet.pause(delay)
-        blocked = 0
-        while not fleet.stopping():
-            reading = await fleet.egress.check()
-            if not reading.ok:
-                blocked += 1
-                self._health.event("egress_blocked", attempt=blocked, **reading.fields())
-                if blocked >= EGRESS_BUDGET:
-                    fleet.worker_down(self._label)
-                    return
-                await fleet.idle()
-                continue
-            blocked = 0
-            try:
-                await self._session()
-            except _ReturnFailed as error:
-                self._health.event("return_rebuilt", error=str(error))
-            except _HallDeaf:
-                # Logged as `hall_deaf` where it was noticed. Straight back to
-                # the egress check and a fresh context, with no budget spent.
-                self._deaf_streak += 1
-            except Exception as error:  # noqa: BLE001 - one session must not end the worker
-                self._failures += 1
-                self._health.event(
-                    "session_failed", attempt=self._failures,
-                    error=f"{type(error).__name__}: {error}",
-                )
-                if self._failures >= FAILURE_BUDGET:
-                    fleet.worker_down(self._label)
-                    return
-                await fleet.idle()
 
     async def _session(self) -> None:
-        """One browser context: log in, reach the lobby, and serve it.
+        """One browser context: log in, then serve whatever role the rota gives.
 
         Raises:
             BrowserError: A step of the walk failed; the page is saved first.
@@ -540,22 +678,186 @@ class Worker:
             ) as (spectator, frames):
                 try:
                     await spectator.log_in()
-                    if await self._arrive(spectator, frames, log):
-                        table_hash = await spectator.read_tournament_hash()
-                        if table_hash is None:
-                            raise BrowserError(
-                                "[selectors].lobby_row_tournament_class matched no row"
-                            )
-                        await self._hall(spectator, frames, log, table_hash)
+                    self._fleet.rota.logged_in()
+                    reason = await self._serve(spectator, frames, log)
                 except BrowserError:
                     await self._capture(spectator, log.path)
                     raise
         finally:
             log.close()
-        self._health.event("session_ended", session=session)
+        self._health.event("session_ended", session=session, reason=reason)
 
-    async def _arrive(self, spectator: Any, frames: Any, log: RawLogWriter) -> bool:
+    async def _serve(self, spectator: Any, frames: Any, log: RawLogWriter) -> str:
+        """Serve the worker's role from wherever the page stands, until it ends.
+
+        The session is a loop over the page's place: a login leaves it on the
+        menu, a chase leaves it at a table, and each place has its own walk to
+        the lobby. The role is read again at the top of every turn, since the
+        rota changes it between games — and first of all right after the
+        login, because a spare still logging in may already have been sent in.
+        A worker the rota has no place for closes its session, which is its
+        logout. The lobby's readers are made on the first arrival and kept for
+        the whole session.
+
+        Returns:
+            Why the session ended: ``parked`` when the rota took the worker's
+            place away, ``stopping``, or ``egress_blocked``.
+
+        Raises:
+            BrowserError: A step of the walk failed, or the lobby shows no
+                tournament row.
+            _ReturnFailed: The walk back from a table did not land.
+        """
+
+        fleet = self._fleet
+        rota = fleet.rota
+        # Only a worker sent straight to the lobby by its login sweeps, and
+        # only in the window's opening wave; a spare's session never does.
+        sweep = rota.role(self._label) is Role.HALL and rota.opening
+        at = _Place.MENU
+        # The run loop has just asked the egress; any later walk asks again.
+        checked = True
+        reader: tuple[LobbyWatcher, WireStream] | None = None
+        while not fleet.stopping():
+            role = rota.role(self._label)
+            if role is Role.OUT:
+                return "parked"
+            if role is Role.SPARE:
+                at = await self._stand_by(spectator, frames, log, at)
+                checked = False
+                continue
+            if not checked and not (await fleet.egress.check()).ok:
+                return "egress_blocked"
+            if role is Role.BOOT:
+                # Only ever handed to a worker logged out, so the page is
+                # where its login left it.
+                left = await self._bootstrap(spectator, frames, log)
+            else:
+                if not await self._reach_lobby(spectator, frames, log, at, sweep=sweep):
+                    return self._ended()
+                if reader is None:
+                    reader = await self._lobby_reader(spectator)
+                left = await self._hall(spectator, frames, log, *reader)
+            if left is None:
+                return self._ended()
+            at, checked = left, False
+        return "stopping"
+
+    def _ended(self) -> str:
+        """Why a walk or a chase that stopped short ended the session."""
+
+        return "stopping" if self._fleet.stopping() else "egress_blocked"
+
+    async def _stand_by(
+        self, spectator: Any, frames: Any, log: RawLogWriter, at: _Place
+    ) -> _Place:
+        """Stand by off the lobby, logged in, until sent in or no longer needed.
+
+        A spare coming from a chase steps off its table first, onto the online
+        menu. From there, or from where its login left it, it only drains its
+        page's frames into the raw log. There is no silence watchdog here: a
+        spare never hears a roster to prove its lobby works, and nobody has
+        measured how quiet a page off the lobby is. ``spare_silent`` records
+        that, once per spell of silence.
+
+        Args:
+            spectator: The worker's browser half, logged in.
+            frames: Its frame source.
+            log: The session's raw log.
+            at: Where the page stands now.
+
+        Returns:
+            Where the page stands once the wait is over.
+
+        Raises:
+            BrowserError: The frames ended, which only a closed page does.
+        """
+
+        fleet = self._fleet
+        rota = fleet.rota
+        if at is _Place.TABLE:
+            exited = await spectator.exit_table()
+            self._health.event("table_exited", exited=exited)
+        self._health.event("standing_by", at=at.value)
+        iterator = aiter(frames)
+        interval = self._profile.recorder.health_interval_s
+        heard = fleet.now()
+        told = False
+        while rota.role(self._label) is Role.SPARE and not fleet.stopping():
+            if self._health.due(interval):
+                self._health.heartbeat(state="spare")
+            try:
+                frame = await asyncio.wait_for(anext(iterator), STANDBY_POLL_S)
+            except TimeoutError:
+                frame = None
+            except StopAsyncIteration:
+                raise BrowserError("the frame source ended: the page has gone") from None
+            if frame is not None:
+                log.write_frame(frame)
+                if frame.direction == RECEIVED:
+                    heard, told = fleet.now(), False
+            silent = fleet.now() - heard
+            if silent >= HALL_SILENCE_S and not told:
+                self._health.event("spare_silent", silent_s=round(silent, 1))
+                told = True
+        return at
+
+    async def _reach_lobby(
+        self, spectator: Any, frames: Any, log: RawLogWriter, at: _Place, *, sweep: bool
+    ) -> bool:
+        """Take the page to the lobby from the menu or from a table.
+
+        Args:
+            spectator: The worker's browser half, logged in.
+            frames: Its frame source.
+            log: The session's raw log.
+            at: Where the page stands now.
+            sweep: Whether this walk may be the worker's startup census.
+
+        Returns:
+            Whether the page is in the lobby. ``False`` means the walk stopped
+            short and the session should end where it stands.
+
+        Raises:
+            _ReturnFailed: The walk back from a table did not land.
+        """
+
+        if at is _Place.MENU:
+            return await self._arrive(spectator, frames, log, sweep=sweep)
+        try:
+            await spectator.return_to_lobby()
+        except BrowserError as error:
+            raise _ReturnFailed(str(error)) from error
+        return True
+
+    async def _lobby_reader(self, spectator: Any) -> tuple[LobbyWatcher, WireStream]:
+        """The session's readers of the lobby, made once on its first arrival.
+
+        One of each for the whole session, not one per wait. The lobby sends
+        every event on both sockets, and a wait resumed after a roster was
+        refused would otherwise meet the second copy as news and announce the
+        same start twice.
+
+        Raises:
+            BrowserError: The lobby shows no tournament row.
+        """
+
+        table_hash = await spectator.read_tournament_hash()
+        if table_hash is None:
+            raise BrowserError("[selectors].lobby_row_tournament_class matched no row")
+        return LobbyWatcher(self._profile, table_hash), WireStream(self._profile.wire)
+
+    async def _arrive(
+        self, spectator: Any, frames: Any, log: RawLogWriter, *, sweep: bool
+    ) -> bool:
         """Reach the lobby — by way of the startup census, the first time.
+
+        Args:
+            spectator: The worker's browser half, logged in.
+            frames: Its frame source.
+            log: The session's raw log.
+            sweep: Whether this session may sweep at all: only a watcher's,
+                in the window's opening wave.
 
         Returns:
             Whether the worker is in the lobby. ``False`` means the census was
@@ -568,12 +870,19 @@ class Worker:
         """
 
         fleet = self._fleet
-        if not fleet.section.census_enabled or self._censused:
+        if not (sweep and fleet.section.census_enabled) or self._censused:
             await spectator.enter_lobby()
             return True
         # Marked before the sweep, not after: a sweep that fails is not one to
         # repeat at the price of every later session's login.
         self._censused = True
+        if fleet.section.bootstrap_enabled:
+            # The startup workers' own gates fill the registry's census as
+            # they scan, and they record what the sweep would only have seen.
+            self._health.event("census_skipped", reason="bootstrap")
+            await spectator.enter_lobby()
+            return True
+        fleet.census_started()
         sightings: list[tuple[str, bool | None]] = []
         try:
             finished = await self._census(spectator, frames, log, sightings)
@@ -696,29 +1005,39 @@ class Worker:
         return None
 
     async def _hall(
-        self, spectator: Any, frames: Any, log: RawLogWriter, table_hash: str
-    ) -> None:
-        """Wait in the lobby, chase what starts, and come back — until told to stop.
+        self,
+        spectator: Any,
+        frames: Any,
+        log: RawLogWriter,
+        watcher: LobbyWatcher,
+        stream: WireStream,
+    ) -> _Place | None:
+        """Wait in the lobby for one start, and chase it.
+
+        Args:
+            spectator: The worker's browser half, in the lobby.
+            frames: Its frame source.
+            log: The session's raw log.
+            watcher: The session's reader of the tournament row.
+            stream: The session's de-duplicating reader of the socket.
+
+        Returns:
+            :attr:`_Place.TABLE` once a chase has run its course, or ``None``
+            when the session should end where it stands: the fleet has
+            stopped, or the chase's egress was refused.
 
         Raises:
-            _ReturnFailed: The walk back from a table did not land.
             BrowserError: The frames ended, which only a closed page does.
         """
 
         fleet = self._fleet
         registry = fleet.registry
-        # One reader for the whole session, not one per wait. The lobby sends
-        # every event on both sockets, and a wait resumed after a roster was
-        # refused would otherwise meet the second copy as news and announce
-        # the same start twice.
-        watcher = LobbyWatcher(self._profile, table_hash)
-        stream = WireStream(self._profile.wire)
         while True:
             # The wait is where a stopping fleet is noticed, before and
             # between chases alike: it returns no roster once told to stop.
             roster = await self._await_roster(frames, log, watcher, stream)
             if roster is None:
-                return
+                return None
             age = frames.elapsed - roster.at
             if age > fleet.section.roster_max_age_s:
                 # Read too late to be the game about to start; chasing it
@@ -728,6 +1047,9 @@ class Worker:
             if not registry.claim_roster(roster.accounts, self._label):
                 self._health.event("roster_taken", roster=roster.digest)
                 continue
+            # Before anything awaits: the spare is sent in while this worker
+            # is still walking out.
+            fleet.rota.chasing(self._label)
             try:
                 self._health.event("chase_started", roster=roster.digest)
                 await spectator.enter_table_from_lobby()
@@ -735,18 +1057,33 @@ class Worker:
             finally:
                 registry.release_roster(roster.accounts, self._label)
             fleet.absorb(summary)
-            if summary.stop_reason is StopReason.SOURCE_ENDED:
-                raise BrowserError("the frame source ended: the page has gone")
-            # A chase that ran its course is progress, whatever it found.
-            self._failures = 0
-            if summary.stop_reason is StopReason.EGRESS_BLOCKED or fleet.stopping():
-                # Nothing more goes to the site on this session: the worker's
-                # own loop checks the egress before the next.
-                return
-            try:
-                await spectator.return_to_lobby()
-            except BrowserError as error:
-                raise _ReturnFailed(str(error)) from error
+            fleet.rota.done(self._label)
+            return self._settle(summary)
+
+    def _settle(self, summary: SessionSummary) -> _Place | None:
+        """What a recorder that ran its course leaves the session to do next.
+
+        Args:
+            summary: What the chase or the startup recording did.
+
+        Returns:
+            :attr:`_Place.TABLE`, where the page now stands, or ``None`` when
+            the session should end there: the egress was refused, or the
+            fleet has stopped.
+
+        Raises:
+            BrowserError: The frames ended, which only a closed page does.
+        """
+
+        if summary.stop_reason is StopReason.SOURCE_ENDED:
+            raise BrowserError("the frame source ended: the page has gone")
+        # A recorder that ran its course is progress, whatever it found.
+        self._failures = 0
+        if summary.stop_reason is StopReason.EGRESS_BLOCKED or self._fleet.stopping():
+            # Nothing more goes to the site on this session: the worker's
+            # own loop checks the egress before the next.
+            return None
+        return _Place.TABLE
 
     async def _await_roster(
         self, frames: Any, log: RawLogWriter, watcher: LobbyWatcher, stream: WireStream
@@ -850,6 +1187,48 @@ class Worker:
             ),
         )
         return await recorder.run()
+
+    async def _bootstrap(
+        self, spectator: Any, frames: Any, log: RawLogWriter
+    ) -> _Place | None:
+        """Join one game already under way and record it from there.
+
+        The ordinary seating, untargeted: the server offers tables and the
+        recorder's own gates keep what is worth taking — one worker per table
+        (``claimed_by_other``), tournaments only, nothing too far along
+        (``hop_after_rows``), no game recorded before. It takes one game, and
+        seats nothing after ``bootstrap_scan_s``. The next startup worker is
+        sent as soon as this one takes its table, not when its game ends.
+
+        Returns:
+            Where the page is left, or ``None`` when the session should end
+            there — as after a chase.
+
+        Raises:
+            BrowserError: A step of the walk failed, or the frames ended.
+        """
+
+        fleet = self._fleet
+        await spectator.enter_variant()
+        seat_in, hard_in = fleet.seconds_left()
+        recorder = fleet.recorder(
+            spectator, frames, self._profile, self._health,
+            limits=RecorderLimits(
+                max_games=1,
+                max_seconds=hard_in,
+                seat_until_s=_earliest(seat_in, fleet.section.bootstrap_scan_s),
+            ),
+            raw=log,
+            egress=fleet.egress,
+            claims=_SeatedClaims(self._claims, lambda: fleet.rota.seated(self._label)),
+        )
+        summary = await recorder.run()
+        fleet.absorb(summary, bootstrap=True)
+        # The rota knows by now whether a table was taken: the claim that
+        # seated one told it. Not the stop reason, since a game seated and
+        # watched can end on the window closing as well as an empty scan.
+        fleet.rota.done(self._label)
+        return self._settle(summary)
 
     async def _capture(self, spectator: Any, raw: Path) -> None:
         """Save the page beside the session's raw log, if the profile asks."""

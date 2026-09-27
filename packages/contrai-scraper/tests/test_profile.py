@@ -361,6 +361,9 @@ FLEET_SECTION = (
     "egress_cache_s = 60\n"
     "census_enabled = false\n"
     "census_hops = 3\n"
+    "# Off here, so a fleet test is about the lobby unless it asks for the\n"
+    "# startup phase; the default is on.\n"
+    "bootstrap_enabled = false\n"
 )
 
 
@@ -395,6 +398,53 @@ class TestFleet:
     def test_a_scan_with_no_budget_is_refused(self, tmp_path, profile_text):
         text = profile_text.replace("scan_distinct_budget = 5", "scan_distinct_budget = 0")
         with pytest.raises(ProfileError, match="scan_distinct_budget must be positive"):
+            load_profile(_write(tmp_path, text))
+
+    def test_a_profile_written_before_the_rota_gets_its_defaults(self, profile):
+        # The fixture profile, like the private ones, names neither key.
+        assert (profile.fleet.lobby_watchers, profile.fleet.spares) == (2, 1)
+
+    def test_the_rota_numbers_are_read(self, tmp_path, profile_text):
+        text = profile_text.replace("workers = 2", "workers = 2\nlobby_watchers = 3\nspares = 0")
+        fleet = load_profile(_write(tmp_path, text)).fleet
+        assert (fleet.lobby_watchers, fleet.spares) == (3, 0)
+
+    def test_a_lobby_with_no_watcher_is_refused(self, tmp_path, profile_text):
+        text = profile_text.replace("workers = 2", "workers = 2\nlobby_watchers = 0")
+        with pytest.raises(ProfileError, match="lobby_watchers must be positive"):
+            load_profile(_write(tmp_path, text))
+
+    def test_a_negative_spare_count_is_refused(self, tmp_path, profile_text):
+        text = profile_text.replace("workers = 2", "workers = 2\nspares = -1")
+        with pytest.raises(ProfileError, match="spares may not be negative"):
+            load_profile(_write(tmp_path, text))
+
+    def test_an_optional_number_is_still_type_checked(self, tmp_path, profile_text):
+        text = profile_text.replace("workers = 2", 'workers = 2\nspares = "one"')
+        with pytest.raises(ProfileError, match=r"\[fleet\]\.spares must be int, not str"):
+            load_profile(_write(tmp_path, text))
+
+    def test_startup_recording_is_on_unless_a_profile_says_otherwise(
+        self, tmp_path, profile_text
+    ):
+        text = profile_text.replace("bootstrap_enabled = false\n", "")
+        fleet = load_profile(_write(tmp_path, text)).fleet
+        assert (fleet.bootstrap_enabled, fleet.bootstrap_scan_s) == (True, 60)
+
+    def test_the_startup_keys_are_read(self, profile, tmp_path, profile_text):
+        text = profile_text.replace("workers = 2", "workers = 2\nbootstrap_scan_s = 90")
+        fleet = load_profile(_write(tmp_path, text)).fleet
+        assert (profile.fleet.bootstrap_enabled, fleet.bootstrap_scan_s) == (False, 90)
+
+    def test_a_startup_scan_with_no_time_is_refused(self, tmp_path, profile_text):
+        text = profile_text.replace("workers = 2", "workers = 2\nbootstrap_scan_s = 0")
+        with pytest.raises(ProfileError, match="bootstrap_scan_s must be positive"):
+            load_profile(_write(tmp_path, text))
+
+    def test_an_optional_switch_is_still_type_checked(self, tmp_path, profile_text):
+        text = profile_text.replace("bootstrap_enabled = false", "bootstrap_enabled = 1")
+        with pytest.raises(ProfileError,
+                           match=r"\[fleet\]\.bootstrap_enabled must be bool, not int"):
             load_profile(_write(tmp_path, text))
 
     def test_an_unknown_fleet_key_is_refused(self, tmp_path, profile_text):
