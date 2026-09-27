@@ -140,6 +140,18 @@ does too, logging `record_skipped` with `reason` `no_round` instead of writing a
 round and a null first round — which is what a chase that found its table seconds before the time
 limit used to leave, counted towards `--max-games` as if it were a game.
 
+A game also gets one record, ever. A record file is opened for appending, so a game seated, left
+and offered again — a spectator hopping away, or a fleet's startup worker taking a table another
+left — used to have the rest of it appended as a second record in the same file: two headers, and
+the first visit's rounds twice. The recorder now refuses it twice over. At the gate, from the wire
+alone, a table whose game already has a file is refused as `already_recorded`: the join snapshot's
+round block is keyed by the site's own game id, the same one the in-game events carry and the record
+file is named after (they agreed on 6,041 of 6,052 snapshots across the fleet's and the box's raw
+logs; every disagreement was a join at a game's boundary or a late event of the table just left).
+And at the write, since a snapshot at a boundary can name another game than the buffer holds, a
+record whose file already exists is not written: `record_skipped` with `reason` `already_recorded`,
+the raw log keeping every frame. `parse` writes as it always did.
+
 `parse` also applies the one gate the wire can answer: a visit whose opening snapshot does not say
 its table is a tournament is left out, as the live gate leaves it. Refusing a table is not leaving
 it. The site chooses where a spectator sits, and while no tournament table is open it seats the
@@ -388,8 +400,8 @@ rather than dropped, because it is the beginning of the table about to be judged
 
 The states, in order: reset the buffer and the stream, wait for a join snapshot, refuse a table
 whose snapshot this profile cannot read, refuse one another worker of a fleet already holds
-(`claimed_by_other`, below), refuse one that is not a tournament or is already
-`hop_after_rows` rounds old, refuse one whose options
+(`claimed_by_other`, below), refuse a game already recorded (`already_recorded`, above), refuse one
+that is not a tournament or is already `hop_after_rows` rounds old, refuse one whose options
 disagree with `[rules.options]`, check that the panel's *us* is the south seat's side, then watch.
 A deal opening a new round triggers the boundary read; the table's own game-over flag closes the
 record; an observer-left flag alone does not, because it says the spectator stopped watching and
@@ -699,9 +711,6 @@ capture — live in `deploy/install.md`.
 
 - The fleet's live ramp — two, five, then ten workers — and the memory each browser context
   costs, which is unmeasured: the 0.8–1.0 GB figure is per *browser*.
-- Recording one game twice: a record file is opened for appending, so a game recorded, abandoned
-  and recorded again later would hold two headers. `run` has always had this; the fleet's registry
-  rules it out for two workers at once, not for one worker twice.
 - `observed_from.round` is still the join read's round index plus one, which names a passed-out
   round rather than the one being watched when passed-out rounds came just before the join. The
   carry is keyed on rows and unaffected; the field is not.
