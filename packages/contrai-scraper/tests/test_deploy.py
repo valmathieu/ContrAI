@@ -70,3 +70,20 @@ class TestDeployFiles:
         assert (target in command, any(item.endswith(f":{target}:ro") for item in items)) == (
             True, True
         )
+
+    def test_the_fleet_reads_its_files_where_compose_mounts_them(self):
+        # The override's command names two files: the profile, mounted by
+        # compose.yml, and the accounts, mounted by the override itself. A path
+        # in the command that no layer mounts read-only is a fleet that starts
+        # and then cannot log anyone in.
+        def items(name):
+            text = (DEPLOY / name).read_text(encoding="utf-8")
+            return re.findall(r"^\s*-\s*(\S+)\s*$", text, re.M)
+
+        fleet = items("compose.fleet.yml")
+        named = [item for item in fleet if item.startswith("/etc/contrai/") and ":" not in item]
+        mounted = {item.split(":")[1] for item in [*items("compose.yml"), *fleet]
+                   if item.endswith(":ro")}
+        assert (fleet[0], named, set(named) <= mounted) == (
+            "fleet", ["/etc/contrai/profile.toml", "/etc/contrai/accounts.toml"], True
+        )

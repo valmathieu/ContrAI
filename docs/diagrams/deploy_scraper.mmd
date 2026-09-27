@@ -6,11 +6,11 @@ flowchart LR
         direction TB
         subgraph Netns["one network namespace, owned by the vpn container"]
             direction TB
-            Scraper["scraper container<br/>contrai-scrape run · headless Chromium<br/>uid 10001 · egress gate before each session and hop"]
+            Scraper["scraper container<br/>contrai-scrape run, or fleet with compose.fleet.yml<br/>headless Chromium · one context per fleet worker<br/>uid 10001 · egress gate before each session and hop"]
             Vpn["vpn container · gluetun<br/>WireGuard tun0 · firewall kill switch<br/>DNS over TLS inside the tunnel"]
             Scraper -- "its only route: tun0" --> Vpn
         end
-        Etc[/"/etc/contrai<br/>profile.toml · env files · wg0.conf"/]
+        Etc[/"/etc/contrai<br/>profile.toml · accounts.toml · env files · wg0.conf"/]
         Records[("/var/lib/contrai/records<br/>games/ · raw/ · verdicts/")]
         Homelab["Nextcloud · Vikunja · Cockpit · Tailscale<br/>untouched, on their own routes"]
         Etc -. "read-only mounts" .-> Scraper

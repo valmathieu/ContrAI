@@ -37,6 +37,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) `carried_over` is inferred across rounds whose running totals were never read, when the totals around them leave no room for a pot. See [scraper docs](docs/scraper/index.md).
 - (scraper) A fleet keeps at most two workers in the lobby and one logged-in spare; other idle workers log out until needed (`[fleet].lobby_watchers`, `spares`). See [scraper docs](docs/scraper/index.md).
 - (scraper) A fleet window records the tournament games already running when it opens, one worker per table, from the mid-game join (`[fleet].bootstrap_enabled`). See [scraper docs](docs/scraper/index.md).
+- (scraper) `deploy/compose.fleet.yml` runs the box's container as a fleet, with a read-only `accounts.toml` and the VPN confinement unchanged. See [install guide](deploy/install.md).
 
 ### Changed
 
@@ -44,6 +45,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (data) **BREAKING:** Records are `contrai-record/2`: a `held` outcome and a nullable `carried_over`, which the engine now writes for real. `/1` still loads; older builds refuse `/2`. See [data docs](docs/data/index.md).
 - (engine) **BREAKING:** `sweep_substitute(tag)` takes the ruleset, and a doubled sweep is now tagged `UnannouncedSlam`. Call `sweep_substitute(tag, rules)`; re-parse older scraped records.
 - (scraper) `open_spectator` is now built on `open_browser` plus `open_session`, so one Chromium can carry several isolated sessions; its behaviour is unchanged. See [scraper docs](docs/scraper/index.md).
+- (scraper) `profile.example.toml`'s chase budget rises to 20 tables / 60 s: 30 s missed a third of the starts at a ~14-table peak.
 
 ### Fixed
 

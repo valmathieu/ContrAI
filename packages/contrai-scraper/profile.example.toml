@@ -303,10 +303,11 @@ workers = 2
 login_stagger_s = 20
 # A chase gives up after judging this many *distinct* tables, or after this
 # many seconds — whichever comes first. The walk re-offers tables, so a budget
-# counted in hops would shrink silently; in the probe's four chases the table
-# was found within 7 distinct tables and 26 seconds.
-scan_distinct_budget = 12
-scan_deadline_s = 30
+# counted in hops would shrink silently. The server draws tables at random, so
+# the budget has to grow with how many are running: at ~7 tables 30 s sufficed,
+# at a ~14-table peak it missed a third of the starts; 60 s matched 6 of 7.
+scan_distinct_budget = 20
+scan_deadline_s = 60
 # A starting roster older than this when read is not chased: its game has
 # begun without the fleet.
 roster_max_age_s = 10
