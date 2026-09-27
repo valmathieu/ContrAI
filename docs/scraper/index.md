@@ -140,6 +140,17 @@ does too, logging `record_skipped` with `reason` `no_round` instead of writing a
 round and a null first round — which is what a chase that found its table seconds before the time
 limit used to leave, counted towards `--max-games` as if it were a game.
 
+`parse` also applies the one gate the wire can answer: a visit whose opening snapshot does not say
+its table is a tournament is left out, as the live gate leaves it. Refusing a table is not leaving
+it. The site chooses where a spectator sits, and while no tournament table is open it seats the
+spectator back at the table just refused, hop after hop — for 15 and 19 minutes at the start of two
+V5 sessions, one hop every `snapshot_timeout_s` — so the log holds a whole game nobody watched. Six
+V5 records were made of such games before the check, among them obs-a5dae556, whose table scores in
+another mode (no contract points, marks rounded to ten) and read as 11 `suspect` rounds. The gates
+that need the page — the options panel, the scoreboard's side — cannot be re-run offline. Every
+visit a V5 log held under a variant this ruleset cannot name — the 35 reported as "could not be
+read" — was one of those tables too, and is now counted with them on the log's summary line.
+
 One limit on "the same path" is worth knowing before a log is used as evidence. The log is
 de-duplicated by frame identity and never reset, so the mirrored connection's copy of a frame is
 not in the file — a replay is faithful for the parser, which drops those copies anyway, but it

@@ -910,6 +910,36 @@ class TestParse:
         assert (code, len(list((tmp_path / "games").glob("*.jsonl")))) == (0, 1)
         assert "could not be read" in capsys.readouterr().out
 
+    @pytest.mark.parametrize(
+        ("flag", "written"),
+        [('\\"cup\\": false', "false"), ("", "missing")],
+        ids=["false", "missing"],
+    )
+    def test_a_table_that_is_not_a_tournament_writes_no_record(
+        self, tmp_path, profile_path, source_game, synthesize, capsys,
+        flag, written,
+    ):
+        # The live gate refuses it, but the site seats the spectator back at
+        # it while no tournament table is open, so the log still holds its
+        # game: obs-a5dae556 was made of one.
+        from contrai_scraper import RawFrame, RawLogWriter, raw_path
+
+        path = raw_path(tmp_path / "corpus", f"session-{written}")
+        with RawLogWriter(path) as log:
+            for index, (text, socket) in enumerate(synthesize(source_game)):
+                text = text.replace('\\"cup\\": true', flag)
+                if not flag:
+                    text = text.replace(', ,', ',').replace('{, ', '{')
+                log.write_frame(
+                    RawFrame(socket=socket, direction="recv", at=index / 10,
+                             text=text)
+                )
+        code = main(["parse", str(path), "--profile", str(profile_path),
+                     "--out", str(tmp_path)])
+        assert (code, (tmp_path / "games").exists()) == (1, False)
+        assert ("1 table visits, 0 with rounds, 1 left out as not a tournament"
+                in capsys.readouterr().out)
+
     def test_a_log_that_parses_to_nothing_exits_one(
         self, tmp_path, profile_path, capsys
     ):
