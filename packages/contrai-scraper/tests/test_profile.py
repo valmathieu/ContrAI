@@ -397,6 +397,30 @@ class TestFleet:
         with pytest.raises(ProfileError, match="scan_distinct_budget must be positive"):
             load_profile(_write(tmp_path, text))
 
+    def test_a_profile_written_before_the_rota_gets_its_defaults(self, profile):
+        # The fixture profile, like the private ones, names neither key.
+        assert (profile.fleet.lobby_watchers, profile.fleet.spares) == (2, 1)
+
+    def test_the_rota_numbers_are_read(self, tmp_path, profile_text):
+        text = profile_text.replace("workers = 2", "workers = 2\nlobby_watchers = 3\nspares = 0")
+        fleet = load_profile(_write(tmp_path, text)).fleet
+        assert (fleet.lobby_watchers, fleet.spares) == (3, 0)
+
+    def test_a_lobby_with_no_watcher_is_refused(self, tmp_path, profile_text):
+        text = profile_text.replace("workers = 2", "workers = 2\nlobby_watchers = 0")
+        with pytest.raises(ProfileError, match="lobby_watchers must be positive"):
+            load_profile(_write(tmp_path, text))
+
+    def test_a_negative_spare_count_is_refused(self, tmp_path, profile_text):
+        text = profile_text.replace("workers = 2", "workers = 2\nspares = -1")
+        with pytest.raises(ProfileError, match="spares may not be negative"):
+            load_profile(_write(tmp_path, text))
+
+    def test_an_optional_number_is_still_type_checked(self, tmp_path, profile_text):
+        text = profile_text.replace("workers = 2", 'workers = 2\nspares = "one"')
+        with pytest.raises(ProfileError, match=r"\[fleet\]\.spares must be int, not str"):
+            load_profile(_write(tmp_path, text))
+
     def test_an_unknown_fleet_key_is_refused(self, tmp_path, profile_text):
         text = profile_text.replace("workers = 2", "workers = 2\ncamp = true")
         with pytest.raises(ProfileError, match=r"\[fleet\] has unknown keys: camp"):

@@ -22,7 +22,8 @@ The package is a pipeline with a browser at one end and a record at the other:
   :mod:`contrai_scraper.egress` says traffic leaves through the tunnel.
 * :mod:`contrai_scraper.fleet` does the same for several workers on one
   browser, which wait in the lobby and chase each game as it starts, with
-  :mod:`contrai_scraper.registry` keeping two of them off one table.
+  :mod:`contrai_scraper.registry` keeping two of them off one table and
+  :mod:`contrai_scraper.rota` deciding which of them are logged in at all.
 
 :mod:`contrai_scraper.cli` wires them into the ``contrai-scrape`` console
 script.
@@ -63,7 +64,14 @@ from contrai_scraper.exceptions import (
     ShiftError,
     WireError,
 )
-from contrai_scraper.fleet import HALL_POLL_S, SOLE_WORKER, Fleet, FleetSummary, Worker
+from contrai_scraper.fleet import (
+    HALL_POLL_S,
+    SOLE_WORKER,
+    STANDBY_POLL_S,
+    Fleet,
+    FleetSummary,
+    Worker,
+)
 from contrai_scraper.frames import (
     RECEIVED,
     SENT,
@@ -82,6 +90,7 @@ from contrai_scraper.registry import (
     WorkerClaims,
     estimate_population,
 )
+from contrai_scraper.rota import Role, Rota
 from contrai_scraper.recorder import (
     SCOREBOARD_PANEL,
     ChaseTarget,
@@ -187,6 +196,7 @@ __all__ = [
     "SEND_SCRIPT",
     "SENT",
     "SOLE_WORKER",
+    "STANDBY_POLL_S",
     "STEP_TIMEOUT_MS",
     "AccountSection",
     "ActiveRange",
@@ -224,6 +234,8 @@ __all__ = [
     "Recorder",
     "RecorderLimits",
     "RecorderSection",
+    "Role",
+    "Rota",
     "RowContract",
     "RulesSection",
     "Schedule",

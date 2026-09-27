@@ -43,9 +43,10 @@ OTHERS = ("3001", "3002", "3003", "3004")
 
 @pytest.fixture(autouse=True)
 def quick_hall(monkeypatch):
-    """A worker in the lobby looks up every hundredth of a second, not five."""
+    """A worker in the lobby, or standing by, looks up every hundredth of a second."""
 
     monkeypatch.setattr("contrai_scraper.fleet.HALL_POLL_S", 0.01)
+    monkeypatch.setattr("contrai_scraper.fleet.STANDBY_POLL_S", 0.01)
 
 
 def accounts(count):
@@ -158,6 +159,10 @@ class Walker:
     async def return_to_lobby(self):
         self._step("return_to_lobby")
 
+    async def exit_table(self):
+        self.calls.append("exit_table")
+        return True
+
     async def capture(self, stem):
         self.calls.append("capture")
         return (stem.with_suffix(".png"),)
@@ -206,22 +211,32 @@ class Recorders:
 
 
 class Harness:
-    """A fleet over fakes: a hand-moved clock, scripted sessions, one log."""
+    """A fleet over fakes: a hand-moved clock, scripted sessions, one log.
+
+    ``idle_sessions`` gives a worker that logs in with nothing scripted a page
+    that says nothing, instead of a failed session: the extra workers of a
+    larger fleet, which a test wants logged in but not doing anything. Their
+    pages end the run once ``until`` says so.
+    """
 
     def __init__(self, profile, workers=1, *, egress=(OPEN,), recorder=None,
-                 limits=RecorderLimits(max_seconds=1e6), clock=None):
+                 limits=RecorderLimits(max_seconds=1e6), clock=None,
+                 idle_sessions=False):
         self.profile = profile
         self.accounts = accounts(workers)
         self.now = 0.0
         self.lines: list[str] = []
         self.sessions: dict[str, list] = {}
         self.opened: list[str] = []
+        self.walkers: dict[str, list[Walker]] = {}
         self.browsers = 0
         self.sleeps: list[float] = []
         self._egress = list(egress)
         self.recorder = recorder if recorder is not None else Recorders()
         self.limits = limits
         self.clock = clock
+        self.idle_sessions = idle_sessions
+        self.until = None
 
     def script(self, label, *sessions):
         """The sessions one worker will open, in order: ``(walker, frames)``."""
@@ -233,6 +248,28 @@ class Harness:
         """Put the clock past every deadline: the run is over."""
 
         self.now = 1e9
+
+    def end_when_done(self):
+        """End the run once ``until`` holds; an ``on_empty`` for any page."""
+
+        if self.until is not None and self.until():
+            self.end()
+
+    def idle(self):
+        """A session whose page says nothing, and ends the run when it is time."""
+
+        return Walker(), Frames(deaf=True, on_empty=self.end_when_done)
+
+    def logins(self, label):
+        """How many sessions one worker has opened."""
+
+        return self.opened.count(f"{label}@example.invalid")
+
+    def roles(self):
+        """Every change of role, as ``(worker, now, why)``."""
+
+        return [(entry["worker"], entry["now"], entry["why"])
+                for entry in self.events("role")]
 
     def saw(self, name):
         return any(json.loads(line)["event"] == name for line in self.lines)
@@ -261,9 +298,14 @@ class Harness:
             email = profile.account.email
             harness.opened.append(email)
             queue = harness.sessions.get(email, [])
-            if not queue:
+            if queue:
+                session = queue.pop(0)
+            elif harness.idle_sessions:
+                session = harness.idle()
+            else:
                 raise BrowserError("no session scripted for this account")
-            yield queue.pop(0)
+            harness.walkers.setdefault(email.split("@")[0], []).append(session[0])
+            yield session
 
         async def sleep(seconds):
             harness.sleeps.append(seconds)
@@ -442,7 +484,10 @@ class TestSessions:
         for label in ("bot01", "bot02", "bot03"):
             harness.script(label, (Walker(), Frames(on_empty=harness.end)))
         harness.run()
-        assert sorted(harness.sleeps[:2]) == [20, 40]
+        # Each login takes its turn a stagger after the last one's. The test
+        # clock moves with every pause, so the third waits 20 s past the
+        # second's 20 s: turns at 0, 20 and 40 s.
+        assert harness.sleeps[:2] == [20, 20]
 
 
 def _ticking(harness, seconds, *, then=None, after=None):
@@ -681,7 +726,9 @@ class TestHeartbeat:
             harness.script(label, (Walker(), Frames(on_empty=harness.end)))
         harness.run()
         beat = harness.events("fleet_heartbeat")[0]
-        assert (beat["workers"], beat["down"], beat["egress_probes"]) == (2, 0, 0)
+        roles = beat["hall"] + beat["spare"] + beat["chase"] + beat["out"]
+        assert (beat["workers"], beat["down"], beat["egress_probes"], roles,
+                "logins" in beat) == (2, 0, 0, 2, True)
 
     def test_a_worker_in_the_lobby_beats_too(self, profile):
         beating = dataclasses.replace(
@@ -813,6 +860,170 @@ class TestCensus:
         harness.run()
         assert (harness.events("census")[0]["tournament_tables"],
                 harness.saw("session_failed")) == (1, True)
+
+
+def parked(harness):
+    """Workers whose sessions ended because the rota had no place for them."""
+
+    return [entry["worker"] for entry in harness.events("session_ended")
+            if entry["reason"] == "parked"]
+
+
+def standing(harness, label):
+    """Whether one worker has stood by as a spare."""
+
+    return any(entry["worker"] == label for entry in harness.events("standing_by"))
+
+
+def start_once(harness, row, *, when):
+    """A lobby page that announces ``row`` once ``when`` holds, and is quiet otherwise.
+
+    The fakes run a worker's whole walk without yielding, so a start scripted
+    up front is chased before the other workers have even logged in. Holding
+    it back until, say, the spare stands by is what makes a scenario of it.
+    """
+
+    frames = Frames(deaf=True)
+    announced = []
+
+    def poll():
+        if not announced and when():
+            frames._frames.append(row)
+            announced.append(row)
+        harness.end_when_done()
+
+    frames._on_empty = poll
+    return frames
+
+
+class TestRota:
+    def test_workers_past_the_watchers_and_the_spare_never_log_in(self, profile):
+        harness = Harness(profile, workers=7, idle_sessions=True)
+        harness.until = lambda: harness.saw("standing_by")
+        harness.run()
+        # Then each logged-in worker gives its place up as the run ends.
+        assert (sorted(set(harness.opened)), harness.roles()[:3],
+                {why for _, _, why in harness.roles()[3:]}) == (
+            [f"bot0{index}@example.invalid" for index in (1, 2, 3)],
+            [("bot01", "hall", "watcher_wanted"), ("bot02", "hall", "watcher_wanted"),
+             ("bot03", "spare", "spare_wanted")],
+            {"stopped"})
+
+    def test_a_chase_sends_the_spare_in_and_logs_the_next_worker_in(
+        self, profile, builders
+    ):
+        harness = Harness(profile, workers=4, recorder=Recorders(summary()),
+                          idle_sessions=True)
+        harness.script("bot01", (Walker(), start_once(
+            harness, full_row(builders), when=lambda: standing(harness, "bot03"))))
+        harness.until = lambda: parked(harness)
+        harness.run()
+        # The spare walks in without a login; bot04 logs in to stand by in its
+        # place, and the chaser, back to a full lobby, logs out.
+        assert (harness.walkers["bot03"][0].calls, harness.logins("bot03"),
+                harness.logins("bot04"), parked(harness), harness.roles()[3:7]) == (
+            ["log_in", "enter_lobby", "read_tournament_hash"], 1, 1, ["bot01"],
+            [("bot01", "chase", "chase"), ("bot03", "hall", "promoted"),
+             ("bot04", "spare", "spare_wanted"), ("bot01", "out", "parked")])
+
+    def test_a_chaser_left_as_the_spare_steps_off_its_table_and_walks_back_later(
+        self, profile, builders
+    ):
+        # Three workers: nobody is queued behind the spare, so the chaser
+        # comes back as the next one, and is sent in by the next start.
+        harness = Harness(profile, workers=3, recorder=Recorders(summary(), summary()),
+                          idle_sessions=True)
+        chaser = Walker()
+        harness.script("bot01", (chaser, start_once(
+            harness, full_row(builders), when=lambda: standing(harness, "bot03"))))
+        harness.script("bot02", (Walker(), start_once(
+            harness, full_row(builders, OTHERS, frame_id="l2"),
+            when=lambda: standing(harness, "bot01"))))
+        harness.until = lambda: "return_to_lobby" in chaser.calls
+        harness.run()
+        assert (chaser.calls, harness.logins("bot01"),
+                harness.events("table_exited")[0]["exited"]) == (
+            ["log_in", "enter_lobby", "read_tournament_hash", "enter_table_from_lobby",
+             "exit_table", "return_to_lobby"], 1, True)
+
+    def test_two_starts_in_a_row_send_in_a_spare_still_logging_in(
+        self, profile, builders
+    ):
+        harness = Harness(profile, workers=5, recorder=Recorders(summary(), summary()),
+                          idle_sessions=True)
+        harness.script("bot01", (Walker(), Frames([full_row(builders)], deaf=True)))
+        harness.script("bot02", (Walker(), Frames(
+            [full_row(builders, OTHERS, frame_id="l2")], deaf=True)))
+        harness.until = lambda: len(parked(harness)) == 2
+        result = harness.run()
+        assert (result.chases, harness.walkers["bot04"][0].calls[:2],
+                harness.logins("bot05"), sorted(parked(harness))) == (
+            2, ["log_in", "enter_lobby"], 1, ["bot01", "bot02"])
+
+    def test_a_refused_egress_as_the_spare_walks_in_ends_its_session(
+        self, profile, builders
+    ):
+        # The fleet's check and three logins pass; the spare's walk in is refused.
+        harness = Harness(profile, workers=3, recorder=Recorders(summary()),
+                          egress=(OPEN, OPEN, OPEN, OPEN, BLOCKED, OPEN),
+                          idle_sessions=True)
+        harness.script("bot01", (Walker(), start_once(
+            harness, full_row(builders), when=lambda: standing(harness, "bot03"))))
+        harness.until = lambda: harness.logins("bot03") == 2
+        harness.run()
+        ended = [entry["reason"] for entry in harness.events("session_ended")
+                 if entry["worker"] == "bot03"]
+        assert (ended[0], harness.walkers["bot03"][0].calls) == (
+            "egress_blocked", ["log_in"])
+
+    def test_a_counted_failure_hands_the_place_on_at_once(self, profile):
+        harness = Harness(profile, workers=4, idle_sessions=True)
+        harness.script("bot01", (Walker(fail={"log_in": "refused"}), Frames()))
+        harness.until = lambda: harness.logins("bot04") == 1
+        harness.run()
+        assert harness.roles()[3:6] == [
+            ("bot01", "out", "session_failed"), ("bot03", "hall", "promoted"),
+            ("bot04", "spare", "spare_wanted")]
+
+    def test_a_spare_says_when_its_page_goes_quiet_and_beats_as_a_spare(self, profile):
+        quiet = dataclasses.replace(
+            profile, fleet=dataclasses.replace(profile.fleet, lobby_watchers=1),
+            recorder=dataclasses.replace(profile.recorder, health_interval_s=0))
+        harness = Harness(quiet, workers=2)
+        harness.script("bot01", (Walker(), Frames()))
+        sent = RawFrame(socket=0, direction="sent", at=0.0, text="ping")
+        harness.script("bot02", (Walker(), Frames(
+            [received("hello"), sent], deaf=True,
+            on_empty=_ticking(harness, 5.0, then=harness.end, after=20))))
+        harness.run()
+        silent = harness.events("spare_silent")
+        spare_beats = [beat for beat in harness.events("heartbeat")
+                       if beat.get("state") == "spare"]
+        assert (len(silent), 60.0 <= silent[0]["silent_s"] <= 65.0,
+                spare_beats[0]["worker"], harness.saw("hall_deaf")) == (
+            1, True, "bot02", False)
+
+    def test_a_spare_whose_page_goes_away_fails_its_session(self, profile):
+        harness = Harness(profile, workers=3, idle_sessions=True)
+        harness.script("bot03", (Walker(), Frames(ends=True)))
+        harness.until = lambda: harness.saw("session_failed")
+        harness.run()
+        failed = harness.events("session_failed")[0]
+        assert (failed["worker"], "the page has gone" in failed["error"]) == (
+            "bot03", True)
+
+    def test_only_the_opening_watchers_sweep(self, profile, builders):
+        harness = Harness(censusing(profile, hops=1), workers=3, idle_sessions=True)
+        for label, table_id in (("bot01", "tA"), ("bot02", "tB")):
+            harness.script(label, (Walker(), Frames(
+                [table(builders, table_id, frame_id=table_id)], deaf=True,
+                on_empty=harness.end_when_done)))
+        harness.until = lambda: (len(harness.events("census")) == 2
+                                 and standing(harness, "bot03"))
+        harness.run()
+        census = harness.events("census")
+        assert (census[-1]["pending"], census[-1]["tournament_tables"],
+                harness.walkers["bot03"][0].calls) == (0, 2, ["log_in"])
 
 
 class TestConstruction:

@@ -321,6 +321,13 @@ egress_cache_s = 60
 # are. Set census_enabled = false to go straight to the lobby.
 census_enabled = true
 census_hops = 8
+# Optional. At most this many workers wait in the lobby (default 2), and this
+# many more stay logged in off it as spares (default 1). Every other idle
+# worker logs out until a chase needs it: a chase sends the spare in and logs
+# the longest-waiting worker in as the next spare. Both are cut down to the
+# workers still up, so a fleet of one is one watcher and no spare.
+lobby_watchers = 2
+spares = 1
 
 [privacy]
 pseudonym_salt = "env:CONTRAI_SCRAPER_SALT"

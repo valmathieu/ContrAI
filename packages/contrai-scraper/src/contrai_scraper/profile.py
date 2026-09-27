@@ -408,6 +408,14 @@ class EgressSection:
 #: the tables can count.
 FLEET_CEILING: int = 10
 
+#: Workers waiting in the lobby when ``[fleet].lobby_watchers`` is not set.
+#: Starts come one every 2.5-5 minutes, and a chase leaves its watcher's place
+#: to the spare within seconds, so two cover even two starts in a row.
+DEFAULT_LOBBY_WATCHERS: int = 2
+
+#: Workers kept logged in off the lobby when ``[fleet].spares`` is not set.
+DEFAULT_SPARES: int = 1
+
 
 @dataclass(frozen=True, slots=True)
 class FleetSection:
@@ -440,16 +448,22 @@ class FleetSection:
     census_hops: int
     """Tables each worker's startup sweep looks at."""
 
+    lobby_watchers: int = DEFAULT_LOBBY_WATCHERS
+    """At most this many workers wait in the lobby for a start."""
+
+    spares: int = DEFAULT_SPARES
+    """Workers kept logged in off the lobby, to replace a watcher that chases."""
+
     def __post_init__(self) -> None:
         if not 1 <= self.workers <= FLEET_CEILING:
             raise ProfileError(
                 f"[fleet].workers must be between 1 and {FLEET_CEILING}"
             )
-        for name in ("login_stagger_s", "egress_cache_s"):
+        for name in ("login_stagger_s", "egress_cache_s", "spares"):
             if getattr(self, name) < 0:
                 raise ProfileError(f"[fleet].{name} may not be negative")
         for name in ("scan_distinct_budget", "scan_deadline_s", "roster_max_age_s",
-                     "claim_ttl_s", "census_hops"):
+                     "claim_ttl_s", "census_hops", "lobby_watchers"):
             if getattr(self, name) <= 0:
                 raise ProfileError(f"[fleet].{name} must be positive")
 
@@ -599,6 +613,17 @@ class _Table:
         if key not in self._data:
             return None
         return self.string(key)
+
+    def optional_integer(self, key: str, default: int) -> int:
+        """Read an integer key that falls back to a default when absent.
+
+        For keys added after profiles were already written: a profile that
+        predates one still loads, and gets the behaviour the default names.
+        """
+
+        if key not in self._data:
+            return default
+        return self.integer(key)
 
     def has(self, key: str) -> bool:
         """Whether a key (or, at the top level, a section) is present."""
@@ -1016,6 +1041,8 @@ def _fleet(table: _Table) -> FleetSection:
         egress_cache_s=table.integer("egress_cache_s"),
         census_enabled=table.boolean("census_enabled"),
         census_hops=table.integer("census_hops"),
+        lobby_watchers=table.optional_integer("lobby_watchers", DEFAULT_LOBBY_WATCHERS),
+        spares=table.optional_integer("spares", DEFAULT_SPARES),
     )
     table.done()
     return section

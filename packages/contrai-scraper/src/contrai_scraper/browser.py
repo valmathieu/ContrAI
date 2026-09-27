@@ -533,12 +533,52 @@ class Spectator:
         """
 
         self._require_lobby()
-        if self._selectors.table_exit is not None and not await self._screen_shown():
-            await self._click_panel("table_exit")
-            await self._page.wait_for_timeout(EXIT_SETTLE_MS)
+        await self._step_off_table()
         await self._back_until("mode_new_games")
         await self._click("lobby_variant")
         await self.dismiss_overlay()
+
+    async def exit_table(self) -> bool:
+        """Step off a table onto the online menu, and no further. Best-effort.
+
+        The first half of :meth:`return_to_lobby`, for a fleet's spare: a
+        worker that stops being needed in the lobby after a chase waits off
+        it, and a finished game's table is not a place to wait. The spare's
+        walk into the lobby, once it is needed, is :meth:`return_to_lobby`,
+        which skips the exit when a menu is already showing.
+
+        Returns:
+            Whether the exit was clicked. ``False`` when a menu already
+            shows, when the profile names no exit, or when the click did not
+            land — which leaves the later walk to fail and rebuild, as it
+            would have without this step.
+
+        Raises:
+            ProfileError: If the profile describes no lobby.
+        """
+
+        self._require_lobby()
+        try:
+            return await self._step_off_table()
+        except BrowserError:
+            return False
+
+    async def _step_off_table(self) -> bool:
+        """Take the table's exit, if the page is at a table and the profile names one.
+
+        Returns:
+            Whether the exit was clicked.
+
+        Raises:
+            BrowserError: If the exit would not take a click, or the page's
+                own script could not read ``lobby_layer``.
+        """
+
+        if self._selectors.table_exit is None or await self._screen_shown():
+            return False
+        await self._click_panel("table_exit")
+        await self._page.wait_for_timeout(EXIT_SETTLE_MS)
+        return True
 
     async def read_tournament_marker(self) -> bool:
         """Whether the rendered marker names a tournament.

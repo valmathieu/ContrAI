@@ -37,6 +37,7 @@ the same reason.
 | `contrai_scraper.egress` | `EgressGate` — exit address, country and route device, checked before the site is touched. |
 | `contrai_scraper.shift` | `Shift` — the outer loop: schedule gate, egress gate, one browser session and raw log per window, failure budgets. |
 | `contrai_scraper.fleet` | `Fleet` / `Worker` — the same gates for N workers on one browser, waiting in the lobby and chasing each game; budgets per worker. |
+| `contrai_scraper.rota` | `Rota` — a fleet's roles: who waits in the lobby, who stands by logged in as the spare, and who is logged out. |
 | `contrai_scraper.health` | `HealthLog` and `Counters` — one JSON line per transition, on stderr. |
 | `contrai_scraper.cli` | `contrai-scrape`: `run` (the default), `check-profile` and `parse`. |
 
@@ -248,7 +249,7 @@ silently wrong data.
 | `[schedule]` | When the scraper may watch: a timezone, daily ranges that may cross midnight, and how long a closing range lets the game in hand run on. |
 | `[egress]` | The gate before any site traffic: the home address (through the environment), the expected country, an echo service, and the tunnel device the route must use. |
 | `[output]` | Where records and raw logs go; both roots resolve relative to the profile, and both name the same directory. |
-| `[fleet]` | Optional, read by `fleet` alone: how many workers (at most 10), their login stagger, a chase's distinct-table budget and deadline, how old a roster may be, the registry's and egress gate's timings, and the startup census. |
+| `[fleet]` | Optional, read by `fleet` alone: how many workers (at most 10), their login stagger, a chase's distinct-table budget and deadline, how old a roster may be, the registry's and egress gate's timings, the startup census, and the rota's `lobby_watchers` (default 2) and `spares` (default 1), which a profile may leave out. |
 | `[privacy]` | Inputs to the pseudonymisation step, which is not built yet. |
 
 A fleet logs in with several accounts, and they do not multiply the profile. They live in a second
@@ -602,8 +603,8 @@ reconciles the two, one browser session at a time.
 `contrai-scrape fleet` runs several workers, each on its own account, and catches games from their
 first card instead of wherever the server seats it. It is a shift in shape — the same schedule gate,
 the same egress gate (one shared `SharedEgressGate`, since every worker and every hop asks it), the
-same retention pruning — but inside an open window it launches one Chromium and opens a session per
-worker on it, logins staggered by `login_stagger_s`.
+same retention pruning — but inside an open window it launches one Chromium and opens sessions on it
+for the workers the rota calls in, each login `login_stagger_s` after the last.
 
 ![A fleet worker's states, from the egress gate to the lobby and back](../diagrams/state_scraper_worker.png)
 
@@ -614,10 +615,40 @@ hash, and waits there on the socket (`in_hall`) until `LobbyWatcher` announces a
 older than `roster_max_age_s` when read is left alone (`roster_stale`); otherwise the worker claims
 it in the registry — a second worker that read the same start logs `roster_taken` and keeps waiting
 — walks out to a table and runs a chasing recorder, which records that one game or gives up. The
-roster is released either way, and the worker walks back to the lobby. Idle workers belong in the
-lobby, not at a table: a spectator left at a table after its game is sent back to the menu anyway,
-and a worker already in the lobby spends none of the few seconds before the first deal getting
-there.
+roster is released either way. Watchers belong in the lobby, not at a table: a spectator left at a
+table after its game is sent back to the menu anyway, and a worker already in the lobby spends none
+of the few seconds before the first deal getting there.
+
+Not every worker watches, though. In the 7-worker run of 2026-09-27, between two and six workers sat
+idle in the lobby at every moment, each holding a login and about 0.43 GB of browser, for one start
+every 2.5–5 minutes. So a `Rota` hands out a role before every login. At most `lobby_watchers` (2)
+wait in the lobby; `spares` (1) more stay logged in off it, standing by (`standing_by`) with their
+frames drained into the raw log; every other idle worker closes its session — its logout — and waits
+logged out, queued longest-waiting first. The window opens with every worker logged out and the
+first roles handed out in fleet order, so at rest a fleet holds three browser contexts plus whoever
+is watching a game, instead of one per worker.
+
+The rota has one rule, applied after every change: fill the lobby from the spare first and then from
+the queue, then fill the spare's place from the queue. A claimed start therefore sends the spare in
+at once — before the chaser has even left, with an egress check and a walk (`enter_lobby` from where
+its login left it, `return_to_lobby` from a table) but no login — and wakes the longest-waiting
+logged-out worker to log in as the next spare. So a chase costs one login. When the chase is over,
+the chaser takes whatever place is still open, lobby first and then the spare's, since a worker
+already logged in beats one that would have to log in; with both full it is parked: its session ends
+with `reason="parked"`. A spare coming from a table steps off it first (`exit_table`, the first half
+of `return_to_lobby`, best-effort). Every change is a `role` line (`worker`, `was`, `now`, `why`),
+and the fleet's heartbeat carries the count in each role and the logins so far. Both numbers are cut
+down to the workers still up, so a fleet of one is one watcher and no spare — the fleet before the
+rota.
+
+Two starts in a row stretch the lobby thin. The second is chased by the other watcher, which sends
+in the spare the first chase woke — still logging in, which takes 5–25 s. Until it arrives the lobby
+holds one watcher: a third start in that gap is still caught, but empties the lobby, and a fourth
+before the spare arrives would be missed. At the rate starts come, that is a rare case, and the
+price of holding three contexts rather than seven. A spare has no silence watchdog, since it never
+hears a roster that would prove its page alive; `spare_silent` records instead, once per spell, a
+spare page that received nothing for 60 s, because how quiet a page off the lobby is has not been
+measured.
 
 One chase, from the lobby's socket to a written record — the claim on the roster, the round trip
 out, the blind scan held against the roster, the table's own gates and the claim on the table, and
@@ -626,11 +657,13 @@ the walk back:
 ```plantuml format="svg" source="seq_scraper_chase.puml"
 ```
 
-The walk back takes the table's exit when the profile names one, and fails fast. A failure rebuilds
-the worker's session — a fresh context and a fresh login — logged as `return_rebuilt` and *not* counted
-against the worker. Everything else that ends a session is: three sessions in a row that fail, or six
-refused egress checks in a row, and the worker goes down (`worker_down`) and stays down for the
-process. A chase that runs its course, whatever it found, clears the streak, so a profile broken in
+The walk back asks the egress first, takes the table's exit when the profile names one, and fails
+fast. A failure rebuilds the worker's session — a fresh context and a fresh login — logged as
+`return_rebuilt`, *not* counted against the worker, and keeping its place in the rota. Everything
+else that ends a session is counted, and gives the place up at once, so the next worker in line
+takes it during the failed worker's idle poll: three sessions in a row that fail, or six refused
+egress checks in a row, and the worker goes down (`worker_down`), leaves the rota and stays down for
+the process. A chase that runs its course, whatever it found, clears the streak, so a profile broken in
 a way every chase meets cannot keep logging in forever. The process hands itself back with exit
 code 3 only once a majority of its workers are down — one worker's bad account does not end the
 others' night — which for a fleet of one is exactly `run`'s rule. A worker whose chase was stopped by
@@ -647,11 +680,12 @@ rebuild spends no budget, as the account is not at fault; a second deafness in a
 heard in between, counts as a failed session, so an account the site keeps kicking out cannot log in
 every minute.
 
-Once a process, before its first lobby, each worker can make a **census**: it walks the observe
-branch and hops `census_hops` tables the ordinary way, recording nothing, reading each join snapshot
-into the registry — which tables are running, tournament or not, and how far along. Workers sweep in
-parallel, and after each sweep the fleet writes a `census` line: distinct tournament tables, how many
-sightings, and a resighting-based estimate of the population — the `N` for which uniform draws with
+Once a process, before its first lobby, each of the window's opening watchers can make a **census**:
+it walks the observe branch and hops `census_hops` tables the ordinary way, recording nothing,
+reading each join snapshot into the registry — which tables are running, tournament or not, and how
+far along. A spare never sweeps, nor does a worker called in after the window's first chase. The
+watchers sweep in parallel, and after each sweep the fleet writes a `census` line: the sweeps still
+under way (`pending`, counted as sweeps start), distinct tournament tables, how many sightings, and a resighting-based estimate of the population — the `N` for which uniform draws with
 replacement would leave exactly as many distinct tables as were seen (`estimate_population`). The
 walk is not a uniform draw, so the figure is a sizing indicator, not a count; it is what says whether
 ten workers is about the whole population. Re-read on the chase probe's walks it comes to 12 and 14

@@ -1633,6 +1633,39 @@ class TestLobbyWalk:
         with pytest.raises(BrowserError, match="lobby_layer.*plain CSS"):
             drain(scenario)
 
+    def test_a_spare_steps_off_its_table_and_no_further(self, profile):
+        # A fleet's spare waits on the online menu, not at a finished game.
+        from contrai_scraper.browser import EXIT_SETTLE_MS
+
+        page = ScreenPage({"#leave": ["Exit"], "#new-games": ["New"]},
+                          screens=("mode", "table"),
+                          layout={**FOUR_SCREEN_BACKS, "#new-games": ["online"]})
+
+        async def scenario():
+            return await Spectator(page, profile).exit_table()
+
+        assert (drain(scenario), page.clicks, page.nth_clicks, page.waited) == (
+            True, ["#leave"], [], [EXIT_SETTLE_MS])
+
+    def test_stepping_off_where_a_menu_shows_clicks_nothing(self, profile):
+        page = ScreenPage({"#leave": ["Exit"]}, screens=("mode", "online"),
+                          layout=FOUR_SCREEN_BACKS)
+
+        async def scenario():
+            return await Spectator(page, profile).exit_table()
+
+        assert (drain(scenario), page.clicks) == (False, [])
+
+    def test_an_exit_that_takes_no_click_is_shrugged_off(self, profile):
+        # Best-effort: the walk into the lobby, later, is what fails and
+        # rebuilds, exactly as it would have without this step.
+        page = ScreenPage(screens=("mode", "table"), layout=FOUR_SCREEN_BACKS)
+
+        async def scenario():
+            return await Spectator(page, profile).exit_table()
+
+        assert drain(scenario) is False
+
     def test_a_profile_without_a_lobby_refuses_every_lobby_step(self, profile):
         from contrai_scraper import ProfileError
 
@@ -1647,7 +1680,8 @@ class TestLobbyWalk:
         spectator = Spectator(ScreenPage(), bare)
         steps = (spectator.enter_lobby, spectator.read_tournament_hash,
                  spectator.back_once, spectator.dismiss_overlay,
-                 spectator.enter_table_from_lobby, spectator.return_to_lobby)
+                 spectator.enter_table_from_lobby, spectator.return_to_lobby,
+                 spectator.exit_table)
         refused = 0
         for step in steps:
             with pytest.raises(ProfileError, match="describes no lobby"):
