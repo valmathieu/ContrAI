@@ -32,6 +32,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) `Recorder(target=ChaseTarget)` chases a lobby roster: all four accounts or refused, a scan budgeted on distinct tables and a deadline, give-ups logged with a reason. See [scraper docs](docs/scraper/index.md).
 - (scraper) `contrai-scrape fleet` — up to ten workers wait in the lobby and chase every tournament game from its first card, with per-worker budgets and an optional `[fleet]` profile section. See [scraper docs](docs/scraper/index.md).
 - (scraper) Fleet startup census — each worker sweeps `census_hops` tables once, recording nothing; a `census` line estimates the tournament population from resightings. See [scraper docs](docs/scraper/index.md).
+- (scraper) `carried_over` is inferred across rounds whose running totals were never read, when the totals around them leave no room for a pot. See [scraper docs](docs/scraper/index.md).
 
 ### Changed
 

@@ -213,18 +213,54 @@ class TestCarries:
         assert (sheet.lines[10].index, sheet.lines[10].carried_over) == (
             rows, _totals(0, 0))
 
-    def test_a_row_between_distant_anchors_is_unknown(self):
-        # Round 1's totals were never read, so no single step brackets either
-        # row.
-        sheet = _sheet(_snap(2, _ROWS[:2], (30, 0)), seen={1, 2})
-        assert [line.carried_over for line in sheet.lines.values()] == [
-            None, None]
 
     def test_a_row_above_the_last_stated_totals_is_unknown(self):
         sheet = _sheet(_snap(1, _ROWS[:1], (10, 0)), _snap(2, _ROWS[:2]),
                        seen={1, 2})
         assert [line.carried_over for line in sheet.lines.values()] == [
             _totals(0, 0), None]
+
+
+class TestSpans:
+    def test_a_zero_residual_over_a_span_proves_every_carry_zero(self):
+        # Round 1's totals were never read, but 0 / 0 to 30 / 0 is exactly
+        # the two rows' 10 + 20, and no carry is negative.
+        sheet = _sheet(_snap(2, _ROWS[:2], (30, 0)), seen={1, 2})
+        assert [line.carried_over for line in sheet.lines.values()] == [
+            _totals(0, 0), _totals(0, 0)]
+
+    def test_a_positive_span_leaves_every_carry_unknown(self):
+        # A pot of 161 was paid in round 1 or in round 2, and which one is
+        # the rule the verifier checks, not the parser's to assume.
+        sheet = _sheet(_snap(2, _ROWS[:2], (191, 0)), seen={1, 2})
+        assert ([line.carried_over for line in sheet.lines.values()],
+                sheet.notes) == ([None, None], ())
+
+    def test_a_positive_residual_on_one_side_is_enough(self):
+        sheet = _sheet(_snap(2, _ROWS[:2], (30, 161)), seen={1, 2})
+        assert [line.carried_over for line in sheet.lines.values()] == [
+            None, None]
+
+    def test_a_negative_span_is_unknown_and_noted_once(self):
+        sheet = _sheet(_snap(2, _ROWS[:2], (20, 0)), seen={1, 2})
+        assert ([line.carried_over for line in sheet.lines.values()],
+                sheet.notes) == ([None, None], (
+            "rounds 1, 2: the running totals moved by less than the marks, so "
+            "the carry is unknown",))
+
+    def test_a_span_ending_at_a_barrier_is_unknown(self):
+        sheet = _sheet(_snap(2, _ROWS[:2], (30, 0)), _snap(2, _ROWS[:2], (35, 0)),
+                       seen={1, 2})
+        assert [line.carried_over for line in sheet.lines.values()] == [
+            None, None]
+
+    def test_a_span_across_a_passed_out_round_counts_its_rows_alone(self):
+        # Round 2 wrote no row, so the span from 0 / 0 is rounds 1 and 3.
+        sheet = _sheet(_snap(3, _ROWS[:2], (30, 0)), seen={1, 2, 3},
+                       passed={2})
+        assert ({n: line.carried_over for n, line in sheet.lines.items()},
+                sheet.standings) == (
+            {1: _totals(0, 0), 3: _totals(0, 0)}, {})
 
 
 class TestContradictions:

@@ -160,8 +160,17 @@ side of its row: what the totals moved by, less the row's made, announced and cr
 points. Where no read stated the totals on both sides of the row the carry is `null`, not zero; a
 negative step cannot be a payout, so it is `null` too, with a note. Keying the step on the row
 count rather than the round number is what lets round 1 of a game seen whole start from 0 / 0, and
-keeps a join just after passed-out rounds on the row it really joined at. Across the V5 corpus 15
-rounds carry a pot — 161, 181 or 480 — and every other inferable round carries 0 / 0.
+keeps a join just after passed-out rounds on the row it really joined at.
+
+A seat taken mid-round, or a boundary request the site never answers, leaves **several rows**
+between two anchors, and no single row's step can be read. The span is still read, conservatively.
+A carry is a payout, never negative, so a residual of zero on both sides proves every row in the
+span carried nothing, and each gets 0 / 0. A positive residual means a pot was paid somewhere
+inside, and attributing it to a row would assume the very rule `contrai verify` checks, so every
+carry in the span stays `null`. A negative residual can only mean misplaced rows: `null`, with a
+note. Across the V5 corpus this leaves no round with a `null` carry (590 before) — 15 rounds carry
+a pot, 161, 181 or 480, and every other round 0 / 0 — and across the fleet's ramp runs 3 of 100,
+all in one span whose pot was paid inside it.
 
 The sheet refuses rather than guesses. Reads that contradict one another — rows that disagree, a
 round on two rows, a played round left without one, rows out of the rounds' order — place no row

@@ -22,7 +22,9 @@ So what a round carried is what the totals moved by across its row, less
 the row's made, announced and credited belote points. Keying that on the row
 count rather than on the round number is what makes 0 / 0 usable before
 round 1 of a game seen whole, and what keeps a join right after passed-out
-rounds on the row it really joined at.
+rounds on the row it really joined at. Where reads were missed and several
+rows lie between two anchors, a residual of zero on both sides still proves
+every one of them carried nothing, since no carry is negative.
 
 Both readings refuse rather than guess. Reads that contradict one another —
 disagreeing rows, a round on two rows, a played round left without one —
@@ -239,11 +241,18 @@ def _carries(
 ) -> dict[int, Mapping[TeamSide, int]]:
     """Each placed round's carry, where the anchors around its row decide it.
 
-    A row is bracketed by the nearest anchors below and above it. With the
-    row alone between them, the carry is the residual: what the totals moved
-    by, less the row's marks. A negative residual cannot be a payout, so the
-    carry is unknown and noted. A bracket holding several rows, or ending at
-    a barrier, is left unknown.
+    A row is bracketed by the nearest anchors below and above it, and the
+    residual is what the totals moved by across the bracket, less its rows'
+    marks. With the row alone between them, the residual is its carry.
+    Several rows come from reads nobody took — a seat taken mid-round, a
+    request the site never answered — and there a carry, being a payout and
+    never negative, is pinned only by a residual of zero on both sides: then
+    every row in the bracket carried nothing. A positive residual is a pot
+    paid somewhere inside, and naming the row would assume the very rule the
+    verifier checks, so every carry there stays unknown. A negative residual
+    cannot be a payout at all, so it is unknown and noted, once per bracket.
+    A bracket ending at a barrier, or a row above the last stated totals,
+    is left unknown.
 
     Args:
         rows: The sheet's rows.
@@ -260,7 +269,7 @@ def _carries(
     points = sorted({*anchors, *barriers})
     carries: dict[int, Mapping[TeamSide, int]] = {}
     for lower, upper in zip(points, points[1:]):
-        if lower in barriers or upper in barriers or upper - lower != 1:
+        if lower in barriers or upper in barriers:
             continue
         rounds = [round_of[index] for index in range(lower, upper)
                   if index in round_of]
@@ -272,13 +281,27 @@ def _carries(
         if any(points_ < 0 for points_ in residual.values()):
             if rounds:
                 notes.append(
-                    f"round {rounds[0]}: the running totals moved by less than "
+                    f"{_label(rounds)}: the running totals moved by less than "
                     "the marks, so the carry is unknown"
                 )
             continue
+        if upper - lower == 1:
+            carry = residual
+        elif not any(residual.values()):
+            carry = dict.fromkeys(TeamSide, 0)
+        else:
+            continue
         for number in rounds:
-            carries[number] = residual
+            carries[number] = carry
     return carries
+
+
+def _label(rounds: Sequence[int]) -> str:
+    """``round 4``, or ``rounds 4, 6`` for several."""
+
+    if len(rounds) == 1:
+        return f"round {rounds[0]}"
+    return f"rounds {', '.join(str(number) for number in rounds)}"
 
 
 def _standings(

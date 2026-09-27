@@ -270,6 +270,50 @@ class TestScoring:
             Position.WEST, Position.SOUTH]
 
 
+class TestCarries:
+    def test_a_missed_read_is_bridged_by_the_next_one(
+        self, profile, source_game, synthesize
+    ):
+        # Round 1's totals were never read; round 2's are exactly both rows'
+        # marks on top of 0 / 0, so neither round can have carried a thing.
+        texts = [(text, socket) for text, socket in synthesize(source_game)
+                 if '"id": "s1"' not in text]
+        scored = [event for event in _parse(profile, texts).events
+                  if isinstance(event, RoundScored)]
+        assert [(e.round, e.carried_over) for e in scored] == [
+            (1, {TeamSide.NS: 0, TeamSide.EW: 0}),
+            (2, {TeamSide.NS: 0, TeamSide.EW: 0}),
+        ]
+
+    def test_the_round_after_a_mid_round_join_gets_its_carry(
+        self, profile, synthesize, game_builders
+    ):
+        # Seated during round 3 on a read of round 2, and round 3's own
+        # read never came: the join's totals and round 4's bracket two rows.
+        b = game_builders
+        game = b.game_events(
+            b.round_events(1, Position.SOUTH, Position.WEST, 80, Suit.SPADES,
+                           True, {TeamSide.NS: 0, TeamSide.EW: 170}),
+            b.round_events(2, Position.EAST, Position.SOUTH, 110, Suit.HEARTS,
+                           True, {TeamSide.NS: 200, TeamSide.EW: 170}),
+            b.round_events(3, Position.SOUTH, Position.WEST, 90, Suit.CLUBS,
+                           True, {TeamSide.NS: 200, TeamSide.EW: 350}),
+            b.round_events(4, Position.WEST, Position.NORTH, 90, Suit.CLUBS,
+                           True, {TeamSide.NS: 380, TeamSide.EW: 350}),
+        )
+        texts = synthesize(game)
+        join = next(index for index, (text, _) in enumerate(texts)
+                    if '"id": "s2"' in text)
+        watched = [(text, socket) for text, socket in texts[join:]
+                   if '"id": "s3"' not in text and ",3,0,0" not in text]
+        result = _parse(profile, watched)
+        scored = [event for event in result.events
+                  if isinstance(event, RoundScored)]
+        assert (result.skipped_rounds,
+                [(e.round, e.carried_over) for e in scored]) == (
+            (3,), [(4, {TeamSide.NS: 0, TeamSide.EW: 0})])
+
+
 class TestEnding:
     def test_a_table_that_closes_ends_the_record(
         self, profile, source_game, synthesize
