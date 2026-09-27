@@ -1506,6 +1506,21 @@ class TestChase:
                      health=HealthLog(write=lines.append))
         assert _only(lines, "game_recorded")["first_round"] == 2
 
+    def test_a_passed_out_first_round_is_the_first_round(
+        self, profile, session_frames, game_builders
+    ):
+        # Nobody bid on the first deal, which is recorded rather than lost, so
+        # the record still starts at round 1.
+        b = game_builders
+        game = b.game_events(
+            b.passed_round(1, Position.EAST),
+            b.round_events(2, *_ROUND_ONE),
+        )
+        lines: list[str] = []
+        run_recorder(FakeSpectator(), session_frames(game), profile,
+                     health=HealthLog(write=lines.append))
+        assert _only(lines, "game_recorded")["first_round"] == 1
+
 
 def _only(lines, name):
     """The one health line carrying ``name``, parsed."""

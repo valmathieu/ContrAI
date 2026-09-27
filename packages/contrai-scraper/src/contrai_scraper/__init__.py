@@ -110,6 +110,7 @@ from contrai_scraper.parse.live import (
     bid_events,
     collect_rounds,
     is_draw,
+    passed_out,
     play_events,
 )
 from contrai_scraper.parse.session import (
@@ -269,6 +270,7 @@ __all__ = [
     "parse_key",
     "parse_range",
     "parse_session",
+    "passed_out",
     "play_events",
     "prune_raw_logs",
     "raw_dir",

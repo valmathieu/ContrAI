@@ -80,6 +80,7 @@ from .live import (
     bid_events,
     collect_rounds,
     is_draw,
+    passed_out,
     play_events,
 )
 from .snapshot import ScoreRow, Snapshot, read_snapshot
@@ -232,7 +233,8 @@ def parse_session(
 
     rounds = collect_rounds(ordered, translator)
     wire_game = _wire_game_id(ordered)
-    scores = _scores_by_round(snapshots, rounds)
+    passed = _passed_out_rounds(rounds, translator)
+    scores = _scores_by_round(snapshots, passed)
     stamp = (now or datetime.now(UTC)).isoformat(timespec="seconds").replace(
         "+00:00", "Z"
     )
@@ -258,11 +260,14 @@ def parse_session(
 
     notes: list[str] = _draw_notes(ordered, profile.wire)
     skipped: list[int] = []
+    last = max(rounds, default=0)
     for number in sorted(rounds):
         round_ = rounds[number]
         produced = _round(
             round_, translator, seat_of_player, rules, scores.get(number),
-            _totals_before(number, scores, joined), ts, notes,
+            _totals_before(number, scores, joined, passed), ts, notes,
+            passed=number in passed,
+            cut_short=number == last and _cut_short(round_, passed, snapshots),
         )
         if produced is None:
             skipped.append(number)
@@ -389,8 +394,30 @@ def _observed_from(snapshot: Snapshot) -> ObservedFrom | None:
     )
 
 
+def _passed_out_rounds(
+    rounds: Mapping[int, LiveRound], translator: Translator
+) -> frozenset[int]:
+    """The numbers of every round the wire shows was passed out.
+
+    Args:
+        rounds: The session's rounds, by number.
+        translator: The vocabulary layer, for how a pass is spelled.
+
+    Returns:
+        The passed-out round numbers — see
+        :func:`~contrai_scraper.parse.live.passed_out`.
+    """
+
+    tokens = translator.profile.wire.tokens
+    last = max(rounds, default=0)
+    return frozenset(
+        number for number, round_ in rounds.items()
+        if passed_out(round_, tokens, superseded=number < last)
+    )
+
+
 def _scores_by_round(
-    snapshots: Sequence[Snapshot], rounds: Mapping[int, LiveRound]
+    snapshots: Sequence[Snapshot], passed: frozenset[int]
 ) -> dict[int, tuple[ScoreRow, Mapping[TeamSide, int] | None]]:
     """Map each snapshot's score rows onto the rounds they describe.
 
@@ -399,6 +426,20 @@ def _scores_by_round(
     ever applied to the rows one snapshot carried, so a round that was never
     covered by a snapshot simply has no entry — which is what makes "no score
     row" expressible rather than guessed at.
+
+    A passed-out round has no row on the sheet but does take a round number,
+    so the walk steps over it: a row belongs to the next *played* round
+    down, not to the next number. The snapshot's totals go to the newest row
+    walked even when ``round_index`` itself names a passed-out round, since
+    passing out changes no total.
+
+    Args:
+        snapshots: Every snapshot of the session, in arrival order.
+        passed: The passed-out round numbers.
+
+    Returns:
+        Round number to its row, and the running totals after it when the
+        row was the newest its snapshot carried.
     """
 
     scores: dict[int, tuple[ScoreRow, Mapping[TeamSide, int] | None]] = {}
@@ -406,13 +447,16 @@ def _scores_by_round(
         if snapshot.round_index is None or not snapshot.score_rows:
             continue
         number = snapshot.round_index
+        totals = snapshot.totals
         for row in reversed(snapshot.score_rows):
+            while number in passed:
+                number -= 1
             if number < 1:
                 break
+            scores.setdefault(number, (row, totals))
             # Only the newest row's totals are the totals *after* that round;
             # an older row's running total is not in the payload at all.
-            totals = snapshot.totals if number == snapshot.round_index else None
-            scores.setdefault(number, (row, totals))
+            totals = None
             number -= 1
     return scores
 
@@ -426,8 +470,29 @@ def _round(
     before: Mapping[TeamSide, int] | None,
     ts: str,
     notes: list[str],
+    *,
+    passed: bool = False,
+    cut_short: bool = False,
 ) -> list[GameEvent] | None:
-    """Everything one round contributes to the record, or ``None`` if skipped."""
+    """Everything one round contributes to the record, or ``None`` if skipped.
+
+    Args:
+        round_: The round as the wire described it.
+        translator: The vocabulary layer.
+        seat_of_player: Which seat each player handle sits in.
+        rules: The table ruleset.
+        score: The round's score row and the totals after it, if read.
+        before: The running totals just before the round, if known.
+        ts: The timestamp to stamp every event with.
+        notes: Where a skipped round says why.
+        passed: Whether the wire shows the round passed out.
+        cut_short: Whether the record ends before the round did: the last
+            round of the visit, not passed out, short of its plays, and
+            covered by no score read.
+
+    Returns:
+        The round's events, or ``None`` when it was skipped.
+    """
 
     number = round_.number
     if len(round_.deal_stock) != DECK_SIZE:
@@ -438,7 +503,24 @@ def _round(
         return None
 
     stock = [translator.card(token) for token in round_.deal_stock]
+    if passed and len(round_.bids) == len(Position):
+        return _passed_out_round(
+            round_, stock, translator, seat_of_player, rules, before, ts, notes
+        )
+    if cut_short:
+        notes.append(
+            f"round {number}: the record ends before the round did — skipped"
+        )
+        return None
+
     plays = play_events(round_, translator, seat_of_player, ts=ts)
+    if not plays:
+        # Nothing to resolve a dealer from. A passed-out round with its whole
+        # auction was recorded above; this is one seen only in part.
+        notes.append(
+            f"round {number}: no card of the round was observed — skipped"
+        )
+        return None
     played_by_seat: dict[Position, set[Card]] = {}
     for play in plays:
         played_by_seat.setdefault(play.position, set()).add(play.card)
@@ -497,6 +579,137 @@ def _round(
     if scored is not None:
         events.append(scored)
     return events
+
+
+def _cut_short(
+    round_: LiveRound, passed: frozenset[int], snapshots: Sequence[Snapshot]
+) -> bool:
+    """Whether the record stops before a round it began did.
+
+    Meant for the last round of a visit: one that was not passed out, is
+    short of its plays, and that no score read reached. It was still being
+    played when the watching stopped, which is not the same fault as a
+    round whose frames went missing mid-game.
+
+    Args:
+        round_: The round as the wire described it.
+        passed: The passed-out round numbers.
+        snapshots: Every snapshot of the session.
+
+    Returns:
+        Whether the round was cut off by the end of the record.
+    """
+
+    number = round_.number
+    return (
+        number not in passed
+        and len(round_.plays) < OBSERVED_PLAYS
+        and not any(
+            snapshot.round_index is not None and snapshot.round_index >= number
+            for snapshot in snapshots
+        )
+    )
+
+
+def _passed_out_round(
+    round_: LiveRound,
+    stock: Sequence[Card],
+    translator: Translator,
+    seat_of_player: Mapping[str, Position],
+    rules: RuleConfig,
+    before: Mapping[TeamSide, int] | None,
+    ts: str,
+    notes: list[str],
+) -> list[GameEvent] | None:
+    """A round every seat passed: its deal, its four passes and its score line.
+
+    Four seats looked at known hands and none bid, which is bidding data like
+    any other. What a played round takes from its plays — the dealer — comes
+    from the auction instead: nobody is forced to pass an empty auction, so
+    the first transmitted bid is the first speaker's, and the dealer sits
+    just before it.
+
+    Args:
+        round_: The round as the wire described it, four passes and no play.
+        stock: The deck in its pre-deal order.
+        translator: The vocabulary layer.
+        seat_of_player: Which seat each player handle sits in.
+        rules: The table ruleset.
+        before: The running totals just before the round, if known.
+        ts: The timestamp to stamp every event with.
+        notes: Where a skipped round says why.
+
+    Returns:
+        The round's events, or ``None`` when the auction cannot be placed.
+    """
+
+    number = round_.number
+    handle, _ = round_.bids[min(round_.bids)]
+    speaker = seat_of_player.get(handle)
+    if speaker is None:
+        notes.append(
+            f"round {number}: every seat passed, but the first to speak is "
+            "seated nowhere, so the dealer is unknown — skipped"
+        )
+        return None
+    rotation = translator.rotation
+    dealer = rotation[(rotation.index(speaker) - 1) % len(rotation)]
+    try:
+        bids = bid_events(
+            round_, translator, seat_of_player, dealer=dealer, rules=rules, ts=ts
+        )
+    except ParseError as error:
+        notes.append(f"round {number}: {error} — skipped")
+        return None
+    return [
+        RoundDealt(
+            round=number,
+            dealer=dealer,
+            hands=deal_hands(stock, speaker, rotation),
+            hands_derivation=HandsDerivation.DEALT_FROM_DECK,
+            ts=ts,
+        ),
+        *bids,
+        _passed_out_scored(number, before, ts),
+    ]
+
+
+def _passed_out_scored(
+    number: int, before: Mapping[TeamSide, int] | None, ts: str
+) -> RoundScored:
+    """The score line of a passed-out round, which the site's sheet never writes.
+
+    Nothing is marked, and nothing is paid out either: under the held rule
+    a dispute's pot goes to the next *contract's* winner, and there was no
+    contract. The totals therefore stand where they stood before the round,
+    when those are known.
+
+    Args:
+        number: The round.
+        before: The running totals just before the round, if known.
+        ts: The timestamp to stamp it with.
+
+    Returns:
+        An ``all_pass`` line.
+    """
+
+    nothing = dict.fromkeys(TeamSide, 0)
+    return RoundScored(
+        round=number,
+        outcome=RoundOutcome.ALL_PASS,
+        declarer=None,
+        contract=None,
+        taken=dict(nothing),
+        belote=dict(nothing),
+        announcements=dict(nothing),
+        carried_over=dict(nothing),
+        marked={side: SideMark(made=0, announced=0) for side in TeamSide},
+        totals=None if before is None else dict(before),
+        last_trick=None,
+        slam=SlamOutcome.NONE,
+        source=ScoreSource.SNAPSHOT,
+        ts=ts,
+    )
 
 
 def _contract(bids: Sequence[BidMade]) -> ContractBid | None:
@@ -600,6 +813,7 @@ def _totals_before(
     number: int,
     scores: Mapping[int, tuple[ScoreRow, Mapping[TeamSide, int] | None]],
     joined: ObservedFrom | None,
+    passed: frozenset[int],
 ) -> Mapping[TeamSide, int] | None:
     """The running totals standing just before round ``number`` was played.
 
@@ -607,11 +821,27 @@ def _totals_before(
     session began; otherwise they are the totals after the round before,
     when a snapshot read them. Anything else is unknown, and no carry can
     be inferred across it.
+
+    Passed-out rounds just before ``number`` change no total, so the walk
+    steps back over them: the totals before ``number`` are those before the
+    first round of that run.
+
+    Args:
+        number: The round being scored.
+        scores: Round number to its row and the totals after it.
+        joined: Where the session joined, or ``None`` when it saw the start.
+        passed: The passed-out round numbers.
+
+    Returns:
+        The totals, or ``None`` when no read covers them.
     """
 
-    if joined is not None and joined.round == number:
+    start = number
+    while start - 1 in passed and (joined is None or joined.round != start):
+        start -= 1
+    if joined is not None and joined.round == start:
         return joined.totals
-    previous = scores.get(number - 1)
+    previous = scores.get(start - 1)
     return None if previous is None else previous[1]
 
 
