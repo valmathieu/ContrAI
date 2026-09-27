@@ -31,7 +31,8 @@ stateDiagram-v2
     Recording --> Back : chase_ended
     Back --> Hall : the list is showing
     Back --> Egress : a step does not land<br/>return_rebuilt · no budget spent
-    Session --> Failed : any step raises
+    Hall --> Egress : silent 60 s · hall_deaf<br/>no budget the first time
+    Session --> Failed : any step raises<br/>or the lobby deaf again, no roster since
     Failed --> Egress : after idle_poll_minutes
     Failed --> Down : 3 in a row
     Down --> Handback : down × 2 > workers

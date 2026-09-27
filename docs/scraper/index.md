@@ -584,6 +584,17 @@ code 3 only once a majority of its workers are down — one worker's bad account
 others' night — which for a fleet of one is exactly `run`'s rule. A worker whose chase was stopped by
 a refused egress sends nothing more on that session and checks the egress again before the next.
 
+The wait in the lobby has a watchdog on the *connection*, not on the lobby's events. The lobby can
+legitimately stay quiet for over a minute; the page never does, since its keepalive answers every
+20 s, and across the ramp's healthy sessions no received frame came more than 20.9 s after the last.
+So a worker that receives nothing at all for `HALL_SILENCE_S` (60 s) logs `hall_deaf`, with how long
+it was silent and how many lobby states it had read, and rebuilds its session. Only received frames
+count: what the page sends goes out whether anyone is listening or not. In the 10-worker ramp both of
+one worker's sockets closed 36 s into the lobby and it sat there deaf for 57 minutes. The first
+rebuild spends no budget, as the account is not at fault; a second deafness in a row, with no roster
+heard in between, counts as a failed session, so an account the site keeps kicking out cannot log in
+every minute.
+
 Once a process, before its first lobby, each worker can make a **census**: it walks the observe
 branch and hops `census_hops` tables the ordinary way, recording nothing, reading each join snapshot
 into the registry — which tables are running, tournament or not, and how far along. Workers sweep in
