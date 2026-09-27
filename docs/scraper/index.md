@@ -29,7 +29,7 @@ the same reason.
 | `contrai_scraper.wire` | Envelope, keepalive, de-duplication, composite key → `WireEvent`. |
 | `contrai_scraper.lobby` | `LobbyWatcher` — the lobby's socket events → a `LobbyRoster` the moment a tournament game starts. |
 | `contrai_scraper.lzstring` | The LZ-String base64 codec the deal payload arrives in. |
-| `contrai_scraper.parse` | `translate`, `deal`, `snapshot`, `live`, `session` — wire events → a record. |
+| `contrai_scraper.parse` | `translate`, `deal`, `snapshot`, `sheet`, `live`, `session` — wire events → a record. |
 | `contrai_scraper.browser` | `Spectator` — the only module that touches a page. Login, the walk, the hop, the two panels. `open_browser` / `open_session` — one Chromium, one isolated context per session. |
 | `contrai_scraper.recorder` | `Recorder` — the table loop: seat, gate, watch, write, hop. Imports no Playwright. |
 | `contrai_scraper.registry` | `TableRegistry` — a fleet's claims: a chase by roster, a table by id, and the census of tables seen. |
@@ -140,6 +140,17 @@ does too, logging `record_skipped` with `reason` `no_round` instead of writing a
 round and a null first round — which is what a chase that found its table seconds before the time
 limit used to leave, counted towards `--max-games` as if it were a game.
 
+`parse` also applies the one gate the wire can answer: a visit whose opening snapshot does not say
+its table is a tournament is left out, as the live gate leaves it. Refusing a table is not leaving
+it. The site chooses where a spectator sits, and while no tournament table is open it seats the
+spectator back at the table just refused, hop after hop — for 15 and 19 minutes at the start of two
+V5 sessions, one hop every `snapshot_timeout_s` — so the log holds a whole game nobody watched. Six
+V5 records were made of such games before the check, among them obs-a5dae556, whose table scores in
+another mode (no contract points, marks rounded to ten) and read as 11 `suspect` rounds. The gates
+that need the page — the options panel, the scoreboard's side — cannot be re-run offline. Every
+visit a V5 log held under a variant this ruleset cannot name — the 35 reported as "could not be
+read" — was one of those tables too, and is now counted with them on the log's summary line.
+
 One limit on "the same path" is worth knowing before a log is used as evidence. The log is
 de-duplicated by frame identity and never reset, so the mirrored connection's copy of a frame is
 not in the file — a replay is faithful for the parser, which drops those copies anyway, but it
@@ -153,11 +164,30 @@ the declaring side; the row's status token is only consulted when a row does not
 
 A held dispute (§7.5) reads as made on the site's row while marking its declarer 0 / 0, so that pair
 is recorded as `held`. Its points are paid into the next winner's running total and appear in no
-row, so each round's `carried_over` is inferred: what the totals moved by since the round before,
-less the row's made, announced and credited belote points. Where the totals before a round were
-never read — the round before was not scored by any snapshot — the carry is `null`, not zero.
-Across the V5 corpus the residual is non-zero in exactly one of 491 inferable rounds, and it is
-that 161.
+row, so each round's `carried_over` is inferred, by `parse.sheet`. It reads the score sheet **by
+position**: each snapshot is an *anchor* — after R rows the totals were T — and every game adds
+one of its own, 0 / 0 after no row at all. A round's carry is the step between the anchors either
+side of its row: what the totals moved by, less the row's made, announced and credited belote
+points. Where no read stated the totals on both sides of the row the carry is `null`, not zero; a
+negative step cannot be a payout, so it is `null` too, with a note. Keying the step on the row
+count rather than the round number is what lets round 1 of a game seen whole start from 0 / 0, and
+keeps a join just after passed-out rounds on the row it really joined at.
+
+A seat taken mid-round, or a boundary request the site never answers, leaves **several rows**
+between two anchors, and no single row's step can be read. The span is still read, conservatively.
+A carry is a payout, never negative, so a residual of zero on both sides proves every row in the
+span carried nothing, and each gets 0 / 0. A positive residual means a pot was paid somewhere
+inside, and attributing it to a row would assume the very rule `contrai verify` checks, so every
+carry in the span stays `null`. A negative residual can only mean misplaced rows: `null`, with a
+note. Across the V5 corpus this leaves no round with a `null` carry (590 before) — 15 rounds carry
+a pot, 161, 181 or 480, and every other round 0 / 0 — and across the fleet's ramp runs 3 of 100,
+all in one span whose pot was paid inside it.
+
+The sheet refuses rather than guesses. Reads that contradict one another — rows that disagree, a
+round on two rows, a played round left without one, rows out of the rounds' order — place no row
+for the visit, and two reads stating different totals after the same number of rows make that
+count a *barrier* no carry is read across. Each leaves one note; neither happens in the V5 corpus
+or the fleet's ramp runs.
 
 A **passed-out round** — every seat passes and the cards are dealt again — has no row on the site's
 score sheet, yet it still advances the round counter. A snapshot's rows therefore cannot be walked
@@ -167,9 +197,11 @@ first, and it reached records once boundary requests went unanswered (two `suspe
 10-worker ramp). `passed_out` recognises such a round on the wire — bids but no play, every observed
 bid a pass, and either four of them or a later round begun, which covers an auction the session
 joined part-way — and the walk steps over those numbers, so each row lands on a *played* round. A
-snapshot taken just after a passed-out round names it as its last, and its totals go to the newest
-row all the same: passing out changes no total. For the same reason the totals standing before a
-round are those before the run of passed-out rounds just ahead of it.
+snapshot's round index names the newest *scored* round and never a passed-out one: after an
+all-pass round 9 the next read still says 8. The walk starts there and stops at the first round
+number the visit saw nothing of, since the rows below it belong to rounds before the join or across
+a gap in the watching, and no read of this visit can say which. Passing out moves no total, so a
+passed-out round stands at the anchor for the rows written before it.
 
 A passed-out round is also **recorded**, not dropped: four seats looked at known hands and none bid,
 which is bidding data like any other. A played round's dealer is resolved from its plays, and this
@@ -364,6 +396,14 @@ record; an observer-left flag alone does not, because it says the spectator stop
 not that the game finished. A table that plays nothing for `stale_after_s` is written as
 `abandoned`, and an interrupted process writes what it saw as `interrupted` — neither is visible
 to the wire, which is why `parse_session` takes an `end_reason` the caller can state.
+
+The first deal after seating triggers the read too, unless it opens the round right after the
+seating snapshot's newest scored round: only then is that snapshot the read. A seat lands mid-round
+in 629 of 706 V5 visits and 11 of 30 fleet visits, and 557 and 10 of those never got a snapshot
+stating the totals before the first round watched — which leaves that round's carry to span
+inference at best. Judged on round numbers rather than on "the first deal seen", the rule also
+holds when the catch-up drain handed a deal over before the watch began. It costs at most one
+request per game: about 13% more requests for `run`, about 5% for a fleet.
 
 The game-over flag outranks both. Seen anywhere in a game's updates, it writes `target_reached`
 whatever followed it — the site sends the spectator back to the menu once a game ends, and that
@@ -662,6 +702,9 @@ capture — live in `deploy/install.md`.
 - Recording one game twice: a record file is opened for appending, so a game recorded, abandoned
   and recorded again later would hold two headers. `run` has always had this; the fleet's registry
   rules it out for two workers at once, not for one worker twice.
+- `observed_from.round` is still the join read's round index plus one, which names a passed-out
+  round rather than the one being watched when passed-out rounds came just before the join. The
+  carry is keyed on rows and unaffected; the field is not.
 - Pseudonymisation: records currently carry raw ids, names and account fields — personal data,
   local only.
 - Rate-limiting / ToS considerations.

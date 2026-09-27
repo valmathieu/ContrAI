@@ -226,6 +226,9 @@ sibling of `games/` so a corpus and its verdicts move together. `verdicts_dir()`
 and `write_verdict()` spell that layout; the file is pretty-printed JSON with sorted keys, so
 re-verifying a corpus produces a diff that shows only what changed. It carries the game's id,
 source and preset, the game verdict, per-verdict round counts, the notes, and one object per round.
+A game whose record ended without its final totals may also carry `replayed_totals`, the totals the
+replay rebuilt for it (see [The winner](#the-winner)); the key is absent otherwise, never `null`,
+so older verdict files still read.
 
 **Reading one back is as strict as reading a record.** `read_verdict()` (and the `from_json`
 classmethods under it) refuses anything `write_verdict` would not have written: an unknown or
@@ -450,7 +453,7 @@ PLAYER_ID — games: 10 (catalog built 2026-09-24T17:59:04Z)
 | `seat N/W/S/E` | Where the player sat — the seat to follow when replaying. |
 | `partner` | The partner's name in that game (`-` if unknown). |
 | outcome | `won` or `lost` when the winner is known; otherwise why the record stops — `observer_left`, `abandoned`, `interrupted`, or `target_reached` when the game ended but its winner cannot be derived — both sides over the target, say (see [The winner](#the-winner)); `unfinished` when the record has no end at all. |
-| score | The final totals, `NS a – EW b`, with `?` when the record does not say. |
+| score | The final totals, `NS a – EW b`, with `?` when neither the record nor its verdict says; `(replayed)` follows totals the verifier rebuilt (see [The winner](#the-winner)). |
 | verdict | `verified`, `partial` or `suspect`; `partial (stale)` when the verdict predates the record; `no verdict` or `unreadable verdict` otherwise. |
 
 When a name sits in more than one seat of a game — an engine game has four `ai:expert` seats — the
@@ -679,7 +682,7 @@ Tables are `STRICT`, booleans are `0`/`1`, and seats, sides and trumps are the r
 | Table | Key | Holds |
 | --- | --- | --- |
 | `meta` | `key` | `schema_version`, `built_at`, `generator`, `root` |
-| `games` | `game_id` | the file (`path`, relative), `source`, `generator`, `created_at`, `ended_at`, `preset`, where a mid-game join landed, round counts, `complete`, `truncated`, `end_reason`, final totals, `winner` and `winner_basis`, the game `verdict`, `verdict_status`, `verdict_notes` |
+| `games` | `game_id` | the file (`path`, relative), `source`, `generator`, `created_at`, `ended_at`, `preset`, where a mid-game join landed, round counts, `complete`, `truncated`, `end_reason`, final totals and `totals_basis`, `winner` and `winner_basis`, the game `verdict`, `verdict_status`, `verdict_notes` |
 | `seats` | `game_id`, `position` | `side`, `player_id`, `name`, `account`, `kind`, `level`, `result` (`won` / `lost`) |
 | `rounds` | `game_id`, `round` | `dealer`, bid / trick / derived-trick / belote counts, `complete`, the contract (`declarer`, `declarer_side`, `contract_value` or `contract_slam`, `trump`, `multiplier`), `outcome`, `slam`, `score_source`, taken / marked / total points per side, and the round's `verdict`, `replayed`, `unchecked` |
 | `mismatches` | `game_id`, `round`, `n` | `kind`, `detail`, `position`, `trick`, `seq`, `expected`, `observed` |
@@ -735,6 +738,18 @@ the catalog derives one. The recorded winner is used when there is one (`winner_
 or above the ruleset's target — but only when **exactly one** side is (`winner_basis = 'totals'`).
 Both sides over the target is a game the belote gate or sudden death decided, rules that live in the
 engine; the catalog leaves it `NULL` rather than guess. `seats.result` follows from the winner.
+
+An observed game that reached the target often ends with **no totals at all**: the table's final
+read never came (10 of the fleet's first 30 games). Its record keeps them `null` — a record holds
+only what was observed, and a total written there from the engine's own scoring would have the
+verifier checking the engine against itself. `contrai verify` rebuilds them instead, as a derived
+value in the game's verdict file (`replayed_totals`): the last totals the record states, plus what
+the replay scored for every round after them. It gives them only when that sum is safe — the last
+stated totals follow a made or failed contract, so no pot is pending, and every round after them is
+present, replayed and not suspect, none of them held. The catalog uses them when the record has
+none and the verdict is `fresh`, and `games.totals_basis` says which it is: `recorded` or
+`replayed`, with `winner_basis = 'replayed'` for a winner derived from them. Being derived at
+verification time rather than stored at scrape time, they follow every fix to the engine's scoring.
 
 ### Recipes
 

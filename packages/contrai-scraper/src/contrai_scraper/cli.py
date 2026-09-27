@@ -822,8 +822,11 @@ def _run_parse(args: argparse.Namespace) -> int:
     root = args.out or profile.output.root
     written = 0
     for log in logs:
-        results, visits = _parse_log(log, profile)
-        print(f"{log.name}: {visits} table visits, {len(results)} with rounds")
+        results, visits, refused = _parse_log(log, profile)
+        line = f"{log.name}: {visits} table visits, {len(results)} with rounds"
+        if refused:
+            line += f", {refused} left out as not a tournament"
+        print(line)
         for result in results:
             rounds = round_count(result.events)
             header = result.events[0]
@@ -850,7 +853,9 @@ def _run_parse(args: argparse.Namespace) -> int:
     return 0 if written else 1
 
 
-def _parse_log(log: Path, profile: Profile) -> tuple[list[SessionResult], int]:
+def _parse_log(
+    log: Path, profile: Profile
+) -> tuple[list[SessionResult], int, int]:
     """Replay one raw log, one record per table visit that held a game.
 
     A frame source is an async iterator, because the live one has to be —
@@ -864,12 +869,21 @@ def _parse_log(log: Path, profile: Profile) -> tuple[list[SessionResult], int]:
     visit this profile cannot read is reported rather than raised, so one
     bad table does not cost the rest of the log.
 
+    A visit to a table that does not say it is a tournament is left out,
+    as the live recorder's gate leaves it. Refusing a table is not leaving
+    it: the site chooses where a spectator sits, and while no tournament
+    table is open it seats the spectator back at the one just refused, hop
+    after hop — for 15 to 19 minutes at the start of two V5 sessions. The
+    log then holds a whole game nobody watched, which six V5 records were
+    made of, obs-a5dae556's other scoring mode among them.
+
     Args:
         log: The raw log to replay.
         profile: The loaded profile.
 
     Returns:
-        The records worth writing, and how many visits the log held.
+        The records worth writing, how many visits the log held, and how
+        many of them were left out as not a tournament.
     """
 
     frames = asyncio.run(_drain(RawLogFrameSource(log)))
@@ -881,7 +895,11 @@ def _parse_log(log: Path, profile: Profile) -> tuple[list[SessionResult], int]:
     ]
     visits = split_visits(events, profile)
     results: list[SessionResult] = []
+    refused = 0
     for visit in visits:
+        if not _tournament(visit, profile):
+            refused += 1
+            continue
         try:
             result = parse_session(order_events(visit), profile)
         except ScraperError as error:
@@ -889,7 +907,27 @@ def _parse_log(log: Path, profile: Profile) -> tuple[list[SessionResult], int]:
             continue
         if round_count(result.events):
             results.append(result)
-    return results, len(visits)
+    return results, len(visits), refused
+
+
+def _tournament(visit: Sequence[WireEvent], profile: Profile) -> bool:
+    """Whether a visit's table says it is a tournament, as its gate reads it.
+
+    The flag is read off the snapshot that opened the visit, through the
+    profile's own path, and only a true value passes — the live gate's
+    rule, so a table that says nothing is refused here as it is there.
+
+    Args:
+        visit: One visit's events, its join snapshot first.
+        profile: The loaded profile.
+
+    Returns:
+        Whether the visit may become a record.
+    """
+
+    join = profile.wire.events.join_snapshot
+    opening = next(event for event in visit if event.kind == join)
+    return bool(Translator(profile).field(opening.data, "is_tournament"))
 
 
 async def _drain(source: RawLogFrameSource) -> list[RawFrame]:

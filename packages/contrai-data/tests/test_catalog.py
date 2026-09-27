@@ -283,6 +283,38 @@ class TestEffectiveWinner:
 
         assert _effective_winner(project(events)) == (None, None)
 
+    def _unread_end(self, three_round_game, reason=EndReason.TARGET_REACHED):
+        ended = GameEnded(totals=None, winner=None, reason=reason, ts=None)
+        return project(_game(three_round_game, ended=ended))
+
+    def test_missing_totals_fall_back_on_the_replay(self, three_round_game):
+        replayed = {TeamSide.NS: 1600, TeamSide.EW: 2040}
+
+        assert _effective_winner(self._unread_end(three_round_game), replayed) == (
+            TeamSide.EW, "replayed")
+
+    def test_the_record_s_own_totals_outrank_the_replay(self, three_round_game):
+        record = project(_game(three_round_game, ended=_ended(2010, 1500)))
+        replayed = {TeamSide.NS: 1600, TeamSide.EW: 2040}
+
+        assert _effective_winner(record, replayed) == (TeamSide.NS, "totals")
+
+    def test_replayed_totals_over_the_target_twice_are_nobody(
+        self, three_round_game
+    ):
+        replayed = {TeamSide.NS: 2010, TeamSide.EW: 2040}
+
+        assert _effective_winner(self._unread_end(three_round_game), replayed) == (
+            None, None)
+
+    def test_an_interrupted_game_is_nobody_whatever_the_replay(
+        self, three_round_game
+    ):
+        record = self._unread_end(three_round_game, EndReason.INTERRUPTED)
+
+        assert _effective_winner(record, {TeamSide.NS: 2100, TeamSide.EW: 0}) == (
+            None, None)
+
 
 class TestVerdictStatus:
     def _status(self, events, verdict, record_s=RECORD_TIME, verdict_s=VERDICT_TIME):
@@ -344,6 +376,35 @@ class TestGameRows:
         assert (game.winner, game.winner_basis) == ("NS", "totals")
         assert (game.verdict, game.verdict_status) == ("partial", "fresh")
         assert json.loads(game.verdict_notes) == []
+
+    def test_the_record_s_totals_are_marked_recorded(self, observed):
+        game = self._rows(observed).game
+
+        assert game.totals_basis == "recorded"
+
+    def _unread(self, observed):
+        ended = GameEnded(totals=None, winner=None,
+                          reason=EndReason.TARGET_REACHED, ts=None)
+        return [*observed[:-1], ended]
+
+    def _replayed(self):
+        return dataclasses.replace(
+            _verdict("obs-0001", source="observed", preset="tournament"),
+            replayed_totals={TeamSide.NS: 2090, TeamSide.EW: 1370},
+        )
+
+    def test_a_fresh_verdict_s_replay_fills_missing_totals(self, observed):
+        game = self._rows(self._unread(observed), self._replayed(), "fresh").game
+
+        assert (game.total_ns, game.total_ew, game.totals_basis) == (
+            2090, 1370, "replayed")
+        assert (game.winner, game.winner_basis) == ("NS", "replayed")
+
+    def test_a_stale_verdict_s_replay_is_not_used(self, observed):
+        game = self._rows(self._unread(observed), self._replayed(), "stale").game
+
+        assert (game.total_ns, game.totals_basis, game.winner) == (
+            None, None, None)
 
     def test_a_game_joined_mid_way_says_where(self, observed):
         joined = ObservedFrom(
@@ -1031,6 +1092,20 @@ class TestPlayerGames:
         assert first.end_reason == "target_reached"
         assert (first.verdict, first.verdict_status) == ("partial", "fresh")
         assert (second.verdict, second.verdict_status) == (None, "missing")
+
+    def test_each_game_says_where_its_totals_come_from(self, root, observed):
+        ended = GameEnded(totals=None, winner=None,
+                          reason=EndReason.TARGET_REACHED, ts=None)
+        _write_record(root, _game(observed, ended=ended))
+        _write_verdict(root, dataclasses.replace(
+            _verdict("obs-0001", source="observed", preset="tournament"),
+            replayed_totals={TeamSide.NS: 2090, TeamSide.EW: 1370},
+        ))
+        build_catalog(root, now=datetime(2026, 9, 24, 12, 0, tzinfo=UTC))
+
+        (game,) = player_games(root, "p-n").games
+        assert (game.total_ns, game.total_ew, game.totals_basis, game.result) == (
+            2090, 1370, "replayed", "won")
 
     def test_games_come_oldest_first(self, corpus):
         created = [game.created_at for game in player_games(corpus, "p-n").games]

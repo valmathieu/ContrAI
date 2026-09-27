@@ -23,8 +23,6 @@ from contrai_data import (
     GameEnded,
     GameStarted,
     Header,
-    JoinPhase,
-    ObservedFrom,
     RoundDealt,
     RoundOutcome,
     RoundScored,
@@ -42,16 +40,14 @@ from contrai_scraper import (
     split_visits,
 )
 from contrai_scraper.parse.session import (
-    _carried_over,
     _held,
     _last_trick,
     _round_scored,
-    _scores_by_round,
     _slam,
     _swept_by,
-    _totals_before,
 )
-from contrai_scraper.parse.snapshot import RowContract, ScoreRow, Snapshot
+from contrai_scraper.parse.sheet import SheetLine
+from contrai_scraper.parse.snapshot import RowContract, ScoreRow
 
 
 def _comparable(events):
@@ -121,9 +117,12 @@ def _doubled_round(builders):
         PassBid(player=Position.EAST),
         PassBid(player=Position.SOUTH),
     )
+    # The builder marks the contract at face value whatever the multiplier,
+    # so the totals are West's 90 + 80: anything more would read as a pot.
     return builders.round_events(
         1, Position.SOUTH, Position.WEST, 80, Suit.SPADES, True,
-        {TeamSide.NS: 0, TeamSide.EW: 640}, auction=auction, multiplier=4)
+        {TeamSide.NS: 0, TeamSide.EW: 170}, auction=auction, multiplier=4,
+        carried_over={TeamSide.NS: 0, TeamSide.EW: 0})
 
 
 #: The ``(round, seq)`` of every forced pass in ``_doubled_round``.
@@ -271,6 +270,50 @@ class TestScoring:
             Position.WEST, Position.SOUTH]
 
 
+class TestCarries:
+    def test_a_missed_read_is_bridged_by_the_next_one(
+        self, profile, source_game, synthesize
+    ):
+        # Round 1's totals were never read; round 2's are exactly both rows'
+        # marks on top of 0 / 0, so neither round can have carried a thing.
+        texts = [(text, socket) for text, socket in synthesize(source_game)
+                 if '"id": "s1"' not in text]
+        scored = [event for event in _parse(profile, texts).events
+                  if isinstance(event, RoundScored)]
+        assert [(e.round, e.carried_over) for e in scored] == [
+            (1, {TeamSide.NS: 0, TeamSide.EW: 0}),
+            (2, {TeamSide.NS: 0, TeamSide.EW: 0}),
+        ]
+
+    def test_the_round_after_a_mid_round_join_gets_its_carry(
+        self, profile, synthesize, game_builders
+    ):
+        # Seated during round 3 on a read of round 2, and round 3's own
+        # read never came: the join's totals and round 4's bracket two rows.
+        b = game_builders
+        game = b.game_events(
+            b.round_events(1, Position.SOUTH, Position.WEST, 80, Suit.SPADES,
+                           True, {TeamSide.NS: 0, TeamSide.EW: 170}),
+            b.round_events(2, Position.EAST, Position.SOUTH, 110, Suit.HEARTS,
+                           True, {TeamSide.NS: 200, TeamSide.EW: 170}),
+            b.round_events(3, Position.SOUTH, Position.WEST, 90, Suit.CLUBS,
+                           True, {TeamSide.NS: 200, TeamSide.EW: 350}),
+            b.round_events(4, Position.WEST, Position.NORTH, 90, Suit.CLUBS,
+                           True, {TeamSide.NS: 380, TeamSide.EW: 350}),
+        )
+        texts = synthesize(game)
+        join = next(index for index, (text, _) in enumerate(texts)
+                    if '"id": "s2"' in text)
+        watched = [(text, socket) for text, socket in texts[join:]
+                   if '"id": "s3"' not in text and ",3,0,0" not in text]
+        result = _parse(profile, watched)
+        scored = [event for event in result.events
+                  if isinstance(event, RoundScored)]
+        assert (result.skipped_rounds,
+                [(e.round, e.carried_over) for e in scored]) == (
+            (3,), [(4, {TeamSide.NS: 0, TeamSide.EW: 0})])
+
+
 class TestEnding:
     def test_a_table_that_closes_ends_the_record(
         self, profile, source_game, synthesize
@@ -378,8 +421,10 @@ class TestRefusals:
     def test_a_session_with_no_rounds_still_produces_a_record(
         self, profile, builders
     ):
-        texts = [(builders.envelope("payload", "joinTable",
-                                    builders.snapshot_payload()), 0)]
+        # Two rounds scored, both North-South's 80, and nothing since.
+        payload = builders.snapshot_payload(
+            rows=(builders.score_row(),) * 2, totals=(160, 0))
+        texts = [(builders.envelope("payload", "joinTable", payload), 0)]
         events = _parse(profile, texts, game_id="obs-empty").events
         assert [type(event).__name__ for event in events] == [
             "Header", "GameStarted", "GameEnded"]
@@ -481,7 +526,7 @@ class TestSlams:
         game = game_builders.game_events(
             game_builders.round_events(
                 1, Position.SOUTH, Position.WEST, SlamLevel.SLAM, Suit.SPADES,
-                True, {TeamSide.NS: 0, TeamSide.EW: 250}),
+                True, {TeamSide.NS: 0, TeamSide.EW: 340}),
         )
         scored = next(event for event in _parse(profile, synthesize(game)).events
                       if isinstance(event, RoundScored))
@@ -494,7 +539,7 @@ class TestSlams:
         game = game_builders.game_events(
             game_builders.round_events(
                 1, Position.SOUTH, Position.WEST, SlamLevel.SOLO_SLAM,
-                Suit.SPADES, True, {TeamSide.NS: 0, TeamSide.EW: 500}),
+                Suit.SPADES, True, {TeamSide.NS: 0, TeamSide.EW: 590}),
         )
         scored = next(event for event in _parse(profile, synthesize(game)).events
                       if isinstance(event, RoundScored))
@@ -684,7 +729,8 @@ def _with_passed_out_third(game_builders):
     b = game_builders
     return b.game_events(
         b.round_events(1, Position.SOUTH, Position.WEST, 80, Suit.SPADES, True,
-                       {TeamSide.NS: 0, TeamSide.EW: 170}),
+                       {TeamSide.NS: 0, TeamSide.EW: 170},
+                       carried_over={TeamSide.NS: 0, TeamSide.EW: 0}),
         b.round_events(2, Position.EAST, Position.SOUTH, 110, Suit.HEARTS, True,
                        {TeamSide.NS: 200, TeamSide.EW: 170},
                        carried_over={TeamSide.NS: 0, TeamSide.EW: 0}),
@@ -703,14 +749,6 @@ def _only_reads(texts, *kept):
         (text, socket) for text, socket in texts
         if "joinTable" not in text or any(id_ in text for id_ in ids)
     ]
-
-
-def _bare_snapshot(round_index, rows, totals):
-    """A snapshot holding nothing but its rows and totals."""
-
-    return Snapshot(table_id="t1", is_tournament=True, round_index=round_index,
-                    seats={}, players={}, score_rows=tuple(rows), totals=totals,
-                    at=None)
 
 
 class TestPassedOutRounds:
@@ -791,15 +829,6 @@ class TestScoreRowWalk:
             (4, 90, Suit.CLUBS, False),
         ]
 
-    def test_the_totals_go_to_the_newest_row_when_the_index_is_passed_out(self):
-        # A read taken just after a passed-out round names that round, and
-        # passing out changes no total: they are the totals after round 2.
-        totals = {TeamSide.NS: 200, TeamSide.EW: 170}
-        first, second = _row(), _row(made=False)
-        scores = _scores_by_round(
-            [_bare_snapshot(3, (first, second), totals)], frozenset({3}))
-        assert scores == {1: (first, None), 2: (second, totals)}
-
     def test_rows_for_rounds_before_the_session_are_dropped(
         self, profile, builders
     ):
@@ -878,7 +907,7 @@ class TestTargetReached:
         game = game_builders.game_events(
             game_builders.round_events(
                 1, Position.SOUTH, Position.WEST, 80, Suit.SPADES, True,
-                {TeamSide.NS: 0, TeamSide.EW: 2000}),
+                {TeamSide.NS: 0, TeamSide.EW: 170}),
             reason=EndReason.TARGET_REACHED,
         )
         ended = _parse(profile, synthesize(game)).events[-1]
@@ -916,110 +945,26 @@ class TestHeldRows:
         assert _held(row, _W80) is False
 
 
-class TestCarriedOver:
-    _R4 = dict(marked={TeamSide.NS: (14, 0), TeamSide.EW: (148, 90)})
+def _line(carried_over):
+    """obs-f3c28d3b round 3's row, placed, with the carry the sheet read."""
 
-    def test_the_observed_payout(self):
-        # obs-f3c28d3b round 4: 129 / 496 before, 143 / 895 after.
-        carry = _carried_over(
-            _row(**self._R4),
-            {TeamSide.NS: 143, TeamSide.EW: 895},
-            {TeamSide.NS: 129, TeamSide.EW: 496},
-        )
-        assert carry == {TeamSide.NS: 0, TeamSide.EW: 161}
-
-    def test_an_ordinary_round_carries_nothing(self):
-        carry = _carried_over(
-            _row(**self._R4),
-            {TeamSide.NS: 143, TeamSide.EW: 734},
-            {TeamSide.NS: 129, TeamSide.EW: 496},
-        )
-        assert carry == {TeamSide.NS: 0, TeamSide.EW: 0}
-
-    def test_credited_belote_is_not_a_carry(self):
-        carry = _carried_over(
-            _row(marked={TeamSide.NS: (14, 0), TeamSide.EW: (148, 90)},
-                 marked_belote={TeamSide.NS: 0, TeamSide.EW: 20}),
-            {TeamSide.NS: 143, TeamSide.EW: 754},
-            {TeamSide.NS: 129, TeamSide.EW: 496},
-        )
-        assert carry == {TeamSide.NS: 0, TeamSide.EW: 0}
-
-    @pytest.mark.parametrize("known", ["totals", "before"])
-    def test_unknown_totals_mean_an_unknown_carry(self, known):
-        totals = {TeamSide.NS: 143, TeamSide.EW: 895}
-        before = {TeamSide.NS: 129, TeamSide.EW: 496}
-        carry = _carried_over(
-            _row(**self._R4),
-            totals if known == "totals" else None,
-            before if known == "before" else None,
-        )
-        assert carry is None
-
-    def test_a_negative_residual_is_not_a_payout(self):
-        carry = _carried_over(
-            _row(**self._R4),
-            {TeamSide.NS: 100, TeamSide.EW: 734},
-            {TeamSide.NS: 129, TeamSide.EW: 496},
-        )
-        assert carry is None
-
-
-class TestTotalsBefore:
-    _AFTER_2 = {TeamSide.NS: 48, TeamSide.EW: 496}
-
-    _NONE: frozenset[int] = frozenset()
-
-    def test_the_join_round_reads_the_join_snapshot(self):
-        joined = ObservedFrom(round=3, phase=JoinPhase.PLAY,
-                              totals=self._AFTER_2)
-        assert _totals_before(3, {}, joined, self._NONE) == self._AFTER_2
-
-    def test_a_later_round_reads_the_round_before(self):
-        scores = {2: (_row(), self._AFTER_2)}
-        assert _totals_before(3, scores, None, self._NONE) == self._AFTER_2
-
-    def test_a_round_before_without_totals_is_unknown(self):
-        assert _totals_before(3, {2: (_row(), None)}, None, self._NONE) is None
-
-    def test_a_missing_round_before_is_unknown(self):
-        assert _totals_before(3, {}, None, self._NONE) is None
-
-    def test_a_passed_out_round_before_is_stepped_over(self):
-        # Passing out changes no total, so the totals before round 4 are the
-        # ones after round 2.
-        scores = {2: (_row(), self._AFTER_2)}
-        assert _totals_before(4, scores, None, frozenset({3})) == self._AFTER_2
-
-    def test_a_run_of_passed_out_rounds_is_stepped_over(self):
-        scores = {2: (_row(), self._AFTER_2)}
-        assert _totals_before(5, scores, None,
-                              frozenset({3, 4})) == self._AFTER_2
-
-    def test_a_passed_out_join_round_reads_the_join_snapshot(self):
-        # The session joined round 3 mid-auction and everybody passed.
-        joined = ObservedFrom(round=3, phase=JoinPhase.PLAY,
-                              totals=self._AFTER_2)
-        assert _totals_before(4, {}, joined, frozenset({3})) == self._AFTER_2
-
-    def test_the_first_round_stays_unknown_after_passing_out(self):
-        # Before round 1 the totals are 0 / 0, but that seed is not this
-        # parser's to write down.
-        assert _totals_before(2, {}, None, frozenset({1})) is None
+    return SheetLine(index=2, row=_row(),
+                     totals={TeamSide.NS: 129, TeamSide.EW: 496},
+                     carried_over=carried_over)
 
 
 class TestHeldRoundScored:
     def test_a_held_row_is_recorded_as_held(self):
         scored = _round_scored(
-            3, _W80, (), (_row(), {TeamSide.NS: 129, TeamSide.EW: 496}), (),
-            "2026-09-24T00:00:00Z", {TeamSide.NS: 48, TeamSide.EW: 496},
+            3, _W80, _line({TeamSide.NS: 0, TeamSide.EW: 0}), (),
+            "2026-09-24T00:00:00Z",
         )
         assert scored.outcome is RoundOutcome.HELD
         assert scored.carried_over == {TeamSide.NS: 0, TeamSide.EW: 0}
 
-    def test_a_round_with_no_totals_before_has_an_unknown_carry(self):
-        scored = _round_scored(
-            3, _W80, (), (_row(), {TeamSide.NS: 129, TeamSide.EW: 496}), (),
-            "2026-09-24T00:00:00Z", None,
-        )
+    def test_an_unknown_carry_stays_unknown(self):
+        scored = _round_scored(3, _W80, _line(None), (), "2026-09-24T00:00:00Z")
         assert scored.carried_over is None
+
+    def test_a_round_with_no_row_is_not_scored(self):
+        assert _round_scored(3, _W80, None, (), "2026-09-24T00:00:00Z") is None

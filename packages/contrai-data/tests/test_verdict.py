@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from contrai_core import TeamSide
 
 from contrai_data import (
     GameVerdict,
@@ -455,6 +456,47 @@ class TestFromJson:
     @pytest.mark.parametrize("payload", [[], "verdict", None, 3])
     def test_a_payload_that_is_not_an_object_is_refused(self, payload):
         with pytest.raises(VerdictFormatError, match="object"):
+            GameVerdict.from_json(payload)
+
+
+_REPLAYED = {TeamSide.NS: 2090, TeamSide.EW: 1370}
+
+
+class TestReplayedTotals:
+    def test_a_game_without_them_writes_no_key(self):
+        assert "replayed_totals" not in _full_game().as_json()
+
+    def test_they_are_written_by_side_token(self):
+        game = GameVerdict(game_id="obs-1", source="observed",
+                           preset="tournament", replayed_totals=_REPLAYED)
+
+        assert game.as_json()["replayed_totals"] == {"NS": 2090, "EW": 1370}
+
+    def test_they_read_back_equal(self, tmp_path):
+        game = GameVerdict(game_id="obs-1", source="observed",
+                           preset="tournament", replayed_totals=_REPLAYED)
+
+        assert read_verdict(write_verdict(tmp_path, game)) == game
+
+    def test_an_older_file_without_them_still_reads(self):
+        assert GameVerdict.from_json(_payload()).replayed_totals is None
+
+    @pytest.mark.parametrize(
+        ("value", "match"),
+        [
+            (None, "replayed_totals"),
+            ({"NS": 2090}, "missing"),
+            ({"NS": 2090, "EW": 1370, "WE": 0}, "unknown"),
+            ({"NS": 2090, "EW": "1370"}, "EW"),
+            ({"NS": True, "EW": 1370}, "NS"),
+        ],
+        ids=["null", "missing-side", "unknown-side", "string", "bool"],
+    )
+    def test_anything_else_is_refused(self, value, match):
+        payload = _payload()
+        payload["replayed_totals"] = value
+
+        with pytest.raises(VerdictFormatError, match=match):
             GameVerdict.from_json(payload)
 
 

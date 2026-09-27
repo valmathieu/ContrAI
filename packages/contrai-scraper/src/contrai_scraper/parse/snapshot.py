@@ -92,7 +92,11 @@ class Snapshot:
     table_id: str | None
     is_tournament: bool | None
     round_index: int | None
-    """The last **completed** round's number, not the one in progress."""
+    """The newest **scored** round's number, not the one in progress.
+
+    A passed-out round is never named here, since it writes no row: after an
+    all-pass round 9 the next read still says 8.
+    """
 
     seats: Mapping[str, Position]
     players: Mapping[str, PlayerInfo]

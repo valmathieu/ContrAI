@@ -17,6 +17,8 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (data) `read_verdict(path)` and `GameVerdict.from_json` read a verdict file back, refusing anything `write_verdict` would not write. See [data docs](docs/data/index.md).
 - (data) `build_catalog(root)` rebuilds `<root>/catalog.sqlite`, a SQLite index of games, seats, rounds and verdicts with player and clean-round views. See [data docs](docs/data/index.md).
 - (engine) `contrai catalog [ROOT] [--player ID_OR_NAME]` rebuilds the corpus index with a summary, or lists one player's games. See [engine docs](docs/engine/index.md).
+- (engine) `contrai verify` rebuilds a finished game's missing final totals from the replay when no pot can be pending; `--player` lines mark them `(replayed)`. See [engine docs](docs/engine/index.md).
+- (data) `GameVerdict.replayed_totals` and catalog `games.totals_basis`: a finished game with no stated final totals takes the replay's, `winner_basis = 'replayed'`; catalog schema 2. See [data docs](docs/data/index.md).
 - (core) `RuleConfig.substitute_survives_doubling` and `personal_sweep_marks_solo_slam` (§9.6) — the observed tables' sweep scoring, both set in the `tournament` preset. See [core docs](docs/core/index.md).
 - (core) `RuleConfig.defense_sweep_marks_substitute` (§9.6): a defense taking all 8 tricks marks 250 made, not 160; on in `tournament`. See [engine docs](docs/engine/index.md).
 - (core) `RuleConfig.dispute_resolution` (§9.6): `failed` / `shared` / `held` settles an exact tie, doubled or not; the `tournament` preset holds it. See [core docs](docs/core/index.md).
@@ -32,6 +34,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) `Recorder(target=ChaseTarget)` chases a lobby roster: all four accounts or refused, a scan budgeted on distinct tables and a deadline, give-ups logged with a reason. See [scraper docs](docs/scraper/index.md).
 - (scraper) `contrai-scrape fleet` — up to ten workers wait in the lobby and chase every tournament game from its first card, with per-worker budgets and an optional `[fleet]` profile section. See [scraper docs](docs/scraper/index.md).
 - (scraper) Fleet startup census — each worker sweeps `census_hops` tables once, recording nothing; a `census` line estimates the tournament population from resightings. See [scraper docs](docs/scraper/index.md).
+- (scraper) `carried_over` is inferred across rounds whose running totals were never read, when the totals around them leave no room for a pot. See [scraper docs](docs/scraper/index.md).
 
 ### Changed
 
@@ -60,6 +63,9 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) A fleet worker whose lobby sends nothing for 60 s logs `hall_deaf` and rebuilds its session, the first time without spending budget. See [scraper docs](docs/scraper/index.md).
 - (scraper) A panel click no longer fails when the rail toggle hides between the look and the click. See [scraper docs](docs/scraper/index.md).
 - (scraper) A game seated too late to see a round writes no record; `record_skipped` logs it instead. See [scraper docs](docs/scraper/index.md).
+- (scraper) A round's carry is read between the running totals around its row, so the first round of a game seen whole is no longer `null`. See [scraper docs](docs/scraper/index.md).
+- (scraper) The recorder asks for the score at the first deal after a mid-round seat, instead of leaving the join round's totals unread. See [scraper docs](docs/scraper/index.md).
+- (scraper) `contrai-scrape parse` leaves out a table that does not say it is a tournament, as the live gate does, instead of recording its unwatched game. See [scraper docs](docs/scraper/index.md).
 
 ## [0.5.0] - 2026-09-17
 

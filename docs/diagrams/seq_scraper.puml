@@ -137,7 +137,7 @@ loop until the game ends, the table goes quiet, or the limits stop it
     R -> RL : write_frame(frame)
     R -> R : buffer.append(event); last_event_id = event.frame_id
 
-    alt a deal opens a new round
+    alt a deal opens a new round (the first one after seating only if the seat fell mid-round)
         R -> SP : request_state(table_id, last_event_id)
         SP -> PG : evaluate(SEND_SCRIPT, envelope, avoid, pattern)
         PG -> SK : resume frame on the newest matching socket

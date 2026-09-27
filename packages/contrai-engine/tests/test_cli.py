@@ -2159,6 +2159,11 @@ class TestPlayerLines:
             PlayerReport(player="p-n", built_at="2026-09-24T12:00:00Z", games=games)
         )
 
+    def test_totals_the_replay_rebuilt_are_marked(self):
+        _, line = self._lines(_player_game(totals_basis="replayed"))
+
+        assert "won  NS 2010 – EW 1500 (replayed)  partial" in line
+
     def test_the_header_names_the_player_and_the_build(self):
         header = self._lines(_player_game())[0]
 

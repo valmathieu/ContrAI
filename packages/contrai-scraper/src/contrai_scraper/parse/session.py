@@ -83,6 +83,7 @@ from .live import (
     passed_out,
     play_events,
 )
+from .sheet import SheetLine, read_sheet
 from .snapshot import ScoreRow, Snapshot, read_snapshot
 from .translate import Translator
 
@@ -234,7 +235,7 @@ def parse_session(
     rounds = collect_rounds(ordered, translator)
     wire_game = _wire_game_id(ordered)
     passed = _passed_out_rounds(rounds, translator)
-    scores = _scores_by_round(snapshots, passed)
+    sheet = read_sheet(snapshots, seen=frozenset(rounds), passed=passed)
     stamp = (now or datetime.now(UTC)).isoformat(timespec="seconds").replace(
         "+00:00", "Z"
     )
@@ -258,14 +259,14 @@ def parse_session(
         ),
     ]
 
-    notes: list[str] = _draw_notes(ordered, profile.wire)
+    notes: list[str] = [*_draw_notes(ordered, profile.wire), *sheet.notes]
     skipped: list[int] = []
     last = max(rounds, default=0)
     for number in sorted(rounds):
         round_ = rounds[number]
         produced = _round(
-            round_, translator, seat_of_player, rules, scores.get(number),
-            _totals_before(number, scores, joined, passed), ts, notes,
+            round_, translator, seat_of_player, rules, sheet.lines.get(number),
+            sheet.standings.get(number), ts, notes,
             passed=number in passed,
             cut_short=number == last and _cut_short(round_, passed, snapshots),
         )
@@ -435,58 +436,13 @@ def _passed_out_rounds(
     )
 
 
-def _scores_by_round(
-    snapshots: Sequence[Snapshot], passed: frozenset[int]
-) -> dict[int, tuple[ScoreRow, Mapping[TeamSide, int] | None]]:
-    """Map each snapshot's score rows onto the rounds they describe.
-
-    A snapshot's ``round_index`` names the round its **last** row scored;
-    earlier rows walk backwards over the rounds before it. The walk is only
-    ever applied to the rows one snapshot carried, so a round that was never
-    covered by a snapshot simply has no entry — which is what makes "no score
-    row" expressible rather than guessed at.
-
-    A passed-out round has no row on the sheet but does take a round number,
-    so the walk steps over it: a row belongs to the next *played* round
-    down, not to the next number. The snapshot's totals go to the newest row
-    walked even when ``round_index`` itself names a passed-out round, since
-    passing out changes no total.
-
-    Args:
-        snapshots: Every snapshot of the session, in arrival order.
-        passed: The passed-out round numbers.
-
-    Returns:
-        Round number to its row, and the running totals after it when the
-        row was the newest its snapshot carried.
-    """
-
-    scores: dict[int, tuple[ScoreRow, Mapping[TeamSide, int] | None]] = {}
-    for snapshot in snapshots:
-        if snapshot.round_index is None or not snapshot.score_rows:
-            continue
-        number = snapshot.round_index
-        totals = snapshot.totals
-        for row in reversed(snapshot.score_rows):
-            while number in passed:
-                number -= 1
-            if number < 1:
-                break
-            scores.setdefault(number, (row, totals))
-            # Only the newest row's totals are the totals *after* that round;
-            # an older row's running total is not in the payload at all.
-            totals = None
-            number -= 1
-    return scores
-
-
 def _round(
     round_: LiveRound,
     translator: Translator,
     seat_of_player: Mapping[str, Position],
     rules: RuleConfig,
-    score: tuple[ScoreRow, Mapping[TeamSide, int] | None] | None,
-    before: Mapping[TeamSide, int] | None,
+    line: SheetLine | None,
+    standing: Mapping[TeamSide, int] | None,
     ts: str,
     notes: list[str],
     *,
@@ -500,8 +456,9 @@ def _round(
         translator: The vocabulary layer.
         seat_of_player: Which seat each player handle sits in.
         rules: The table ruleset.
-        score: The round's score row and the totals after it, if read.
-        before: The running totals just before the round, if known.
+        line: The round's row on the score sheet, if one was placed.
+        standing: The totals standing through the round, if it was passed
+            out and they were read.
         ts: The timestamp to stamp every event with.
         notes: Where a skipped round says why.
         passed: Whether the wire shows the round passed out.
@@ -524,7 +481,7 @@ def _round(
     stock = [translator.card(token) for token in round_.deal_stock]
     if passed and len(round_.bids) == len(Position):
         return _passed_out_round(
-            round_, stock, translator, seat_of_player, rules, before, ts, notes
+            round_, stock, translator, seat_of_player, rules, standing, ts, notes
         )
     if cut_short:
         notes.append(
@@ -591,10 +548,8 @@ def _round(
         *plays,
         *last,
     ]
-    events += _belotes(number, hands, contract.suit, score, ts)
-    scored = _round_scored(
-        number, contract, bids, score, [*plays, *last], ts, before
-    )
+    events += _belotes(number, hands, contract.suit, line, ts)
+    scored = _round_scored(number, contract, line, [*plays, *last], ts)
     if scored is not None:
         events.append(scored)
     return events
@@ -636,7 +591,7 @@ def _passed_out_round(
     translator: Translator,
     seat_of_player: Mapping[str, Position],
     rules: RuleConfig,
-    before: Mapping[TeamSide, int] | None,
+    standing: Mapping[TeamSide, int] | None,
     ts: str,
     notes: list[str],
 ) -> list[GameEvent] | None:
@@ -654,7 +609,7 @@ def _passed_out_round(
         translator: The vocabulary layer.
         seat_of_player: Which seat each player handle sits in.
         rules: The table ruleset.
-        before: The running totals just before the round, if known.
+        standing: The totals standing through the round, if read.
         ts: The timestamp to stamp every event with.
         notes: Where a skipped round says why.
 
@@ -689,12 +644,12 @@ def _passed_out_round(
             ts=ts,
         ),
         *bids,
-        _passed_out_scored(number, before, ts),
+        _passed_out_scored(number, standing, ts),
     ]
 
 
 def _passed_out_scored(
-    number: int, before: Mapping[TeamSide, int] | None, ts: str
+    number: int, standing: Mapping[TeamSide, int] | None, ts: str
 ) -> RoundScored:
     """The score line of a passed-out round, which the site's sheet never writes.
 
@@ -705,7 +660,7 @@ def _passed_out_scored(
 
     Args:
         number: The round.
-        before: The running totals just before the round, if known.
+        standing: The totals standing through the round, if read.
         ts: The timestamp to stamp it with.
 
     Returns:
@@ -723,7 +678,7 @@ def _passed_out_scored(
         announcements=dict(nothing),
         carried_over=dict(nothing),
         marked={side: SideMark(made=0, announced=0) for side in TeamSide},
-        totals=None if before is None else dict(before),
+        totals=None if standing is None else dict(standing),
         last_trick=None,
         slam=SlamOutcome.NONE,
         source=ScoreSource.SNAPSHOT,
@@ -792,7 +747,7 @@ def _belotes(
     number: int,
     hands: Mapping[Position, tuple[Card, ...]],
     trump: ContractSuit,
-    score: tuple[ScoreRow, Mapping[TeamSide, int] | None] | None,
+    line: SheetLine | None,
     ts: str,
 ) -> list[BeloteHeld]:
     """Which seats held the trump king and queen.
@@ -803,9 +758,9 @@ def _belotes(
     """
 
     credited = set()
-    if score is not None:
+    if line is not None:
         credited = {
-            side for side, points in score[0].belote.items()
+            side for side, points in line.row.belote.items()
             if points >= BELOTE_POINTS
         }
     held: list[BeloteHeld] = []
@@ -828,70 +783,6 @@ def _belotes(
     return held
 
 
-def _totals_before(
-    number: int,
-    scores: Mapping[int, tuple[ScoreRow, Mapping[TeamSide, int] | None]],
-    joined: ObservedFrom | None,
-    passed: frozenset[int],
-) -> Mapping[TeamSide, int] | None:
-    """The running totals standing just before round ``number`` was played.
-
-    The join snapshot states them for the round being watched when the
-    session began; otherwise they are the totals after the round before,
-    when a snapshot read them. Anything else is unknown, and no carry can
-    be inferred across it.
-
-    Passed-out rounds just before ``number`` change no total, so the walk
-    steps back over them: the totals before ``number`` are those before the
-    first round of that run.
-
-    Args:
-        number: The round being scored.
-        scores: Round number to its row and the totals after it.
-        joined: Where the session joined, or ``None`` when it saw the start.
-        passed: The passed-out round numbers.
-
-    Returns:
-        The totals, or ``None`` when no read covers them.
-    """
-
-    start = number
-    while start - 1 in passed and (joined is None or joined.round != start):
-        start -= 1
-    if joined is not None and joined.round == start:
-        return joined.totals
-    previous = scores.get(start - 1)
-    return None if previous is None else previous[1]
-
-
-def _carried_over(
-    row: ScoreRow,
-    totals: Mapping[TeamSide, int] | None,
-    before: Mapping[TeamSide, int] | None,
-) -> dict[TeamSide, int] | None:
-    """What each side was paid beyond its own marks, or ``None`` if unknowable.
-
-    The observed tables pay a held dispute's points (§7.5) into the next
-    contract's winner's *total* and state them nowhere else — not in the
-    row's marks. So the carry is what the totals moved by, less the row's
-    made, announced and credited belote points. Measured over the V5
-    corpus: across 491 inferable rounds it is non-zero exactly once, the
-    161 of obs-f3c28d3b round 4. A negative residual cannot be a payout,
-    so it is reported as unknown rather than written down.
-    """
-
-    if totals is None or before is None:
-        return None
-    carry = {
-        side: totals[side] - before[side]
-        - sum(row.marked[side]) - row.marked_belote[side]
-        for side in TeamSide
-    }
-    if any(points < 0 for points in carry.values()):
-        return None
-    return carry
-
-
 def _held(row: ScoreRow, contract: ContractBid) -> bool:
     """Whether the row is a held dispute (§7.5).
 
@@ -907,21 +798,15 @@ def _held(row: ScoreRow, contract: ContractBid) -> bool:
 def _round_scored(
     number: int,
     contract: ContractBid,
-    bids: Sequence[BidMade],
-    score: tuple[ScoreRow, Mapping[TeamSide, int] | None] | None,
+    line: SheetLine | None,
     plays: Sequence[CardPlayed],
     ts: str,
-    before: Mapping[TeamSide, int] | None,
 ) -> RoundScored | None:
-    """One round's score, or ``None`` when the wire never scored it.
+    """One round's score, or ``None`` when the wire never scored it."""
 
-    ``before`` is the running total just before the round, from which the
-    carry is inferred.
-    """
-
-    if score is None:
+    if line is None:
         return None
-    row, totals = score
+    row, totals = line.row, line.totals
     return RoundScored(
         round=number,
         outcome=(
@@ -941,8 +826,10 @@ def _round_scored(
         # Not on the wire: the observed tables play no announcements.
         announcements=dict.fromkeys(TeamSide, 0),
         # A held dispute's pot is paid into the winner's running total and
-        # stated nowhere in the row, so it is inferred from the totals.
-        carried_over=_carried_over(row, totals, before),
+        # stated nowhere in the row: the sheet reads it off the totals.
+        carried_over=(
+            None if line.carried_over is None else dict(line.carried_over)
+        ),
         marked={
             side: SideMark(made=made, announced=announced)
             for side, (made, announced) in row.marked.items()
