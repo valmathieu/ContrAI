@@ -198,6 +198,67 @@ class TestSecrets:
         with pytest.raises(ProfileError, match="CONTRAI_SCRAPER_EMAIL"):
             load_profile(path)
 
+    def test_a_variable_holding_an_indirection_is_refused(self, tmp_path, profile_text,
+                                                          monkeypatch):
+        # An unresolved ``env:`` value is how an offline load marks a secret
+        # it never read, and the egress section skips its address check on
+        # one. A live load producing that shape would pass the check blind.
+        monkeypatch.setenv("CONTRAI_HOME_IP", "env:ELSEWHERE")
+        path = tmp_path / "p.toml"
+        path.write_text(
+            profile_text.replace('home_ip = "198.51.100.1"',
+                                 'home_ip = "env:CONTRAI_HOME_IP"'), encoding="utf-8")
+        with pytest.raises(ProfileError, match="another indirection"):
+            load_profile(path)
+
+
+class TestOfflineLoading:
+    @pytest.fixture
+    def indirected(self, tmp_path, profile_text, monkeypatch):
+        # Every secret the profile can hold, indirected, with none of the
+        # variables set: the state of a laptop re-parsing logs.
+        for name in ("CONTRAI_SCRAPER_EMAIL", "CONTRAI_SCRAPER_CODE",
+                     "CONTRAI_HOME_IP", "CONTRAI_SCRAPER_SALT"):
+            monkeypatch.delenv(name, raising=False)
+        text = (profile_text
+                .replace('email = "watcher@example.invalid"',
+                         'email = "env:CONTRAI_SCRAPER_EMAIL"')
+                .replace('verification_code = "0000"',
+                         'verification_code = "env:CONTRAI_SCRAPER_CODE"')
+                .replace('home_ip = "198.51.100.1"', 'home_ip = "env:CONTRAI_HOME_IP"')
+                .replace('pseudonym_salt = "unused-in-4a"',
+                         'pseudonym_salt = "env:CONTRAI_SCRAPER_SALT"'))
+        path = tmp_path / "p.toml"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_a_live_load_still_needs_the_variables(self, indirected):
+        with pytest.raises(ProfileError, match="not set in the environment"):
+            load_profile(indirected)
+
+    def test_an_offline_load_keeps_every_indirection_unread(self, indirected):
+        profile = load_profile(indirected, resolve_secrets=False)
+        assert (profile.account.email, profile.account.verification_code,
+                profile.egress.home_ip, profile.privacy.pseudonym_salt) == (
+            "env:CONTRAI_SCRAPER_EMAIL", "env:CONTRAI_SCRAPER_CODE",
+            "env:CONTRAI_HOME_IP", "env:CONTRAI_SCRAPER_SALT")
+
+    def test_an_offline_load_reads_the_wire_as_a_live_one_does(self, indirected, profile):
+        assert load_profile(indirected, resolve_secrets=False).wire == profile.wire
+
+    def test_an_offline_load_passes_literals_through(self, profile_path):
+        profile = load_profile(profile_path, resolve_secrets=False)
+        assert (profile.account.email, profile.egress.home_ip) == (
+            "watcher@example.invalid", "198.51.100.1")
+
+    def test_an_offline_load_still_checks_a_literal_home_ip(self, tmp_path, profile_text):
+        path = tmp_path / "p.toml"
+        path.write_text(
+            profile_text.replace('home_ip = "198.51.100.1"', 'home_ip = "home"'),
+            encoding="utf-8")
+        with pytest.raises(ProfileError, match="home_ip"):
+            load_profile(path, resolve_secrets=False)
+
 
 class TestSelectors:
     def test_a_single_string_and_a_candidate_list_both_load(self, profile):

@@ -49,6 +49,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 ### Fixed
 
+- (scraper) `contrai-scrape parse` no longer needs the account's `env:` variables set: `load_profile(path, resolve_secrets=False)` leaves them unread. See [scraper docs](docs/scraper/index.md).
 - (scraper) `check-profile` compares options only on a tournament table (others read `not compared`), and its `login` line no longer prints the account address. See [scraper docs](docs/scraper/index.md).
 - (scraper) A fleet worker's first failed session retries after 30 s, not a 5-minute poll, so its lobby place is not left empty. See [scraper docs](docs/scraper/index.md).
 - (scraper) A chase whose hop cannot be clicked (a table still loading) gives up as `hop_failed` instead of ending the worker's session. See [scraper docs](docs/scraper/index.md).

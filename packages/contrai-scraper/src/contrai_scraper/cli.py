@@ -833,7 +833,7 @@ def _run_parse(args: argparse.Namespace) -> int:
         SystemExit: If the profile or a path cannot be read (exit code 2).
     """
 
-    profile = _profile_or_exit(args)
+    profile = _profile_or_exit(args, offline=True)
     logs = _logs(args.paths, args.parser)
     root = args.out or profile.output.root
     written = 0
@@ -986,15 +986,23 @@ def _logs(paths: list[Path], parser: argparse.ArgumentParser) -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
-def _profile_or_exit(args: argparse.Namespace) -> Profile:
+def _profile_or_exit(
+    args: argparse.Namespace, *, offline: bool = False
+) -> Profile:
     """Load the profile, or fail with usage rather than a traceback.
+
+    Args:
+        args: The parsed arguments, carrying the profile path.
+        offline: Whether the command never touches the site. An offline
+            command leaves the ``env:`` secrets unresolved, so it runs
+            without the account's variables set.
 
     Raises:
         SystemExit: If the profile cannot be read (exit code 2).
     """
 
     try:
-        return load_profile(args.profile)
+        return load_profile(args.profile, resolve_secrets=not offline)
     except ScraperError as error:
         args.parser.error(str(error))
 

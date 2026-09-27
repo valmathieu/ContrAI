@@ -264,6 +264,13 @@ silently wrong data.
 | `[fleet]` | Optional, read by `fleet` alone: how many workers (at most 10), their login stagger, a chase's distinct-table budget and deadline, how old a roster may be, the registry's and egress gate's timings, the startup census, the rota's `lobby_watchers` (default 2) and `spares` (default 1), and the startup phase's `bootstrap_enabled` (default on) and `bootstrap_scan_s` (default 60) — these four a profile may leave out. |
 | `[privacy]` | Inputs to the pseudonymisation step, which is not built yet. |
 
+The `env:NAME` values are read only by the commands that reach the site. `parse` never does, so it
+loads the profile with `load_profile(path, resolve_secrets=False)`: every `env:` value is kept as
+its own text, unread, and every other key is validated as strictly as before. A laptop re-parsing
+logs therefore needs none of the account's variables set. The home address's IP check is skipped
+for such an unread value alone, and a live load refuses a variable whose value is itself an
+`env:` indirection, so an unread-looking address can never reach the egress gate.
+
 A fleet logs in with several accounts, and they do not multiply the profile. They live in a second
 git-ignored document, `accounts.toml` beside `profile.toml` (`accounts.example.toml` is its
 committed schema): one table per account, named by its **label**, holding the same `email` and

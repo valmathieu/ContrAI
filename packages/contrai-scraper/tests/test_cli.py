@@ -986,6 +986,26 @@ class TestParse:
             main(["parse", str(raw_log_path), "--profile", str(bad)])
         assert exc.value.code == 2
 
+    def test_the_account_variables_are_not_needed(
+        self, tmp_path, profile_text, raw_log_path, monkeypatch
+    ):
+        # Re-parsing never touches the site, so a laptop without the
+        # account's variables set must still be able to do it.
+        for name in ("CONTRAI_SCRAPER_EMAIL", "CONTRAI_SCRAPER_CODE",
+                     "CONTRAI_HOME_IP"):
+            monkeypatch.delenv(name, raising=False)
+        indirected = tmp_path / "indirected-profile.toml"
+        indirected.write_text(
+            profile_text
+            .replace('email = "watcher@example.invalid"',
+                     'email = "env:CONTRAI_SCRAPER_EMAIL"')
+            .replace('verification_code = "0000"',
+                     'verification_code = "env:CONTRAI_SCRAPER_CODE"')
+            .replace('home_ip = "198.51.100.1"', 'home_ip = "env:CONTRAI_HOME_IP"'),
+            encoding="utf-8")
+        assert main(["parse", str(raw_log_path), "--profile", str(indirected),
+                     "--out", str(tmp_path)]) == 0
+
 
 class TestReporting:
     def test_each_log_reports_its_game_and_round_count(
