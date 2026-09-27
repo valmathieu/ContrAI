@@ -97,6 +97,12 @@ from .catalog import (
     PlayerReport,
     player_games,
 )
+from .corpus import (
+    RecordCopy,
+    Rejection,
+    CopyChoice,
+    choose_copy,
+)
 
 __all__: list[str] = [
     "RecordError",
@@ -176,4 +182,8 @@ __all__: list[str] = [
     "PlayerGame",
     "PlayerReport",
     "player_games",
+    "RecordCopy",
+    "Rejection",
+    "CopyChoice",
+    "choose_copy",
 ]

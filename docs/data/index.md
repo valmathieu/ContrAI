@@ -16,6 +16,7 @@ Source lives at `packages/contrai-data/src/contrai_data/`:
 | `store.py`      | Records on disk: `RecordWriter`, `read_events` / `ReadResult`, `records_root` / `games_dir` / `game_path`, `new_game_id` |
 | `projection.py` | `GameRecord` / `RoundRecord`, and the `project` / `load_game` fold that re-derives the contract, the tricks and their winners |
 | `catalog.py`    | `build_catalog` / `CatalogSummary` / `SkippedFile` — the SQLite index over a records root — and `player_games` / `PlayerReport` / `PlayerGame` to read one player back |
+| `corpus.py`     | A corpus of scraped games: `RecordCopy` / `choose_copy` / `CopyChoice` / `Rejection`, which keep one record per game among several copies |
 | `verdict.py`    | What `contrai verify` concluded: `Verdict` (`verified` / `partial` / `suspect`), the five `MismatchKind` classes, `Mismatch` / `RoundVerdict` / `GameVerdict`, `verdicts_dir` / `verdict_path` / `write_verdict`, and the strict `read_verdict` |
 
 Everything above is re-exported from `contrai_data/__init__.py` and is part of the public API.
@@ -804,4 +805,39 @@ SELECT m.kind, COUNT(*) AS rounds, group_concat(m.game_id || '#' || m.round, ' '
 FROM mismatches m JOIN games g USING (game_id)
 WHERE g.verdict_status = 'fresh' AND m.n = 1
 GROUP BY m.kind ORDER BY rounds DESC;
+```
+
+## The corpus
+
+A corpus is every scraped game kept once, rebuilt from the raw wire logs that saw it. The raw logs
+are the only data kept by hand; the records, the verdicts and the catalog are all build outputs.
+
+### One copy per game
+
+One game can reach a corpus more than once: the box and a fleet worker may watch the same table,
+and one session may leave a table and be seated back at it. Each raw log that saw the game yields
+its own record, and the copies differ by how much of the game each saw. `choose_copy` keeps one.
+
+The ranking is lexicographic: a later tier only counts on a tie in every earlier one.
+
+| Tier | The better copy has | Why |
+| ---- | ------------------- | --- |
+| 1 | more rounds with a score line | a scored round is what verification and training both consume |
+| 2 | more rounds | an unscored round still carries its deal, auction and play |
+| 3 | a `game_ended` stating totals | the game's result is known, not inferred |
+| 4 | the lower first round | it saw more of the opening |
+| 5 | the first source label, then the first origin, in sorted order | two builds over the same logs keep the same file |
+
+Each copy that loses carries a `Rejection` naming the first tier it fell behind on, with both
+values: `fewer scored rounds (3 against 5)`, `joined later (round 4 against round 1)`. The order
+the candidates are handed over in never changes the choice.
+
+```python
+from contrai_data import RecordCopy, choose_copy
+
+choice = choose_copy([
+    RecordCopy.of("box", "raw/box/a.jsonl", box_events),
+    RecordCopy.of("laptop", "raw/laptop/b.jsonl", laptop_events),
+])
+choice.chosen.origin, [r.reason for r in choice.rejected]
 ```

@@ -37,6 +37,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) `carried_over` is inferred across rounds whose running totals were never read, when the totals around them leave no room for a pot. See [scraper docs](docs/scraper/index.md).
 - (scraper) A fleet keeps at most two workers in the lobby and one logged-in spare; other idle workers log out until needed (`[fleet].lobby_watchers`, `spares`). See [scraper docs](docs/scraper/index.md).
 - (scraper) A fleet window records the tournament games already running when it opens, one worker per table, from the mid-game join (`[fleet].bootstrap_enabled`). See [scraper docs](docs/scraper/index.md).
+- (data) `choose_copy` keeps one record per game among several copies (scored rounds, rounds, final totals, earliest join) and says why each other lost. See [data docs](docs/data/index.md).
 - (scraper) `deploy/compose.fleet.yml` runs the box's container as a fleet, with a read-only `accounts.toml` and the VPN confinement unchanged. See [install guide](deploy/install.md).
 
 ### Changed
