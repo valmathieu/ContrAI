@@ -553,7 +553,10 @@ table never holds it, so it can never keep out the worker that came to find it, 
 elsewhere while the page was being read is still refused at the end. And a chase is fast but not
 instant: in one probe run the match came 26.2 s after the roster, after the first deal had gone out,
 and a record joined then starts at round 2. Nothing at the gate can tell, so `game_recorded` carries
-`first_round`, which is what says how often a chase arrives in time.
+`first_round`, which is what says how often a chase arrives in time. The record says it too: the
+join snapshot reads as "seen whole" both before and after the first deal, so the parser takes a
+round 1 whose deal never arrived as the join point, `observed_from.round = 1` at 0 / 0, `bidding`
+if any of its bids were seen and `play` otherwise.
 
 **From a table, the way back starts with the table's exit.** The lobby's back controls sit on the
 menu screens, and a table is drawn over those screens rather than as one of them: while a table is

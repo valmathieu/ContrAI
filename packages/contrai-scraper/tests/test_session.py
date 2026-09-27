@@ -23,6 +23,8 @@ from contrai_data import (
     GameEnded,
     GameStarted,
     Header,
+    JoinPhase,
+    ObservedFrom,
     RoundDealt,
     RoundOutcome,
     RoundScored,
@@ -440,6 +442,44 @@ class TestObservedFrom:
         assert started.observed_from is not None
         assert started.observed_from.round == 5
         assert started.observed_from.totals == {TeamSide.NS: 40, TeamSide.EW: 60}
+
+    def test_a_game_seen_from_its_first_deal_has_no_join(
+        self, profile, source_game, synthesize
+    ):
+        started = _parse(profile, synthesize(source_game)).events[1]
+        assert started.observed_from is None
+
+    def test_a_session_that_missed_round_ones_deal_joined_in_its_auction(
+        self, profile, source_game, synthesize
+    ):
+        # A chase that sits down after the first deal: the join snapshot still
+        # knows no completed round, but the deal never arrives, and round 1's
+        # bids do.
+        texts = [(text, socket) for text, socket in synthesize(source_game)
+                 if ",1,0,0" not in text]
+        started = _parse(profile, texts).events[1]
+        assert started.observed_from == ObservedFrom(
+            round=1, phase=JoinPhase.BIDDING,
+            totals={TeamSide.NS: 0, TeamSide.EW: 0})
+
+    def test_a_session_that_saw_none_of_round_ones_auction_joined_in_play(
+        self, profile, source_game, synthesize
+    ):
+        # "g1,1,0," is round 1's deal and every one of its bids.
+        texts = [(text, socket) for text, socket in synthesize(source_game)
+                 if "g1,1,0," not in text]
+        started = _parse(profile, texts).events[1]
+        assert started.observed_from is not None
+        assert (started.observed_from.round, started.observed_from.phase) == (
+            1, JoinPhase.PLAY)
+
+    def test_a_mid_game_join_is_read_off_the_snapshot_not_round_one(
+        self, profile, builders
+    ):
+        # The snapshot's own reading wins: round 1 is not even in the session.
+        texts = [(builders.envelope("payload", "joinTable",
+                                    builders.snapshot_payload(round_index=4)), 0)]
+        assert _parse(profile, texts).events[1].observed_from.round == 5
 
     def test_a_join_whose_totals_cannot_be_placed_is_refused(self, profile, builders):
         # contrai-data refuses a join that does not name both sides' totals.
