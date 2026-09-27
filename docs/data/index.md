@@ -9,14 +9,14 @@ Source lives at `packages/contrai-data/src/contrai_data/`:
 
 | Module          | Contents                                                                                  |
 | --------------- | ----------------------------------------------------------------------------------------- |
-| `exceptions.py` | `RecordError` (base), `RecordFormatError`, `UnsupportedFormatError`, `VerdictFormatError`, and `CatalogError` — all of them both a `ContraiError` and a `ValueError` |
+| `exceptions.py` | `RecordError` (base), `RecordFormatError`, `UnsupportedFormatError`, `VerdictFormatError`, `CatalogError` and `CorpusError` — all of them both a `ContraiError` and a `ValueError` |
 | `events.py`     | One frozen dataclass per event (`Header`, `GameStarted`, `RoundDealt`, `BidMade`, `CardPlayed`, `BeloteHeld`, `RoundScored`, `GameEnded`), the five value objects (`Seat`, `ObservedFrom`, `Ruleset`, `SideMark`, `ContractTerms`), and the eight closed vocabularies |
 | `tokens.py`     | Domain value ⇄ ASCII token, both ways and strictly — seats, sides, cards, contract suits and values, whole bids, whole rulesets, and the UTC timestamp check |
 | `codec.py`      | `encode` / `decode` — one event ⇄ one JSON line — plus `FORMAT` and the major-version gate |
 | `store.py`      | Records on disk: `RecordWriter`, `read_events` / `ReadResult`, `records_root` / `games_dir` / `game_path`, `new_game_id` |
 | `projection.py` | `GameRecord` / `RoundRecord`, and the `project` / `load_game` fold that re-derives the contract, the tricks and their winners |
 | `catalog.py`    | `build_catalog` / `CatalogSummary` / `SkippedFile` — the SQLite index over a records root — and `player_games` / `PlayerReport` / `PlayerGame` to read one player back |
-| `corpus.py`     | A corpus of scraped games: `RecordCopy` / `choose_copy` / `CopyChoice` / `Rejection`, which keep one record per game among several copies |
+| `corpus.py`     | A corpus of scraped games: `RecordCopy` / `choose_copy` / `CopyChoice` / `Rejection`, which keep one record per game among several copies; `import_raw` / `RawImport` / `ImportStatus` and `raw_logs` for its raw logs; `write_games`, which swaps a new `games/` in whole |
 | `verdict.py`    | What `contrai verify` concluded: `Verdict` (`verified` / `partial` / `suspect`), the five `MismatchKind` classes, `Mismatch` / `RoundVerdict` / `GameVerdict`, `verdicts_dir` / `verdict_path` / `write_verdict`, and the strict `read_verdict` |
 
 Everything above is re-exported from `contrai_data/__init__.py` and is part of the public API.
@@ -811,6 +811,46 @@ GROUP BY m.kind ORDER BY rounds DESC;
 
 A corpus is every scraped game kept once, rebuilt from the raw wire logs that saw it. The raw logs
 are the only data kept by hand; the records, the verdicts and the catalog are all build outputs.
+`contrai-scrape corpus build` drives it (see the [scraper docs](../scraper/index.md#the-corpus));
+this package holds the parts that know nothing of the wire.
+
+| Path | Role | Rebuildable? |
+| ---- | ---- | ------------ |
+| `raw/<source>/*.jsonl` | The verbatim wire logs, one directory per source label (`box`, `laptop`). The source of truth. | No: this is what gets backed up. |
+| `games/*.jsonl` | One record per game, the best copy among every raw log that saw it. | Yes, from `raw/`. |
+| `verdicts/*.json` | `contrai verify`'s output. | Yes. |
+| `catalog.sqlite` | `contrai catalog`'s index; "validated" is the `clean_rounds` view. | Yes. |
+| `build.json` | The last build's report: imports, counts, every rejected copy and why. | Yes. |
+
+JSONL stays canonical and SQLite stays the index because replay and verify already read records;
+a training export (Parquet, tensors) would be one more derived layer, not a replacement.
+
+### Raw logs in
+
+`import_raw(root, {label: [paths]})` is the one door into `raw/`. A label is one lowercase path
+segment. Every log is judged before any is copied, and each gets an `ImportStatus`:
+
+| Status | When |
+| ------ | ---- |
+| `copied` | The name is new to the source. |
+| `present` | The same bytes are already kept. |
+| `grown` | The kept log is a byte prefix of this one, which replaces it. |
+| `stale` | This log is a byte prefix of the kept one, which stays. |
+
+`grown` exists because a raw log is only ever appended to: a log fetched while its session was
+still running is a prefix of the one fetched later, and refusing it would block every periodic
+pull. Any other difference under a taken name raises `CorpusError`, naming every conflict, and
+nothing is copied. A copy goes to a temporary file first and is renamed into place, so a crash
+never leaves a half-copied log that the next import would take for a conflict. `raw_logs(root)`
+lists them back by source, then name.
+
+### Games out
+
+`write_games(root, copies)` writes one record per copy into a staging directory beside `games/`,
+then swaps it in whole; a failure leaves the previous games untouched. A new `games/` makes the
+old verdicts and catalog stale, so both are removed before the swap — the catalog first, because
+on Windows it is the file another program most often holds open, and failing there changes
+nothing. Two copies of one game are refused: the second would be appended to the first.
 
 ### One copy per game
 
@@ -830,7 +870,8 @@ The ranking is lexicographic: a later tier only counts on a tie in every earlier
 
 Each copy that loses carries a `Rejection` naming the first tier it fell behind on, with both
 values: `fewer scored rounds (3 against 5)`, `joined later (round 4 against round 1)`. The order
-the candidates are handed over in never changes the choice.
+the candidates are handed over in never changes the choice. `CopyChoice.as_report()` is the
+JSON form the build report lists for every game seen more than once.
 
 ```python
 from contrai_data import RecordCopy, choose_copy

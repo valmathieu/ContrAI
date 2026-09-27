@@ -1,0 +1,43 @@
+---
+title: contrai-scraper + contrai-data — building a corpus (contrai-scrape corpus build)
+---
+flowchart TD
+    %% ---------- Where the raw logs come from ----------
+    Box[/"box raw logs<br/>(fetched weekly)"/]
+    Laptop[/"laptop raw logs"/]
+    Box -- "--source box=DIR" --> Import
+    Laptop -- "--source laptop=DIR" --> Import
+
+    %% ---------- The one thing kept by hand ----------
+    Import["import_raw<br/>judge every log before copying any<br/>identical → present · extends → grown<br/>shorter snapshot → stale · differs → refused"]
+    Import --> Raw[("raw/&lt;source&gt;/*.jsonl<br/>never edited, never pruned")]
+
+    %% ---------- Rebuilt from raw, every time ----------
+    Raw --> Parse["each log parsed on its own, in memory<br/>(the parse path: visits, tournament gate)<br/>no record is ever appended to"]
+    Profile[/"profile.toml<br/>loaded without its secrets"/] --> Parse
+    Parse --> Copies["RecordCopy per game per log"]
+    Copies --> Choose{"choose_copy<br/>scored rounds › rounds ›<br/>final totals › earliest join ›<br/>source, origin"}
+    Choose -- "kept" --> Write["write_games<br/>staging dir, swapped in whole<br/>stale verdicts/ + catalog removed"]
+    Choose -- "rejected, with a reason" --> Report[("build.json")]
+    Write --> Games[("games/obs-*.jsonl<br/>one record per game")]
+
+    %% ---------- The follow-up commands ----------
+    Games --> Verify(["contrai verify ROOT/games"])
+    Verify --> Verdicts[("verdicts/")]
+    Verdicts --> Catalog(["contrai catalog ROOT"])
+    Games --> Catalog
+    Catalog --> Sqlite[("catalog.sqlite<br/>validated = clean_rounds")]
+
+    %% ---------- palette ----------
+    classDef entry fill:#9B7FCC,stroke:#5E4495,stroke-width:2px,color:#FFFFFF;
+    classDef scraper fill:#EDE7F6,stroke:#5E4495,stroke-width:1px,color:#2E1F52;
+    classDef data fill:#E0F5F2,stroke:#2E7D74,stroke-width:2px,color:#1F544E;
+    classDef store fill:#5FBFB5,stroke:#2E7D74,stroke-width:2px,color:#10302C;
+    classDef engine fill:#FFEFD9,stroke:#B26A28,stroke-width:2px,color:#5C3A14;
+    classDef config fill:#FFF3E0,stroke:#B26A28,stroke-width:1px,color:#5C3A14;
+
+    class Box,Laptop,Profile config;
+    class Parse scraper;
+    class Import,Copies,Choose,Write data;
+    class Raw,Games,Report,Verdicts,Sqlite store;
+    class Verify,Catalog engine;

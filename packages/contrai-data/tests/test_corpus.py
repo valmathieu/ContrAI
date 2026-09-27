@@ -1,19 +1,31 @@
-"""Pins the corpus: which copy of a game is kept, and why the others are not."""
+"""Pins the corpus: which copy of a game is kept, how raw logs come in, and
+how a new ``games/`` replaces the old one."""
 
 from __future__ import annotations
 
 import dataclasses
 import itertools
+from pathlib import Path
 
 import pytest
 
 from contrai_data import (
     CopyChoice,
+    CorpusError,
     GameEnded,
     GameEvent,
+    ImportStatus,
+    RawImport,
     RecordCopy,
     RoundScored,
+    catalog_path,
     choose_copy,
+    game_path,
+    import_raw,
+    load_game,
+    raw_logs,
+    verdicts_dir,
+    write_games,
 )
 
 
@@ -146,3 +158,222 @@ class TestRefusals:
         other = _copy([header, *three_round_game[1:]])
         with pytest.raises(ValueError, match="several games"):
             choose_copy([_copy(three_round_game), other])
+
+
+class TestReport:
+    def test_a_choice_reports_every_copy_with_its_counts(self, three_round_game):
+        full = _copy(three_round_game, origin="raw/box/a.jsonl")
+        short = _copy(_without_rounds(three_round_game, 3), source="laptop",
+                      origin="raw/laptop/b.jsonl")
+        assert choose_copy([short, full]).as_report() == {
+            "game_id": "engine-20260910T181815Z-a1b2c3",
+            "chosen": {"source": "box", "origin": "raw/box/a.jsonl",
+                       "scored_rounds": 3, "rounds": 3, "ended_with_totals": True,
+                       "first_round": 1},
+            "rejected": [{"source": "laptop", "origin": "raw/laptop/b.jsonl",
+                          "scored_rounds": 2, "rounds": 2, "ended_with_totals": True,
+                          "first_round": 1,
+                          "reason": "fewer scored rounds (2 against 3)"}],
+        }
+
+
+# ----------------------------------------------------------------------
+# Raw logs
+# ----------------------------------------------------------------------
+
+
+def _log(directory: Path, name: str, text: str) -> Path:
+    """A raw log with the given content, somewhere outside the corpus."""
+
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    path.write_bytes(text.encode("utf-8"))
+    return path
+
+
+@pytest.fixture
+def corpus(tmp_path) -> Path:
+    return tmp_path / "corpus"
+
+
+class TestImportRaw:
+    def test_a_new_log_is_copied_under_its_source(self, tmp_path, corpus):
+        log = _log(tmp_path / "box", "s1.jsonl", "a\nb\n")
+        result = import_raw(corpus, {"box": [log]})
+        assert result.entries == (("box", "s1.jsonl", ImportStatus.COPIED),)
+        assert (corpus / "raw" / "box" / "s1.jsonl").read_text() == "a\nb\n"
+
+    def test_the_same_log_again_is_present(self, tmp_path, corpus):
+        log = _log(tmp_path / "box", "s1.jsonl", "a\n")
+        import_raw(corpus, {"box": [log]})
+        assert import_raw(corpus, {"box": [log]}).entries == (
+            ("box", "s1.jsonl", ImportStatus.PRESENT),)
+
+    def test_a_log_that_grew_replaces_its_snapshot(self, tmp_path, corpus):
+        # The box's current session log is fetched while it is still being
+        # written: next week's fetch is the same log, further on.
+        import_raw(corpus, {"box": [_log(tmp_path / "w1", "s1.jsonl", "a\nb")]})
+        grown = _log(tmp_path / "w2", "s1.jsonl", "a\nbc\nd\n")
+        assert import_raw(corpus, {"box": [grown]}).entries == (
+            ("box", "s1.jsonl", ImportStatus.GROWN),)
+        assert (corpus / "raw" / "box" / "s1.jsonl").read_text() == "a\nbc\nd\n"
+
+    def test_an_older_snapshot_leaves_the_longer_log(self, tmp_path, corpus):
+        import_raw(corpus, {"box": [_log(tmp_path / "w2", "s1.jsonl", "a\nb\n")]})
+        older = _log(tmp_path / "w1", "s1.jsonl", "a\n")
+        assert import_raw(corpus, {"box": [older]}).entries == (
+            ("box", "s1.jsonl", ImportStatus.STALE),)
+        assert (corpus / "raw" / "box" / "s1.jsonl").read_text() == "a\nb\n"
+
+    def test_a_different_log_under_a_taken_name_refuses_everything(self, tmp_path, corpus):
+        import_raw(corpus, {"box": [_log(tmp_path / "w1", "s1.jsonl", "a\nb\n")]})
+        new = _log(tmp_path / "w2", "s2.jsonl", "fresh\n")
+        clash = _log(tmp_path / "w2", "s1.jsonl", "a\nX\n")
+        with pytest.raises(CorpusError, match=r"box/s1\.jsonl"):
+            import_raw(corpus, {"box": [new, clash]})
+        # Judged before anything is copied: the good log did not come in.
+        assert not (corpus / "raw" / "box" / "s2.jsonl").exists()
+
+    def test_every_conflict_is_named(self, tmp_path, corpus):
+        import_raw(corpus, {"box": [_log(tmp_path / "a", "s1.jsonl", "1\n"),
+                                    _log(tmp_path / "a", "s2.jsonl", "2\n")]})
+        with pytest.raises(CorpusError, match=r"s1\.jsonl.*s2\.jsonl"):
+            import_raw(corpus, {"box": [_log(tmp_path / "b", "s1.jsonl", "x\n"),
+                                        _log(tmp_path / "b", "s2.jsonl", "y\n")]})
+
+    def test_two_logs_handed_in_under_one_name_are_compared(self, tmp_path, corpus):
+        short = _log(tmp_path / "a", "s1.jsonl", "a\n")
+        long = _log(tmp_path / "b", "s1.jsonl", "a\nb\n")
+        result = import_raw(corpus, {"box": [short, long, short]})
+        assert [status for *_, status in result.entries] == [
+            ImportStatus.COPIED, ImportStatus.GROWN, ImportStatus.STALE]
+        assert (corpus / "raw" / "box" / "s1.jsonl").read_text() == "a\nb\n"
+
+    def test_one_name_in_two_sources_is_two_logs(self, tmp_path, corpus):
+        result = import_raw(corpus, {"box": [_log(tmp_path / "a", "s1.jsonl", "a\n")],
+                                     "laptop": [_log(tmp_path / "b", "s1.jsonl", "b\n")]})
+        assert result.counts() == {
+            "box": {"copied": 1, "grown": 0, "present": 0, "stale": 0},
+            "laptop": {"copied": 1, "grown": 0, "present": 0, "stale": 0},
+        }
+
+    def test_a_long_log_is_compared_past_the_first_chunk(self, tmp_path, corpus,
+                                                         monkeypatch):
+        monkeypatch.setattr("contrai_data.corpus._CHUNK", 4)
+        import_raw(corpus, {"box": [_log(tmp_path / "a", "s1.jsonl", "abcdefgh1")]})
+        with pytest.raises(CorpusError):
+            import_raw(corpus, {"box": [_log(tmp_path / "b", "s1.jsonl", "abcdefgh2")]})
+
+    @pytest.mark.parametrize("label", ["Box", "", "../up", "a/b", "-x", "box.1"])
+    def test_a_label_that_is_not_a_plain_segment_is_refused(self, tmp_path, corpus,
+                                                             label):
+        with pytest.raises(CorpusError, match="source label"):
+            import_raw(corpus, {label: [_log(tmp_path, "s1.jsonl", "a\n")]})
+        assert not corpus.exists()
+
+    def test_a_failed_copy_leaves_no_partial_file(self, tmp_path, corpus, monkeypatch):
+        def broken(source, destination):
+            Path(destination).write_text("half")
+            raise OSError("disk full")
+
+        monkeypatch.setattr("contrai_data.corpus.shutil.copyfile", broken)
+        with pytest.raises(OSError, match="disk full"):
+            import_raw(corpus, {"box": [_log(tmp_path / "a", "s1.jsonl", "a\n")]})
+        assert list((corpus / "raw" / "box").iterdir()) == []
+
+    def test_an_empty_import_reports_nothing(self, corpus):
+        assert import_raw(corpus, {}) == RawImport(())
+
+
+class TestRawLogs:
+    def test_a_corpus_without_raw_holds_none(self, corpus):
+        assert raw_logs(corpus) == ()
+
+    def test_logs_come_by_source_then_name(self, tmp_path, corpus):
+        import_raw(corpus, {
+            "laptop": [_log(tmp_path / "l", "a.jsonl", "1\n")],
+            "box": [_log(tmp_path / "b", "b.jsonl", "2\n"),
+                    _log(tmp_path / "b", "a.jsonl", "3\n")],
+        })
+        (corpus / "raw" / "README.txt").write_text("not a source")
+        (corpus / "raw" / "box" / "notes.txt").write_text("not a log")
+        assert [(source, path.name) for source, path in raw_logs(corpus)] == [
+            ("box", "a.jsonl"), ("box", "b.jsonl"), ("laptop", "a.jsonl")]
+
+
+# ----------------------------------------------------------------------
+# Games
+# ----------------------------------------------------------------------
+
+
+class TestWriteGames:
+    def test_each_copy_becomes_one_loadable_record(self, corpus, three_round_game):
+        assert write_games(corpus, [_copy(three_round_game)]) == 1
+        record = load_game(game_path(corpus, "engine-20260910T181815Z-a1b2c3"))
+        assert len(record.rounds) == 3
+
+    def test_the_old_games_are_replaced_whole(self, corpus, three_round_game):
+        stale = game_path(corpus, "obs-gone")
+        stale.parent.mkdir(parents=True)
+        stale.write_text("an old record\n")
+        write_games(corpus, [_copy(three_round_game)])
+        assert [path.name for path in (corpus / "games").iterdir()] == [
+            "engine-20260910T181815Z-a1b2c3.jsonl"]
+        # Nothing is left behind beside games/: no staging, no retired copy.
+        assert sorted(path.name for path in corpus.iterdir()) == ["games"]
+
+    def test_the_verdicts_and_catalog_go_with_the_old_games(self, corpus,
+                                                            three_round_game):
+        verdicts_dir(corpus).mkdir(parents=True)
+        (verdicts_dir(corpus) / "old.json").write_text("{}")
+        catalog_path(corpus).write_text("stale")
+        write_games(corpus, [_copy(three_round_game)])
+        assert (verdicts_dir(corpus).exists(), catalog_path(corpus).exists()) == (
+            False, False)
+
+    def test_two_copies_of_one_game_are_refused_and_change_nothing(
+        self, corpus, three_round_game
+    ):
+        kept = game_path(corpus, "obs-kept")
+        kept.parent.mkdir(parents=True)
+        kept.write_text("kept\n")
+        with pytest.raises(ValueError, match="Two copies"):
+            write_games(corpus, [_copy(three_round_game), _copy(three_round_game)])
+        assert kept.read_text() == "kept\n"
+        assert sorted(path.name for path in corpus.iterdir()) == ["games"]
+
+    def test_a_catalog_held_open_changes_nothing(self, corpus, three_round_game,
+                                                 monkeypatch):
+        # On Windows another program holding the catalog makes the unlink
+        # fail: the previous games must survive it.
+        kept = game_path(corpus, "obs-kept")
+        kept.parent.mkdir(parents=True)
+        kept.write_text("kept\n")
+        catalog_path(corpus).write_text("open elsewhere")
+        real_unlink = Path.unlink
+
+        def held(self, missing_ok=False):
+            if self.name == catalog_path(corpus).name:
+                raise PermissionError("in use")
+            real_unlink(self, missing_ok=missing_ok)
+
+        monkeypatch.setattr(Path, "unlink", held)
+        with pytest.raises(PermissionError):
+            write_games(corpus, [_copy(three_round_game)])
+        assert kept.read_text() == "kept\n"
+        assert sorted(path.name for path in corpus.iterdir()) == [
+            "catalog.sqlite", "games"]
+
+    def test_no_copy_leaves_an_empty_games(self, corpus):
+        assert write_games(corpus, []) == 0
+        assert list((corpus / "games").iterdir()) == []
+
+    def test_a_rebuild_writes_the_same_bytes(self, corpus, three_round_game):
+        # A second build over the same copies replaces the first rather than
+        # appending to it: the append trap the offline parse falls into.
+        path = game_path(corpus, "engine-20260910T181815Z-a1b2c3")
+        write_games(corpus, [_copy(three_round_game)])
+        first = path.read_bytes()
+        write_games(corpus, [_copy(three_round_game)])
+        assert path.read_bytes() == first
+        assert sorted(entry.name for entry in corpus.iterdir()) == ["games"]

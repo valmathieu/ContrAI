@@ -39,13 +39,14 @@ the same reason.
 | `contrai_scraper.fleet` | `Fleet` / `Worker` — the same gates for N workers on one browser, waiting in the lobby and chasing each game; budgets per worker. |
 | `contrai_scraper.rota` | `Rota` — a fleet's roles: who waits in the lobby, who stands by logged in as the spare, and who is logged out. |
 | `contrai_scraper.health` | `HealthLog` and `Counters` — one JSON line per transition, on stderr. |
-| `contrai_scraper.cli` | `contrai-scrape`: `run` (the default), `fleet`, `check-profile` and `parse`. |
+| `contrai_scraper.cli` | `contrai-scrape`: `run` (the default), `fleet`, `check-profile`, `parse` and `corpus build`. |
 
 ```bash
 uv run contrai-scrape run --profile profile.toml --headless    # watch tables
 uv run contrai-scrape fleet --profile profile.toml --accounts accounts.toml --workers 5 --headless
 uv run contrai-scrape check-profile profile.toml               # validate before a shift
 uv run contrai-scrape parse RAW... --profile profile.toml      # re-parse stored logs
+uv run contrai-scrape corpus build --profile profile.toml --corpus ROOT --source box=DIR
 ```
 
 `run` takes `--max-games N` and `--minutes N`, and `--headless` / `--headed` override
@@ -787,6 +788,51 @@ capture — live in `deploy/install.md`. The same image runs a fleet through a C
 ![The scraper deployed behind its VPN sidecar](../diagrams/deploy_scraper.png)
 
 *Rendered from [`deploy_scraper.mmd`](../diagrams/deploy_scraper.mmd).*
+
+## The corpus
+
+Scraped games pile up in several places: the box's output root, the laptop's, and scratch roots
+from re-parses. `parse` appends into whatever record it finds, so gathering them by re-parsing
+into one root doubles games. `corpus build` gathers them safely, and can be re-run as often as
+needed:
+
+```powershell
+uv run contrai-scrape corpus build --profile ..\ContrAI-captures\profile.toml `
+    --corpus ..\ContrAI-captures\corpus `
+    --source box=..\ContrAI-captures\box-raw-2026-09-28 `
+    --source laptop=..\ContrAI-captures\scraped\raw
+uv run contrai verify ..\ContrAI-captures\corpus\games
+uv run contrai catalog ..\ContrAI-captures\corpus
+```
+
+1. **Import.** Each `--source LABEL=DIR` copies the raw logs under `DIR` (and `DIR/raw`, as `parse`
+   searches) into `ROOT/raw/LABEL/`. Every log is judged before any is copied. A log already
+   there is `present`. A longer log whose start is the kept one byte for byte is `grown` and
+   replaces it: raw logs are only appended to, so a log fetched while its session was still
+   running is a prefix of the one fetched next week. A shorter such log is `stale` and left out.
+   Any other difference under a taken name refuses the whole build, before anything changes.
+2. **Parse.** Every raw log the corpus holds is parsed, not only the new ones, each on its own and
+   in memory, through `parse`'s own path (visits, tournament gate). No record is appended to.
+3. **Choose.** The records are grouped by game, and `choose_copy` keeps one per game: the most
+   scored rounds, then rounds, then a closing total, then the earliest join (see the
+   [data docs](../data/index.md#the-corpus)).
+4. **Swap.** The kept records are written to a staging directory, which replaces `ROOT/games/`
+   whole. The old `verdicts/` and `catalog.sqlite` describe files that are gone, so they are
+   removed; the command prints the `contrai verify` and `contrai catalog` runs that rebuild them.
+   `ROOT/build.json` records what was imported, the visits, and every rejected copy with its reason.
+
+With no `--source`, the build re-parses the corpus's own `raw/`, which is how a parser fix reaches
+every game already watched. A copy the parser produces but the projection cannot fold is reported
+and left out rather than failing the build. The profile is loaded without its secrets, so none of
+the account's variables need to be set. The corpus stays private and outside git: its raw logs
+carry session tokens and player names.
+
+The records the live recorder wrote on the box are not imported: only what the raw logs rebuild is
+in the corpus, which is what keeps it reproducible.
+
+![Building a corpus, from raw logs to the catalog](../diagrams/flow_corpus.png)
+
+*Rendered from [`flow_corpus.mmd`](../diagrams/flow_corpus.mmd).*
 
 ## Pending
 

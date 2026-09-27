@@ -38,6 +38,8 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) A fleet keeps at most two workers in the lobby and one logged-in spare; other idle workers log out until needed (`[fleet].lobby_watchers`, `spares`). See [scraper docs](docs/scraper/index.md).
 - (scraper) A fleet window records the tournament games already running when it opens, one worker per table, from the mid-game join (`[fleet].bootstrap_enabled`). See [scraper docs](docs/scraper/index.md).
 - (data) `choose_copy` keeps one record per game among several copies (scored rounds, rounds, final totals, earliest join) and says why each other lost. See [data docs](docs/data/index.md).
+- (data) `import_raw`, `raw_logs` and `write_games` keep a corpus's raw logs append-only and swap in a rebuilt `games/` whole. See [data docs](docs/data/index.md#the-corpus).
+- (scraper) `contrai-scrape corpus build` gathers raw logs from every machine and rebuilds one record per game, safely re-runnable, with a `build.json` report. See [scraper docs](docs/scraper/index.md#the-corpus).
 - (scraper) `deploy/compose.fleet.yml` runs the box's container as a fleet, with a read-only `accounts.toml` and the VPN confinement unchanged. See [install guide](deploy/install.md).
 
 ### Changed

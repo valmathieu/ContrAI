@@ -1,6 +1,6 @@
 """Console entry point for the spectator scraper.
 
-Four subcommands. ``run`` watches tables and is still the default, so a bare
+Five subcommands. ``run`` watches tables and is still the default, so a bare
 ``contrai-scrape`` is ``contrai-scrape run`` with the word left out — but it
 now needs a profile, and a bare invocation fails with usage rather than
 launching anything. That is the intended break: there is no longer a flow
@@ -21,20 +21,41 @@ the parser turns out to have mis-read something the fix applies to games
 already watched rather than only to the next ones — and it is the same code
 path the recorder runs live, so a bug found offline is the bug that was
 happening online.
+
+``corpus build`` is ``parse`` made safe to repeat. It gathers raw logs from
+every machine into one corpus, parses each log on its own, keeps one record
+per game among the copies several logs made of it, and swaps the whole
+``games/`` in at once — so it can be re-run after every parser fix or box
+pull, where ``parse`` appends into whatever records it finds.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import signal
 import sys
 import time
 from collections.abc import Sequence
+from datetime import UTC, datetime
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Final
 
-from contrai_data import RecordWriter, game_path
+from contrai_data import (
+    BUILD_FILE,
+    CorpusError,
+    CopyChoice,
+    RecordCopy,
+    RecordFormatError,
+    RecordWriter,
+    choose_copy,
+    game_path,
+    import_raw,
+    raw_logs,
+    write_games,
+)
 
 from contrai_scraper.accounts import LabelledAccount, load_accounts
 from contrai_scraper.browser import open_browser, open_session, open_spectator
@@ -72,7 +93,9 @@ from contrai_scraper.shift import Shift, ShiftSummary
 from contrai_scraper.wire import WireEvent, WireStream, order_events
 
 #: The subcommands, and the one a bare invocation means.
-SUBCOMMANDS: Final[tuple[str, ...]] = ("run", "fleet", "parse", "check-profile")
+SUBCOMMANDS: Final[tuple[str, ...]] = (
+    "run", "fleet", "parse", "check-profile", "corpus"
+)
 DEFAULT_SUBCOMMAND: Final[str] = "run"
 
 #: Where a directory argument is searched for logs.
@@ -115,8 +138,9 @@ def main(argv: list[str] | None = None) -> int:
         "fleet": _run_fleet,
         "check-profile": _run_check,
         "parse": _run_parse,
+        "corpus build": _run_corpus_build,
     }
-    return dispatch[args.command](args)
+    return dispatch[_command_key(args)](args)
 
 
 def _reconfigure_streams() -> None:
@@ -982,6 +1006,155 @@ def _logs(paths: list[Path], parser: argparse.ArgumentParser) -> list[Path]:
 
 
 # ---------------------------------------------------------------------------
+# corpus
+# ---------------------------------------------------------------------------
+
+
+def _run_corpus_build(args: argparse.Namespace) -> int:
+    """Import raw logs into a corpus, then rebuild its games from all of them.
+
+    Each raw log is parsed on its own, in memory, so no record is ever
+    appended to: the append trap of ``parse`` cannot happen here even when
+    one log holds two visits to the same table. The records are grouped by
+    game, one copy is kept per game, and the new ``games/`` replaces the
+    old one whole — taking the now-stale verdicts and catalog with it.
+
+    Args:
+        args: The parsed ``corpus build`` arguments.
+
+    Returns:
+        0 when a ``games/`` was written with at least one record; 1 when a
+        log was refused on import, or the raw logs held no game at all, in
+        which case the previous games are left as they were.
+
+    Raises:
+        SystemExit: If the profile or a source path cannot be read (exit
+            code 2).
+    """
+
+    profile = _profile_or_exit(args, offline=True)
+    root: Path = args.corpus
+    sources: dict[str, list[Path]] = {}
+    for label, directory in args.sources:
+        sources.setdefault(label, []).extend(_logs([directory], args.parser))
+    try:
+        imported = import_raw(root, sources)
+    except CorpusError as error:
+        print(f"corpus build refused: {error}", file=sys.stderr)
+        return 1
+    for label, counts in imported.counts().items():
+        print(
+            f"{label}: {counts['copied']} copied, {counts['grown']} grown, "
+            f"{counts['present']} already present, {counts['stale']} older "
+            "snapshots left out"
+        )
+
+    logs = raw_logs(root)
+    copies: dict[str, list[RecordCopy]] = {}
+    visits = not_tournament = 0
+    unusable: list[dict[str, str]] = []
+    for label, log in logs:
+        results, seen, refused = _parse_log(log, profile)
+        visits += seen
+        not_tournament += refused
+        origin = log.relative_to(root).as_posix()
+        for result in results:
+            try:
+                copy = RecordCopy.of(label, origin, result.events)
+            except RecordFormatError as error:
+                # A parser bug on one game must not cost the corpus the rest
+                # of them; it is reported and left out instead.
+                game_id = result.events[0].game_id
+                print(f"  {origin}: {game_id} could not be folded: {error}")
+                unusable.append({"origin": origin, "game_id": game_id, "reason": str(error)})
+                continue
+            copies.setdefault(copy.game_id, []).append(copy)
+
+    if not copies:
+        print(f"{len(logs)} raw logs held no game; {root / 'games'} left as it was")
+        return 1
+    choices = [choose_copy(group) for _, group in sorted(copies.items())]
+    written = write_games(root, [choice.chosen for choice in choices])
+    report = _build_report(
+        imported.counts(), logs, visits, not_tournament, unusable, choices, written
+    )
+    (root / BUILD_FILE).write_text(
+        json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    duplicates = sum(1 for choice in choices if choice.rejected)
+    print(
+        f"{len(logs)} raw logs, {visits} table visits ({not_tournament} not a "
+        f"tournament) -> {sum(len(group) for group in copies.values())} copies of "
+        f"{written} games, {duplicates} seen more than once"
+    )
+    print(f"report: {root / BUILD_FILE}")
+    print("next:")
+    print(f"  uv run contrai verify {root / 'games'}")
+    print(f"  uv run contrai catalog {root}")
+    return 0
+
+
+def _build_report(
+    imported: dict[str, dict[str, int]],
+    logs: Sequence[tuple[str, Path]],
+    visits: int,
+    not_tournament: int,
+    unusable: list[dict[str, str]],
+    choices: Sequence[CopyChoice],
+    written: int,
+) -> dict[str, Any]:
+    """The build's account of itself, written to ``build.json``.
+
+    Every rejected copy is listed with its reason, so the choice made for a
+    game seen twice can be audited without re-running the build.
+
+    Returns:
+        A JSON-ready mapping.
+    """
+
+    per_source: dict[str, int] = {}
+    for label, _ in logs:
+        per_source[label] = per_source.get(label, 0) + 1
+    return {
+        "built_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generator": _generator(),
+        "imported": imported,
+        "raw_logs": per_source,
+        "visits": visits,
+        "not_tournament": not_tournament,
+        "unusable": unusable,
+        "copies": sum(1 + len(choice.rejected) for choice in choices),
+        "games": written,
+        "duplicates": [choice.as_report() for choice in choices if choice.rejected],
+    }
+
+
+def _generator() -> str:
+    """This build's name and version, stamped into ``build.json``."""
+
+    try:
+        return f"contrai-scraper {version('contrai-scraper')}"
+    except PackageNotFoundError:  # pragma: no cover - installed in the workspace
+        return "contrai-scraper"
+
+
+def _source_arg(text: str) -> tuple[str, Path]:
+    """Read one ``--source LABEL=DIR``.
+
+    The label is checked by the import, which names the rule it breaks;
+    only the shape is checked here.
+
+    Raises:
+        argparse.ArgumentTypeError: If the value is not ``LABEL=PATH``.
+    """
+
+    label, sep, path = text.partition("=")
+    if not sep or not label or not path:
+        raise argparse.ArgumentTypeError(f"expected LABEL=DIR, got {text!r}")
+    return label, Path(path)
+
+
+# ---------------------------------------------------------------------------
 # arguments
 # ---------------------------------------------------------------------------
 
@@ -1028,8 +1201,20 @@ def _parse_argv(argv: list[str] | None = None) -> argparse.Namespace:
     resolved = list(sys.argv[1:] if argv is None else argv)
     parser, subparsers = _build_parser()
     args = parser.parse_args(_normalise_argv(resolved))
-    args.parser = subparsers[args.command]
+    args.parser = subparsers[_command_key(args)]
     return args
+
+
+def _command_key(args: argparse.Namespace) -> str:
+    """The command a namespace was parsed for, a nested one included.
+
+    ``corpus`` holds its own subcommands, so its key is two words —
+    ``corpus build`` — while every other command is its own name.
+    """
+
+    if args.command == "corpus":
+        return f"corpus {args.corpus_command}"
+    return args.command
 
 
 def _normalise_argv(argv: list[str]) -> list[str]:
@@ -1080,7 +1265,7 @@ def _build_parser() -> tuple[
             "Seat a spectator at tournament tables and write one record per "
             "game watched."
         ),
-        epilog="other subcommands: fleet, parse, check-profile",
+        epilog="other subcommands: fleet, parse, check-profile, corpus",
     )
     run.add_argument(
         "--profile",
@@ -1201,7 +1386,56 @@ def _build_parser() -> tuple[
         action="store_true",
         help="report only; do not write any record",
     )
-    return parser, {"run": run, "fleet": fleet, "check-profile": check, "parse": parse}
+
+    corpus = subcommands.add_parser(
+        "corpus",
+        help="gather raw logs into one corpus and rebuild its games",
+        description="Keep every scraped game once, rebuilt from the raw logs that saw it.",
+    )
+    corpus_commands = corpus.add_subparsers(dest="corpus_command", required=True)
+    build = corpus_commands.add_parser(
+        "build",
+        help="import raw logs, then rebuild every game from all of them",
+        description=(
+            "Copy raw logs into ROOT/raw/<label>/, parse every raw log the corpus "
+            "holds, keep one record per game and replace ROOT/games/ whole. The "
+            "verdicts and catalog it makes stale are removed; re-run contrai "
+            "verify and contrai catalog afterwards."
+        ),
+    )
+    build.add_argument(
+        "--profile",
+        type=Path,
+        required=True,
+        metavar="FILE",
+        help="the profile describing the site the logs came from",
+    )
+    build.add_argument(
+        "--corpus",
+        type=Path,
+        required=True,
+        metavar="ROOT",
+        help="the corpus root (created if missing)",
+    )
+    build.add_argument(
+        "--source",
+        dest="sources",
+        type=_source_arg,
+        action="append",
+        default=[],
+        metavar="LABEL=DIR",
+        help=(
+            "import the raw logs under DIR (and DIR/raw) as source LABEL, e.g. "
+            "box=box-raw; repeatable; none rebuilds from the corpus's own raw/"
+        ),
+    )
+    return parser, {
+        "run": run,
+        "fleet": fleet,
+        "check-profile": check,
+        "parse": parse,
+        "corpus build": build,
+    }
 
 
 if __name__ == "__main__":  # pragma: no cover - console-script shim

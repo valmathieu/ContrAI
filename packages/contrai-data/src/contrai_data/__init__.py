@@ -10,6 +10,7 @@ from .exceptions import (
     UnsupportedFormatError,
     VerdictFormatError,
     CatalogError,
+    CorpusError,
 )
 from .events import (
     RecordSource,
@@ -98,10 +99,17 @@ from .catalog import (
     player_games,
 )
 from .corpus import (
+    RAW_DIR,
+    BUILD_FILE,
     RecordCopy,
     Rejection,
     CopyChoice,
     choose_copy,
+    ImportStatus,
+    RawImport,
+    import_raw,
+    raw_logs,
+    write_games,
 )
 
 __all__: list[str] = [
@@ -110,6 +118,7 @@ __all__: list[str] = [
     "UnsupportedFormatError",
     "VerdictFormatError",
     "CatalogError",
+    "CorpusError",
     "RecordSource",
     "SeatKind",
     "JoinPhase",
@@ -182,8 +191,15 @@ __all__: list[str] = [
     "PlayerGame",
     "PlayerReport",
     "player_games",
+    "RAW_DIR",
+    "BUILD_FILE",
     "RecordCopy",
     "Rejection",
     "CopyChoice",
     "choose_copy",
+    "ImportStatus",
+    "RawImport",
+    "import_raw",
+    "raw_logs",
+    "write_games",
 ]
