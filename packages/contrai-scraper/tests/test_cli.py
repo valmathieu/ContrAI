@@ -376,12 +376,13 @@ class FakeWalk:
     """A spectator whose walk and panels are scripted; a named step may raise."""
 
     def __init__(self, *, pledge=False, fail=None, marker=True, ids=None,
-                 saved=None):
+                 saved=None, differing=()):
         self._pledge = pledge
         self._fail = fail or {}
         self._marker = marker
         self._ids = ids or {}
         self._saved = saved
+        self._differing = tuple(differing)
         self.captured = []
 
     async def capture(self, stem):
@@ -406,7 +407,8 @@ class FakeWalk:
 
     async def read_options(self, expected):
         self._step("read_options")
-        return OptionsReading(observed=dict(expected), missing=(), extra=(), differing=())
+        return OptionsReading(observed=dict(expected), missing=(), extra=(),
+                              differing=self._differing)
 
     async def read_player_id(self, position):
         return self._ids.get(position)
@@ -468,7 +470,7 @@ class TestLiveChecks:
         # enters the variant can tell whether it was there.
         results = asyncio.run(_live_checks(FakeWalk(pledge=answered), Frames(), profile))
         assert results[:3] == [
-            ("login", True, profile.account.email),
+            ("login", True, "the profile's [account]"),
             ("pledge", True, detail),
             ("variant entered", True, "the server chose a table"),
         ]
@@ -502,6 +504,28 @@ class TestLiveChecks:
         results = asyncio.run(_live_checks(walk, Frames(_received("tick"),
                                                         _join_frame(builders)), profile))
         assert ([name for name, passed, _ in results if not passed], len(results)) == ([], 8)
+
+    def test_no_line_names_the_account(self, profile):
+        # Under Compose this output reaches the journal.
+        results = asyncio.run(_live_checks(FakeWalk(), Frames(), profile))
+        assert all(profile.account.email not in detail for _, _, detail in results)
+
+    def test_a_tournament_table_whose_options_differ_fails(self, profile, builders):
+        walk = FakeWalk(differing=("opt_beta",))
+        results = asyncio.run(_live_checks(walk, Frames(_join_frame(builders)), profile))
+        passed = {name: ok for name, ok, _ in results}
+        assert passed["options match [rules.options]"] is False
+
+    def test_another_tables_options_are_read_but_not_compared(self, profile, builders):
+        # The server chose a table that is not a tournament: its options are
+        # its own, so a difference there is no profile fault.
+        payload = builders.snapshot_payload()
+        payload["table"]["cup"] = False
+        frame = _received(builders.envelope("payload", "joinTable", payload, frame_id="s0"))
+        walk = FakeWalk(marker=False, differing=("opt_beta",))
+        results = asyncio.run(_live_checks(walk, Frames(frame), profile))
+        _, passed, detail = next(line for line in results if line[0].startswith("options"))
+        assert (passed, detail.startswith("not compared")) == (True, True)
 
     def test_a_panel_id_that_differs_from_the_wire_fails(self, profile, builders):
         snapshot = read_snapshot(builders.snapshot_payload(), Translator(profile))

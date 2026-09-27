@@ -369,6 +369,12 @@ the browser is gone by the time the line is read and the walk cannot be repeated
 itself is never replaced by the diagnosis — an unwritable raw root or a page that has already gone
 leaves the failure reported exactly as it was.
 
+The server seats `check-profile` wherever it likes, so its table is not always a tournament, and
+every other table chooses its own options. The options panel is still read there, so a selector the
+site broke still fails, but it is held against `[rules.options]` only on a tournament table;
+elsewhere the line reads `not compared`, and a re-run lands on one. No line names the account: under
+Compose this output reaches the journal.
+
 A hop moves the page long before the reader hears about it, and a gate judging the wrong snapshot
 reads one table's options and scoreboard against another's. Measured across 2026-09-16 and
 2026-09-17: over twenty table joins the new table described itself between 0.05 s and 0.23 s after

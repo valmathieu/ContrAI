@@ -585,7 +585,9 @@ async def _live_checks(
     step = "login"
     try:
         await spectator.log_in()
-        results.append(("login", True, profile.account.email))
+        # Never the address: under Compose this output reaches the journal,
+        # and a log line is the thing most likely to leave the machine.
+        results.append(("login", True, "the profile's [account]"))
         step = "variant entered"
         # The pledge is drawn between the menu steps, so only the walk into the
         # variant can see it: a probe made before that walk found nothing.
@@ -613,13 +615,26 @@ async def _live_checks(
         ))
 
         step = "options match [rules.options]"
+        # Read on any table, so a panel selector the site broke still fails
+        # here; held against the profile only on a tournament table. The
+        # server seats this check wherever it likes, and every other table
+        # chooses its own options — one differing there is the table's
+        # choice, not a profile fault, and the recorder never gets that far
+        # with it: `not_tournament` refuses it first.
         reading = await spectator.read_options(profile.rules.options)
-        results.append((
-            step,
-            reading.matches,
-            f"missing {list(reading.missing)}, extra {list(reading.extra)}, "
-            f"differing {list(reading.differing)}",
-        ))
+        if snapshot.is_tournament:
+            results.append((
+                step,
+                reading.matches,
+                f"missing {list(reading.missing)}, extra {list(reading.extra)}, "
+                f"differing {list(reading.differing)}",
+            ))
+        else:
+            results.append((
+                step, True,
+                "not compared — the server chose a table that is not a tournament, "
+                "whose options are its own; the panel read. Re-run to land on one",
+            ))
 
         step = "panel ids equal the wire's accounts"
         results.append(await _seat_ids_agree(spectator, snapshot, translator))
