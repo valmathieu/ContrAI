@@ -801,6 +801,9 @@ def _player_lines(report: PlayerReport) -> list[str]:
         outcome = game.result or game.end_reason or "unfinished"
         ns = "?" if game.total_ns is None else game.total_ns
         ew = "?" if game.total_ew is None else game.total_ew
+        # Totals the replay rebuilt are the engine's reading, not the
+        # table's, and the line says so.
+        rebuilt = " (replayed)" if game.totals_basis == "replayed" else ""
         if game.verdict_status == "missing":
             verdict = "no verdict"
         elif game.verdict_status == "unreadable":
@@ -812,7 +815,7 @@ def _player_lines(report: PlayerReport) -> list[str]:
         lines.append(
             f"{game.created_at[:10]}  {game.game_id}  {game.player_id or '-'}  "
             f"{game.name}  seat {game.position}  partner {game.partner or '-'}  "
-            f"{outcome}  NS {ns} – EW {ew}  {verdict}"
+            f"{outcome}  NS {ns} – EW {ew}{rebuilt}  {verdict}"
         )
     return lines
 

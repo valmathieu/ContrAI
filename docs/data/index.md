@@ -453,7 +453,7 @@ PLAYER_ID — games: 10 (catalog built 2026-09-24T17:59:04Z)
 | `seat N/W/S/E` | Where the player sat — the seat to follow when replaying. |
 | `partner` | The partner's name in that game (`-` if unknown). |
 | outcome | `won` or `lost` when the winner is known; otherwise why the record stops — `observer_left`, `abandoned`, `interrupted`, or `target_reached` when the game ended but its winner cannot be derived — both sides over the target, say (see [The winner](#the-winner)); `unfinished` when the record has no end at all. |
-| score | The final totals, `NS a – EW b`, with `?` when the record does not say. |
+| score | The final totals, `NS a – EW b`, with `?` when neither the record nor its verdict says; `(replayed)` follows totals the verifier rebuilt (see [The winner](#the-winner)). |
 | verdict | `verified`, `partial` or `suspect`; `partial (stale)` when the verdict predates the record; `no verdict` or `unreadable verdict` otherwise. |
 
 When a name sits in more than one seat of a game — an engine game has four `ai:expert` seats — the

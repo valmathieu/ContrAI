@@ -33,6 +33,11 @@ round would never catch it — by then the replay has already diverged.
 diverged from the record's, so every later check in that round would be
 comparing two different games. The round is reported ``suspect`` with
 what was found, and the next round starts from its own recorded deal.
+
+The replay also gives back one thing it did not check: a record that
+ended without its final totals — an observed table whose final read never
+came — gets them rebuilt in its verdict, from the last totals it states
+and what the replay scored after them (:func:`_replayed_totals`).
 """
 
 from __future__ import annotations
@@ -48,6 +53,7 @@ from contrai_core.exceptions import IllegalBidError, IllegalPlayError
 from contrai_data import (
     BeloteHeld,
     GameRecord,
+    RoundOutcome,
     RoundRecord,
     SlamOutcome,
     load_game,
@@ -148,6 +154,9 @@ class VerifyingObserver:
         self.rounds: list[RoundVerdict] = []
         self.notes: list[str] = list(_ruleset_notes(record))
         self._current: _RoundCheck | None = None
+        # What the replay scored for each round it played out, by the
+        # record's round number — the raw material of the replayed totals.
+        self._scored: dict[int, Any] = {}
 
     # --- driven by the verifier, not by the engine -----------------------
 
@@ -209,6 +218,7 @@ class VerifyingObserver:
         check = self._current
         if check is None:
             return
+        self._scored[check.record.number] = round_.round_score
         _check_auction(check, round_)
         _check_trick_winners(check, round_)
         _check_belote(check, round_)
@@ -271,6 +281,9 @@ class VerifyingObserver:
             preset=self.record.preset,
             rounds=tuple(self.rounds),
             notes=tuple(self.notes),
+            replayed_totals=_replayed_totals(
+                self.record, self._scored, self.rounds
+            ),
         )
 
 
@@ -782,6 +795,112 @@ def _taken_agrees(
     return theirs == {
         side: (substitute if side is sweeper else 0) for side in TeamSide
     }
+
+
+# ---------------------------------------------------------------------------
+# Replayed totals
+# ---------------------------------------------------------------------------
+
+
+def _replayed_totals(
+    record: GameRecord,
+    scored: dict[int, Any],
+    verdicts: list[RoundVerdict],
+) -> dict[TeamSide, int] | None:
+    """The final totals of a record that ended without stating them.
+
+    An observed game that reached the target often ends with ``null``
+    totals: the table's final read never came, so its last round has no
+    score line. The record rightly keeps them ``null`` — a record holds
+    what was observed — but the replay has scored that round anyway. So
+    the totals are rebuilt here, as a derived value for the verdict: the
+    last totals the record states, plus what the replay marked for every
+    round after them.
+
+    Only when that sum is safe. A held dispute's pot (§7.5) is paid into
+    the next contract winner's total and the replay's own pot is only as
+    good as the rounds it saw, so the rebuild requires that no pot can be
+    pending — the stated totals follow a made or failed contract, or the
+    game's first deal — and that no round after them is held or pays one
+    out. Every round after them must be there, in sequence, replayed and
+    free of mismatches: a round missing or suspect is a round whose marks
+    are not known.
+
+    Args:
+        record: The record being verified.
+        scored: The replay's ``RoundScore`` per round it played out, by the
+            record's round number; ``None`` for a round passed out.
+        verdicts: The round verdicts, in file order.
+
+    Returns:
+        The rebuilt totals, or ``None`` when the record states its own or
+        they cannot be rebuilt safely.
+    """
+
+    ended = record.ended
+    if ended is None or ended.totals is not None:
+        return None
+    rounds = record.rounds
+    anchor = next(
+        (
+            index for index in reversed(range(len(rounds)))
+            if rounds[index].score is not None
+            and rounds[index].score.totals is not None
+        ),
+        None,
+    )
+    if anchor is None or not _no_pot_pending(record, anchor):
+        return None
+    after = rounds[anchor + 1:]
+    first = rounds[anchor].number + 1
+    if not after or [r.number for r in after] != list(
+        range(first, first + len(after))
+    ):
+        return None
+    by_number = {verdict.number: verdict for verdict in verdicts}
+    totals = dict(rounds[anchor].score.totals)
+    for round_ in after:
+        verdict = by_number.get(round_.number)
+        if verdict is None or not verdict.replayed or verdict.mismatches:
+            return None
+        if round_.contract is None:
+            # Passed out: nothing marked, nothing paid.
+            continue
+        score = scored.get(round_.number)
+        if score is None or score.is_held or any(score.carried_over.values()):
+            return None
+        for side in TeamSide:
+            totals[side] += score.scores[side]
+    return totals
+
+
+def _no_pot_pending(record: GameRecord, anchor: int) -> bool:
+    """Whether no dispute pot can be open after the round at ``anchor``.
+
+    A pot is opened by a held round and paid by the next contract, made
+    or failed. So walking back from ``anchor`` past passed-out rounds, the
+    first contracted round settles it; reaching the game's first deal
+    with nothing in between settles it too. A gap in the round numbers
+    could hide a held round, and leaves it unsettled.
+
+    Args:
+        record: The record being verified.
+        anchor: Index of the last round whose totals are stated.
+
+    Returns:
+        Whether the totals at ``anchor`` carry no pending pot.
+    """
+
+    rounds = record.rounds
+    for index in range(anchor, -1, -1):
+        round_ = rounds[index]
+        if index < anchor and round_.number != rounds[index + 1].number - 1:
+            return False
+        if round_.contract is None:
+            continue
+        outcome = round_.score.outcome if round_.score is not None else None
+        return outcome in (RoundOutcome.MADE, RoundOutcome.FAILED)
+    return record.observed_from is None and rounds[0].number == 1
 
 
 def _ruleset_notes(record: GameRecord) -> list[str]:
