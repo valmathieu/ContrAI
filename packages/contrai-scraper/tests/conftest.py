@@ -612,8 +612,8 @@ def round_events(number, dealer, declarer, value, suit, made, totals, *,
     ``auction`` replaces the default auction — the declarer's bid and three
     passes — with bids of its own; ``multiplier`` is the contract's, 2 when
     doubled and 4 when redoubled. ``carried_over`` is what the parser can
-    infer for the round: ``None`` when no running total before it was read
-    (a first round), else the per-side carry. The marks go to the declaring
+    infer for the round: ``None`` when the totals around its row leave it
+    unknown, else the per-side carry. The marks go to the declaring
     side when the contract is made and to the defense when it fails, so a
     made row never marks its declarer 0 / 0 — the shape of a held dispute.
     """
@@ -789,10 +789,12 @@ def source_game():
     # Each round is dealt by the seat before its declarer, so the declarer
     # speaks first and the auction is its bid and three passes.
     return game_events(
+        # Every game starts at 0 / 0, and the totals after each round are
+        # read, so both carries are inferable: the totals moved by exactly
+        # West's 90 + 80, then South's 90 + 110, so nothing was carried.
         round_events(1, Position.SOUTH, Position.WEST, 80, Suit.SPADES, True,
-                     {TeamSide.NS: 0, TeamSide.EW: 170}),
-        # Round 1's totals are read, so round 2's carry is inferable: the
-        # totals moved by exactly South's 90 + 110, so nothing was carried.
+                     {TeamSide.NS: 0, TeamSide.EW: 170},
+                     carried_over={TeamSide.NS: 0, TeamSide.EW: 0}),
         round_events(2, Position.EAST, Position.SOUTH, 110, Suit.HEARTS, True,
                      {TeamSide.NS: 200, TeamSide.EW: 170},
                      carried_over={TeamSide.NS: 0, TeamSide.EW: 0}),
@@ -1040,6 +1042,7 @@ def game_builders():
         game_events=game_events,
         card_glyph=card_glyph,
         stock_for=stock_for,
+        wire_row=_wire_row,
         rotation=ROTATION,
         handle_of_seat=HANDLE_OF_SEAT,
         seat_of_handle=SEAT_OF_HANDLE,

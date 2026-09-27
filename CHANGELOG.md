@@ -60,6 +60,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) A fleet worker whose lobby sends nothing for 60 s logs `hall_deaf` and rebuilds its session, the first time without spending budget. See [scraper docs](docs/scraper/index.md).
 - (scraper) A panel click no longer fails when the rail toggle hides between the look and the click. See [scraper docs](docs/scraper/index.md).
 - (scraper) A game seated too late to see a round writes no record; `record_skipped` logs it instead. See [scraper docs](docs/scraper/index.md).
+- (scraper) A round's carry is read between the running totals around its row, so the first round of a game seen whole is no longer `null`. See [scraper docs](docs/scraper/index.md).
 
 ## [0.5.0] - 2026-09-17
 

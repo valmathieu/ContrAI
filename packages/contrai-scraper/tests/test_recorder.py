@@ -7,7 +7,7 @@ import json
 
 import pytest
 from contrai_core import Position, Suit, TeamSide
-from contrai_data import EndReason, load_game
+from contrai_data import EndReason, RoundScored, load_game
 
 from contrai_scraper import (
     BrowserError,
@@ -180,6 +180,24 @@ def snapshot_frame(builders, *, frame_id="s0", tournament=True, account="100",
         block["acct"] = f"{account}{index}"
     return frame(
         builders.envelope("payload", "joinTable", payload, frame_id=frame_id)
+    )
+
+
+def closing_frame(builders, game_builders, game, *, frame_id="sz"):
+    """The snapshot answering a closing request for ``game``.
+
+    It repeats the game's own rows and final totals: a read whose rows
+    disagree with an earlier read of the same sheet contradicts it, and the
+    parser then places no row at all.
+    """
+
+    scored = [event for event in game
+              if isinstance(event, RoundScored) and event.contract is not None]
+    last = scored[-1]
+    return snapshot_frame(
+        builders, frame_id=frame_id, round_index=last.round,
+        rows=[game_builders.wire_row(event) for event in scored],
+        totals=(last.totals[TeamSide.NS], last.totals[TeamSide.EW]),
     )
 
 
@@ -603,8 +621,7 @@ class TestSeating:
             game_builders.round_events(1, *_ROUND_ONE),
             reason=EndReason.TARGET_REACHED,
         )
-        closing = snapshot_frame(builders, frame_id="sz", round_index=1,
-                                 rows=[builders.score_row()])
+        closing = closing_frame(builders, game_builders, ended)
         lines: list[str] = []
         script = [
             *session_frames(ended),
@@ -1000,8 +1017,7 @@ class TestClosingRequest:
     ):
         lines: list[str] = []
         health = HealthLog(write=lines.append)
-        closing = snapshot_frame(builders, frame_id="sz", round_index=1,
-                                 rows=[builders.score_row()])
+        closing = closing_frame(builders, game_builders, self._ended(game_builders))
         run_recorder(FakeSpectator(),
                      [*session_frames(self._ended(game_builders)), closing],
                      profile, health=health)
@@ -1054,8 +1070,7 @@ class TestClosingRequest:
             reason=EndReason.TARGET_REACHED,
         )
         lines: list[str] = []
-        closing = snapshot_frame(builders, frame_id="sz", round_index=2,
-                                 rows=[builders.score_row()] * 2)
+        closing = closing_frame(builders, game_builders, game)
         script = [item for item in session_frames(game)
                   if '"id": "s2"' not in item.text]
         run_recorder(FakeSpectator(), [*script, closing], profile,
@@ -1126,8 +1141,7 @@ class TestShiftTerms:
             game_builders.round_events(1, *_ROUND_ONE),
             reason=EndReason.TARGET_REACHED,
         )
-        closing = snapshot_frame(builders, frame_id="sz", round_index=1,
-                                 rows=[builders.score_row()])
+        closing = closing_frame(builders, game_builders, ended)
         summary = run_recorder(spectator, [*session_frames(ended), closing], profile,
                                limits=RecorderLimits(max_games=1))
         assert (("next_table",) in spectator.calls, summary.stop_reason) == (
@@ -1228,8 +1242,7 @@ class TestEnding:
         # The table answers the closing request, so the session is still live
         # when it asks for the next table. A source that simply ran dry would
         # mean the browser is gone, and a hop is not asked of a dead session.
-        closing = snapshot_frame(builders, frame_id="sz", round_index=1,
-                                 rows=[builders.score_row()])
+        closing = closing_frame(builders, game_builders, ended)
         run_recorder(spectator, [*session_frames(ended), closing], profile)
         record = records_in(profile)[0]
         assert (record.ended.reason, ("next_table",) in spectator.calls) == (
@@ -1247,8 +1260,7 @@ class TestEnding:
             game_builders.round_events(1, *_ROUND_ONE),
             reason=EndReason.TARGET_REACHED,
         )
-        closing = snapshot_frame(builders, frame_id="sz", round_index=1,
-                                 rows=[builders.score_row()])
+        closing = closing_frame(builders, game_builders, ended)
         # A straggler between the request and its answer: the drain keeps
         # buffering rather than stopping at the first thing it sees.
         straggler = frame(builders.play_frame(round_=2, trick=1, index=0,

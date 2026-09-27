@@ -120,6 +120,7 @@ from contrai_scraper.parse.session import (
     parse_session,
     split_visits,
 )
+from contrai_scraper.parse.sheet import ScoreSheet, SheetLine, read_sheet
 from contrai_scraper.parse.snapshot import (
     PlayerInfo,
     RowContract,
@@ -227,6 +228,7 @@ __all__ = [
     "RulesSection",
     "Schedule",
     "ScoreRow",
+    "ScoreSheet",
     "ScoreboardReading",
     "ScraperError",
     "Selector",
@@ -235,6 +237,7 @@ __all__ = [
     "SessionResult",
     "SessionSummary",
     "SharedEgressGate",
+    "SheetLine",
     "Shift",
     "ShiftError",
     "ShiftSummary",
@@ -280,6 +283,7 @@ __all__ = [
     "raw_dir",
     "raw_path",
     "read_raw_log",
+    "read_sheet",
     "read_snapshot",
     "resolve_dealer",
     "restore_forced_passes",
