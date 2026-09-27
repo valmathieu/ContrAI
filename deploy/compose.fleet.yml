@@ -1,0 +1,24 @@
+# The same scraper image, running a fleet instead of a single session. Layered
+# over compose.yml, from the repository root:
+#   sudo docker compose -f deploy/compose.yml -f deploy/compose.fleet.yml up -d --build
+# Everything not set here — the VPN's network namespace, the env file, the
+# profile and records mounts, the journald tag — comes from compose.yml.
+services:
+  scraper:
+    # How many workers is the profile's [fleet].workers, so resizing the fleet
+    # is a config edit on the host, not a change to this file.
+    command:
+      - fleet
+      - --profile
+      - /etc/contrai/profile.toml
+      - --accounts
+      - /etc/contrai/accounts.toml
+      - --headless
+    # One Chromium, one context per worker: seven contexts outgrow the single
+    # session's 1 GB of /dev/shm.
+    shm_size: "2gb"
+    # A stopped fleet writes every game in hand, then logs each worker out in
+    # turn; the last one went out 48 s after the stop in a 7-worker run.
+    stop_grace_period: 90s
+    volumes:
+      - /etc/contrai/accounts.toml:/etc/contrai/accounts.toml:ro

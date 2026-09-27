@@ -12,6 +12,7 @@ Two containers, both described by `deploy/compose.yml`:
   only through it.
 - **`scraper`** — `contrai-scrape run`, headless, as an unprivileged user, with **no network of
   its own**: `network_mode: "service:vpn"` puts it inside the vpn container's network namespace.
+  `deploy/compose.fleet.yml` switches the same container to `contrai-scrape fleet` (§5).
 
 **The guarantee:** the scraper has no route but the tunnel. If the tunnel is down, it has no
 network at all — it fails closed, it never falls back to the home connection.
@@ -33,7 +34,7 @@ Nothing else on the host is rerouted: every other service keeps its own routes.
   `[egress].expected_country`, and whose `Endpoint` is an **IP address** rather than a host name —
   gluetun raises its firewall before any name can be resolved. Keep the provider's fixed endpoint
   rather than a provider integration that picks its own server: a server that reconnects elsewhere
-  invalidates the outage test in §6 and moves the address the gate expects.
+  invalidates the outage test in §7 and moves the address the gate expects.
 - The repository tree on the host. Nothing is pushed from a development session, so either clone
   after pushing, or bundle it on the laptop and clone the bundle on the host:
 
@@ -103,7 +104,75 @@ the site.
 If gluetun logs an IPv6 address error, remove the IPv6 entries from the `.conf`'s `Address` and
 `AllowedIPs` lines.
 
-## 5. Watching it
+## 5. Running a fleet
+
+`run` is one account hopping from table to table, so it joins almost every game mid-way. A fleet
+runs several accounts on one browser: they wait in the tournament lobby, chase each game to its
+table as it starts, and record the games already running when the service starts. It is the same
+image, switched by a Compose override, `deploy/compose.fleet.yml`, which changes the command, the
+`/dev/shm` size and the stop grace period, and mounts one more file. The confinement is unchanged:
+the override keeps the VPN's network namespace.
+
+**One account, one login.** A second login on an account ends the first one's session (the site
+shows "Session invalide"). No account may be logged in anywhere else while the fleet runs: stop the
+laptop's scraper, and keep `contrai.env`'s account out of `accounts.toml`. Walk every new account
+through the site's two first-login dialogs by hand, behind the tunnel, before adding it — until an
+avatar and a pseudonym are chosen, a dialog covers the menus and that worker goes down.
+
+**The accounts file.** `accounts.toml` lists one labelled account per worker; the layout is
+`packages/contrai-scraper/accounts.example.toml`, and a value may read `env:NAME` from `contrai.env`
+instead of holding it. Install it **before** the first `up`: Docker creates a missing bind-mount
+source as an empty directory, and the fleet then refuses to start.
+
+```bash
+sudo install -m 400 -o 10001 accounts.toml /etc/contrai/accounts.toml
+```
+
+**The profile.** The fleet reads three things `run` never needs, all described in
+`profile.example.toml`: the lobby keys under `[selectors]` (with `table_exit`), the lobby event and
+paths under `[wire.events]` and `[wire.fields]`, and a `[fleet]` section. Copy them from the laptop's
+working profile, keeping §3's box values, then set:
+
+```toml
+[fleet]
+workers = 7                 # how many accounts to use, from the top of accounts.toml; at most 10
+scan_distinct_budget = 20   # the chase budget measured at a ~14-table peak
+scan_deadline_s = 60
+```
+
+`workers` is read from the profile, not from the command, so resizing the fleet is a profile edit
+and a restart. Reinstall the profile as in §3 and check the **installed** copy, not the staging one.
+
+**Memory.** About 0.43 GB per live browser context plus 0.2 GB for the browser. Seven workers
+peaked at 3.4–3.6 GB on a laptop, with every worker at a table or in the lobby; leave at least 1 GB
+over that for the host and the VPN (`free -h`).
+
+**Commands.** Every command of §4 takes both files:
+
+```bash
+FLEET="-f deploy/compose.yml -f deploy/compose.fleet.yml"
+sudo docker compose $FLEET config -q
+sudo docker compose $FLEET build scraper
+sudo docker compose $FLEET run --rm scraper check-profile /etc/contrai/profile.toml
+sudo docker compose $FLEET up -d scraper
+```
+
+`check-profile` walks the lobby too, and every line must read `ok`. Back to a single session is
+`sudo docker compose -f deploy/compose.yml up -d scraper`.
+
+**Watching a fleet.** Each worker's lines carry `worker` (its label, never the address), and a
+`fleet_heartbeat` adds them up, with how many workers hold each role — `hall` (in the lobby),
+`spare`, `chase`, `boot` (a startup recording) and `out`:
+
+```bash
+journalctl -t contrai-scraper -o cat | jq -c 'select(.event=="fleet_heartbeat")' | tail -1
+journalctl -t contrai-scraper -o cat | jq -c 'select(.event|test("^chase_"))'
+```
+
+A worker whose sessions keep failing goes down (`worker_down`) and the others carry on; the process
+exits 3 only once a majority of workers are down.
+
+## 6. Watching it
 
 The scraper writes one JSON object per line to the journal. Everything but the heartbeats:
 
@@ -139,7 +208,7 @@ Exit codes, as the restart count shows them (`sudo docker compose -f deploy/comp
 A restart count that keeps climbing means a budget keeps being spent: read the `egress_blocked`
 and `session_failed` lines.
 
-## 6. Proving the confinement
+## 7. Proving the confinement
 
 **The exit address.** From inside the scraper's network namespace, an echo service must show the
 VPN exit, never the home address:
@@ -152,7 +221,7 @@ print(u.urlopen(url, timeout=10).read().decode())"
 ```
 
 It asks the same service the gate asks, taken from the profile, so this check and the gate can
-never disagree about which echo service is in use — see §10 on choosing one.
+never disagree about which echo service is in use — see §11 on choosing one.
 
 **The gate refuses home.** Run the check once with the home address set to the exit address just
 printed (`-e` overrides the env file for this one run; Compose's `--env-file` flag would only feed
@@ -186,12 +255,12 @@ sudo iptables -D DOCKER-USER -d "$VPN_ENDPOINT" -j DROP
 gluetun reconnects on its own, and the next poll logs `egress_ok` and a new session. Held past six
 polls, the process exits 3 and Docker restarts it; the restart count shows it.
 
-## 7. Raw logs
+## 8. Raw logs
 
 Raw logs are pruned automatically at every session start, once their last write is older than
 `[output].raw_retention_days`. Records are never pruned.
 
-## 8. Upgrading
+## 9. Upgrading
 
 Update the tree first, and note that the host may have nothing to pull *from*: §2's clone can come
 from a bundle, and a host administered through a console rather than SSH has no usable remote at
@@ -218,7 +287,8 @@ sudo docker compose -f deploy/compose.yml build scraper
 sudo docker compose -f deploy/compose.yml up -d scraper
 ```
 
-The image carries the code, so updating the tree changes nothing until `build` has run. Re-run
+A fleet takes both files here as everywhere (§5). The image carries the code, so updating the tree
+changes nothing until `build` has run. Re-run
 `check-profile` (§4) whenever the update touches `profile.example.toml`: `[wire.fields]` must bind
 the parser's field names **exactly**, so a profile written against an older revision is refused
 outright rather than half-applied.
@@ -226,7 +296,7 @@ outright rather than half-applied.
 A gluetun bump is `sudo docker compose -f deploy/compose.yml pull vpn` then `up -d`; Compose
 restarts the scraper with it (`depends_on.restart`).
 
-## 9. If headless is ever refused
+## 10. If headless is ever refused
 
 The no-code fallback is a headed browser on a virtual display. Add `xvfb` to the Dockerfile's
 `apt-get install` line if `which xvfb-run` finds nothing in the image, set
@@ -236,7 +306,7 @@ The no-code fallback is a headed browser on a virtual display. Add `xvfb` to the
 xvfb-run -a /opt/contrai/venv/bin/contrai-scrape run --profile /etc/contrai/profile.toml
 ```
 
-## 10. Known limits
+## 11. Known limits
 
 - The home address is compared as configured. A dynamic residential address that changes silently
   weakens that one check; the country and route checks remain, and the confinement itself depends
@@ -250,7 +320,7 @@ xvfb-run -a /opt/contrai/venv/bin/contrai-scrape run --profile /etc/contrai/prof
   not meter per address; `[egress].probe_url` with `probe_ip_field` and `probe_country_field` makes
   the change a config edit, not a code change.
 
-## 11. Validation (2026-09-20)
+## 12. Validation (2026-09-20)
 
 Measured end to end on the target host — Debian 13, Docker Engine 29.8.0, Compose v5, reached
 through a web console rather than SSH — with the scraper sharing a WireGuard sidecar's network
