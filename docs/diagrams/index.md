@@ -170,4 +170,4 @@ Each row links to the canonical `.puml` source, the rendered `.png` preview, and
 | `state_scraper_worker.mmd` | State | A fleet worker's life | [source](state_scraper_worker.mmd) | [png](state_scraper_worker.png) | [Scraper — fleets](../scraper/#fleets) |
 | `seq_scraper_chase.puml` | Sequence | One chase, lobby to record | [source](seq_scraper_chase.puml) | [png](seq_scraper_chase.png) | [Scraper — fleets](../scraper/#fleets) |
 | `deploy_scraper.mmd` | Deployment | Scraper on the homelab host | [source](deploy_scraper.mmd) | [png](deploy_scraper.png) | [Scraper — deployment](../scraper/#deployment) |
-| `flow_corpus.mmd` | Flowchart | Building a corpus from raw logs | [source](flow_corpus.mmd) | [png](flow_corpus.png) | [Scraper — the corpus](../scraper/#the-corpus) |
+| `flow_corpus.mmd` | Flowchart | Building and saving a corpus | [source](flow_corpus.mmd) | [png](flow_corpus.png) | [Scraper — the corpus](../scraper/#the-corpus) |

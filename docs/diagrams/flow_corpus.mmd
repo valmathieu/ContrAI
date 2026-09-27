@@ -1,5 +1,5 @@
 ---
-title: contrai-scraper + contrai-data — building a corpus (contrai-scrape corpus build)
+title: contrai-scraper + contrai-data — building and saving a corpus (contrai-scrape corpus)
 ---
 flowchart TD
     %% ---------- Where the raw logs come from ----------
@@ -28,6 +28,13 @@ flowchart TD
     Games --> Catalog
     Catalog --> Sqlite[("catalog.sqlite<br/>validated = clean_rounds")]
 
+    %% ---------- Saving what cannot be rebuilt ----------
+    Raw --> Backup["backup_corpus<br/>raw/ + games/ + build.json<br/>+ MANIFEST.json (sha256, size)"]
+    Games --> Backup
+    Report --> Backup
+    Backup --> Zip[("contrai-corpus-STAMP.zip<br/>laptop · external drive · off-site")]
+    Zip --> Check(["corpus check<br/>missing · altered · unreadable · unlisted"])
+
     %% ---------- palette ----------
     classDef entry fill:#9B7FCC,stroke:#5E4495,stroke-width:2px,color:#FFFFFF;
     classDef scraper fill:#EDE7F6,stroke:#5E4495,stroke-width:1px,color:#2E1F52;
@@ -38,6 +45,7 @@ flowchart TD
 
     class Box,Laptop,Profile config;
     class Parse scraper;
-    class Import,Copies,Choose,Write data;
-    class Raw,Games,Report,Verdicts,Sqlite store;
+    class Import,Copies,Choose,Write,Backup data;
+    class Raw,Games,Report,Verdicts,Sqlite,Zip store;
+    class Check entry;
     class Verify,Catalog engine;

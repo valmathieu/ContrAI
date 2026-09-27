@@ -39,7 +39,7 @@ the same reason.
 | `contrai_scraper.fleet` | `Fleet` / `Worker` — the same gates for N workers on one browser, waiting in the lobby and chasing each game; budgets per worker. |
 | `contrai_scraper.rota` | `Rota` — a fleet's roles: who waits in the lobby, who stands by logged in as the spare, and who is logged out. |
 | `contrai_scraper.health` | `HealthLog` and `Counters` — one JSON line per transition, on stderr. |
-| `contrai_scraper.cli` | `contrai-scrape`: `run` (the default), `fleet`, `check-profile`, `parse` and `corpus build`. |
+| `contrai_scraper.cli` | `contrai-scrape`: `run` (the default), `fleet`, `check-profile`, `parse` and `corpus build` / `backup` / `check`. |
 
 ```bash
 uv run contrai-scrape run --profile profile.toml --headless    # watch tables
@@ -47,6 +47,7 @@ uv run contrai-scrape fleet --profile profile.toml --accounts accounts.toml --wo
 uv run contrai-scrape check-profile profile.toml               # validate before a shift
 uv run contrai-scrape parse RAW... --profile profile.toml      # re-parse stored logs
 uv run contrai-scrape corpus build --profile profile.toml --corpus ROOT --source box=DIR
+uv run contrai-scrape corpus backup ROOT --to DIR                # save it; corpus check ARCHIVE
 ```
 
 `run` takes `--max-games N` and `--minutes N`, and `--headless` / `--headed` override
@@ -829,6 +830,19 @@ carry session tokens and player names.
 
 The records the live recorder wrote on the box are not imported: only what the raw logs rebuild is
 in the corpus, which is what keeps it reproducible.
+
+To save it, back it up and check the archive:
+
+```powershell
+uv run contrai-scrape corpus backup ..\ContrAI-captures\corpus --to E:\contrai-backups
+uv run contrai-scrape corpus check E:\contrai-backups\contrai-corpus-20260928T120000Z.zip
+```
+
+The zip holds `raw/`, `games/` and `build.json` with a manifest of every file's SHA-256 and size;
+`check` re-hashes it and exits 1 on any missing, altered, unreadable or unlisted file (see the
+[data docs](../data/index.md#backups)). A restore is an unzip, then `contrai verify` and
+`contrai catalog`. Keep three copies — the laptop, an external drive, and an encrypted off-site
+one — and never an unencrypted cloud copy: the raw logs carry session tokens and player names.
 
 ![Building a corpus, from raw logs to the catalog](../diagrams/flow_corpus.png)
 

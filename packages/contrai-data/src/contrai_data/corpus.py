@@ -26,18 +26,28 @@ are imported, never edited and never pruned; everything else is rebuilt
 from them, which is what lets a parser fix reach every game already
 watched. :func:`import_raw` is the one door into ``raw/``, and
 :func:`write_games` swaps a whole new ``games/`` in at once.
+
+**A backup is one zip with a manifest.** :func:`backup_corpus` packs the
+raw logs, the games and the build report beside a ``MANIFEST.json`` of
+per-file SHA-256 and size, and :func:`check_archive` re-hashes an archive
+against it, so a copy on another drive can be proven whole on its own.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import os
 import re
 import shutil
 import tempfile
+import zipfile
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import Enum
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Final
 
@@ -61,8 +71,14 @@ _RAW_GLOB: Final[str] = "*.jsonl"
 #: on every OS and never climb out of ``raw/``.
 _LABEL: Final[re.Pattern[str]] = re.compile(r"[a-z0-9][a-z0-9_-]*")
 
-#: How much of a file is compared at a time.
+#: How much of a file is compared or hashed at a time.
 _CHUNK: Final[int] = 1 << 20
+
+#: The manifest's name inside a backup archive.
+MANIFEST_FILE: Final[str] = "MANIFEST.json"
+
+#: The manifest's format, checked before anything else is read.
+MANIFEST_FORMAT: Final[str] = "contrai-corpus-backup/1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -521,3 +537,213 @@ def write_games(root: Path | str, copies: Iterable[RecordCopy]) -> int:
     if retired is not None:
         shutil.rmtree(retired)
     return len(written)
+
+
+# ----------------------------------------------------------------------
+# Backups: the raw logs and the games, with a manifest to check them by
+# ----------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class BackupSummary:
+    """What :func:`backup_corpus` wrote.
+
+    Attributes:
+        path: The archive.
+        files: How many corpus files it holds, the manifest not counted.
+        size: Their total size in bytes, before compression.
+        raw_logs: How many of them are raw logs.
+        games: How many of them are game records.
+    """
+
+    path: Path
+    files: int
+    size: int
+    raw_logs: int
+    games: int
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveCheck:
+    """What :func:`check_archive` found.
+
+    Attributes:
+        files: How many files the manifest lists.
+        problems: One line per file that is missing, altered, unreadable
+            or not listed. Empty when the archive is whole.
+    """
+
+    files: int
+    problems: tuple[str, ...]
+
+    @property
+    def ok(self) -> bool:
+        """Whether every listed file is present and unaltered, and no other is."""
+
+        return not self.problems
+
+
+def _sha256(path: Path) -> str:
+    """A file's SHA-256, read in chunks so a large log never sits in memory."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(_CHUNK):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _generator() -> str:
+    """This build's name and version, stamped into a backup's manifest."""
+
+    try:
+        return f"contrai-data {version('contrai-data')}"
+    except PackageNotFoundError:  # pragma: no cover - installed in the workspace
+        return "contrai-data"
+
+
+def _backed_up(root: Path) -> list[str]:
+    """The corpus files a backup holds, as sorted POSIX paths under ``root``.
+
+    The raw logs because nothing else can rebuild them, the games because
+    rebuilding them needs this exact parser, and the build report because
+    it says how they were chosen. Verdicts and the catalog are left out:
+    ``contrai verify`` and ``contrai catalog`` rebuild them from the games.
+    """
+
+    files = [
+        path
+        for directory in (root / RAW_DIR, games_dir(root))
+        if directory.is_dir()
+        for path in directory.rglob("*")
+        if path.is_file()
+    ]
+    if (root / BUILD_FILE).is_file():
+        files.append(root / BUILD_FILE)
+    return sorted(path.relative_to(root).as_posix() for path in files)
+
+
+def backup_corpus(
+    root: Path | str, destination: Path | str, *, now: datetime | None = None
+) -> BackupSummary:
+    """Write one zip holding a corpus's raw logs, games and build report.
+
+    The archive carries a ``MANIFEST.json`` naming every file with its
+    SHA-256 and size, so :func:`check_archive` can prove a copy on another
+    drive is still whole without the corpus it came from. It is written
+    under a temporary name and renamed once complete, so an interrupted
+    backup never leaves a file that looks like a finished one.
+
+    Args:
+        root: The corpus root.
+        destination: The directory the archive goes in. Created if missing.
+        now: The instant to stamp; defaults to now, in UTC.
+
+    Returns:
+        What was written.
+
+    Raises:
+        CorpusError: If the corpus holds nothing to back up, or an archive
+            with this stamp already exists.
+    """
+
+    root, destination = Path(root), Path(destination)
+    moment = now or datetime.now(UTC)
+    names = _backed_up(root)
+    if not names:
+        raise CorpusError(f"{root} holds no raw log, game or build report to back up")
+    destination.mkdir(parents=True, exist_ok=True)
+    archive = destination / f"contrai-corpus-{moment.strftime('%Y%m%dT%H%M%SZ')}.zip"
+    if archive.exists():
+        raise CorpusError(f"{archive} already exists")
+    listed = {
+        name: {"sha256": _sha256(root / name), "size": (root / name).stat().st_size}
+        for name in names
+    }
+    raw_prefix, games_prefix = f"{RAW_DIR}/", f"{games_dir(root).name}/"
+    counts = {
+        "raw_logs": sum(1 for name in names if name.startswith(raw_prefix)),
+        "games": sum(1 for name in names if name.startswith(games_prefix)),
+    }
+    manifest = {
+        "format": MANIFEST_FORMAT,
+        "created_at": moment.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generator": _generator(),
+        "counts": counts,
+        "files": listed,
+    }
+    temporary = archive.with_name(f"{archive.name}.tmp")
+    try:
+        with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as zipped:
+            for name in names:
+                zipped.write(root / name, arcname=name)
+            zipped.writestr(MANIFEST_FILE, json.dumps(manifest, indent=2) + "\n")
+        os.replace(temporary, archive)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    return BackupSummary(
+        path=archive,
+        files=len(names),
+        size=sum(entry["size"] for entry in listed.values()),
+        raw_logs=counts["raw_logs"],
+        games=counts["games"],
+    )
+
+
+def _member_sha256(zipped: zipfile.ZipFile, name: str) -> str:
+    """A member's SHA-256, streamed out of the archive."""
+
+    digest = hashlib.sha256()
+    with zipped.open(name) as handle:
+        while chunk := handle.read(_CHUNK):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def check_archive(path: Path | str) -> ArchiveCheck:
+    """Re-hash every file of a backup against its manifest.
+
+    Args:
+        path: An archive :func:`backup_corpus` wrote.
+
+    Returns:
+        How many files the manifest lists, and every problem found — all
+        of them, not only the first.
+
+    Raises:
+        CorpusError: If the file is not a zip, or holds no manifest this
+            build can read.
+    """
+
+    path = Path(path)
+    try:
+        zipped = zipfile.ZipFile(path)
+    except zipfile.BadZipFile as error:
+        raise CorpusError(f"{path} is not a zip archive") from error
+    with zipped:
+        try:
+            manifest = json.loads(zipped.read(MANIFEST_FILE))
+        except KeyError:
+            raise CorpusError(f"{path} holds no {MANIFEST_FILE}") from None
+        if manifest.get("format") != MANIFEST_FORMAT:
+            raise CorpusError(
+                f"{path}'s manifest is {manifest.get('format')!r}, not {MANIFEST_FORMAT}"
+            )
+        listed: dict[str, dict[str, Any]] = manifest["files"]
+        present = set(zipped.namelist()) - {MANIFEST_FILE}
+        problems: list[str] = []
+        for name, expected in sorted(listed.items()):
+            if name not in present:
+                problems.append(f"missing: {name}")
+                continue
+            try:
+                digest = _member_sha256(zipped, name)
+            except zipfile.BadZipFile as error:
+                # The zip's own CRC failed before the hash could be taken.
+                problems.append(f"unreadable: {name} ({error})")
+                continue
+            if digest != expected["sha256"] or zipped.getinfo(name).file_size != expected["size"]:
+                problems.append(f"altered: {name}")
+        problems += [f"unlisted: {name}" for name in sorted(present - listed.keys())]
+    return ArchiveCheck(files=len(listed), problems=tuple(problems))

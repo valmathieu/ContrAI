@@ -110,6 +110,12 @@ from .corpus import (
     import_raw,
     raw_logs,
     write_games,
+    MANIFEST_FILE,
+    MANIFEST_FORMAT,
+    BackupSummary,
+    ArchiveCheck,
+    backup_corpus,
+    check_archive,
 )
 
 __all__: list[str] = [
@@ -202,4 +208,10 @@ __all__: list[str] = [
     "import_raw",
     "raw_logs",
     "write_games",
+    "MANIFEST_FILE",
+    "MANIFEST_FORMAT",
+    "BackupSummary",
+    "ArchiveCheck",
+    "backup_corpus",
+    "check_archive",
 ]

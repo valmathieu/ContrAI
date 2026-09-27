@@ -1,13 +1,16 @@
-"""Pins ``contrai-scrape corpus build``: raw logs in, one record per game out."""
+"""Pins ``contrai-scrape corpus``: ``build`` (raw logs in, one record per game
+out), then ``backup`` and ``check``."""
 
 import json
 import shutil
+import zipfile
 from pathlib import Path
 
 import pytest
 from contrai_data import (
     RecordCopy,
     RecordFormatError,
+    build_catalog,
     catalog_path,
     game_path,
     load_game,
@@ -235,3 +238,60 @@ class TestOffline:
             .replace('home_ip = "198.51.100.1"', 'home_ip = "env:CONTRAI_HOME_IP"'),
             encoding="utf-8")
         assert _build(root, indirected, f"box={raw_log_path}") == 0
+
+
+class TestBackupCommands:
+    @pytest.fixture
+    def built(self, root, profile_path, raw_log_path) -> Path:
+        _build(root, profile_path, f"box={raw_log_path.parent}")
+        return root
+
+    def _archive(self, out: Path) -> Path:
+        (archive,) = out.glob("contrai-corpus-*.zip")
+        return archive
+
+    def test_a_backup_is_written_and_named(self, built, tmp_path, capsys):
+        assert main(["corpus", "backup", str(built), "--to", str(tmp_path / "out")]) == 0
+        archive = self._archive(tmp_path / "out")
+        printed = capsys.readouterr().out
+        assert f"{archive}: 3 files (1 raw logs, 1 games)" in printed
+        assert "corpus check" in printed
+
+    def test_a_fresh_backup_checks_clean(self, built, tmp_path, capsys):
+        main(["corpus", "backup", str(built), "--to", str(tmp_path / "out")])
+        capsys.readouterr()
+        assert main(["corpus", "check", str(self._archive(tmp_path / "out"))]) == 0
+        assert "ok: 3 files match the manifest" in capsys.readouterr().out
+
+    def test_a_damaged_backup_fails_its_check(self, built, tmp_path, capsys):
+        main(["corpus", "backup", str(built), "--to", str(tmp_path / "out")])
+        archive = self._archive(tmp_path / "out")
+        with zipfile.ZipFile(archive, "a") as zipped:
+            zipped.writestr("games/obs-smuggled.jsonl", "not in the manifest\n")
+        capsys.readouterr()
+        assert main(["corpus", "check", str(archive)]) == 1
+        printed = capsys.readouterr().out
+        assert "unlisted: games/obs-smuggled.jsonl" in printed and "FAIL" in printed
+
+    def test_a_restore_rebuilds_the_same_catalog(self, built, tmp_path):
+        # A restore is an unzip, then verify and catalog: the games that come
+        # back index exactly as the ones that went in.
+        main(["corpus", "backup", str(built), "--to", str(tmp_path / "out")])
+        restored = tmp_path / "restored"
+        with zipfile.ZipFile(self._archive(tmp_path / "out")) as zipped:
+            zipped.extractall(restored)
+        assert build_catalog(restored).game_count == build_catalog(built).game_count == 1
+        assert game_path(restored, "obs-g1").read_bytes() == (
+            game_path(built, "obs-g1").read_bytes())
+
+    def test_an_empty_corpus_refuses_a_backup(self, tmp_path, capsys):
+        (tmp_path / "empty").mkdir()
+        assert main(["corpus", "backup", str(tmp_path / "empty"),
+                     "--to", str(tmp_path / "out")]) == 1
+        assert "corpus backup refused" in capsys.readouterr().err
+
+    def test_a_file_that_is_not_a_backup_fails_its_check(self, tmp_path, capsys):
+        path = tmp_path / "not.zip"
+        path.write_text("plain text")
+        assert main(["corpus", "check", str(path)]) == 1
+        assert "corpus check failed" in capsys.readouterr().err

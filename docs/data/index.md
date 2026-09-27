@@ -16,7 +16,7 @@ Source lives at `packages/contrai-data/src/contrai_data/`:
 | `store.py`      | Records on disk: `RecordWriter`, `read_events` / `ReadResult`, `records_root` / `games_dir` / `game_path`, `new_game_id` |
 | `projection.py` | `GameRecord` / `RoundRecord`, and the `project` / `load_game` fold that re-derives the contract, the tricks and their winners |
 | `catalog.py`    | `build_catalog` / `CatalogSummary` / `SkippedFile` — the SQLite index over a records root — and `player_games` / `PlayerReport` / `PlayerGame` to read one player back |
-| `corpus.py`     | A corpus of scraped games: `RecordCopy` / `choose_copy` / `CopyChoice` / `Rejection`, which keep one record per game among several copies; `import_raw` / `RawImport` / `ImportStatus` and `raw_logs` for its raw logs; `write_games`, which swaps a new `games/` in whole |
+| `corpus.py`     | A corpus of scraped games: `RecordCopy` / `choose_copy` / `CopyChoice` / `Rejection`, which keep one record per game among several copies; `import_raw` / `RawImport` / `ImportStatus` and `raw_logs` for its raw logs; `write_games`, which swaps a new `games/` in whole; `backup_corpus` / `BackupSummary` and `check_archive` / `ArchiveCheck` for backups |
 | `verdict.py`    | What `contrai verify` concluded: `Verdict` (`verified` / `partial` / `suspect`), the five `MismatchKind` classes, `Mismatch` / `RoundVerdict` / `GameVerdict`, `verdicts_dir` / `verdict_path` / `write_verdict`, and the strict `read_verdict` |
 
 Everything above is re-exported from `contrai_data/__init__.py` and is part of the public API.
@@ -882,3 +882,30 @@ choice = choose_copy([
 ])
 choice.chosen.origin, [r.reason for r in choice.rejected]
 ```
+
+### Backups
+
+`backup_corpus(root, destination)` writes `contrai-corpus-<UTC stamp>.zip`, holding `raw/`,
+`games/` and `build.json` beside a `MANIFEST.json`:
+
+```json
+{
+  "format": "contrai-corpus-backup/1",
+  "created_at": "2026-09-28T12:00:00Z",
+  "generator": "contrai-data 0.5.0",
+  "counts": {"raw_logs": 412, "games": 731},
+  "files": {"games/obs-d0570bbb.jsonl": {"sha256": "…", "size": 48213}}
+}
+```
+
+The raw logs go in because nothing else can rebuild them, the games because rebuilding them needs
+this exact parser, and the build report because it says how they were chosen. Verdicts and the
+catalog stay out: `contrai verify` and `contrai catalog` rebuild them after a restore, which is an
+unzip followed by those two commands. The archive is written under a temporary name and renamed
+once complete, and an existing archive is never overwritten.
+
+`check_archive(path)` re-hashes every member against the manifest and returns an `ArchiveCheck`
+listing every problem, not only the first: `missing`, `altered` (hash or size), `unreadable` (the
+zip's own CRC failed) and `unlisted` (a member the manifest does not name). A file that is not a
+zip, or holds no manifest of this format, raises `CorpusError`. The check needs only the archive,
+so a copy on an external drive can be proven whole without the corpus it came from.

@@ -26,7 +26,9 @@ happening online.
 every machine into one corpus, parses each log on its own, keeps one record
 per game among the copies several logs made of it, and swaps the whole
 ``games/`` in at once — so it can be re-run after every parser fix or box
-pull, where ``parse`` appends into whatever records it finds.
+pull, where ``parse`` appends into whatever records it finds. ``corpus
+backup`` packs what cannot be rebuilt into one zip with a manifest, and
+``corpus check`` proves an archive still matches it.
 """
 
 from __future__ import annotations
@@ -46,6 +48,8 @@ from typing import Any, Final
 from contrai_data import (
     BUILD_FILE,
     CorpusError,
+    backup_corpus,
+    check_archive,
     CopyChoice,
     RecordCopy,
     RecordFormatError,
@@ -139,6 +143,8 @@ def main(argv: list[str] | None = None) -> int:
         "check-profile": _run_check,
         "parse": _run_parse,
         "corpus build": _run_corpus_build,
+        "corpus backup": _run_corpus_backup,
+        "corpus check": _run_corpus_check,
     }
     return dispatch[_command_key(args)](args)
 
@@ -1094,6 +1100,54 @@ def _run_corpus_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_corpus_backup(args: argparse.Namespace) -> int:
+    """Pack a corpus's raw logs, games and build report into one zip.
+
+    Args:
+        args: The parsed ``corpus backup`` arguments.
+
+    Returns:
+        0 when the archive was written, 1 when it was refused.
+    """
+
+    try:
+        summary = backup_corpus(args.root, args.to)
+    except CorpusError as error:
+        print(f"corpus backup refused: {error}", file=sys.stderr)
+        return 1
+    print(
+        f"{summary.path}: {summary.files} files ({summary.raw_logs} raw logs, "
+        f"{summary.games} games), {summary.size / 1_000_000:.1f} MB before compression"
+    )
+    print(f"next: uv run contrai-scrape corpus check {summary.path}")
+    return 0
+
+
+def _run_corpus_check(args: argparse.Namespace) -> int:
+    """Re-hash a backup against its manifest.
+
+    Args:
+        args: The parsed ``corpus check`` arguments.
+
+    Returns:
+        0 when every listed file is present and unaltered and no other is
+        there; 1 otherwise, or when the file is not a backup at all.
+    """
+
+    try:
+        check = check_archive(args.archive)
+    except CorpusError as error:
+        print(f"corpus check failed: {error}", file=sys.stderr)
+        return 1
+    for problem in check.problems:
+        print(f"  {problem}")
+    if check.ok:
+        print(f"ok: {check.files} files match the manifest")
+        return 0
+    print(f"FAIL: {len(check.problems)} of {check.files} listed files do not match")
+    return 1
+
+
 def _build_report(
     imported: dict[str, dict[str, int]],
     logs: Sequence[tuple[str, Path]],
@@ -1429,12 +1483,40 @@ def _build_parser() -> tuple[
             "box=box-raw; repeatable; none rebuilds from the corpus's own raw/"
         ),
     )
+    backup = corpus_commands.add_parser(
+        "backup",
+        help="pack the raw logs, games and build report into one zip",
+        description=(
+            "Write contrai-corpus-<UTC stamp>.zip into DIR, holding raw/, games/ and "
+            "build.json beside a MANIFEST.json of per-file SHA-256 and size. Verdicts "
+            "and the catalog are left out: contrai verify and contrai catalog rebuild "
+            "them after an unzip."
+        ),
+    )
+    backup.add_argument("root", type=Path, metavar="ROOT", help="the corpus root")
+    backup.add_argument(
+        "--to",
+        type=Path,
+        required=True,
+        metavar="DIR",
+        help="the directory to write the archive into (created if missing)",
+    )
+    check_backup = corpus_commands.add_parser(
+        "check",
+        help="re-hash a backup against its manifest",
+        description="Check that every file a backup lists is present and unaltered.",
+    )
+    check_backup.add_argument(
+        "archive", type=Path, metavar="ARCHIVE", help="a zip corpus backup wrote"
+    )
     return parser, {
         "run": run,
         "fleet": fleet,
         "check-profile": check,
         "parse": parse,
         "corpus build": build,
+        "corpus backup": backup,
+        "corpus check": check_backup,
     }
 
 
