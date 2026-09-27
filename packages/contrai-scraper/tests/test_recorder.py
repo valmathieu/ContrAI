@@ -81,6 +81,14 @@ class FakeSpectator:
         self.calls.append(("next_table",))
 
 
+class StuckHopSpectator(FakeSpectator):
+    """A spectator whose hop button never comes out from under the overlay."""
+
+    async def next_table(self):
+        await super().next_table()
+        raise BrowserError("[selectors].next_table matched nothing that could be clicked")
+
+
 class FakeFrameSource:
     """A scripted frame source; a callable entry runs before the next frame.
 
@@ -1782,6 +1790,29 @@ class TestChase:
                                health=HealthLog(write=lines.append))
         assert (_only(lines, "chase_gave_up")["reason"], summary.stop_reason) == (
             "deadline", StopReason.CHASE_GAVE_UP)
+
+    def test_a_hop_that_cannot_be_clicked_gives_the_chase_up(self, profile, builders):
+        # The next table was still loading under its overlay: the chase is
+        # lost, the session is not.
+        lines: list[str] = []
+        spectator = StuckHopSpectator()
+        script = [table_frame(builders, "t0", STRANGERS, frame_id="x0"),
+                  table_frame(builders, "t2", STRANGERS, frame_id="x1")]
+        summary = run_recorder(spectator, script, profile, target=_target(),
+                               health=HealthLog(write=lines.append))
+        gave_up = _only(lines, "chase_gave_up")
+        assert ((gave_up["reason"], gave_up["distinct"]), _gated(lines),
+                summary.stop_reason) == (
+            ("hop_failed", 1), ["t0"], StopReason.CHASE_GAVE_UP)
+
+    def test_a_hop_that_cannot_be_clicked_outside_a_chase_ends_the_session(
+        self, profile, builders
+    ):
+        # `run` and a startup worker have no lobby to go back to: the error is
+        # theirs to handle, as before.
+        script = [snapshot_frame(builders, frame_id="s0", tournament=False)]
+        with pytest.raises(BrowserError, match="next_table"):
+            run_recorder(StuckHopSpectator(), script, profile)
 
     def test_a_seat_that_hears_only_keepalives_stops_at_the_deadline(self, profile):
         # The socket keeps talking while no table describes itself; the wait

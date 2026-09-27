@@ -545,7 +545,10 @@ lobby's to announce. The scan is budgeted on *distinct* tables judged and on a d
 hops, because the server's walk re-offers tables it has already given and is not a cycle — a hop
 count shrinks silently as repeats eat it. Running out, or finding the table and seeing a gate refuse
 it, is `chase_gave_up` with its reason (`distinct_budget`, `deadline`, `target_refused`): an outcome,
-not an error. Log lines name a roster by its digest, never by its players.
+not an error. So is a hop the page would not take (`hop_failed`, with the error): the next table can
+still be loading under its overlay for every click attempt, and that costs the chase, not the
+session — the worker walks back like any give-up and keeps its place. Outside a chase the same
+failure still ends the session. Log lines name a roster by its digest, never by its players.
 
 Two consequences for the registry. The `claimed_by_other` check still comes first, but the claim
 itself is taken only when a table is *accepted*, after its other gates: a scan passing through a

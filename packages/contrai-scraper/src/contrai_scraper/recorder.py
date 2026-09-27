@@ -1005,6 +1005,10 @@ class Recorder:
         Args:
             egress_checked: Whether the caller has just checked the egress,
                 so a stale table costs one probe rather than two.
+
+        Raises:
+            BrowserError: If the hop control could not be clicked and the
+                recorder is not chasing.
         """
 
         if self._finished() or self._found is not None:
@@ -1017,7 +1021,23 @@ class Recorder:
             and not await self._egress_open()
         ):
             return
-        await self._spectator.next_table()
+        try:
+            await self._spectator.next_table()
+        except BrowserError as error:
+            target = self._target
+            if target is None:
+                raise
+            # A chase's hop lands on a table the server is still loading often
+            # enough that its button can stay under the loading overlay for
+            # every attempt — measured once in about sixty hops of a live run.
+            # That is the chase's loss, not the session's: the worker goes back
+            # to the lobby the way any give-up does, keeping its place, where
+            # an error would end the session and leave the lobby short.
+            self._health.event(
+                "chase_gave_up", reason="hop_failed", roster=target.roster.digest,
+                distinct=len(self._scanned), error=str(error),
+            )
+            self._stop(StopReason.CHASE_GAVE_UP)
 
     # -- the record ------------------------------------------------------
 
