@@ -386,6 +386,14 @@ not that the game finished. A table that plays nothing for `stale_after_s` is wr
 `abandoned`, and an interrupted process writes what it saw as `interrupted` — neither is visible
 to the wire, which is why `parse_session` takes an `end_reason` the caller can state.
 
+The first deal after seating triggers the read too, unless it opens the round right after the
+seating snapshot's newest scored round: only then is that snapshot the read. A seat lands mid-round
+in 629 of 706 V5 visits and 11 of 30 fleet visits, and 557 and 10 of those never got a snapshot
+stating the totals before the first round watched — which leaves that round's carry to span
+inference at best. Judged on round numbers rather than on "the first deal seen", the rule also
+holds when the catch-up drain handed a deal over before the watch began. It costs at most one
+request per game: about 13% more requests for `run`, about 5% for a fleet.
+
 The game-over flag outranks both. Seen anywhere in a game's updates, it writes `target_reached`
 whatever followed it — the site sends the spectator back to the menu once a game ends, and that
 later observer-left flag used to win — and whatever reason the caller stated. When the game's final

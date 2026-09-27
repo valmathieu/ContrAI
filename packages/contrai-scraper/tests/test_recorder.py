@@ -772,6 +772,46 @@ class TestBoundary:
         run_recorder(spectator, session_frames(source_game), profile)
         assert ("request_state", "t1", "d1") not in spectator.calls
 
+    def test_the_first_deal_after_a_mid_round_seat_asks_for_the_score(
+        self, profile, session_frames, source_game
+    ):
+        # Seated during round 1, whose deal never arrived: nothing has stated
+        # the totals round 1 ended on, and round 2's deal is the first news.
+        spectator = FakeSpectator()
+        script = [item for item in session_frames(source_game)
+                  if '"id": "d1"' not in item.text]
+        run_recorder(spectator, script, profile)
+        assert ("request_state", "t1", "d2") in spectator.calls
+
+    @pytest.mark.parametrize(
+        ("round_index", "deal", "asks"),
+        [(1, 2, False), (1, 3, True), (None, 2, True), (None, 1, False)],
+    )
+    def test_the_first_deal_is_judged_against_the_seating_snapshot(
+        self, profile, builders, round_index, deal, asks
+    ):
+        # Only the round right after the snapshot's newest scored one opens
+        # on a score the snapshot already stated.
+        spectator = FakeSpectator()
+        script = [snapshot_frame(builders, round_index=round_index),
+                  frame(builders.deal_frame(round_=deal))]
+        run_recorder(spectator, script, profile)
+        assert (("request_state", "t1", f"d{deal}") in spectator.calls) is asks
+
+    def test_a_deal_drained_before_the_watch_does_not_cost_the_next_read(
+        self, profile, builders
+    ):
+        # Round 2's deal was already queued when the table was seated, so the
+        # catch-up hands it over without the watch loop ever seeing it. The
+        # first deal the loop sees is round 3's, and round 2's score is due.
+        spectator = FakeSpectator()
+        script = [snapshot_frame(builders, round_index=1),
+                  frame(builders.deal_frame(round_=2)),
+                  frame(builders.deal_frame(round_=3))]
+        run_recorder(spectator, script, profile, backlog=2)
+        assert [call for call in spectator.calls
+                if call[0] == "request_state"] == [("request_state", "t1", "d3")]
+
     def test_a_failed_resume_falls_back_to_the_panel(self, profile,
                                                      session_frames,
                                                      source_game):

@@ -754,10 +754,18 @@ class Recorder:
             key = event.key
             if key is None or key.verb != DEAL_VERB or key.round == last_deal_round:
                 continue
-            if last_deal_round is not None:
+            if (
+                last_deal_round is not None
+                or key.round != (snapshot.round_index or 0) + 1
+            ):
                 # The deal that opens a round is the news that the previous
                 # one is over and has a score to read. The first deal after
-                # seating has none: the snapshot that seated us is it.
+                # seating is no exception unless it opens the round right
+                # after the seating snapshot's newest scored one: only then
+                # is that snapshot the read. A seat that fell mid-round has
+                # a round whose totals nothing stated yet — 557 of 706 V5
+                # visits never got them. Judged on round numbers, the rule
+                # also holds when the catch-up drain swallowed a deal.
                 await self._boundary(table_id, last_event_id)
             last_deal_round = key.round
 
