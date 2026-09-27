@@ -10,6 +10,7 @@ from contrai_core import Position, Suit, TeamSide
 from contrai_data import EndReason, load_game
 
 from contrai_scraper import (
+    BrowserError,
     EgressReading,
     EgressRefusal,
     HealthLog,
@@ -19,6 +20,7 @@ from contrai_scraper import (
     Recorder,
     RecorderLimits,
     ScoreboardReading,
+    SentRequest,
     StopReason,
     read_raw_log,
 )
@@ -47,6 +49,7 @@ class FakeSpectator:
     def __init__(self, *, options=None, scoreboard=None, resume=True,
                  on_resume=None):
         self.calls: list[tuple] = []
+        self.avoided: list[int | None] = []
         self._options = options if options is not None else _matching_options()
         self._scoreboard = (
             scoreboard if scoreboard is not None else ScoreboardReading((), "")
@@ -62,11 +65,17 @@ class FakeSpectator:
         self.calls.append(("read_scoreboard",))
         return self._scoreboard
 
-    async def request_state(self, table_id, last_event_id):
+    async def request_state(self, table_id, last_event_id, *, avoid=None):
+        """Sends on the page's socket 1, or on 0 when told to avoid 1."""
+
         self.calls.append(("request_state", table_id, last_event_id))
+        self.avoided.append(avoid)
         if self._on_resume is not None:
             self._on_resume()
-        return self._resume
+        if not self._resume:
+            return None
+        return SentRequest(id=f"contrai-{len(self.avoided)}",
+                           socket=0 if avoid == 1 else 1)
 
     async def next_table(self):
         self.calls.append(("next_table",))
@@ -759,6 +768,275 @@ class TestBoundary:
         run_recorder(FakeSpectator(resume=False), session_frames(source_game),
                      profile, health=health)
         assert health.counters.score_reads_failed == 1
+
+
+def _named(lines, name):
+    """Every health line carrying ``name``, parsed, in order."""
+
+    return [entry for entry in map(json.loads, lines) if entry["event"] == name]
+
+
+def _after_frame(script, frame_id, *extra):
+    """``script`` with ``extra`` inserted after both copies of one frame."""
+
+    marker = f'"id": "{frame_id}"'
+    last = max(index for index, item in enumerate(script) if marker in item.text)
+    return [*script[: last + 1], *extra, *script[last + 1 :]]
+
+
+def _sent_echo(request_id, socket=1):
+    """Our own request, as the frame source echoes a sent frame."""
+
+    return RawFrame(socket=socket, direction="sent", at=0.0,
+                    text=json.dumps({"id": request_id, "action": "resume",
+                                     "data": {"room": "room-t1"}}))
+
+
+def _jump(clock, to):
+    """A script entry moving the scripted clock to ``to``."""
+
+    return lambda: clock.__setitem__(0, to)
+
+
+class TimingOutFrameSource(FakeFrameSource):
+    """A scripted source whose empty queue times out, moving the clock on.
+
+    A wait that expires is what the recorder's deadlines are built on, and a
+    real one would cost the suite real seconds. Here each wait past the script
+    raises the timeout at once and advances the scripted clock by ``step``.
+    """
+
+    def __init__(self, script, clock, *, step, waits):
+        super().__init__(script)
+        self._clock = clock
+        self._step = step
+        self._waits = waits
+
+    async def __anext__(self):
+        if self._script:
+            return await super().__anext__()
+        if self._waits:
+            self._waits -= 1
+            self._clock[0] += self._step
+            raise TimeoutError
+        raise StopAsyncIteration
+
+
+class TestUnansweredRequests:
+    def test_an_answered_request_is_one_wire_read_and_no_event(
+        self, profile, session_frames, source_game
+    ):
+        lines: list[str] = []
+        health = HealthLog(write=lines.append)
+        run_recorder(FakeSpectator(), session_frames(source_game), profile,
+                     health=health)
+        assert (health.counters.score_reads_wire,
+                health.counters.score_reads_unanswered,
+                _named(lines, "state_unanswered")) == (1, 0, [])
+
+    def test_a_request_is_counted_only_once_its_snapshot_arrives(
+        self, profile, session_frames, source_game
+    ):
+        # Sent and acknowledged is not read: without round 2's snapshot the
+        # heartbeat must not report a read that never came.
+        health = HealthLog(write=lambda _: None)
+        script = [item for item in session_frames(source_game)
+                  if '"id": "s2"' not in item.text]
+        run_recorder(FakeSpectator(), script, profile, health=health)
+        assert health.counters.score_reads_wire == 0
+
+    def test_another_tables_snapshot_is_no_answer(
+        self, profile, builders, session_frames, source_game
+    ):
+        health = HealthLog(write=lambda _: None)
+        elsewhere = snapshot_frame(builders, table_id="t9", frame_id="x9")
+        script = [item for item in session_frames(source_game)
+                  if '"id": "s2"' not in item.text]
+        run_recorder(FakeSpectator(), _after_frame(script, "d2", elsewhere),
+                     profile, health=health)
+        assert health.counters.score_reads_wire == 0
+
+    def test_an_unanswered_request_is_retried_on_another_socket(
+        self, profile, session_frames, source_game
+    ):
+        # The site answered nothing for 5 s, on the socket our own sent frame
+        # names; the retry avoids the page's socket the first attempt used,
+        # and round 2's snapshot then answers it.
+        clock = [0.0]
+        lines: list[str] = []
+        health = HealthLog(write=lines.append)
+        spectator = FakeSpectator()
+        script = _after_frame(session_frames(source_game), "d2",
+                              _sent_echo("contrai-1", socket=1),
+                              _jump(clock, 10.0), frame("tick"))
+        run_recorder(spectator, script, profile, health=health,
+                     monotonic=lambda: clock[0])
+        unanswered = _named(lines, "state_unanswered")
+        assert ([(u["table"], u["socket"], u["attempt"]) for u in unanswered],
+                spectator.avoided,
+                health.counters.score_reads_wire,
+                health.counters.score_reads_unanswered) == (
+            [("t1", 1, 0)], [None, 1], 1, 1)
+
+    def test_a_request_unanswered_twice_falls_back_to_the_panel(
+        self, profile, session_frames, source_game
+    ):
+        clock = [0.0]
+        lines: list[str] = []
+        health = HealthLog(write=lines.append)
+        spectator = FakeSpectator()
+        script = _after_frame(session_frames(source_game), "d2",
+                              _jump(clock, 10.0), frame("tick"),
+                              _jump(clock, 20.0), frame("tick"))
+        run_recorder(spectator, script, profile, health=health,
+                     monotonic=lambda: clock[0])
+        assert ([u["attempt"] for u in _named(lines, "state_unanswered")],
+                # One for the gate, one for the fallback.
+                spectator.calls.count(("read_scoreboard",)),
+                health.counters.score_reads_unanswered,
+                health.counters.score_reads_wire) == ([0, 1], 2, 2, 0)
+
+    def test_a_panel_that_fails_during_the_fallback_still_records_the_game(
+        self, profile, session_frames, source_game
+    ):
+        # The fallback is evidence only; a click that missed must not cost
+        # the game it was meant to document.
+        clock = [0.0]
+        lines: list[str] = []
+        health = HealthLog(write=lines.append)
+        spectator = FakeSpectator()
+        readings = iter([ScoreboardReading((), ""), BrowserError("rail_show")])
+
+        async def read_scoreboard():
+            reading = next(readings)
+            if isinstance(reading, Exception):
+                raise reading
+            return reading
+
+        spectator.read_scoreboard = read_scoreboard
+        script = _after_frame(session_frames(source_game), "d2",
+                              _jump(clock, 10.0), frame("tick"),
+                              _jump(clock, 20.0), frame("tick"))
+        summary = run_recorder(spectator, script, profile, health=health,
+                               monotonic=lambda: clock[0])
+        assert (summary.games_recorded, health.counters.score_reads_failed,
+                [e["error"] for e in _named(lines, "score_read_failed")]) == (
+            1, 1, ["rail_show"])
+
+    def test_a_request_overtaken_by_the_next_boundary_is_replaced(
+        self, profile, session_frames, game_builders
+    ):
+        # Round 2's snapshot never came before round 3 was dealt. The new
+        # request covers the same rows, so the old one is given up, not
+        # retried.
+        b = game_builders
+        game = b.game_events(
+            b.round_events(1, Position.SOUTH, Position.WEST, 80, Suit.SPADES,
+                           True, {TeamSide.NS: 0, TeamSide.EW: 170}),
+            b.round_events(2, Position.EAST, Position.SOUTH, 110, Suit.HEARTS,
+                           True, {TeamSide.NS: 200, TeamSide.EW: 170}),
+            b.round_events(3, Position.WEST, Position.NORTH, 90, Suit.CLUBS,
+                           True, {TeamSide.NS: 380, TeamSide.EW: 170}),
+        )
+        lines: list[str] = []
+        health = HealthLog(write=lines.append)
+        spectator = FakeSpectator()
+        script = [item for item in session_frames(game)
+                  if '"id": "s2"' not in item.text]
+        run_recorder(spectator, script, profile, health=health)
+        assert ([u["attempt"] for u in _named(lines, "state_unanswered")],
+                spectator.avoided, health.counters.score_reads_wire) == (
+            [0], [None, None], 1)
+
+    def test_a_pending_deadline_is_not_a_table_gone_quiet(
+        self, profile, session_frames, source_game
+    ):
+        # A wait cut short by the request's 5 s is the request's to settle.
+        # Only once no request is out does a quiet table become stale.
+        clock = [0.0]
+        lines: list[str] = []
+        script = [item for item in session_frames(source_game)
+                  if '"id": "s2"' not in item.text and '"id": "end"' not in item.text]
+        source = TimingOutFrameSource(script, clock, step=3.0, waits=5)
+        run_recorder(FakeSpectator(), [], profile, source=source,
+                     health=HealthLog(write=lines.append),
+                     monotonic=lambda: clock[0])
+        order = [entry["event"] for entry in map(json.loads, lines)
+                 if entry["event"] in {"state_unanswered", "table_stale"}]
+        assert order == ["state_unanswered", "state_unanswered", "table_stale"]
+
+
+class TestClosingRequest:
+    def _ended(self, game_builders):
+        return game_builders.game_events(
+            game_builders.round_events(1, *_ROUND_ONE),
+            reason=EndReason.TARGET_REACHED,
+        )
+
+    def test_an_answered_closing_request_is_a_wire_read(
+        self, profile, builders, session_frames, game_builders
+    ):
+        lines: list[str] = []
+        health = HealthLog(write=lines.append)
+        closing = snapshot_frame(builders, frame_id="sz", round_index=1,
+                                 rows=[builders.score_row()])
+        run_recorder(FakeSpectator(),
+                     [*session_frames(self._ended(game_builders)), closing],
+                     profile, health=health)
+        assert (health.counters.score_reads_wire,
+                _named(lines, "state_unanswered")) == (1, [])
+
+    def test_a_closing_request_unanswered_twice_still_writes_the_game(
+        self, profile, session_frames, game_builders
+    ):
+        # Two attempts, the second on another socket, and no panel after
+        # them: the end screen covers the page.
+        clock = [0.0]
+        lines: list[str] = []
+        spectator = FakeSpectator()
+        script = [*session_frames(self._ended(game_builders)),
+                  _jump(clock, 10.0), frame("tick"),
+                  _jump(clock, 20.0), frame("tick")]
+        summary = run_recorder(spectator, script, profile,
+                               health=HealthLog(write=lines.append),
+                               monotonic=lambda: clock[0])
+        assert ([u["attempt"] for u in _named(lines, "state_unanswered")],
+                spectator.avoided,
+                # The gate's own read, and none after it.
+                spectator.calls.count(("read_scoreboard",)),
+                summary.games_recorded) == ([0, 1], [None, 1], 1, 1)
+
+    def test_a_close_with_no_frame_id_seen_asks_for_nothing(
+        self, profile, builders
+    ):
+        # The resume parameter names the newest frame seen; with none there
+        # is nothing to name, and the game is written as it stands.
+        spectator = FakeSpectator()
+        over = frame(json.dumps({"event": "payload", "data": json.dumps(
+            {"event": "updateTable", "data": {"over": 1}})}))
+        summary = run_recorder(spectator, [snapshot_frame(builders), over], profile)
+        assert (spectator.avoided, summary.games_recorded) == ([], 1)
+
+    def test_a_request_still_out_at_the_close_is_given_up(
+        self, profile, builders, session_frames, game_builders
+    ):
+        # Round 1's snapshot never answered the boundary request before the
+        # table said the game was over; the closing request covers it.
+        b = game_builders
+        game = b.game_events(
+            b.round_events(1, *_ROUND_ONE),
+            b.round_events(2, Position.EAST, Position.SOUTH, 110, Suit.HEARTS,
+                           True, {TeamSide.NS: 200, TeamSide.EW: 170}),
+            reason=EndReason.TARGET_REACHED,
+        )
+        lines: list[str] = []
+        closing = snapshot_frame(builders, frame_id="sz", round_index=2,
+                                 rows=[builders.score_row()] * 2)
+        script = [item for item in session_frames(game)
+                  if '"id": "s2"' not in item.text]
+        run_recorder(FakeSpectator(), [*script, closing], profile,
+                     health=HealthLog(write=lines.append))
+        assert [u["attempt"] for u in _named(lines, "state_unanswered")] == [0]
 
 
 class TestShiftTerms:

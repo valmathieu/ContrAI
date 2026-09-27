@@ -248,6 +248,21 @@ have had:
   and the answer arrives on the socket as a fresh join snapshot — 0.21 s against 2.58 s for the
   rendered panel, with no replay cost. The panel is the fallback, and it is evidence for the raw
   log rather than a score the parser can use.
+- **A score read counts when its snapshot arrives, not when its request goes out.** The site
+  acknowledges some state requests and never answers them — 77 of 218 in the 10-worker ramp, 35%,
+  in 8 of 9 sessions — and a counter of requests sent reported none of it. Answers come fast or
+  never: every answered request came back within 0.22 s. So a request is pending for
+  `STATE_ANSWER_S` (5 s) until a join snapshot of *this* table arrives, which is what
+  `score_reads_wire` now counts. An unanswered attempt is logged `state_unanswered` — the table, the
+  frame source's socket the request went on (learnt from our own sent frame) and the attempt — and
+  counts in `score_reads_unanswered`. The first attempt is retried once on another socket:
+  `SEND_SCRIPT` sends on the newest open socket matching `[wire].socket_url_pattern`, which was never
+  the one the page itself switched to the table's room, so the retry avoids it. That is a measured
+  experiment, not a known cure; how often the retry is answered is read from the next live run. After
+  two silences the panel is read, best-effort: a panel that fails costs `score_reads_failed`, never
+  the game in hand. A request still pending at the next boundary is logged unanswered and replaced,
+  since the new one covers the same rows. The closing request takes the same two attempts and stops
+  at this table's snapshot, with no panel after them: the end screen covers the page.
 
 A session *is* a browser context — its own cookies, so its own login, and its own sockets, so its
 own frames — opened by `open_session` on a browser `open_browser` launched. The browser is the
@@ -339,6 +354,14 @@ record; an observer-left flag alone does not, because it says the spectator stop
 not that the game finished. A table that plays nothing for `stale_after_s` is written as
 `abandoned`, and an interrupted process writes what it saw as `interrupted` — neither is visible
 to the wire, which is why `parse_session` takes an `end_reason` the caller can state.
+
+The game-over flag outranks both. Seen anywhere in a game's updates, it writes `target_reached`
+whatever followed it — the site sends the spectator back to the menu once a game ends, and that
+later observer-left flag used to win — and whatever reason the caller stated. When the game's final
+read never came, its totals are written `null`, not the newest read's: those miss the last round,
+and a catalog would derive a winner from them. In the 10-worker ramp, 8 finished games were written
+`observer_left` behind a closing request the site never answered; a re-parse writes them
+`target_reached`.
 
 The orientation check compares the newest round *both* readings describe, not the last row of
 each. The panel is opened a moment after the join snapshot arrives, so the table can score a round

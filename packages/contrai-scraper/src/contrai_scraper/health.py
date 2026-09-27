@@ -47,8 +47,13 @@ class Counters:
     frames_skipped: int = 0
     snapshots_seen: int = 0
     score_reads_wire: int = 0
+    """State requests the table answered with its snapshot."""
+
     score_reads_panel: int = 0
     score_reads_failed: int = 0
+    score_reads_unanswered: int = 0
+    """State requests the table acknowledged and never answered, per attempt."""
+
     sockets_opened: int = 0
     sockets_closed: int = 0
 

@@ -157,8 +157,8 @@ class Walker:
     async def read_scoreboard(self):
         return ScoreboardReading(rows=(), text="")
 
-    async def request_state(self, table_id, last_event_id):
-        return False
+    async def request_state(self, table_id, last_event_id, *, avoid=None):
+        return None
 
     async def next_table(self):
         self.calls.append("next_table")

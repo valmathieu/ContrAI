@@ -304,11 +304,67 @@ class TestEnding:
                         end_reason=EndReason.ABANDONED)
         assert result.events[-1].reason is EndReason.ABANDONED
 
-    def test_a_stated_reason_beats_the_wires_own_flag(self, profile, synthesize,
-                                                      source_game):
+    def test_a_stated_reason_beats_the_spectator_leaving(self, profile, synthesize,
+                                                         source_game):
         result = _parse(profile, synthesize(source_game),
                         end_reason=EndReason.INTERRUPTED)
         assert result.events[-1].reason is EndReason.INTERRUPTED
+
+    def test_a_finished_game_then_left_is_still_finished(
+        self, profile, synthesize, builders, source_game
+    ):
+        # The closing request went unanswered, and the spectator was sent back
+        # to the menu before the recorder gave up on it: 8 games of the
+        # 10-worker ramp were written observer_left this way.
+        game = (*source_game[:-1],
+                dataclasses.replace(source_game[-1],
+                                    reason=EndReason.TARGET_REACHED))
+        texts = [*synthesize(game),
+                 (builders.envelope("payload", "updateTable", {"gone": 1},
+                                    frame_id="left"), 0)]
+        assert _parse(profile, texts).events[-1].reason is EndReason.TARGET_REACHED
+
+    def test_a_finished_game_beats_the_callers_guess(
+        self, profile, synthesize, source_game
+    ):
+        game = (*source_game[:-1],
+                dataclasses.replace(source_game[-1],
+                                    reason=EndReason.TARGET_REACHED))
+        result = _parse(profile, synthesize(game),
+                        end_reason=EndReason.OBSERVER_LEFT)
+        assert result.events[-1].reason is EndReason.TARGET_REACHED
+
+    def test_a_finished_game_keeps_the_final_reads_totals(
+        self, profile, synthesize, source_game
+    ):
+        game = (*source_game[:-1],
+                dataclasses.replace(source_game[-1],
+                                    reason=EndReason.TARGET_REACHED))
+        ended = _parse(profile, synthesize(game)).events[-1]
+        assert ended.totals == {TeamSide.NS: 200, TeamSide.EW: 170}
+
+    def test_a_finished_game_whose_final_read_never_came_has_no_totals(
+        self, profile, synthesize, source_game
+    ):
+        # Round 1's totals miss round 2, and the side they put ahead need
+        # not be the side that won.
+        game = (*source_game[:-1],
+                dataclasses.replace(source_game[-1],
+                                    reason=EndReason.TARGET_REACHED))
+        texts = [(text, socket) for text, socket in synthesize(game)
+                 if '"id": "s2"' not in text]
+        ended = _parse(profile, texts).events[-1]
+        assert (ended.reason, ended.totals) == (EndReason.TARGET_REACHED, None)
+
+    def test_a_game_left_before_its_final_read_keeps_the_newest_totals(
+        self, profile, synthesize, source_game
+    ):
+        # Not finished, so the totals are only where the score last stood.
+        texts = [(text, socket) for text, socket in synthesize(source_game)
+                 if '"id": "s2"' not in text]
+        ended = _parse(profile, texts).events[-1]
+        assert (ended.reason, ended.totals) == (
+            EndReason.OBSERVER_LEFT, {TeamSide.NS: 0, TeamSide.EW: 170})
 
 
 class TestRefusals:

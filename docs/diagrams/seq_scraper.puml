@@ -139,20 +139,29 @@ loop until the game ends, the table goes quiet, or the limits stop it
 
     alt a deal opens a new round
         R -> SP : request_state(table_id, last_event_id)
-        SP -> PG : evaluate(SEND_SCRIPT, envelope)
-        PG -> SK : resume frame carrying the last event id
-        SK --> FS : a fresh join snapshot
-        note right of R
-          The answer arrives on the socket
-          and lands in the same buffer the
-          parser already walks.
-        end note
+        SP -> PG : evaluate(SEND_SCRIPT, envelope, avoid, pattern)
+        PG -> SK : resume frame on the newest matching socket
+        SP --> R : SentRequest(id, socket) · pending for 5 s
+        alt this table's snapshot arrives in time
+            SK --> FS : a fresh join snapshot
+            R -> R : score_reads_wire += 1
+            note right of R
+              The answer arrives on the socket
+              and lands in the same buffer the
+              parser already walks.
+            end note
+        else no answer within 5 s
+            R -> R : state_unanswered (table, socket, attempt)
+            R -> SP : request_state(..., avoid = the first socket)
+            R -> SP : still nothing: read_scoreboard(), best-effort
+        end
     end
 end
 
 == 7. Write, then hop ==
 
-R -> SP : one final request_state, and wait for its snapshot
+R -> SP : one final request_state, and up to 5 s for this table's snapshot
+R -> SP : unanswered: once more on the other socket (no panel: the end screen covers it)
 R -> R : split_visits(buffer) · more than one game or table: record_refused, nothing written
 R -> PS : parse_session(order_events(buffer), profile, end_reason)
 activate PS
