@@ -1,8 +1,9 @@
 """Records on disk: where they live, how they are appended, how they are read.
 
-The only module in the package that touches the filesystem — everything
-above it works on events in memory, which is what makes the rest of
-``contrai-data`` trivially testable.
+The one module that reads and writes *records* — everything above it
+works on events in memory, which is what makes the rest of
+``contrai-data`` trivially testable. Verdict files are
+:mod:`contrai_data.verdict`'s.
 
 **One line, one flush.** :class:`RecordWriter` appends a single encoded
 event and flushes it, so a producer that dies mid-game — a crashed

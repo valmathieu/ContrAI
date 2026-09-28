@@ -73,7 +73,8 @@ _POSITION_BY_NAME: Mapping[str, Position] = {
     "E": Position.EAST,
 }
 
-#: Every logical name ``[wire.fields]`` must bind, and no other. The set spans
+#: Every logical name ``[wire.fields]`` must bind, and no other — bar the
+#: lobby's optional group, :data:`LOBBY_FIELD_NAMES`. The set spans
 #: both halves of the scraper — the browser half reads ``spectators`` and
 #: ``observable_tables``, the parser reads the rest — so the local document is
 #: written once and neither half has to grow the schema later.
@@ -125,6 +126,18 @@ FIELD_NAMES: frozenset[str] = frozenset({
     "left",
     "spectators",
     "observable_tables",
+})
+
+#: The logical names that read the lobby's socket events, all or none of them.
+#: Optional because only a fleet waits in the lobby: ``lobby_hash`` is the row
+#: an event describes, ``lobby_seats`` its whole seat map, ``lobby_seat_account``
+#: the account inside one seat, and ``lobby_full`` the flag the row raises the
+#: moment its game starts.
+LOBBY_FIELD_NAMES: frozenset[str] = frozenset({
+    "lobby_hash",
+    "lobby_seats",
+    "lobby_seat_account",
+    "lobby_full",
 })
 
 
@@ -201,14 +214,75 @@ class SelectorSection:
     player_id_title: Selector
     player_id_prefix: str
 
+    # -- the lobby: optional as a group, and all-or-none -------------------
+    #
+    # A fleet waits for games on the lobby screen rather than being seated by
+    # the server, so it needs the route there and back. `run` does not, which
+    # is why a profile naming none of these keys still loads; one naming only
+    # some of them is refused, since a lobby half-described fails mid-shift.
+
+    mode_new_games: Selector | None
+    """The action beside the observe one that opens the list of games."""
+
+    lobby_variant: Selector | None
+    """The variant inside that list's own picker — not the observe branch's."""
+
+    lobby_tables: str | None
+    """The list container. Read in the page's own script, so plain CSS."""
+
+    lobby_back: tuple[str, ...] | None
+    """Back-ish controls, best first. Plain CSS, and chosen by layer."""
+
+    lobby_layer: str | None
+    """What a screen's controls sit in; its computed style says whether it shows."""
+
+    lobby_row_tournament_class: str | None
+    """The class marking the tournament row among the list's rows."""
+
+    lobby_row_hash_attr: str | None
+    """The row attribute holding the hash the lobby's socket events are keyed by."""
+
+    table_exit: Selector | None
+    """Optional: the table's own exit control, the way back to the lobby.
+
+    Outside the lobby group, so a profile describing the lobby still loads
+    without it. It sits on a rail, like the panel buttons, and leaves the
+    table for the online menu, from which the lobby's back steps carry on.
+    Without it, a fleet worker returns from a table by rebuilding its session.
+    """
+
+    @property
+    def has_lobby(self) -> bool:
+        """Whether the profile describes the lobby, which a fleet needs."""
+
+        return self.mode_new_games is not None
+
+
+#: The ``[selectors]`` keys that describe the lobby, all or none of them.
+LOBBY_SELECTOR_KEYS: tuple[str, ...] = (
+    "mode_new_games",
+    "lobby_variant",
+    "lobby_tables",
+    "lobby_back",
+    "lobby_layer",
+    "lobby_row_tournament_class",
+    "lobby_row_hash_attr",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class WireEvents:
-    """The three event names the parser reacts to."""
+    """The three event names the parser reacts to, and the lobby's own."""
 
     join_snapshot: str
     table_update: str
     counters: str
+    lobby_table: str | None
+    """The lobby's event for one row, or ``None`` where no fleet runs.
+
+    Not a table's event at all: it is what drives the lobby screen, and the
+    only way to see a tournament game's four players before it starts.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,9 +334,24 @@ class WireSection:
     resume_action: str
     resume_room_prefix: str
     resume_param: str
+    draw_verb: str | None
+    """The verb the pre-game draw is keyed by, at round 0.
+
+    Every player draws a real card with its place in the deck, and none of
+    those cards belongs to a hand. Round 0 is left out of every record either
+    way; naming the verb is what lets a parse say so when something *other*
+    than the draw turns up there, rather than dropping it unremarked.
+    """
+
     events: WireEvents
     fields: Mapping[str, str]
     tokens: WireTokens
+
+    @property
+    def has_lobby(self) -> bool:
+        """Whether the profile can read the lobby's socket, which a fleet needs."""
+
+        return self.events.lobby_table is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,16 +391,101 @@ class EgressSection:
     """The device the site's route must leave through, where one can be asked."""
 
     def __post_init__(self) -> None:
-        try:
-            ipaddress.ip_address(self.home_ip)
-        except ValueError:
-            # The value is never echoed: it may well be a real address, and a
-            # refusal message is the one place it must not appear.
-            raise ProfileError("[egress].home_ip is not an IP address") from None
+        # An indirection left unresolved is what an offline load keeps: it has
+        # no environment to read and no gate to run. A live load can never
+        # produce one (``_secret`` refuses a variable that looks like one), so
+        # skipping the check here cannot let a live gate run against a string.
+        if not self.home_ip.startswith(_ENV_PREFIX):
+            try:
+                ipaddress.ip_address(self.home_ip)
+            except ValueError:
+                # The value is never echoed: it may well be a real address,
+                # and a refusal message is the one place it must not appear.
+                raise ProfileError(
+                    "[egress].home_ip is not an IP address"
+                ) from None
         if len(self.expected_country) != 2 or not self.expected_country.isalpha():
             raise ProfileError(
                 "[egress].expected_country must be a two-letter country code"
             )
+
+
+#: The most workers a fleet may run. A day on the box met up to ~40 distinct
+#: tournament tables an hour at the peak, so the fleet is sized at about twenty;
+#: the ceiling leaves that some margin and stays a courtesy, since every worker
+#: is one more spectator the tables can count.
+FLEET_CEILING: int = 25
+
+#: Workers waiting in the lobby when ``[fleet].lobby_watchers`` is not set.
+#: Starts come one every 2.5-5 minutes, and a chase leaves its watcher's place
+#: to the spare within seconds, so two cover even two starts in a row.
+DEFAULT_LOBBY_WATCHERS: int = 2
+
+#: Workers kept logged in off the lobby when ``[fleet].spares`` is not set.
+DEFAULT_SPARES: int = 1
+
+#: Seconds a startup worker looks for a running table to join before it gives
+#: up, when ``[fleet].bootstrap_scan_s`` is not set. A chase finds its table
+#: within 26 s across the probe's walks; twice that, for a scan that takes any
+#: table, leaves room for the tables it refuses.
+DEFAULT_BOOTSTRAP_SCAN_S: int = 60
+
+
+@dataclass(frozen=True, slots=True)
+class FleetSection:
+    """How a fleet of workers waits, chases and shares its gates. Optional."""
+
+    workers: int
+    """How many workers to run, at most :data:`FLEET_CEILING`."""
+
+    login_stagger_s: int
+    """Seconds between one worker's first login and the next's."""
+
+    scan_distinct_budget: int
+    """Distinct tables a chase judges before giving up."""
+
+    scan_deadline_s: int
+    """Seconds a chase looks for its table before giving up."""
+
+    roster_max_age_s: int
+    """How old a starting roster may be and still be chased."""
+
+    claim_ttl_s: int
+    """How long an unrefreshed registry claim holds against other workers."""
+
+    egress_cache_s: int
+    """How long a passing egress reading answers the fleet's later checks."""
+
+    census_enabled: bool
+    """Whether each worker sweeps a few tables before its first lobby."""
+
+    census_hops: int
+    """Tables each worker's startup sweep looks at."""
+
+    lobby_watchers: int = DEFAULT_LOBBY_WATCHERS
+    """At most this many workers wait in the lobby for a start."""
+
+    spares: int = DEFAULT_SPARES
+    """Workers kept logged in off the lobby, to replace a watcher that chases."""
+
+    bootstrap_enabled: bool = True
+    """Whether a window opens by recording the games already running."""
+
+    bootstrap_scan_s: int = DEFAULT_BOOTSTRAP_SCAN_S
+    """Seconds a startup worker looks for a running table before giving up."""
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.workers <= FLEET_CEILING:
+            raise ProfileError(
+                f"[fleet].workers must be between 1 and {FLEET_CEILING}"
+            )
+        for name in ("login_stagger_s", "egress_cache_s", "spares"):
+            if getattr(self, name) < 0:
+                raise ProfileError(f"[fleet].{name} may not be negative")
+        for name in ("scan_distinct_budget", "scan_deadline_s", "roster_max_age_s",
+                     "claim_ttl_s", "census_hops", "lobby_watchers", "bootstrap_scan_s"):
+            if getattr(self, name) <= 0:
+                raise ProfileError(f"[fleet].{name} must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -345,6 +519,24 @@ class Profile:
     egress: EgressSection
     output: OutputSection
     privacy: PrivacySection
+    fleet: FleetSection | None
+    """``None`` where no fleet runs; ``run`` never reads it."""
+
+    def fleet_gaps(self) -> tuple[str, ...]:
+        """What the profile lacks for ``contrai-scrape fleet``, by section.
+
+        Returns:
+            One phrase per missing group, empty when a fleet can run.
+        """
+
+        gaps = []
+        if not self.selectors.has_lobby:
+            gaps.append("the lobby's [selectors] keys")
+        if not self.wire.has_lobby:
+            gaps.append("[wire.events].lobby_table and the [wire.fields] lobby paths")
+        if self.fleet is None:
+            gaps.append("a [fleet] section")
+        return tuple(gaps)
 
 
 class _Table:
@@ -442,6 +634,53 @@ class _Table:
             return None
         return self.string(key)
 
+    def optional_integer(self, key: str, default: int) -> int:
+        """Read an integer key that falls back to a default when absent.
+
+        For keys added after profiles were already written: a profile that
+        predates one still loads, and gets the behaviour the default names.
+        """
+
+        if key not in self._data:
+            return default
+        return self.integer(key)
+
+    def optional_boolean(self, key: str, default: bool) -> bool:
+        """Read a boolean key that falls back to a default when absent."""
+
+        if key not in self._data:
+            return default
+        return self.boolean(key)
+
+    def has(self, key: str) -> bool:
+        """Whether a key (or, at the top level, a section) is present."""
+
+        return key in self._data
+
+    def group(self, keys: tuple[str, ...], name: str) -> bool:
+        """Whether an optional group of keys is present — all of it, or none.
+
+        Args:
+            keys: The group's keys.
+            name: What the group describes, for the refusal.
+
+        Returns:
+            Whether every key is there. ``False`` means none of them is.
+
+        Raises:
+            ProfileError: Some of the group's keys are there and some are not.
+                A half-described group loads cleanly and fails the first time
+                it is used, which for a lobby is hours into a shift.
+        """
+
+        present = [key for key in keys if key in self._data]
+        if present and len(present) != len(keys):
+            missing = ", ".join(key for key in keys if key not in self._data)
+            raise ProfileError(
+                f"{self.label} describes {name} only in part; missing: {missing}"
+            )
+        return bool(present)
+
     def optional_selector(self, key: str) -> Selector | None:
         """Read a selector key that may be absent."""
 
@@ -489,29 +728,40 @@ class _Table:
         raise ProfileError(f"{self.label} has unknown keys: {names}")
 
 
-def _secret(label: str, value: str) -> str:
+def _secret(label: str, value: str, *, resolve: bool = True) -> str:
     """Resolve an ``env:NAME`` indirection, or pass the literal through.
 
     Args:
         label: The profile key, for the error message.
         value: The raw value read from the document.
+        resolve: Whether to read the environment at all. ``False`` hands an
+            indirection back as the ``env:NAME`` text it is, which is what
+            an offline command wants: it never uses the secret.
 
     Returns:
-        The secret itself.
+        The secret itself, or the unresolved indirection.
 
     Raises:
-        ProfileError: The named environment variable is not set.
+        ProfileError: The named environment variable is not set, or holds
+            a value that is itself an indirection.
     """
 
-    if not value.startswith(_ENV_PREFIX):
+    if not value.startswith(_ENV_PREFIX) or not resolve:
         return value
     name = value[len(_ENV_PREFIX):]
     try:
-        return os.environ[name]
+        resolved = os.environ[name]
     except KeyError:
         raise ProfileError(
             f"{label} reads {name}, which is not set in the environment"
         ) from None
+    # An unresolved indirection is how an offline load marks a secret it
+    # never read, and ``EgressSection`` skips its address check on one. A
+    # live load must therefore never produce that shape, or a home address
+    # could reach the egress gate unchecked.
+    if resolved.startswith(_ENV_PREFIX):
+        raise ProfileError(f"{label} reads {name}, which holds another indirection")
+    return resolved
 
 
 def _tokens(table: _Table, key: str, vocabulary: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -542,7 +792,7 @@ def _tokens(table: _Table, key: str, vocabulary: Mapping[str, Any]) -> Mapping[s
 
 
 def _fields(table: _Table) -> Mapping[str, str]:
-    """Read ``[wire.fields]``, which must bind exactly :data:`FIELD_NAMES`.
+    """Read ``[wire.fields]``: exactly :data:`FIELD_NAMES`, plus the lobby's or not.
 
     Args:
         table: The ``[wire]`` table the field map hangs off.
@@ -551,12 +801,18 @@ def _fields(table: _Table) -> Mapping[str, str]:
         Logical name to the dotted path that reads it.
 
     Raises:
-        ProfileError: A logical name is unknown or missing, or a path is not
-            a string.
+        ProfileError: A logical name is unknown or missing, the lobby's names
+            are there only in part, or a path is not a string.
     """
 
     raw = table.mapping("fields")
-    unknown = sorted(set(raw) - FIELD_NAMES)
+    lobby = set(raw) & LOBBY_FIELD_NAMES
+    if lobby and lobby != LOBBY_FIELD_NAMES:
+        raise ProfileError(
+            "[wire.fields] describes the lobby only in part; missing: "
+            + ", ".join(sorted(LOBBY_FIELD_NAMES - lobby))
+        )
+    unknown = sorted(set(raw) - FIELD_NAMES - LOBBY_FIELD_NAMES)
     if unknown:
         raise ProfileError(
             f"[wire.fields] names fields this parser does not read: "
@@ -584,13 +840,15 @@ def _site(table: _Table) -> SiteSection:
     return section
 
 
-def _account(table: _Table) -> AccountSection:
+def _account(table: _Table, resolve: bool) -> AccountSection:
     """Read ``[account]``, resolving both values' indirection."""
 
     section = AccountSection(
-        email=_secret("[account].email", table.string("email")),
+        email=_secret("[account].email", table.string("email"), resolve=resolve),
         verification_code=_secret(
-            "[account].verification_code", table.string("verification_code")
+            "[account].verification_code",
+            table.string("verification_code"),
+            resolve=resolve,
         ),
     )
     table.done()
@@ -617,6 +875,8 @@ def _selectors(table: _Table) -> SelectorSection:
         raise ProfileError(
             "[selectors].seat_element must carry a {seat} placeholder"
         )
+    lobby = table.group(LOBBY_SELECTOR_KEYS, "the lobby")
+    back = table.selector("lobby_back") if lobby else None
     section = SelectorSection(
         dismiss_tutorial=table.selector("dismiss_tutorial"),
         login_start=table.selector("login_start"),
@@ -647,6 +907,18 @@ def _selectors(table: _Table) -> SelectorSection:
         player_panel=table.selector("player_panel"),
         player_id_title=table.selector("player_id_title"),
         player_id_prefix=table.string("player_id_prefix"),
+        mode_new_games=table.selector("mode_new_games") if lobby else None,
+        lobby_variant=table.selector("lobby_variant") if lobby else None,
+        lobby_tables=table.string("lobby_tables") if lobby else None,
+        # Normalised to a tuple: the list is a ranking, and a single control
+        # is a ranking of one.
+        lobby_back=(back,) if isinstance(back, str) else back,
+        lobby_layer=table.string("lobby_layer") if lobby else None,
+        lobby_row_tournament_class=(
+            table.string("lobby_row_tournament_class") if lobby else None
+        ),
+        lobby_row_hash_attr=table.string("lobby_row_hash_attr") if lobby else None,
+        table_exit=table.optional_selector("table_exit"),
     )
     table.done()
     return section
@@ -668,10 +940,19 @@ def _wire(table: _Table) -> WireSection:
         join_snapshot=events_table.string("join_snapshot"),
         table_update=events_table.string("table_update"),
         counters=events_table.string("counters"),
+        lobby_table=events_table.optional_string("lobby_table"),
     )
     events_table.done()
 
     fields = _fields(table)
+    if (events.lobby_table is None) != LOBBY_FIELD_NAMES.isdisjoint(fields):
+        # The event and the paths that read it are one description: an event
+        # nothing can read, or paths for an event nobody names, both load and
+        # then read nothing at all.
+        raise ProfileError(
+            "[wire.events].lobby_table and the [wire.fields] lobby paths "
+            f"({', '.join(sorted(LOBBY_FIELD_NAMES))}) go together: name all or none"
+        )
 
     tokens_table = table.section("tokens")
     tokens = WireTokens(
@@ -700,6 +981,7 @@ def _wire(table: _Table) -> WireSection:
         resume_action=table.string("resume_action"),
         resume_room_prefix=table.string("resume_room_prefix"),
         resume_param=table.string("resume_param"),
+        draw_verb=table.optional_string("draw_verb"),
         events=events,
         fields=fields,
         tokens=tokens,
@@ -750,11 +1032,11 @@ def _schedule(table: _Table) -> Schedule:
     return section
 
 
-def _egress(table: _Table) -> EgressSection:
+def _egress(table: _Table, resolve: bool) -> EgressSection:
     """Read ``[egress]``, resolving the home address's indirection."""
 
     section = EgressSection(
-        home_ip=_secret("[egress].home_ip", table.string("home_ip")),
+        home_ip=_secret("[egress].home_ip", table.string("home_ip"), resolve=resolve),
         expected_country=table.string("expected_country"),
         probe_url=table.string("probe_url"),
         probe_ip_field=table.string("probe_ip_field"),
@@ -786,20 +1068,55 @@ def _output(table: _Table, base: Path) -> OutputSection:
     return section
 
 
-def _privacy(table: _Table) -> PrivacySection:
+def _fleet(table: _Table) -> FleetSection:
+    """Read ``[fleet]``."""
+
+    section = FleetSection(
+        workers=table.integer("workers"),
+        login_stagger_s=table.integer("login_stagger_s"),
+        scan_distinct_budget=table.integer("scan_distinct_budget"),
+        scan_deadline_s=table.integer("scan_deadline_s"),
+        roster_max_age_s=table.integer("roster_max_age_s"),
+        claim_ttl_s=table.integer("claim_ttl_s"),
+        egress_cache_s=table.integer("egress_cache_s"),
+        census_enabled=table.boolean("census_enabled"),
+        census_hops=table.integer("census_hops"),
+        lobby_watchers=table.optional_integer("lobby_watchers", DEFAULT_LOBBY_WATCHERS),
+        spares=table.optional_integer("spares", DEFAULT_SPARES),
+        bootstrap_enabled=table.optional_boolean("bootstrap_enabled", True),
+        bootstrap_scan_s=table.optional_integer(
+            "bootstrap_scan_s", DEFAULT_BOOTSTRAP_SCAN_S
+        ),
+    )
+    table.done()
+    return section
+
+
+def _privacy(table: _Table, resolve: bool) -> PrivacySection:
     """Read ``[privacy]``; the salt may be absent entirely."""
 
     raw = table.optional_string("pseudonym_salt")
-    salt = None if raw is None else _secret("[privacy].pseudonym_salt", raw)
+    salt = (
+        None
+        if raw is None
+        else _secret("[privacy].pseudonym_salt", raw, resolve=resolve)
+    )
     table.done()
     return PrivacySection(pseudonym_salt=salt)
 
 
-def load_profile(path: Path | str) -> Profile:
+def load_profile(path: Path | str, *, resolve_secrets: bool = True) -> Profile:
     """Read and validate a profile document.
 
     Args:
         path: The ``profile.toml`` to read.
+        resolve_secrets: Whether to read ``env:NAME`` values from the
+            environment. The commands that touch the site need them; the
+            offline ones (re-parsing raw logs, building a corpus) only read
+            the wire vocabulary, and pass ``False`` so they run on a machine
+            where the account's variables are not set. The indirections are
+            then kept as their ``env:NAME`` text, and every other key is
+            validated exactly as before.
 
     Returns:
         The parsed :class:`Profile`.
@@ -823,16 +1140,17 @@ def load_profile(path: Path | str) -> Profile:
     root = _Table(_ROOT, raw)
     profile = Profile(
         site=_site(root.section("site")),
-        account=_account(root.section("account")),
+        account=_account(root.section("account"), resolve_secrets),
         browser=_browser(root.section("browser")),
         selectors=_selectors(root.section("selectors")),
         wire=_wire(root.section("wire")),
         rules=_rules(root.section("rules")),
         recorder=_recorder(root.section("recorder")),
         schedule=_schedule(root.section("schedule")),
-        egress=_egress(root.section("egress")),
+        egress=_egress(root.section("egress"), resolve_secrets),
         output=_output(root.section("output"), path.parent),
-        privacy=_privacy(root.section("privacy")),
+        privacy=_privacy(root.section("privacy"), resolve_secrets),
+        fleet=_fleet(root.section("fleet")) if root.has("fleet") else None,
     )
     root.done()
     return profile

@@ -828,8 +828,37 @@ class TestFollowingTeamLosing:
             _contract(players["E"], 100, Suit.HEARTS),
             current_trick=current,
         )
-        result = north.cardplay.choose_card(obs).card
+        decision = north.cardplay.choose_card(obs)
+        result = decision.card
         assert (result.suit, result.rank) == (Suit.SPADES, Rank.EIGHT)
+        # Suit length settled it, so nothing was drawn.
+        assert decision.rationale.drawn_from == ()
+
+    def test_a_drawn_discard_says_so_in_its_rationale(self, players):
+        """The tie the draw settles is named, so a reader knows the rule
+        did not pick this 8 over the other one."""
+        north = players["N"]
+        current = (Play(players["W"], _c(Suit.HEARTS, Rank.ACE)),)
+        hand = [
+            _c(Suit.DIAMONDS, Rank.EIGHT),
+            _c(Suit.DIAMONDS, Rank.QUEEN),
+            _c(Suit.SPADES, Rank.EIGHT),
+            _c(Suit.SPADES, Rank.QUEEN),
+        ]
+        obs = _obs(
+            north,
+            hand,
+            _contract(players["E"], 100, Suit.HEARTS),
+            current_trick=current,
+        )
+
+        decision = north.cardplay.choose_card(obs)
+
+        assert set(decision.rationale.drawn_from) == {
+            str(_c(Suit.DIAMONDS, Rank.EIGHT)),
+            str(_c(Suit.SPADES, Rank.EIGHT)),
+        }
+        assert str(decision.card) in decision.rationale.drawn_from
 
     def test_discard_picks_randomly_when_points_and_length_tie(self, players):
         """Same points and same suit length — the pick is random.

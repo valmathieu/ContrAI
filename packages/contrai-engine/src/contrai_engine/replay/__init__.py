@@ -23,9 +23,17 @@ from .exceptions import (
     SeatMismatchError,
 )
 from .player import RecordedPlayer, RoundScript
-from .stepping import ReplayInterrupt, StepMode, SteppingView
+from .stepping import (
+    ReplayInterrupt,
+    StepMode,
+    SteppingView,
+    read_step_key,
+)
 from .summary import ReplayRow, replay_rows
-from .verdict import (
+# The verdict model lives in ``contrai-data`` — a corpus catalog reads
+# verdict files without importing the engine — and is re-exported here so
+# ``from contrai_engine.replay import Verdict`` keeps working.
+from contrai_data import (
     GameVerdict,
     Mismatch,
     MismatchKind,
@@ -56,6 +64,7 @@ __all__ = [
     "ReplayInterrupt",
     "StepMode",
     "SteppingView",
+    "read_step_key",
     "ReplayRow",
     "replay_rows",
     "Verdict",

@@ -53,8 +53,12 @@ SECTIONS: dict[str, tuple[str, ...]] = {
                   "belote_counts_toward_contract", "belote_lost_when_contract_fails"),
     "scoring": ("mark_made_points", "mark_announced_points",
                 "only_announced_points_multiplied", "any_failure_marks_160",
-                "unannounced_slam_substitute", "failed_slam_marks_made_points",
+                "unannounced_slam_substitute", "substitute_survives_doubling",
+                "personal_sweep_marks_solo_slam",
+                "defense_sweep_marks_substitute",
+                "failed_slam_marks_made_points",
                 "failed_slam_marks_announced_points", "attack_must_outscore_defense",
+                "dispute_resolution",
                 "rounding", "win_on_belote_points_alone"),
 }
 

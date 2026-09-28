@@ -590,6 +590,22 @@ class TestEmission:
             Card(Suit.SPADES, Rank.QUEEN),
         )
 
+    def test_a_paid_pot_is_written_as_carried_over(self, tmp_path):
+        # The stacked belote round is a made contract; hand it an open
+        # dispute pot and its declaring side collects it on the record.
+        game = _stacked_game(BELOTE_HANDS)
+        game.dispute_pot = 161
+        view = RecordingView(_Spy(), tmp_path)
+        view.attach(game, target_score=game.rules.target_score)
+        game.manage_round(view=view)
+        view.on_round_complete(game.current_round, game.scores)
+        view.close_record()
+        _, events = _only_record(tmp_path)
+        (scored,) = _of(events, RoundScored)
+        side = game.current_round.contract.player.position.team_side
+        assert scored.carried_over[side] == 161
+        assert sum(scored.carried_over.values()) == 161
+
     def test_round_scored_mirrors_RoundScore(self, stacked_belote_game):
         game, _, events = stacked_belote_game
         (scored,) = _of(events, RoundScored)
@@ -955,3 +971,25 @@ class TestEndToEnd:
         main()
 
         assert not (home / "records").exists()
+
+
+class TestOutcome:
+    @pytest.mark.parametrize(
+        "made, held, expected",
+        [
+            (None, 0, RoundOutcome.ALL_PASS),
+            (True, 0, RoundOutcome.MADE),
+            (False, 0, RoundOutcome.FAILED),
+            (True, 161, RoundOutcome.HELD),
+        ],
+    )
+    def test_a_score_translates_to_its_outcome(self, made, held, expected):
+        from contrai_engine.model.round import RoundScore
+        from contrai_engine.recording import _outcome
+
+        score = RoundScore(
+            scores={}, contract_made=made, unannounced_slam=None, marks={},
+            belote_points={}, card_points={}, last_trick_side=None,
+            multiplier=1, held=held,
+        )
+        assert _outcome(score) is expected

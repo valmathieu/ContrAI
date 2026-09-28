@@ -324,6 +324,25 @@ class TestLastDecisions:
                 assert set(citation) == {"knob", "value", "effect"}
                 assert all(isinstance(v, str) for v in citation.values())
 
+    def test_a_settled_decision_draws_from_nothing(self):
+        for entry in last_decisions(self._round()):
+            assert entry["drawn_from"] == []
+
+    def test_a_drawn_decision_names_what_it_was_drawn_from(self):
+        round_ = _StubDecisionRound(card_decisions=[
+            _card_decision(
+                Position.EAST,
+                Card(Suit.CLUBS, Rank.EIGHT),
+                "concede cheaply",
+                "gave up the cheapest card.",
+                drawn_from=("8 of Clubs", "8 of Diamonds"),
+            ),
+        ])
+
+        (entry,) = last_decisions(round_)
+
+        assert entry["drawn_from"] == ["8 of Clubs", "8 of Diamonds"]
+
     def test_oldest_first(self):
         """Play order, so a new decision lands below the previous ones."""
         entries = last_decisions(self._round())
@@ -372,6 +391,61 @@ class TestLastDecisions:
 
     def test_a_missing_round_projects_nothing(self):
         assert last_decisions(None) == []
+
+    def test_a_bid_names_its_seat(self, four_players):
+        north, *_ = four_players
+        round_ = _StubDecisionRound(bid_decisions=[
+            BidDecision(PassBid(north), Rationale("pass", "nothing to bid.")),
+        ])
+
+        (entry,) = last_decisions(round_)
+
+        assert entry["seat"] == "N"
+
+    def test_a_card_names_the_seat_that_played_it(self, four_players):
+        from contrai_core import Play
+
+        _north, east, *_ = four_players
+        card = Card(Suit.CLUBS, Rank.SEVEN)
+        round_ = _StubDecisionRound(card_decisions=[
+            CardDecision(card, Rationale("concede cheaply", "gave up.")),
+        ])
+
+        class _PlayState:
+            plays = (Play(east, card),)
+
+        round_.play_state = _PlayState()
+
+        (entry,) = last_decisions(round_)
+
+        assert entry["seat"] == "E"
+
+    def test_a_seat_the_round_cannot_place_is_none(self):
+        # The stub round has no play history and the pass no player.
+        entries = last_decisions(self._round())
+
+        assert all(entry["seat"] is None for entry in entries)
+
+    def test_a_live_decision_prefers_nothing(self):
+        assert all(
+            entry["preferred"] is None
+            for entry in last_decisions(self._round())
+        )
+
+    def test_a_replayed_decision_carries_what_the_ai_would_now_prefer(self):
+        from contrai_engine.replay.player import ReplayedCard
+
+        round_ = _StubDecisionRound(card_decisions=[
+            ReplayedCard(
+                Card(Suit.CLUBS, Rank.SEVEN),
+                Rationale("concede cheaply", "gave up."),
+                preferred="8 of Clubs",
+            ),
+        ])
+
+        (entry,) = last_decisions(round_)
+
+        assert entry["preferred"] == "8 of Clubs"
 
     def test_a_round_without_the_attributes_projects_nothing(self):
         """Defensive: a Round double that predates the decision lists."""

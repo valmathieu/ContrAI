@@ -324,3 +324,91 @@ class TestDealPayloads:
         frames = [builders.envelope("payload", "g1,1,0,0",
                                     compress_to_base64(json.dumps({"beforeDeal": 7})))]
         assert _rounds(profile, frames)[1].deal_stock == ()
+
+
+class TestTheDraw:
+    def test_the_pre_game_draw_opens_no_round(self, profile, builders):
+        # Four real cards, each with its place in the deck, none in a hand.
+        frames = [
+            builders.envelope("payload", f"g1,0,0,{index},lots,p{index + 1}", card,
+                              frame_id=f"draw{index}")
+            for index, card in enumerate(("2w", "5x", "9y", "7z"))
+        ]
+        assert _rounds(profile, frames) == {}
+
+    @pytest.mark.parametrize(("round_", "verb", "draw_verb", "expected"), [
+        (0, "lots", "lots", True),
+        (0, "card", "lots", True),
+        (3, "lots", "lots", True),
+        (0, "card", None, True),
+        (3, "lots", None, False),
+        (3, "card", "lots", False),
+    ], ids=["the-draw", "round-0-other-verb", "draw-verb-elsewhere",
+            "round-0-no-verb-named", "no-verb-named-elsewhere", "a-play"])
+    def test_either_mark_makes_an_event_the_draws(
+        self, round_, verb, draw_verb, expected
+    ):
+        from contrai_scraper import EventKey, is_draw
+
+        key = EventKey(game="g1", round=round_, trick=0, position=0, verb=verb,
+                       player="p1")
+        assert is_draw(key, draw_verb) is expected
+
+
+def _passes(builders, *actors, round_=1):
+    """One pass per actor, numbered in turn."""
+
+    return [
+        builders.bid_frame(round_=round_, seq=seq, actor=actor, payload=None)
+        for seq, actor in enumerate(actors, start=1)
+    ]
+
+
+class TestPassedOut:
+    def _passed_out(self, profile, frames, *, superseded=False, tokens=None):
+        from contrai_scraper import passed_out
+
+        return passed_out(_rounds(profile, frames)[1],
+                          tokens or profile.wire.tokens, superseded=superseded)
+
+    def test_four_passes_and_no_play_are_a_passed_out_round(self, profile, builders):
+        frames = _passes(builders, "p1", "p2", "p3", "p4")
+        assert self._passed_out(profile, frames) is True
+
+    def test_a_partial_auction_followed_by_a_later_round_is_passed_out(
+        self, profile, builders
+    ):
+        # The round the session joined mid-auction: a contract would have
+        # been played out before the next deal.
+        frames = _passes(builders, "p3", "p4")
+        assert self._passed_out(profile, frames, superseded=True) is True
+
+    def test_a_partial_auction_still_in_progress_is_not(self, profile, builders):
+        frames = _passes(builders, "p1", "p2")
+        assert self._passed_out(profile, frames) is False
+
+    def test_a_round_with_a_contract_bid_is_not(self, profile, builders):
+        frames = [
+            builders.bid_frame(seq=1, actor="p1",
+                               payload={"who": "p1", "colour": "w", "level": 80}),
+            builders.bid_frame(seq=2, actor="p2", payload=None),
+        ]
+        assert self._passed_out(profile, frames, superseded=True) is False
+
+    def test_a_round_with_plays_is_not(self, profile, builders):
+        frames = [*_passes(builders, "p1", "p2", "p3", "p4"),
+                  builders.play_frame(actor="p1", card="2w")]
+        assert self._passed_out(profile, frames) is False
+
+    def test_a_round_with_no_bid_is_not(self, profile, builders):
+        frames = [builders.deal_frame(round_=1, cards=("2w",))]
+        assert self._passed_out(profile, frames, superseded=True) is False
+
+    def test_a_pass_the_profile_does_not_spell_as_null_is_not_recognised(
+        self, profile, builders
+    ):
+        import dataclasses
+
+        tokens = dataclasses.replace(profile.wire.tokens, pass_is_null=False)
+        frames = _passes(builders, "p1", "p2", "p3", "p4")
+        assert self._passed_out(profile, frames, tokens=tokens) is False

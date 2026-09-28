@@ -151,6 +151,23 @@ SLAM_SCORED = RoundScored(
     ts=TS,
 )
 
+HELD_SCORED = RoundScored(
+    round=4,
+    outcome=RoundOutcome.HELD,
+    declarer=Position.WEST,
+    contract=ContractTerms(value=80, suit=Suit.DIAMONDS, multiplier=1),
+    taken={TeamSide.NS: 81, TeamSide.EW: 81},
+    belote={TeamSide.NS: 0, TeamSide.EW: 0},
+    announcements={TeamSide.NS: 0, TeamSide.EW: 0},
+    carried_over=None,
+    marked={TeamSide.NS: SideMark(81, 0), TeamSide.EW: SideMark(0, 0)},
+    totals={TeamSide.NS: 129, TeamSide.EW: 496},
+    last_trick=None,
+    slam=SlamOutcome.NONE,
+    source=ScoreSource.SNAPSHOT,
+    ts=TS,
+)
+
 EVERY_EVENT = [
     HEADER,
     STARTED,
@@ -201,6 +218,7 @@ EVERY_EVENT = [
     SCORED,
     ALL_PASS,
     SLAM_SCORED,
+    HELD_SCORED,
     GameEnded(
         totals={TeamSide.NS: 1386, TeamSide.EW: 1742},
         winner=TeamSide.EW, reason=EndReason.TARGET_REACHED, ts=TS,
@@ -246,11 +264,18 @@ class TestFormatGate:
     def test_the_current_format_is_accepted(self):
         assert decode(encode(HEADER)).format == FORMAT
 
-    @pytest.mark.parametrize("value", ["contrai-record/2", "contrai-record/0"])
+    @pytest.mark.parametrize("value", ["contrai-record/3", "contrai-record/0"])
     def test_an_unknown_major_is_refused(self, value):
         line = json.dumps({**json.loads(encode(HEADER)), "format": value})
         with pytest.raises(UnsupportedFormatError, match="major"):
             decode(line)
+
+    def test_a_first_major_record_still_reads(self):
+        line = json.dumps({**json.loads(encode(HEADER)), "format": "contrai-record/1"})
+        assert decode(line).format == "contrai-record/1"
+
+    def test_this_build_writes_the_second_major(self):
+        assert FORMAT == "contrai-record/2"
 
     @pytest.mark.parametrize("value", ["some-other-format/1"])
     def test_an_unknown_family_is_refused(self, value):

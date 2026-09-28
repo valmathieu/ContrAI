@@ -33,3 +33,35 @@ class UnsupportedFormatError(RecordError):
     future format change surfaces here rather than as a confusing pile of
     :class:`RecordFormatError`.
     """
+
+
+class CatalogError(ContraiError, ValueError):
+    """A file is not a catalog this build can read.
+
+    Raised when a catalog is *read* — a file that is not SQLite, or one
+    written under another schema version. Not a :class:`RecordError`: the
+    catalog is derived, so the remedy is always to rebuild it, never to
+    distrust the corpus.
+    """
+
+
+class CorpusError(ContraiError, ValueError):
+    """A corpus operation was refused before it changed anything.
+
+    Raised when raw logs cannot be imported — a source label that is not
+    one plain path segment, or a log whose name is already taken by
+    different content — and when a backup archive fails its manifest. Not
+    a :class:`RecordError`: nothing here says a record is malformed, only
+    that the corpus would stop being what its raw logs describe.
+    """
+
+
+class VerdictFormatError(RecordError):
+    """A verdict file does not say what ``write_verdict`` would have written.
+
+    Raised by :func:`~contrai_data.read_verdict` and the ``from_json``
+    readers on an unknown or missing key, a wrong type, an unknown token,
+    a repeated round, or a stored verdict or count that disagrees with the
+    rounds it summarises. A :class:`RecordError`, because a verdict file is
+    part of a corpus and is read with the same distrust as a record.
+    """

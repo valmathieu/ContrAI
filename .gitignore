@@ -55,13 +55,18 @@ docs/plans/
 # ─── Scraper / engine local material ──────────────────────────────────────
 # The site profile (URL, credentials, selectors, wire vocabulary), the
 # pseudonym salt and map, and every game record or raw wire log written by
-# `contrai --record` or `contrai-scrape` stay on the machine that made them.
+# `contrai --record` or `contrai-scrape` stay on the machine that made them,
+# and so does the fleet's list of spectator accounts.
 profile.toml
+accounts.toml
 *.local.toml
 .env
 pseudonyms.json
 records/
 raw/
+# The corpus catalog indexes player ids and display names: personal data,
+# derived and rebuildable, so it never leaves the machine that built it.
+catalog.sqlite*
 # Deployment secrets live on the host under /etc/contrai; keep stray copies out.
 deploy/*.env
 deploy/wireguard/

@@ -2,8 +2,8 @@
 
 The two screens a recorded game is watched through: the round picker —
 one row per recorded round, with its contract, outcome, running totals
-and verification verdict — and the step prompt that draws under whatever
-frame the replay just rendered.
+and verification verdict — and the one-line step keys that draw under
+whatever frame the replay just rendered.
 
 This module is the **throwaway half** of the picker. The stable half is
 :mod:`contrai_engine.replay.summary`, which computes the rows as plain
@@ -22,8 +22,9 @@ from rich.table import Table
 from rich.text import Text
 
 from contrai_core import TeamSide
-from contrai_engine.replay.verdict import Verdict
+from contrai_data import Verdict
 from contrai_engine.view.formatting import (
+    _format_contract_short,
     _position_short,
     _suit_color,
     _suit_glyph,
@@ -176,7 +177,7 @@ def _format_replay_contract(row: "ReplayRow") -> Text:
 
 
 def _replay_summary_prompt_text(rows: Sequence["ReplayRow"]) -> Text:
-    """The picker's key list: the steppable range, and ``[q]`` to leave.
+    """The picker's key list: step or grid a round, and ``[q]`` to leave.
 
     Args:
         rows: The rows on screen.
@@ -189,10 +190,11 @@ def _replay_summary_prompt_text(rows: Sequence["ReplayRow"]) -> Text:
     steppable = [row.number for row in rows if row.steppable]
     text = Text()
     if steppable:
-        text.append(
-            f"[{min(steppable)}-{max(steppable)}]", style=f"bold {FG}"
-        )
+        span = f"{min(steppable)}-{max(steppable)}"
+        text.append(f"[{span}]", style=f"bold {FG}")
         text.append(" step a round  ·  ", style=FG)
+        text.append(f"[g {span}]", style=f"bold {FG}")
+        text.append(" all its tricks  ·  ", style=FG)
     text.append("[q]", style=f"bold {GOLD}")
     text.append(" quit", style=FG)
     return text
@@ -216,51 +218,112 @@ def _replay_summary_rejection_text(rows: Sequence["ReplayRow"]) -> Text:
         )
     return Text(
         "✗ Pick one of the rounds the table does not mark "
-        f"'{NOT_STEPPABLE}' ({min(steppable)}-{max(steppable)}), or [q].",
+        f"'{NOT_STEPPABLE}' ({min(steppable)}-{max(steppable)}, "
+        "g before it for the grid), or [q].",
         style=RED,
     )
 
 
-def _replay_step_prompt_text(*, can_go_back: bool) -> Text:
-    """The step prompt's key list; ``[p]`` is omitted at a round's first stop.
+def _replay_step_prompt_text(
+    *,
+    can_go_back: bool,
+    can_skip_auction: bool = False,
+    can_explain: bool = False,
+) -> Text:
+    """The step keys, as one line, offering only the keys that apply.
+
+    One line, short words and plain two-space gaps, because it is printed
+    bare under a frame that already fills most of a terminal and must not
+    wrap on an 80-column one: ``trick`` and ``round`` stand for "run to
+    the end of the trick / round", ``skip`` for "skip the rest of the
+    auction", ``grid`` for "show the round so far as a trick grid",
+    ``why`` for "more / less of the AI's reasons". ``[p]`` is omitted at
+    a round's first stop, ``[a]`` once the auction is over, ``[w]`` when
+    no seat's reasons can be shown.
 
     Args:
         can_go_back: Whether a previous stop exists to return to.
+        can_skip_auction: Whether the round is still bidding.
+        can_explain: Whether the replay shows an AI-rationale panel.
+
+    Returns:
+        The key line.
+    """
+
+    keys: list[tuple[str, str]] = [
+        ("[n]", "next"),
+        ("[t]", "trick"),
+        ("[r]", "round"),
+    ]
+    if can_skip_auction:
+        keys.append(("[a]", "skip"))
+    keys.append(("[g]", "grid"))
+    if can_explain:
+        keys.append(("[w]", "why"))
+    if can_go_back:
+        keys.append(("[p]", "back"))
+    text = Text()
+    for key, label in keys:
+        text.append(key, style=f"bold {FG}")
+        text.append(f" {label}  ", style=FG)
+    # ``out`` of the round, back to the picker: "rounds" cost the three
+    # cells that let every key fit 80 columns at once.
+    text.append("[q]", style=f"bold {GOLD}")
+    text.append(" out", style=FG)
+    return text
+
+
+def _replay_step_rejection_text(
+    *,
+    can_go_back: bool,
+    can_skip_auction: bool = False,
+    can_explain: bool = False,
+) -> Text:
+    """The notice shown when a step key is not one on offer.
+
+    Args:
+        can_go_back: Whether a previous stop exists, which decides
+            whether ``[p]`` is named as an option.
+        can_skip_auction: Whether the round is still bidding, which
+            decides whether ``[a]`` is.
+        can_explain: Whether the replay shows an AI-rationale panel,
+            which decides whether ``[w]`` is.
+
+    Returns:
+        The notice.
+    """
+
+    keys = ["[n]", "[t]", "[r]"]
+    if can_skip_auction:
+        keys.append("[a]")
+    keys.append("[g]")
+    if can_explain:
+        keys.append("[w]")
+    if can_go_back:
+        keys.append("[p]")
+    keys.append("[q]")
+    return Text(
+        f"✗ {' '.join(keys)}, or [Enter] for the next action.", style=RED
+    )
+
+
+def _replay_contract_text(round_: Any) -> Text:
+    """The prompt line where ``[a]`` comes to rest: the contract just set.
+
+    Args:
+        round_: The round whose auction just closed.
 
     Returns:
         The prompt line.
     """
 
     text = Text()
-    text.append("[n]", style=f"bold {FG}")
-    text.append(" next  ·  ", style=FG)
-    text.append("[t]", style=f"bold {FG}")
-    text.append(" end of trick  ·  ", style=FG)
-    text.append("[r]", style=f"bold {FG}")
-    text.append(" end of round  ·  ", style=FG)
-    if can_go_back:
-        text.append("[p]", style=f"bold {FG}")
-        text.append(" back  ·  ", style=FG)
-    text.append("[q]", style=f"bold {GOLD}")
-    text.append(" rounds", style=FG)
+    text.append("Contract set: ", style=f"bold {GOLD}")
+    contract = getattr(round_, "contract", None)
+    if contract is not None:
+        text.append_text(_format_contract_short(contract, suit_glyph=True))
+    text.append(" — [n] plays the first card.", style=FG)
     return text
-
-
-def _replay_step_rejection_text(*, can_go_back: bool) -> Text:
-    """The notice shown when a step key is not one of the five.
-
-    Args:
-        can_go_back: Whether a previous stop exists, which decides
-            whether ``[p]`` is named as an option.
-
-    Returns:
-        The notice.
-    """
-
-    keys = "[n] [t] [r] [p] [q]" if can_go_back else "[n] [t] [r] [q]"
-    return Text(
-        f"✗ {keys}, or [Enter] for the next action.", style=RED
-    )
 
 
 def _replay_deal_text(round_: Any) -> Text:

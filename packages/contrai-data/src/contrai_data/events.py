@@ -124,12 +124,16 @@ class RoundOutcome(Enum):
         FAILED: It did not.
         ALL_PASS: Nobody bid, so the round was passed out.
         DISPUTED: Two score sources disagreed about the round.
+        HELD: The contract tied and its points went into a pot for the
+            next contract to be won (§7.5). Not DISPUTED, which says two
+            score sources disagreed about a round.
     """
 
     MADE = "made"
     FAILED = "failed"
     ALL_PASS = "all_pass"
     DISPUTED = "disputed"
+    HELD = "held"
 
     def __str__(self) -> str:
         return self.value
@@ -332,7 +336,7 @@ class Header:
     """The record's first line: what this file is and who wrote it.
 
     Attributes:
-        format: ``family/major``, e.g. ``contrai-record/1``. The major
+        format: ``family/major``, e.g. ``contrai-record/2``. The major
             version is what a loader refuses when it cannot read it.
         source: Whether the game was played or watched.
         generator: The producing program and its version.
@@ -565,7 +569,8 @@ class RoundScored:
         taken: Card points each side took.
         belote: Belote points each side marked.
         announcements: Announcement points each side marked.
-        carried_over: Points each side carried in from earlier rounds.
+        carried_over: Points each side was paid from earlier rounds — a
+            held dispute's pot — or ``None`` when the source could not say.
         marked: What each side wrote on the sheet, split made / announced.
         totals: The running score after the round, or ``None`` when the
             source did not report one.
@@ -582,7 +587,7 @@ class RoundScored:
     taken: Mapping[TeamSide, int]
     belote: Mapping[TeamSide, int]
     announcements: Mapping[TeamSide, int]
-    carried_over: Mapping[TeamSide, int]
+    carried_over: Mapping[TeamSide, int] | None
     marked: Mapping[TeamSide, SideMark]
     totals: Mapping[TeamSide, int] | None
     last_trick: TeamSide | None
@@ -620,12 +625,13 @@ class RoundScored:
             ("taken", self.taken),
             ("belote", self.belote),
             ("announcements", self.announcements),
-            ("carried_over", self.carried_over),
             ("marked", self.marked),
         ):
             _require_both_sides(mapping, field)
         if self.totals is not None:
             _require_both_sides(self.totals, "totals")
+        if self.carried_over is not None:
+            _require_both_sides(self.carried_over, "carried_over")
 
 
 @dataclass(frozen=True, slots=True)

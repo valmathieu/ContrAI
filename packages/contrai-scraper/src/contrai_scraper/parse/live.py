@@ -17,6 +17,14 @@ plays per trick numbered 0-3 look exactly like four seats numbered 0-3, and
 the mistake is invisible until a trick winner comes out wrong. The seat comes
 from the player handle, through the snapshot's seat map.
 
+And one thing the wire puts *in* that belongs to no round: the pre-game draw.
+Before the first deal every player draws a card to seat the table, and each
+draw arrives keyed at round 0, carrying a real card and its place in the deck.
+None of those cards is in a hand. It is never deal-shaped, so it cannot pass for
+a deal, but a stage that took "every keyed event of the table" as game data
+would fold four stray cards into the record — so round 0 is left out here by
+name, and so is the draw's verb wherever it turns up.
+
 One more thing the wire leaves out: a pass from a seat that had no other bid.
 The table spends the turn's sequence number and sends nothing, so the auction
 it transmits can look closed early — after a double, and at once after a
@@ -43,9 +51,13 @@ from contrai_data import BidMade, CardPlayed
 
 from ..exceptions import ParseError
 from ..lzstring import decompress_from_base64
-from ..wire import DEAL_VERB, WireEvent
+from ..profile import WireTokens
+from ..wire import DEAL_VERB, EventKey, WireEvent
 from .forced_passes import restore_forced_passes
 from .translate import Translator
+
+#: The round the pre-game draw is keyed at. Game rounds count from 1.
+DRAW_ROUND = 0
 
 
 @dataclass(slots=True)
@@ -81,14 +93,15 @@ def collect_rounds(
     Returns:
         Round number to what the wire said about it. Events that carry no
         game key — lifecycle notices, counters — are ignored here; the
-        session assembler reads those itself.
+        session assembler reads those itself. So is the pre-game draw: see
+        :func:`is_draw`.
     """
 
     wire = translator.profile.wire
     rounds: dict[int, LiveRound] = {}
     for event in events:
         key = event.key
-        if key is None or key.round is None:
+        if key is None or key.round is None or is_draw(key, wire.draw_verb):
             continue
         round_ = rounds.setdefault(key.round, LiveRound(number=key.round))
         if event.received_ms is not None and (
@@ -110,6 +123,58 @@ def collect_rounds(
                 event.data,
             )
     return rounds
+
+
+def passed_out(round_: LiveRound, tokens: WireTokens, *, superseded: bool) -> bool:
+    """Whether a round was passed out: every seat passed and the cards went back.
+
+    A passed-out round has no row on the site's score sheet, yet it still
+    advances the round counter — so it has to be recognised before any row
+    is mapped onto a round number, or every row below it lands one round too
+    high.
+
+    The wire shows it as a round with bids and no play in which every bid
+    observed is a pass. Four passes settle it. Fewer settle it too once a
+    later round has begun, because a contract would have been played out
+    first: that is the round the session joined mid-auction, or one whose
+    frames were lost in a gap. A round that was played cannot look like
+    this — it holds a contract bid and twenty-eight plays.
+
+    Args:
+        round_: The round as the wire described it.
+        tokens: The profile's vocabulary, which says whether a pass is the
+            null payload — the only spelling of a pass this can recognise.
+        superseded: Whether a later round of the same game was seen begun.
+
+    Returns:
+        Whether the round was passed out.
+    """
+
+    if round_.plays or not round_.bids or not tokens.pass_is_null:
+        return False
+    if any(payload is not None for _, payload in round_.bids.values()):
+        return False
+    return len(round_.bids) == len(Position) or superseded
+
+
+def is_draw(key: EventKey, draw_verb: str | None) -> bool:
+    """Whether a keyed event belongs to the pre-game draw, and so to no round.
+
+    Either mark is enough: round 0 is not a game round whatever its verb, and
+    the draw's verb is the draw wherever it is addressed. Leaving out the
+    union is the conservative reading — the four cards the draw carries are
+    real cards, and one of them in a round would be a card in no hand.
+
+    Args:
+        key: The event's key.
+        draw_verb: ``[wire].draw_verb``, or ``None`` when the profile names
+            none — round 0 is left out all the same.
+
+    Returns:
+        Whether to leave the event out of every round.
+    """
+
+    return key.round == DRAW_ROUND or (draw_verb is not None and key.verb == draw_verb)
 
 
 def bid_events(

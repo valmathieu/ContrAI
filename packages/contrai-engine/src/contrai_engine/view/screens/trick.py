@@ -198,8 +198,26 @@ def _diamond_panel_height(round_: Optional[Round]) -> int:
     Returns:
         The panel height, ``8`` through ``10``.
     """
-    badges = _belote_by_position(round_)
-    rows = sum(
+    return 8 + max(0, _badge_rows(_belote_by_position(round_)) - 1)
+
+
+def _badge_rows(badges: dict[Position, tuple[Suit, ...]]) -> int:
+    """How many of the diamond's three rows carry a belote badge.
+
+    The diamond puts N, W + E and S on three rows, and a badge sits on a
+    line of its own under the row of the seat that owns it — W and E
+    sharing one. So the extra height a diamond needs is one line per row
+    with any badge, not one per badge.
+
+    Args:
+        badges: Seat → the suits it shows a badge for, as
+            :func:`~contrai_engine.view.state_helpers._belote_by_position`
+            returns them.
+
+    Returns:
+        ``0`` through ``3``.
+    """
+    return sum(
         1
         for row in (
             (Position.NORTH,),
@@ -208,7 +226,6 @@ def _diamond_panel_height(round_: Optional[Round]) -> int:
         )
         if any(badges.get(seat) for seat in row)
     )
-    return 8 + max(0, rows - 1)
 
 
 def _panel_last_trick(
@@ -379,6 +396,7 @@ def _render_diamond(
     width: int,
     belote_by_position: Optional[dict[Position, tuple[Suit, ...]]] = None,
     narrow_badges: bool = False,
+    lead_marker: bool = False,
 ) -> Text:
     """Render the 4-player diamond: N top, E right, S bottom, W left.
 
@@ -395,6 +413,11 @@ def _render_diamond(
     side by side — the 18-cell ``Last trick`` diamond, where the W and E
     badges share one row. It only licenses the compact spelling; whether
     one is actually used is decided here, from the crowding.
+
+    ``lead_marker`` marks the seat that led with a ``▸`` before its
+    label instead of the `` (led)`` suffix a wide diamond carries: five
+    cells the 18-cell diamonds of the replay's trick grid cannot spare
+    on the shared W / E row.
     """
     belote_by_position = belote_by_position or {}
     # A belote's suit is worth naming only where more than one of them can
@@ -455,6 +478,8 @@ def _render_diamond(
 
     def slot(pos: Position) -> Text:
         t = Text()
+        if lead_marker and pos == led_position:
+            t.append("▸", style=f"bold {YELLOW}")
         label = _position_short(pos)
         pcolor = _position_color(pos)
         if pos == pending_position:
@@ -488,7 +513,7 @@ def _render_diamond(
             t.append(f"{label} ", style=f"bold {fg_label}")
             t.append(rank_label, style=rank_style)
             t.append(_suit_glyph(card.suit), style=suit_style)
-        if pos == led_position and not dimmed:
+        if pos == led_position and not dimmed and not lead_marker:
             t.append(" (led)", style=DIM)
         return t
 

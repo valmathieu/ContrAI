@@ -19,6 +19,7 @@ from contrai_engine.view.rich_view import RichView
 from contrai_engine.view.screens.recap import (
     _panel_round_recap,
     _recap_breakdown,
+    _round_held,
 )
 
 
@@ -106,7 +107,8 @@ class TestRoundRecapPanel:
         def __init__(self, *, round_number, contract, round_scores,
                      team_tricks=None, belote_pairs=None,
                      contract_made=None, marks=None, rules=None,
-                     belote_marked=None):
+                     belote_marked=None, held=0, carried_over=None,
+                     dispute_pot=0):
             self.round_number = round_number
             self.contract = contract
             self.round_scores = round_scores
@@ -127,6 +129,11 @@ class TestRoundRecapPanel:
             # What the scorer *marked* per side, when that differs from
             # what each side holds — i.e. after a failure-transfer.
             self._belote_marked = belote_marked
+            # The dispute pot the round was handed, and what it put into
+            # or paid out of it (§7.5).
+            self._held = held
+            self._carried_over = carried_over or {}
+            self.dispute_pot = dispute_pot
 
         @property
         def belote_counts_by_side(self):
@@ -177,7 +184,71 @@ class TestRoundRecapPanel:
                 card_points=card_points,
                 last_trick_side=last_trick_side,
                 multiplier=self.contract.get_multiplier(),
+                held=self._held,
+                carried_over=dict(self._carried_over),
             )
+
+    def test_recap_held_round_shows_the_tie_badge(self):
+        contract = self._StubContract(80, Suit.DIAMONDS, TeamSide.EW)
+        round_ = self._StubRound(
+            round_number=3, contract=contract,
+            round_scores={TeamSide.NS: 81, TeamSide.EW: 0},
+            contract_made=True, held=161,
+        )
+        text = _panel_round_recap(
+            round_, {TeamSide.NS: 129, TeamSide.EW: 496}
+        ).renderable.plain
+        assert "Contract tied — 161 held for the next contract" in text
+        assert "Contract made" not in text
+        assert "161 held — paid to whoever wins the next contract" in text
+
+    def test_recap_payout_round_shows_a_carried_in_row(self):
+        contract = self._StubContract(90, Suit.DIAMONDS, TeamSide.EW)
+        round_ = self._StubRound(
+            round_number=4, contract=contract,
+            round_scores={TeamSide.NS: 14, TeamSide.EW: 238},
+            contract_made=True, carried_over={TeamSide.EW: 161},
+            dispute_pot=161,
+        )
+        text = _panel_round_recap(
+            round_, {TeamSide.NS: 143, TeamSide.EW: 895}
+        ).renderable.plain
+        assert "Carried in" in text
+        assert "paid to whoever wins the next contract" not in text
+
+    def test_recap_all_pass_keeps_announcing_a_waiting_pot(self):
+        round_ = self._StubRound(
+            round_number=5, contract=None,
+            round_scores={TeamSide.NS: 0, TeamSide.EW: 0}, dispute_pot=161,
+        )
+        text = _panel_round_recap(
+            round_, {TeamSide.NS: 143, TeamSide.EW: 496}
+        ).renderable.plain
+        assert "161 held — paid to whoever wins the next contract" in text
+
+    def test_recap_ordinary_round_mentions_no_pot(self):
+        contract = self._StubContract(100, Suit.HEARTS, TeamSide.NS)
+        round_ = self._StubRound(
+            round_number=3, contract=contract,
+            round_scores={TeamSide.NS: 162, TeamSide.EW: 0},
+        )
+        text = _panel_round_recap(
+            round_, {TeamSide.NS: 500, TeamSide.EW: 0}
+        ).renderable.plain
+        assert "Carried in" not in text
+        assert "held for the next contract" not in text
+        assert "paid to whoever wins the next contract" not in text
+
+    def test_round_held_reads_the_score(self):
+        from types import SimpleNamespace
+        assert _round_held(SimpleNamespace(round_score=None)) is False
+        assert _round_held(SimpleNamespace(
+            round_score=RoundScore(
+                scores={}, contract_made=True, unannounced_slam=None,
+                marks={}, belote_points={}, card_points={},
+                last_trick_side=None, multiplier=1, held=161,
+            )
+        )) is True
 
     def test_the_breakdown_does_not_recompute_the_score(self, four_players):
         """A deliberately impossible ``RoundScore``: the components say

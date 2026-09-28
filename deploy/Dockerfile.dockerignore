@@ -16,6 +16,7 @@
 **/__pycache__
 **/*.egg-info
 **/profile.toml
+**/accounts.toml
 **/*.local.toml
 **/.env
 **/*.env

@@ -76,8 +76,9 @@ def contract_components(
             on a numeric contract.
         substitute: The flat amount that replaces the pile for the side
             that wins the contract — the Slam-family base, the 250 / 500
-            of an unannounced sweep, or ``None`` when the pile is counted
-            for real.
+            of an unannounced sweep, the 250 of a defense's sweep at a
+            table that marks one, or ``None`` when the pile is counted for
+            real.
         rules: The table ruleset.
 
     Returns:
@@ -100,10 +101,17 @@ def contract_components(
             made_att, made_def = attack_pile, defense_pile
     else:
         made_att = 0
-        if slam_family and rules.failed_slam_marks_made_points:
-            made_def = (
-                substitute if substitute is not None else FLAT_FAILURE_PILE
-            )
+        if slam_family:
+            # A failed Slam keeps its substitute only where the table
+            # says so (§9.6).
+            keeps_substitute = rules.failed_slam_marks_made_points
+        else:
+            # A numeric failure is handed a substitute only for a defense
+            # that swept at a table pricing that sweep (§9.6) — the caller
+            # has already asked the switch.
+            keeps_substitute = True
+        if keeps_substitute and substitute is not None:
+            made_def = substitute
         else:
             made_def = FLAT_FAILURE_PILE
 

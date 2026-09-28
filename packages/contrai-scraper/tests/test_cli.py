@@ -134,6 +134,111 @@ class TestLimits:
         assert (code, "refused" in capsys.readouterr().err) == (3, True)
 
 
+class TestFleetCommand:
+    """``fleet``: what it is handed, what it refuses, what it exits with."""
+
+    @pytest.fixture
+    def handed(self, monkeypatch):
+        """What ``fleet`` handed the async run, instead of running it."""
+
+        seen = {}
+
+        def capture(profile, accounts, limits, headless):
+            seen.update(accounts=accounts, limits=limits, headless=headless)
+
+        monkeypatch.setattr("contrai_scraper.cli._fleet", capture)
+        monkeypatch.setattr("contrai_scraper.cli.asyncio.run", lambda c: c)
+        return seen
+
+    @staticmethod
+    def _accounts_file(tmp_path, count):
+        path = tmp_path / "fixture-accounts.toml"
+        path.write_text("".join(
+            f'[bot{index:02}]\nemail = "bot{index:02}@example.invalid"\n'
+            'verification_code = "0000"\n'
+            for index in range(1, count + 1)
+        ), encoding="utf-8")
+        return path
+
+    def test_without_accounts_it_is_one_worker_on_the_profiles_account(
+        self, handed, profile_path, profile
+    ):
+        assert main(["fleet", "--profile", str(profile_path)]) == 0
+        (only,) = handed["accounts"]
+        assert (only.label, only.account.email) == ("bot01", profile.account.email)
+
+    def test_with_accounts_it_takes_the_profiles_worker_count(
+        self, handed, profile_path, tmp_path
+    ):
+        main(["fleet", "--profile", str(profile_path),
+              "--accounts", str(self._accounts_file(tmp_path, 3))])
+        assert [item.label for item in handed["accounts"]] == ["bot01", "bot02"]
+
+    def test_workers_on_the_command_line_win(self, handed, profile_path, tmp_path):
+        main(["fleet", "--profile", str(profile_path), "--workers", "3",
+              "--accounts", str(self._accounts_file(tmp_path, 3))])
+        assert len(handed["accounts"]) == 3
+
+    def test_the_limits_and_the_window_mode_reach_the_fleet(self, handed, profile_path):
+        main(["fleet", "--profile", str(profile_path), "--minutes", "20",
+              "--max-games", "4", "--headless"])
+        assert (handed["limits"].max_seconds, handed["limits"].max_games,
+                handed["headless"]) == (1200.0, 4, True)
+
+    def test_more_workers_than_accounts_is_a_usage_error(self, handed, profile_path,
+                                                        tmp_path, capsys):
+        with pytest.raises(SystemExit) as exc:
+            main(["fleet", "--profile", str(profile_path), "--workers", "3",
+                  "--accounts", str(self._accounts_file(tmp_path, 2))])
+        assert (exc.value.code, "holds 2 account(s)" in capsys.readouterr().err) == (
+            2, True)
+
+    def test_several_workers_without_accounts_is_a_usage_error(self, handed,
+                                                                profile_path):
+        with pytest.raises(SystemExit) as exc:
+            main(["fleet", "--profile", str(profile_path), "--workers", "2"])
+        assert exc.value.code == 2
+
+    @pytest.mark.parametrize("workers", ["0", "26"])
+    def test_a_worker_count_out_of_range_is_a_usage_error(self, handed, profile_path,
+                                                          tmp_path, workers):
+        with pytest.raises(SystemExit):
+            main(["fleet", "--profile", str(profile_path), "--workers", workers,
+                  "--accounts", str(self._accounts_file(tmp_path, 3))])
+
+    def test_accounts_that_do_not_load_are_a_usage_error(self, handed, profile_path,
+                                                         tmp_path):
+        with pytest.raises(SystemExit) as exc:
+            main(["fleet", "--profile", str(profile_path),
+                  "--accounts", str(tmp_path / "absent.toml")])
+        assert exc.value.code == 2
+
+    def test_a_profile_that_cannot_run_a_fleet_is_a_usage_error(
+        self, handed, tmp_path, profile_text, capsys
+    ):
+        path = tmp_path / "no-fleet.toml"
+        path.write_text(profile_text.split("\n[fleet]\n")[0], encoding="utf-8")
+        with pytest.raises(SystemExit) as exc:
+            main(["fleet", "--profile", str(path)])
+        assert (exc.value.code, "[fleet] section" in capsys.readouterr().err) == (2, True)
+
+    def test_a_fleet_that_hands_itself_back_exits_3(self, monkeypatch, profile_path):
+        def down(coroutine):
+            coroutine.close()
+            raise ShiftError("2 of 3 workers are down")
+
+        monkeypatch.setattr("contrai_scraper.cli.asyncio.run", down)
+        assert main(["fleet", "--profile", str(profile_path)]) == 3
+
+    def test_an_interrupted_fleet_exits_130(self, monkeypatch, profile_path):
+        def interrupted(coroutine):
+            coroutine.close()
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr("contrai_scraper.cli.asyncio.run", interrupted)
+        assert main(["fleet", "--profile", str(profile_path)]) == 130
+
+
 class TestSigterm:
     def test_sigterm_cancels_the_run_the_way_ctrl_c_does(self):
         # A service stop is SIGTERM, and Python's default for it is to die
@@ -271,12 +376,13 @@ class FakeWalk:
     """A spectator whose walk and panels are scripted; a named step may raise."""
 
     def __init__(self, *, pledge=False, fail=None, marker=True, ids=None,
-                 saved=None):
+                 saved=None, differing=()):
         self._pledge = pledge
         self._fail = fail or {}
         self._marker = marker
         self._ids = ids or {}
         self._saved = saved
+        self._differing = tuple(differing)
         self.captured = []
 
     async def capture(self, stem):
@@ -301,7 +407,8 @@ class FakeWalk:
 
     async def read_options(self, expected):
         self._step("read_options")
-        return OptionsReading(observed=dict(expected), missing=(), extra=(), differing=())
+        return OptionsReading(observed=dict(expected), missing=(), extra=(),
+                              differing=self._differing)
 
     async def read_player_id(self, position):
         return self._ids.get(position)
@@ -363,7 +470,7 @@ class TestLiveChecks:
         # enters the variant can tell whether it was there.
         results = asyncio.run(_live_checks(FakeWalk(pledge=answered), Frames(), profile))
         assert results[:3] == [
-            ("login", True, profile.account.email),
+            ("login", True, "the profile's [account]"),
             ("pledge", True, detail),
             ("variant entered", True, "the server chose a table"),
         ]
@@ -398,6 +505,28 @@ class TestLiveChecks:
                                                         _join_frame(builders)), profile))
         assert ([name for name, passed, _ in results if not passed], len(results)) == ([], 8)
 
+    def test_no_line_names_the_account(self, profile):
+        # Under Compose this output reaches the journal.
+        results = asyncio.run(_live_checks(FakeWalk(), Frames(), profile))
+        assert all(profile.account.email not in detail for _, _, detail in results)
+
+    def test_a_tournament_table_whose_options_differ_fails(self, profile, builders):
+        walk = FakeWalk(differing=("opt_beta",))
+        results = asyncio.run(_live_checks(walk, Frames(_join_frame(builders)), profile))
+        passed = {name: ok for name, ok, _ in results}
+        assert passed["options match [rules.options]"] is False
+
+    def test_another_tables_options_are_read_but_not_compared(self, profile, builders):
+        # The server chose a table that is not a tournament: its options are
+        # its own, so a difference there is no profile fault.
+        payload = builders.snapshot_payload()
+        payload["table"]["cup"] = False
+        frame = _received(builders.envelope("payload", "joinTable", payload, frame_id="s0"))
+        walk = FakeWalk(marker=False, differing=("opt_beta",))
+        results = asyncio.run(_live_checks(walk, Frames(frame), profile))
+        _, passed, detail = next(line for line in results if line[0].startswith("options"))
+        assert (passed, detail.startswith("not compared")) == (True, True)
+
     def test_a_panel_id_that_differs_from_the_wire_fails(self, profile, builders):
         snapshot = read_snapshot(builders.snapshot_payload(), Translator(profile))
         ids = _accounts(snapshot)
@@ -406,6 +535,166 @@ class TestLiveChecks:
         results = asyncio.run(_live_checks(walk, Frames(_join_frame(builders)), profile))
         passed = {name: ok for name, ok, _ in results}
         assert passed["panel ids equal the wire's accounts"] is False
+
+
+class FakeLobbyWalk(FakeWalk):
+    """A spectator whose lobby walk is scripted too."""
+
+    def __init__(self, *, table_hash="cfg-42", **kwargs):
+        super().__init__(**kwargs)
+        self._hash = table_hash
+        self.steps: list[str] = []
+
+    async def log_in(self):
+        self.steps.append("log_in")
+        await super().log_in()
+
+    async def enter_lobby(self):
+        self.steps.append("enter_lobby")
+        self._step("enter_lobby")
+        return False
+
+    async def read_tournament_hash(self):
+        self.steps.append("read_tournament_hash")
+        return self._hash
+
+    async def enter_table_from_lobby(self):
+        self.steps.append("enter_table_from_lobby")
+        self._step("enter_table_from_lobby")
+
+    async def return_to_lobby(self):
+        self.steps.append("return_to_lobby")
+        self._step("return_to_lobby")
+
+
+def _lobby_frame(builders, data=None, frame_id="l1"):
+    """A lobby event, in the fixture vocabulary, for the tournament row."""
+
+    if data is None:
+        data = {"key": "cfg-42", "chairs": {"top": {"acct": "095024"}}}
+    return _received(builders.envelope("payload", "slot", data, frame_id=frame_id))
+
+
+class TestLobbyChecks:
+    def test_a_lobby_the_profile_describes_passes_every_check(self, profile, builders):
+        from contrai_scraper.cli import _lobby_checks
+
+        walk = FakeLobbyWalk()
+        frames = Frames(_lobby_frame(builders), _join_frame(builders))
+        results = asyncio.run(_lobby_checks(walk, frames, profile))
+        assert ([(name, passed) for name, passed, _ in results], walk.steps) == (
+            [("lobby entered", True), ("tournament row found", True),
+             ("lobby events read", True), ("back to a table from the lobby", True),
+             ("back to the lobby from a table", True)],
+            ["log_in", "enter_lobby", "read_tournament_hash", "enter_table_from_lobby",
+             "return_to_lobby", "read_tournament_hash"],
+        )
+
+    def test_a_list_with_no_tournament_row_fails_the_lines_reading_it(
+        self, profile, builders
+    ):
+        from contrai_scraper.cli import _lobby_checks
+
+        walk = FakeLobbyWalk(table_hash=None)
+        frames = Frames(_lobby_frame(builders), _join_frame(builders))
+        results = asyncio.run(_lobby_checks(walk, frames, profile))
+        assert [passed for _, passed, _ in results] == [True, False, True, True, False]
+
+    def test_a_way_back_that_fails_is_a_line_naming_its_check(self, profile, builders):
+        from contrai_scraper.cli import _lobby_checks
+
+        message = "[selectors].table_exit matched nothing that could be clicked"
+        walk = FakeLobbyWalk(fail={"return_to_lobby": message})
+        frames = Frames(_lobby_frame(builders), _join_frame(builders))
+        results = asyncio.run(_lobby_checks(walk, frames, profile))
+        assert results[-1] == ("back to the lobby from a table", False, message)
+
+    def test_a_lobby_without_a_table_exit_is_told_so_and_not_failed(
+        self, profile, builders
+    ):
+        import dataclasses
+
+        from contrai_scraper.cli import TABLE_EXIT_NOT_DESCRIBED, _lobby_checks
+
+        bare = dataclasses.replace(
+            profile, selectors=dataclasses.replace(profile.selectors, table_exit=None))
+        walk = FakeLobbyWalk()
+        frames = Frames(_lobby_frame(builders), _join_frame(builders))
+        results = asyncio.run(_lobby_checks(walk, frames, bare))
+        assert (results[-1], "return_to_lobby" in walk.steps) == (
+            TABLE_EXIT_NOT_DESCRIBED, False)
+
+    def test_a_profile_that_cannot_read_the_lobbys_socket_fails_that_line(
+        self, profile, builders
+    ):
+        import dataclasses
+
+        from contrai_scraper.cli import _lobby_checks
+
+        blind = dataclasses.replace(
+            profile, wire=dataclasses.replace(
+                profile.wire,
+                events=dataclasses.replace(profile.wire.events, lobby_table=None)))
+        results = asyncio.run(_lobby_checks(FakeLobbyWalk(), Frames(_join_frame(builders)),
+                                            blind))
+        name, passed, detail = results[2]
+        assert (name, passed, "lobby_table" in detail) == ("lobby events read", False, True)
+
+    def test_a_step_that_fails_is_a_line_naming_its_check(self, profile):
+        from contrai_scraper.cli import _lobby_checks
+
+        message = "[selectors].lobby_back matched 2 control(s), none of them on the screen shown"
+        walk = FakeLobbyWalk(fail={"enter_table_from_lobby": message})
+        results = asyncio.run(_lobby_checks(walk, Frames(), profile))
+        assert results[-1] == ("back to a table from the lobby", False, message)
+
+    def test_a_table_that_never_describes_itself_fails_the_round_trip(self, profile):
+        from contrai_scraper.cli import _lobby_checks
+
+        results = asyncio.run(_lobby_checks(FakeLobbyWalk(), Frames(), profile))
+        assert results[-1] == (
+            "back to a table from the lobby", False, "no snapshot within the timeout")
+
+    def test_a_profile_with_no_lobby_is_told_so_and_not_failed(self):
+        from contrai_scraper.cli import LOBBY_NOT_DESCRIBED
+
+        assert LOBBY_NOT_DESCRIBED[:2] == ("lobby described", True)
+
+
+class TestLobbyEventLine:
+    def _result(self, profile, builders, data):
+        from contrai_scraper import WireStream
+        from contrai_scraper.cli import _lobby_event_result
+
+        event = WireStream(profile.wire).ingest(
+            _lobby_frame(builders, data).text, socket=0)
+        return _lobby_event_result(event, profile, "cfg-42")
+
+    def test_the_tournament_rows_event_passes_with_its_seat_count(self, profile, builders):
+        assert self._result(profile, builders, None) == (
+            "lobby events read", True,
+            "an event for the tournament row named 1 seated account(s)")
+
+    def test_another_rows_event_reads_the_paths_just_as_well(self, profile, builders):
+        _, passed, detail = self._result(
+            profile, builders, {"key": "cfg-7", "chairs": {}})
+        assert (passed, "another row" in detail) == (True, True)
+
+    def test_silence_passes_and_says_it_proved_nothing(self, profile):
+        # The lobby speaks only when a seat changes: 27 s and 82 s of silence
+        # after arriving were both measured.
+        from contrai_scraper.cli import _lobby_event_result
+
+        _, passed, detail = _lobby_event_result(None, profile, "cfg-42")
+        assert (passed, "proves nothing yet" in detail) == (True, True)
+
+    def test_an_event_naming_no_row_fails_on_the_hash_path(self, profile, builders):
+        _, passed, detail = self._result(profile, builders, {"chairs": {}})
+        assert (passed, "lobby_hash" in detail) == (False, True)
+
+    def test_an_event_with_no_seat_map_fails_on_the_seats_path(self, profile, builders):
+        _, passed, detail = self._result(profile, builders, {"key": "cfg-42"})
+        assert (passed, "lobby_seats" in detail) == (False, True)
 
 
 def _capturing_profile(profile_text, tmp_path, root):
@@ -645,6 +934,36 @@ class TestParse:
         assert (code, len(list((tmp_path / "games").glob("*.jsonl")))) == (0, 1)
         assert "could not be read" in capsys.readouterr().out
 
+    @pytest.mark.parametrize(
+        ("flag", "written"),
+        [('\\"cup\\": false', "false"), ("", "missing")],
+        ids=["false", "missing"],
+    )
+    def test_a_table_that_is_not_a_tournament_writes_no_record(
+        self, tmp_path, profile_path, source_game, synthesize, capsys,
+        flag, written,
+    ):
+        # The live gate refuses it, but the site seats the spectator back at
+        # it while no tournament table is open, so the log still holds its
+        # game: obs-a5dae556 was made of one.
+        from contrai_scraper import RawFrame, RawLogWriter, raw_path
+
+        path = raw_path(tmp_path / "corpus", f"session-{written}")
+        with RawLogWriter(path) as log:
+            for index, (text, socket) in enumerate(synthesize(source_game)):
+                text = text.replace('\\"cup\\": true', flag)
+                if not flag:
+                    text = text.replace(', ,', ',').replace('{, ', '{')
+                log.write_frame(
+                    RawFrame(socket=socket, direction="recv", at=index / 10,
+                             text=text)
+                )
+        code = main(["parse", str(path), "--profile", str(profile_path),
+                     "--out", str(tmp_path)])
+        assert (code, (tmp_path / "games").exists()) == (1, False)
+        assert ("1 table visits, 0 with rounds, 1 left out as not a tournament"
+                in capsys.readouterr().out)
+
     def test_a_log_that_parses_to_nothing_exits_one(
         self, tmp_path, profile_path, capsys
     ):
@@ -667,6 +986,68 @@ class TestParse:
             main(["parse", str(raw_log_path), "--profile", str(bad)])
         assert exc.value.code == 2
 
+    def test_a_record_is_stamped_when_its_game_was_heard_not_when_parsed(
+        self, tmp_path, profile_path, raw_log_path
+    ):
+        # The fixture frames carry no server clock, so the stamp falls back to
+        # the log's own start — the same bytes however often it is re-parsed.
+        import json
+
+        from contrai_data import game_path, read_events
+
+        started = json.loads(raw_log_path.read_text(encoding="utf-8").splitlines()[0])
+        main(["parse", str(raw_log_path), "--profile", str(profile_path),
+              "--out", str(tmp_path / "a")])
+        main(["parse", str(raw_log_path), "--profile", str(profile_path),
+              "--out", str(tmp_path / "b")])
+        first = game_path(tmp_path / "a", "obs-g1")
+        assert read_events(first).events[0].created_at == started["started_at"]
+        assert first.read_bytes() == game_path(tmp_path / "b", "obs-g1").read_bytes()
+
+    def test_parsing_twice_into_one_root_leaves_the_record_as_it_was(
+        self, tmp_path, profile_path, raw_log_path
+    ):
+        # The writer appends: a second parse used to leave two headers and
+        # every round twice in the same file.
+        from contrai_data import game_path
+
+        argv = ["parse", str(raw_log_path), "--profile", str(profile_path),
+                "--out", str(tmp_path)]
+        main(argv)
+        before = game_path(tmp_path, "obs-g1").read_bytes()
+        assert main(argv) == 0
+        assert game_path(tmp_path, "obs-g1").read_bytes() == before
+
+    def test_a_record_already_there_is_reported(
+        self, tmp_path, profile_path, raw_log_path, capsys
+    ):
+        argv = ["parse", str(raw_log_path), "--profile", str(profile_path),
+                "--out", str(tmp_path)]
+        main(argv)
+        capsys.readouterr()
+        main(argv + ["--dry-run"])
+        assert "already recorded, left as it is" in capsys.readouterr().out
+
+    def test_the_account_variables_are_not_needed(
+        self, tmp_path, profile_text, raw_log_path, monkeypatch
+    ):
+        # Re-parsing never touches the site, so a laptop without the
+        # account's variables set must still be able to do it.
+        for name in ("CONTRAI_SCRAPER_EMAIL", "CONTRAI_SCRAPER_CODE",
+                     "CONTRAI_HOME_IP"):
+            monkeypatch.delenv(name, raising=False)
+        indirected = tmp_path / "indirected-profile.toml"
+        indirected.write_text(
+            profile_text
+            .replace('email = "watcher@example.invalid"',
+                     'email = "env:CONTRAI_SCRAPER_EMAIL"')
+            .replace('verification_code = "0000"',
+                     'verification_code = "env:CONTRAI_SCRAPER_CODE"')
+            .replace('home_ip = "198.51.100.1"', 'home_ip = "env:CONTRAI_HOME_IP"'),
+            encoding="utf-8")
+        assert main(["parse", str(raw_log_path), "--profile", str(indirected),
+                     "--out", str(tmp_path)]) == 0
+
 
 class TestReporting:
     def test_each_log_reports_its_game_and_round_count(
@@ -683,3 +1064,42 @@ class TestReporting:
         main(["parse", str(partial_raw_log_path), "--profile", str(profile_path),
               "--out", str(tmp_path)])
         assert "skipped" in capsys.readouterr().out
+
+
+class TestParseStamp:
+    def _event(self, received_ms):
+        from contrai_scraper import WireEvent
+
+        return WireEvent(kind="x", key=None, data=None, received_ms=received_ms)
+
+    def test_the_latest_server_instant_of_the_visit_is_the_stamp(self):
+        from datetime import UTC, datetime
+
+        from contrai_scraper.cli import _visit_stamp
+
+        visit = [self._event(1_789_510_540_000), self._event(None),
+                 self._event(1_789_510_543_721)]
+        assert _visit_stamp(visit, None) == datetime.fromtimestamp(
+            1_789_510_543.721, UTC)
+
+    def test_a_visit_without_a_clock_takes_the_log_start(self):
+        from datetime import UTC, datetime
+
+        from contrai_scraper.cli import _visit_stamp
+
+        started = datetime(2026, 9, 15, 22, 15, 18, tzinfo=UTC)
+        assert _visit_stamp([self._event(None)], started) == started
+
+    @pytest.mark.parametrize(
+        "first_line",
+        ["", "not json\n", '{"kind": "frame"}\n', '{"started_at": "someday"}\n'],
+        ids=["empty", "not-json", "no-stamp", "bad-stamp"],
+    )
+    def test_a_log_without_a_readable_start_leaves_the_wall_clock(
+        self, tmp_path, first_line
+    ):
+        from contrai_scraper.cli import _log_started
+
+        log = tmp_path / "raw.jsonl"
+        log.write_text(first_line, encoding="utf-8")
+        assert _log_started(log) is None

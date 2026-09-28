@@ -257,6 +257,16 @@ class TestFailureSwitches:
                            defense_pile=162, rules=rules)
         assert d == Mark(made=160, announced=base)
 
+    def test_a_numeric_failure_handed_a_substitute_marks_it(self):
+        # The defense's sweep at a table that prices it (§9.6): the caller
+        # hands the 250 in, and the defense marks it in place of the 160 —
+        # whatever failed_slam_marks_made_points says, which is a Slam's
+        # switch and not this one.
+        rules = RuleConfig(failed_slam_marks_made_points=False)
+        _, d = _components(substitute=250, made=False, attack_pile=0,
+                           defense_pile=162, rules=rules)
+        assert d == Mark(made=250, announced=100)
+
     @pytest.mark.parametrize("announced_switch, expected", [(True, 250),
                                                             (False, 160)])
     def test_failed_slam_announced_points_only_bites_under_any_failure_160(

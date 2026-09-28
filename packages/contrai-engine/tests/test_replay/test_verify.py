@@ -9,20 +9,27 @@ reports is attributable to the single mutation.
 
 from __future__ import annotations
 
+import dataclasses
 import json
+from types import SimpleNamespace
 
 import pytest
-from contrai_core import Card, DoubleBid, PassBid, Rank, Suit
+from contrai_core import Card, DoubleBid, PassBid, Rank, Suit, TeamSide
 from contrai_data import (
     BeloteHeld,
     BidMade,
     CardPlayed,
+    GameEnded,
+    Mismatch,
+    MismatchKind,
+    RoundOutcome,
     RoundScored,
+    RoundVerdict,
     SideMark,
 )
 
 from contrai_engine.replay import Verdict, verify_game, verify_record
-from contrai_engine.replay.verify import default_out_root
+from contrai_engine.replay.verify import _replayed_totals, default_out_root
 
 from .conftest import TS, play_and_record, rebuilt
 
@@ -501,6 +508,73 @@ class TestScore:
         assert verdict.counts[Verdict.PARTIAL] == len(recorded_game.rounds)
 
 
+def _without_round(number):
+    """A mutation: round ``number`` gone entirely, as a late join leaves it."""
+
+    def mutate(events):
+        return [e for e in events if getattr(e, "round", None) != number]
+
+    return mutate
+
+
+def _paying_a_pot(number):
+    """A mutation: round ``number``'s score line pays a 161 pot to East-West."""
+
+    def mutate(events):
+        return [
+            dataclasses.replace(e, carried_over={TeamSide.NS: 0, TeamSide.EW: 161})
+            if isinstance(e, RoundScored) and e.round == number
+            else e
+            for e in events
+        ]
+
+    return mutate
+
+
+class TestCarryBeforeTheRecord:
+    """A pot from a tie held before the record began is the replay's blind spot."""
+
+    @staticmethod
+    def _contracted(record):
+        return [r.number for r in record.rounds if r.contract is not None]
+
+    def test_a_late_record_s_first_contract_may_pay_an_unseen_pot(self, recorded_game):
+        # Round 1 is not in the record, so a tie it held is invisible to the
+        # replay: the carry the record infers cannot be held against it.
+        late = rebuilt(recorded_game, _without_round(1))
+        first = self._contracted(late)[0]
+
+        verdict = verify_game(rebuilt(late, _paying_a_pot(first)))
+
+        reported = _round_verdict(verdict, first)
+        assert (reported.verdict, reported.unchecked) == (Verdict.PARTIAL, ("score",))
+
+    def test_after_a_settled_contract_the_carry_is_checked_again(self, recorded_game):
+        late = rebuilt(recorded_game, _without_round(1))
+        second = self._contracted(late)[1]
+
+        verdict = verify_game(rebuilt(late, _paying_a_pot(second)))
+
+        assert _round_verdict(verdict, second).verdict is Verdict.SUSPECT
+
+    def test_a_record_seen_from_its_first_deal_checks_every_carry(self, recorded_game):
+        first = self._contracted(recorded_game)[0]
+
+        verdict = verify_game(rebuilt(recorded_game, _paying_a_pot(first)))
+
+        assert _round_verdict(verdict, first).verdict is Verdict.SUSPECT
+
+    def test_a_gap_in_the_numbering_loses_the_pot(self, recorded_game):
+        # A missing round may have been a held tie the replay never saw.
+        numbers = self._contracted(recorded_game)
+        gapped = rebuilt(recorded_game, _without_round(numbers[1]))
+        after_gap = next(n for n in self._contracted(gapped) if n > numbers[1])
+
+        verdict = verify_game(rebuilt(gapped, _paying_a_pot(after_gap)))
+
+        assert _round_verdict(verdict, after_gap).verdict is Verdict.PARTIAL
+
+
 # ---------------------------------------------------------------------------
 # Incomplete rounds and ruleset drift
 # ---------------------------------------------------------------------------
@@ -559,6 +633,167 @@ class TestRulesetDrift:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# replayed totals
+# ---------------------------------------------------------------------------
+
+
+#: Seed 1's final totals, which every rebuild below must land on.
+_FINAL = {TeamSide.NS: 1138, TeamSide.EW: 2178}
+
+
+def _unread_from(number, *, drop_rounds=()):
+    """A mutation: no score line from round ``number`` on, no final totals.
+
+    What an observed game looks like when the table's reads stopped
+    coming: the plays are all there, the score is not. ``drop_rounds``
+    removes whole rounds on top, leaving a gap in the numbering.
+    """
+
+    def mutate(events):
+        kept = [
+            e for e in events
+            if not (isinstance(e, RoundScored) and e.round >= number)
+            and getattr(e, "round", None) not in drop_rounds
+        ]
+        return [
+            dataclasses.replace(e, totals=None) if isinstance(e, GameEnded) else e
+            for e in kept
+        ]
+
+    return mutate
+
+
+def _held(number):
+    """A mutation: round ``number``'s score line says the round was held."""
+
+    def mutate(events):
+        return [
+            dataclasses.replace(e, outcome=RoundOutcome.HELD)
+            if isinstance(e, RoundScored) and e.round == number
+            else e
+            for e in events
+        ]
+
+    return mutate
+
+
+class TestReplayedTotals:
+    def test_a_record_that_states_its_totals_gets_none(self, recorded_game):
+        assert verify_game(recorded_game).replayed_totals is None
+
+    @pytest.mark.parametrize(
+        "unread_from",
+        [
+            pytest.param(18, id="last-round"),
+            # Passed-out rounds 15 and 17 sit in the rebuilt span.
+            pytest.param(15, id="through-passed-out-rounds"),
+            # The last stated totals are passed-out round 3's, and rounds
+            # 1 to 3 were all passed out: the game's first deal settles it.
+            pytest.param(4, id="from-the-first-deal"),
+        ],
+    )
+    def test_missing_totals_are_rebuilt_to_the_true_ones(
+        self, recorded_game, unread_from
+    ):
+        record = rebuilt(recorded_game, _unread_from(unread_from))
+
+        assert verify_game(record).replayed_totals == _FINAL
+
+    def test_a_record_with_no_stated_totals_gets_none(self, recorded_game):
+        record = rebuilt(recorded_game, _unread_from(1))
+
+        assert verify_game(record).replayed_totals is None
+
+    def test_a_record_whose_last_round_is_scored_gets_none(self, recorded_game):
+        # Nothing after the stated totals: the round that decided the game
+        # is not in the record at all.
+        record = rebuilt(recorded_game, _unread_from(19))
+
+        assert verify_game(record).replayed_totals is None
+
+    def test_a_round_missing_after_the_stated_totals_gets_none(
+        self, recorded_game
+    ):
+        record = rebuilt(recorded_game, _unread_from(16, drop_rounds=(17,)))
+
+        assert verify_game(record).replayed_totals is None
+
+    def test_a_round_missing_before_them_leaves_a_pot_possible(
+        self, recorded_game
+    ):
+        # The stated totals are passed-out round 15's; round 14 is gone,
+        # and a held round 14 would leave a pot nobody can see.
+        record = rebuilt(recorded_game, _unread_from(16, drop_rounds=(14,)))
+
+        assert verify_game(record).replayed_totals is None
+
+    def test_totals_stated_after_a_held_round_get_none(self, recorded_game):
+        def mutate(events):
+            return _unread_from(15)(_held(14)(events))
+
+        assert verify_game(rebuilt(recorded_game, mutate)).replayed_totals is None
+
+    def test_a_game_with_no_end_gets_none(self, recorded_game):
+        def mutate(events):
+            return [e for e in _unread_from(18)(events)
+                    if not isinstance(e, GameEnded)]
+
+        assert verify_game(rebuilt(recorded_game, mutate)).replayed_totals is None
+
+
+def _score(ew, *, held=0, carried=None):
+    """A stand-in for the replay's ``RoundScore`` of one round."""
+
+    return SimpleNamespace(
+        scores={TeamSide.NS: 0, TeamSide.EW: ew},
+        is_held=held > 0,
+        carried_over=carried or {},
+    )
+
+
+class TestReplayedTotalsGuards:
+    """What each round after the stated totals must be, one refusal each."""
+
+    @pytest.fixture
+    def unread(self, recorded_game):
+        record = rebuilt(recorded_game, _unread_from(18))
+        return record, list(verify_game(record).rounds)
+
+    def test_the_replay_s_marks_are_added(self, unread):
+        record, verdicts = unread
+
+        assert _replayed_totals(record, {18: _score(350)}, verdicts) == _FINAL
+
+    @pytest.mark.parametrize(
+        "score",
+        [None, _score(350, held=80), _score(350, carried={TeamSide.EW: 160})],
+        ids=["not-scored", "held", "paying-a-pot"],
+    )
+    def test_a_round_the_sum_cannot_trust_gets_none(self, unread, score):
+        record, verdicts = unread
+
+        assert _replayed_totals(record, {18: score}, verdicts) is None
+
+    @pytest.mark.parametrize(
+        "verdict",
+        [
+            RoundVerdict.decide(18, mismatches=(Mismatch(
+                kind=MismatchKind.SCORE, detail="off"),)),
+            RoundVerdict.decide(18, replayed=False),
+            None,
+        ],
+        ids=["suspect", "not-replayed", "no-verdict"],
+    )
+    def test_a_round_not_cleanly_replayed_gets_none(self, unread, verdict):
+        record, verdicts = unread
+        verdicts = [v for v in verdicts if v.number != 18]
+        if verdict is not None:
+            verdicts.append(verdict)
+
+        assert _replayed_totals(record, {18: _score(350)}, verdicts) is None
+
+
 class TestVerifyRecord:
     def test_it_verifies_a_file(self, tmp_path):
         play_and_record(tmp_path, seed=1)
@@ -595,3 +830,29 @@ class TestVerifyRecord:
 
     def test_a_record_in_a_games_directory_walks_up_two(self, tmp_path):
         assert default_out_root(tmp_path / "games" / "x.jsonl") == tmp_path
+
+
+class TestPublicApi:
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Verdict",
+            "MismatchKind",
+            "Mismatch",
+            "RoundVerdict",
+            "GameVerdict",
+            "verdicts_dir",
+            "verdict_path",
+            "write_verdict",
+        ],
+    )
+    def test_replay_re_exports_the_verdict_model_from_contrai_data(self, name):
+        # The model moved to ``contrai-data`` so the corpus catalog can read
+        # verdict files without the engine. ``contrai_engine.replay`` keeps
+        # the names, and they must be the *same* objects — a copy would make
+        # ``verdict is Verdict.SUSPECT`` false across the two packages.
+        import contrai_data
+        import contrai_engine.replay
+
+        assert getattr(contrai_engine.replay, name) is getattr(contrai_data, name)
+        assert name in contrai_engine.replay.__all__

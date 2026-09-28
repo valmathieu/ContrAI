@@ -49,15 +49,16 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from contrai_core import Position
 from contrai_data import EndReason, RecordWriter, RoundDealt, game_path
 
-from .exceptions import ParseError, ScraperError
-from .frames import FrameSource, RawFrame
+from .exceptions import BrowserError, ParseError, ScraperError
+from .frames import SENT, FrameSource, RawFrame
 from .health import HealthLog
-from .parse.session import parse_session
+from .lobby import SEATS, LobbyRoster
+from .parse.session import observed_game_id, parse_session, round_count, split_visits
 from .parse.snapshot import ScoreRow, Snapshot, read_snapshot
 from .parse.translate import Translator
 from .profile import Profile
@@ -66,6 +67,31 @@ from .wire import DEAL_VERB, WireEvent, WireStream, duplicate_key, order_events
 
 #: The name a scoreboard read is filed under in the raw log.
 SCOREBOARD_PANEL = "scoreboard"
+
+#: How long a state request is given to be answered, in seconds.
+#:
+#: Answers come fast or never: across the ramp's runs every answered request
+#: came back within 0.22 s (p99 0.17 s), and none came late. So waiting the
+#: whole ``snapshot_timeout_s`` for one buys nothing but a later retry.
+STATE_ANSWER_S: Final[float] = 5.0
+
+
+@dataclass(slots=True)
+class _PendingRead:
+    """A state request out on the wire, waiting for its snapshot."""
+
+    request: Any
+    """What ``request_state`` returned: its ``id`` and the page's ``socket``."""
+
+    table_id: str | None
+    last_event_id: str
+    attempt: int
+    """0 for the first request, 1 for the retry on another socket."""
+
+    deadline: float
+    socket: int | None = None
+    """The frame source's index of the socket it went on, from our own sent
+    frame — the index every frame of the raw log is filed under."""
 
 
 class StopReason(StrEnum):
@@ -76,6 +102,30 @@ class StopReason(StrEnum):
     WINDOW_CLOSED = "window_closed"
     EGRESS_BLOCKED = "egress_blocked"
     SOURCE_ENDED = "source_ended"
+    CHASE_ENDED = "chase_ended"
+    """The chased table was found and watched to the end of its game."""
+
+    CHASE_GAVE_UP = "chase_gave_up"
+    """The chased table was not found in budget, or was found and refused."""
+
+
+@dataclass(frozen=True, slots=True)
+class ChaseTarget:
+    """A game to find: its four players, and how hard to look for it.
+
+    The server seats a spectator wherever it likes, so finding a table is a
+    blind scan — one hop at a time, each landing somewhere the server chose.
+    The walk re-offers tables it has already given and is not a cycle, so a
+    budget counted in hops shrinks silently as repeats eat it; this one counts
+    the *distinct* tables judged instead, and a deadline bounds the rest.
+    """
+
+    roster: LobbyRoster
+    distinct_budget: int
+    """Distinct tables to judge before giving up."""
+
+    deadline_s: float
+    """Seconds to look before giving up, from the recorder's start."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +173,8 @@ class Recorder:
         "_monotonic", "_translator", "_iterator", "_stream", "_buffer",
         "_seen_snapshots", "_records", "_deadline", "_stopped", "_active",
         "_last_activity", "_seated", "_rejected", "_base", "_egress",
-        "_seat_deadline", "_stop_reason", "_left_table",
+        "_seat_deadline", "_stop_reason", "_left_table", "_claims", "_target",
+        "_scanned", "_chase_deadline", "_found", "_pending",
     )
 
     def __init__(
@@ -137,6 +188,8 @@ class Recorder:
         raw: RawLogWriter | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         egress: Any = None,
+        claims: Any = None,
+        target: ChaseTarget | None = None,
     ) -> None:
         """Wire the loop up.
 
@@ -157,6 +210,17 @@ class Recorder:
             egress: Anything with ``async check() -> EgressReading``, asked
                 before every hop and when a table goes quiet. ``None`` skips
                 both checks, which is what a replay or a test wants.
+            claims: One worker's view of a fleet's registry —
+                :class:`~contrai_scraper.registry.WorkerClaims` or anything
+                shaped like it. A table another worker holds is refused
+                before any other gate, the table being watched is held, and
+                every table judged is added to the census. ``None`` is a
+                recorder alone, which is what ``run`` is.
+            target: A game to chase. Every table is then held against its
+                roster before anything else is read, the one that matches
+                is gated like any other and watched to its end, and the
+                recorder stops there — or gives up, with a reason, when the
+                scan runs out. ``None`` takes whatever the server offers.
         """
 
         self._spectator = spectator
@@ -167,6 +231,11 @@ class Recorder:
         self._raw = raw
         self._monotonic = monotonic
         self._egress = egress
+        self._claims = claims
+        self._target = target
+        self._scanned: set[str | None] = set()
+        self._chase_deadline: float | None = None
+        self._found: str | None = None
         self._translator = Translator(profile)
         self._iterator: Any = None
         self._stream: WireStream | None = None
@@ -183,6 +252,7 @@ class Recorder:
         self._seated = 0
         self._rejected = 0
         self._base = [0, 0, 0]
+        self._pending: _PendingRead | None = None
 
     async def run(self) -> SessionSummary:
         """Watch tables until the limits are reached or the frames stop.
@@ -199,27 +269,44 @@ class Recorder:
 
         self._iterator = self._frames.__aiter__()
         limits = self._limits
-        if limits.max_seconds is not None or limits.seat_until_s is not None:
-            # One reading for both: a second call would shift every scripted
-            # clock in the suite by a tick.
+        target = self._target
+        if (
+            limits.max_seconds is not None
+            or limits.seat_until_s is not None
+            or target is not None
+        ):
+            # One reading for all of them: a second call would shift every
+            # scripted clock in the suite by a tick.
             started = self._monotonic()
             if limits.max_seconds is not None:
                 self._deadline = started + limits.max_seconds
             if limits.seat_until_s is not None:
                 self._seat_deadline = started + limits.seat_until_s
+            if target is not None:
+                self._chase_deadline = started + target.deadline_s
         try:
-            while not self._finished():
+            while not self._finished() and not self._chase_over():
                 seated = await self._seat()
                 if seated is None:
                     continue
                 snapshot, event, tail = seated
                 if not await self._gate(snapshot, event, tail):
-                    await self._hop()
+                    if not self._chase_over():
+                        await self._hop()
                     continue
                 await self._watch(snapshot)
+                if target is not None:
+                    # One game is what a chase is for; the worker goes back
+                    # to the lobby for the next.
+                    self._stop(StopReason.CHASE_ENDED)
         except (asyncio.CancelledError, KeyboardInterrupt):
             self._write(EndReason.INTERRUPTED)
             raise
+        finally:
+            # Whatever ended the loop, the table it was on is no longer being
+            # watched, and another worker must be free to take it.
+            if self._claims is not None:
+                self._claims.release()
         self._health.heartbeat(closing=True)
         return SessionSummary(
             games_recorded=len(self._records),
@@ -249,6 +336,9 @@ class Recorder:
                 return None
             if self._past_seat_deadline():
                 self._stop(StopReason.WINDOW_CLOSED)
+                return None
+            if self._past_chase_deadline():
+                # Left to the loop, which gives the chase up and says why.
                 return None
             remaining = self._capped(
                 timeout - (self._monotonic() - started), seating=True
@@ -448,6 +538,30 @@ class Recorder:
         """
 
         recorder = self._profile.recorder
+        if self._target is not None:
+            self._scanned.add(snapshot.table_id)
+        if self._claims is not None:
+            self._claims.seen(
+                snapshot.table_id,
+                is_tournament=snapshot.is_tournament,
+                round_index=snapshot.round_index,
+            )
+            # First, because it is the only refusal that prevents corruption
+            # rather than waste: two workers at one table would append two
+            # streams to one record file. Only *asked* here: the claim itself
+            # is taken on acceptance, below, so a scan passing through never
+            # holds a table another worker has come to find.
+            holder = self._claims.holder(snapshot.table_id)
+            if holder is not None and holder != self._claims.worker:
+                return self._reject(snapshot, "claimed_by_other", holder=holder)
+        if self._target is not None and not self._is_target(snapshot):
+            return False
+        if snapshot.game_id is not None and self._record_path(snapshot.game_id).exists():
+            # A game gets one record. Its file already exists when this game
+            # was watched before — seated, left and offered again — and the
+            # rest of it would be appended as a second record in the same
+            # file: two headers, and every round from the first visit twice.
+            return self._reject(snapshot, "already_recorded", game=snapshot.game_id)
         if not snapshot.is_tournament:
             return self._reject(snapshot, "not_tournament")
         if len(snapshot.score_rows) >= recorder.hop_after_rows:
@@ -486,11 +600,85 @@ class Recorder:
             self._health.counters.tables_rejected += 1
             return False
 
+        if self._claims is not None and not self._claims.claim(snapshot.table_id):
+            # Another worker accepted it while this one was reading the page.
+            return self._reject(
+                snapshot, "claimed_by_other",
+                holder=self._claims.holder(snapshot.table_id),
+            )
         self._seated += 1
         self._health.counters.tables_seated += 1
         self._health.event("table_seated", table=snapshot.table_id)
         self._buffer = [event, *tail]
         return True
+
+    def _is_target(self, snapshot: Snapshot) -> bool:
+        """Whether this is the chased table: all four accounts, nothing less.
+
+        Held on the wire alone, before anything is read off the page, because
+        a scan is mostly refusals and the page costs seconds a refusal does
+        not. Partial is refused outright: across every roster and every wrong
+        table in the corpus, the best a wrong table scored was two of four,
+        so "most of them" would have found a wrong table forty times.
+
+        Returns:
+            Whether to go on to the table's other gates, which a match must
+            pass as well — a chase is not a way round them.
+        """
+
+        target = self._target
+        assert target is not None
+        matched = _accounts_matched(snapshot, target.roster)
+        if matched < SEATS:
+            return self._reject(
+                snapshot, "roster_mismatch", matched=matched,
+                roster=target.roster.digest,
+            )
+        self._found = snapshot.table_id
+        self._health.event(
+            "chase_matched",
+            table=snapshot.table_id,
+            roster=target.roster.digest,
+            distinct=len(self._scanned),
+            after_s=round(self._frames.elapsed - target.roster.at, 1),
+        )
+        return True
+
+    def _chase_over(self) -> bool:
+        """Whether a chase should stop rather than look at another table.
+
+        Stops it, and says why, when it should. Giving up is an outcome, not
+        an error: the worker goes back to the lobby for the next game.
+
+        Returns:
+            Whether the chase gave up just now. Always ``False`` for a
+            recorder that is not chasing.
+        """
+
+        target = self._target
+        if target is None:
+            return False
+        if self._found is not None:
+            # The table was found and one of its gates refused it; nothing
+            # else can be the game the roster started.
+            reason = "target_refused"
+        elif len(self._scanned) >= target.distinct_budget:
+            reason = "distinct_budget"
+        elif self._past_chase_deadline():
+            reason = "deadline"
+        else:
+            return False
+        self._health.event(
+            "chase_gave_up", reason=reason, roster=target.roster.digest,
+            distinct=len(self._scanned),
+        )
+        self._stop(StopReason.CHASE_GAVE_UP)
+        return True
+
+    def _record_path(self, wire_game: str) -> Path:
+        """Where the record of the game the site calls ``wire_game`` is written."""
+
+        return game_path(self._profile.output.root, observed_game_id(wire_game))
 
     def _reject(self, snapshot: Snapshot, reason: str, **fields: Any) -> bool:
         """Count and log one refused table.
@@ -519,48 +707,76 @@ class Recorder:
         last_event_id: str | None = None
         last_deal_round: int | None = None
         self._last_activity = self._monotonic()
+        self._pending = None
         recorder = self._profile.recorder
 
         while True:
             if self._health.due(recorder.health_interval_s):
                 self._health.heartbeat(table=table_id)
             if self._past_deadline():
-                # The shift is over. The game was not abandoned and did not
-                # finish: we stopped watching it. Only this hard deadline stops
-                # a game in hand; the seat deadline is never checked here.
-                self._stop(StopReason.TIME_LIMIT)
-                self._write(EndReason.OBSERVER_LEFT)
-                return
+                return self._leave_at_deadline()
+            pending = self._pending
+            if pending is not None and self._monotonic() >= pending.deadline:
+                await self._unanswered()
+                continue
             remaining = self._capped(
                 recorder.stale_after_s - (self._monotonic() - self._last_activity)
             )
-            if remaining <= 0:
-                return await self._abandon()
-
-            pulled = await self._pull(remaining)
+            # A pending request shortens the wait to its own deadline. A wait
+            # cut short that way is the request's to settle, at the top of the
+            # loop — never a table gone quiet.
+            waiting_on_request = (
+                pending is not None
+                and pending.deadline - self._monotonic() < remaining
+            )
+            if waiting_on_request:
+                remaining = pending.deadline - self._monotonic()
+            pulled = await self._pull(remaining) if remaining > 0 else None
             if self._stopped:
                 self._write(EndReason.INTERRUPTED)
                 return
             if pulled is None:
+                if waiting_on_request:
+                    continue
+                if self._past_deadline():
+                    # The wait is capped at the deadline, so it runs out there
+                    # whether or not the players are still at it: the shift
+                    # ended, not the table. Checked before the watchdog, or
+                    # every window closing mid-game would write `abandoned`.
+                    return self._leave_at_deadline()
                 return await self._abandon()
 
             frame, event = pulled
             if self._active:
                 self._last_activity = self._monotonic()
+                if self._claims is not None:
+                    # A game runs for longer than any claim lives unrefreshed.
+                    self._claims.hold()
             if event is None:
                 continue
 
             self._buffer.append(event)
+            if self._pending is not None and self._answers(event, table_id):
+                self._health.counters.score_reads_wire += 1
+                self._pending = None
             last_event_id = event.frame_id or last_event_id
             if self._says(event, "ended"):
                 return await self._close(table_id, last_event_id)
             key = event.key
             if key is None or key.verb != DEAL_VERB or key.round == last_deal_round:
                 continue
-            if last_deal_round is not None:
+            if (
+                last_deal_round is not None
+                or key.round != (snapshot.round_index or 0) + 1
+            ):
                 # The deal that opens a round is the news that the previous
                 # one is over and has a score to read. The first deal after
-                # seating has none: the snapshot that seated us is it.
+                # seating is no exception unless it opens the round right
+                # after the seating snapshot's newest scored one: only then
+                # is that snapshot the read. A seat that fell mid-round has
+                # a round whose totals nothing stated yet — 557 of 706 V5
+                # visits never got them. Judged on round numbers, the rule
+                # also holds when the catch-up drain swallowed a deal.
                 await self._boundary(table_id, last_event_id)
             last_deal_round = key.round
 
@@ -570,18 +786,108 @@ class Recorder:
         """Ask the table for a state snapshot, or fall back to the panel.
 
         The request answers on the socket, so the snapshot arrives in the
-        live loop and lands in the buffer like any other event. The panel
-        behind it cannot: the parser reads scores from snapshots only, so a
-        panel read is evidence for the raw log and nothing more.
+        live loop and lands in the buffer like any other event; it counts as
+        a wire read only once it has. A request still unanswered when the
+        next boundary comes is given up: the new one covers the same rows.
+
+        The panel behind it cannot land in the buffer: the parser reads
+        scores from snapshots only, so a panel read is evidence for the raw
+        log and nothing more.
+        """
+
+        if self._pending is not None:
+            self._log_unanswered(self._pending)
+            self._pending = None
+        if last_event_id is not None and await self._request(
+            table_id, last_event_id, attempt=0
+        ):
+            return
+        await self._panel_fallback()
+
+    async def _request(
+        self,
+        table_id: str | None,
+        last_event_id: str,
+        *,
+        attempt: int,
+        avoid: int | None = None,
+    ) -> bool:
+        """Send one state request and remember it as pending.
+
+        Args:
+            table_id: The table being watched.
+            last_event_id: The id of the newest frame seen.
+            attempt: 0 for a first request, 1 for the retry.
+            avoid: The page's socket the unanswered attempt went on.
+
+        Returns:
+            Whether it went out; there was no open socket to send it on if
+            not.
+        """
+
+        sent = await self._spectator.request_state(
+            table_id, last_event_id, avoid=avoid
+        )
+        if sent is None:
+            return False
+        self._pending = _PendingRead(
+            request=sent,
+            table_id=table_id,
+            last_event_id=last_event_id,
+            attempt=attempt,
+            deadline=self._monotonic() + STATE_ANSWER_S,
+        )
+        return True
+
+    async def _unanswered(self) -> None:
+        """Settle a request whose answer did not come in time.
+
+        The first attempt is retried once on another socket: the site
+        acknowledges some requests and never answers them, and ours always
+        went out on the newest socket, which was never the one the page itself
+        had switched to the table's room. Whether that helps is measured by
+        this very retry. After two silences the panel is read instead.
+        """
+
+        pending = self._pending
+        assert pending is not None
+        self._pending = None
+        self._log_unanswered(pending)
+        if pending.attempt == 0 and await self._request(
+            pending.table_id,
+            pending.last_event_id,
+            attempt=1,
+            avoid=pending.request.socket,
+        ):
+            return
+        await self._panel_fallback()
+
+    def _log_unanswered(self, pending: _PendingRead) -> None:
+        """Say that a request went unanswered, and count it."""
+
+        self._health.counters.score_reads_unanswered += 1
+        self._health.event(
+            "state_unanswered",
+            table=pending.table_id,
+            socket=pending.socket,
+            attempt=pending.attempt,
+        )
+
+    async def _panel_fallback(self) -> None:
+        """Read the scoreboard panel, best-effort.
+
+        A failed read costs the evidence, never the game in hand: the record
+        is built from the wire, and a panel click that missed is no reason to
+        stop watching it.
         """
 
         counters = self._health.counters
-        if last_event_id is not None and await self._spectator.request_state(
-            table_id, last_event_id
-        ):
-            counters.score_reads_wire += 1
+        try:
+            board = await self._read_panel()
+        except BrowserError as error:
+            counters.score_reads_failed += 1
+            self._health.event("score_read_failed", error=str(error))
             return
-        board = await self._read_panel()
         if board.rows:
             counters.score_reads_panel += 1
         else:
@@ -595,32 +901,86 @@ class Recorder:
         The last round has had no deal after it, so its score has never been
         asked for. One final request buys it, and the answer is waited for
         rather than fired and forgotten — otherwise the round the game was
-        decided on is the one round with no score.
+        decided on is the one round with no score. It takes the same two
+        attempts a boundary read does, but no panel after them: the end
+        screen covers the page.
         """
 
-        if last_event_id is not None and await self._spectator.request_state(
-            table_id, last_event_id
-        ):
-            self._health.counters.score_reads_wire += 1
-            await self._drain_for_snapshot()
+        if self._pending is not None:
+            self._log_unanswered(self._pending)
+            self._pending = None
+        if last_event_id is not None:
+            avoid: int | None = None
+            for attempt in (0, 1):
+                if not await self._request(
+                    table_id, last_event_id, attempt=attempt, avoid=avoid
+                ):
+                    break
+                pending = self._pending
+                assert pending is not None
+                if await self._drain_for_snapshot(table_id, pending.deadline):
+                    self._health.counters.score_reads_wire += 1
+                    break
+                if self._stopped:
+                    break
+                self._log_unanswered(pending)
+                avoid = pending.request.socket
+            self._pending = None
         self._write(None)
         await self._hop()
 
-    async def _drain_for_snapshot(self) -> None:
-        """Keep reading until the answering snapshot arrives, or time runs out."""
+    async def _drain_for_snapshot(
+        self, table_id: str | None, deadline: float
+    ) -> bool:
+        """Keep reading until this table's snapshot arrives, or time runs out.
 
-        started = self._monotonic()
-        timeout = self._profile.recorder.snapshot_timeout_s
-        while timeout - (self._monotonic() - started) > 0:
-            pulled = await self._pull(timeout - (self._monotonic() - started))
+        Args:
+            table_id: The table being closed.
+            deadline: When the request stops being waited for, on the
+                recorder's clock. The hard deadline cuts it shorter still.
+
+        Returns:
+            Whether the answer came.
+        """
+
+        while True:
+            remaining = self._capped(deadline - self._monotonic())
+            if remaining <= 0:
+                return False
+            pulled = await self._pull(remaining)
             if self._stopped or pulled is None:
-                return
+                return False
             _, event = pulled
             if event is None:
                 continue
             self._buffer.append(event)
-            if event.kind == self._join_name:
-                return
+            if self._answers(event, table_id):
+                return True
+
+    def _answers(self, event: WireEvent, table_id: str | None) -> bool:
+        """Whether an event is a snapshot of the table being watched.
+
+        That is what an answered state request looks like. Another table's
+        snapshot is not, and neither is anything else that happens to arrive
+        while the request is out.
+        """
+
+        return (
+            event.kind == self._join_name
+            and self._translator.field(event.data, "table_id") == table_id
+        )
+
+    def _leave_at_deadline(self) -> None:
+        """Close the game in hand because the shift is over.
+
+        The game was not abandoned and did not finish: we stopped watching
+        it. Only the hard deadline stops a game in hand; the seat deadline is
+        never checked while one is watched. No hop follows — the shift that
+        would sit at the next table has ended.
+        """
+
+        self._stop(StopReason.TIME_LIMIT)
+        self._write(EndReason.OBSERVER_LEFT)
 
     async def _abandon(self) -> None:
         """Give up on a table that has stopped playing — or on a tunnel that has."""
@@ -637,16 +997,23 @@ class Recorder:
     async def _hop(self, *, egress_checked: bool = False) -> None:
         """Ask the server for another table, if the shift still wants one.
 
-        There is no leave: the site's exit control leaves spectating rather
-        than the table, and nothing in-session recovers from that. The egress
-        is re-checked first, because a hop is new traffic to the site.
+        The table control is the only hop. The site's exit control leads to
+        the menus, not to another table, which makes it a way back to the
+        lobby and never a way to change table. The egress is re-checked
+        first, because a hop is new traffic to the site.
 
         Args:
             egress_checked: Whether the caller has just checked the egress,
                 so a stale table costs one probe rather than two.
+
+        Raises:
+            BrowserError: If the hop control could not be clicked and the
+                recorder is not chasing.
         """
 
-        if self._finished():
+        if self._finished() or self._found is not None:
+            # A chase that found its table is over once it is left: the next
+            # table is the lobby's to announce, not the server's to offer.
             return
         if (
             self._egress is not None
@@ -654,7 +1021,23 @@ class Recorder:
             and not await self._egress_open()
         ):
             return
-        await self._spectator.next_table()
+        try:
+            await self._spectator.next_table()
+        except BrowserError as error:
+            target = self._target
+            if target is None:
+                raise
+            # A chase's hop lands on a table the server is still loading often
+            # enough that its button can stay under the loading overlay for
+            # every attempt — measured once in about sixty hops of a live run.
+            # That is the chase's loss, not the session's: the worker goes back
+            # to the lobby the way any give-up does, keeping its place, where
+            # an error would end the session and leave the lobby short.
+            self._health.event(
+                "chase_gave_up", reason="hop_failed", roster=target.roster.digest,
+                distinct=len(self._scanned), error=str(error),
+            )
+            self._stop(StopReason.CHASE_GAVE_UP)
 
     # -- the record ------------------------------------------------------
 
@@ -667,6 +1050,20 @@ class Recorder:
         """
 
         if not self._buffer:
+            return
+        mixture = self._mixture()
+        if mixture is not None:
+            # A buffer is one table's game by construction, but only by
+            # construction: a seat taken one table behind the page once
+            # filled one with 108 events of another table against 59 of its
+            # own, and the parser folded both into a single record. Rounds
+            # numbered alike collide, the seats come from whichever snapshot
+            # sorts first, and the result is complete, legal and wrong. The
+            # raw log still holds every frame for `contrai-scrape parse` to
+            # cut apart; what this path must not do is guess which half was
+            # the table it seated.
+            self._health.event("record_refused", **mixture)
+            self._buffer = []
             return
         try:
             result = parse_session(
@@ -681,22 +1078,77 @@ class Recorder:
         for note in result.notes:
             self._health.event("parse_note", note=note)
         header = result.events[0]
+        if not round_count(result.events):
+            # Seated too late to see a deal — a chase that found its table
+            # seconds before the time limit. A record with no round and no
+            # first round is not a game, and `parse` never wrote one either.
+            self._health.event("record_skipped", game=header.game_id, reason="no_round")
+            self._buffer = []
+            return
         path = game_path(self._profile.output.root, header.game_id)
+        if path.exists():
+            # The gate refuses a game already on disk, but it reads the
+            # join snapshot, which can name another game than the one the
+            # buffer holds — at a game's boundary. A record file is opened for
+            # appending, so this is the check that actually keeps it whole;
+            # the raw log still holds every frame of what is skipped.
+            self._health.event(
+                "record_skipped", game=header.game_id, reason="already_recorded"
+            )
+            self._buffer = []
+            return
         with RecordWriter(path) as writer:
             for event in result.events:
                 writer.write(event)
 
-        rounds = sum(1 for event in result.events if isinstance(event, RoundDealt))
+        dealt = [event.round for event in result.events if isinstance(event, RoundDealt)]
+        rounds = len(dealt)
         self._health.counters.games_recorded += 1
         self._health.counters.rounds_recorded += rounds
         self._records.append(path)
         self._health.event(
-            "game_recorded", game=header.game_id, rounds=rounds, path=str(path)
+            "game_recorded", game=header.game_id, rounds=rounds, path=str(path),
+            # Whether the record starts where its game did: a chase that
+            # arrives after the first deal loses round 1 however fast it was.
+            first_round=min(dealt, default=None),
         )
         # Emptied, not kept: the interrupt handler writes whatever is in the
         # buffer, and a record written twice is a record with two of every
         # round.
         self._buffer = []
+
+    def _mixture(self) -> dict[str, Any] | None:
+        """What makes the buffer more than one game, or ``None`` when it is one.
+
+        The buffer is cut exactly as ``contrai-scrape parse`` cuts a raw log,
+        by :func:`~contrai_scraper.parse.session.split_visits`: a join
+        snapshot naming another table opens a visit, and a boundary re-read
+        of the seated table does not. Two tests then decide, and either one
+        refuses. More than one game key means two games' plays would share
+        round numbers. More than one table means another table's snapshot is
+        in the buffer, which would lend the record its seats and its score
+        rows even when none of its plays came along. The pre-game draw is
+        keyed to the game it opens, so a table caught from its first card is
+        still one game.
+
+        Returns:
+            The fields a refusal is logged with — the reason, the wire's game
+            ids and the tables in the order they were met — or ``None`` when
+            the buffer holds one game at one table.
+        """
+
+        visits = split_visits(self._buffer, self._profile)
+        games = sorted(
+            {event.key.game for event in self._buffer if event.key is not None}
+        )
+        if len(visits) <= 1 and len(games) <= 1:
+            return None
+        tables = [self._translator.field(visit[0].data, "table_id") for visit in visits]
+        return {
+            "reason": "several_games" if len(games) > 1 else "several_tables",
+            "games": games,
+            "tables": list(dict.fromkeys(tables)),
+        }
 
     # -- the wire --------------------------------------------------------
 
@@ -721,6 +1173,16 @@ class Recorder:
 
         if self._raw is not None:
             self._raw.write_frame(frame)
+        pending = self._pending
+        if (
+            pending is not None
+            and pending.socket is None
+            and frame.direction == SENT
+            and duplicate_key(frame.text) == pending.request.id
+        ):
+            # Our own request, echoed by the frame source: this is where the
+            # page's socket gets the index every logged frame is filed under.
+            pending.socket = frame.socket
         assert self._stream is not None
         before = self._stream.received
         event = self._stream.ingest(frame.text, frame.socket)
@@ -734,8 +1196,10 @@ class Recorder:
         return frame, event
 
     def _reset_buffer(self) -> None:
-        """Start a fresh table: empty buffer, fresh de-duplication."""
+        """Start a fresh table: empty buffer, fresh de-duplication, no claim."""
 
+        if self._claims is not None:
+            self._claims.release()
         if self._stream is not None:
             self._base[0] += self._stream.received
             self._base[1] += self._stream.deduped
@@ -811,7 +1275,7 @@ class Recorder:
 
         deadlines = [self._deadline]
         if seating:
-            deadlines.append(self._seat_deadline)
+            deadlines += [self._seat_deadline, self._chase_deadline]
         present = [deadline for deadline in deadlines if deadline is not None]
         if not present:
             return remaining
@@ -828,6 +1292,14 @@ class Recorder:
         return (
             self._seat_deadline is not None
             and self._monotonic() >= self._seat_deadline
+        )
+
+    def _past_chase_deadline(self) -> bool:
+        """Whether a chase has looked for its table for as long as it may."""
+
+        return (
+            self._chase_deadline is not None
+            and self._monotonic() >= self._chase_deadline
         )
 
     def _finished(self) -> bool:
@@ -873,6 +1345,29 @@ class Recorder:
         self._health.event("egress_blocked", **reading.fields())
         self._stop(StopReason.EGRESS_BLOCKED)
         return False
+
+
+def _accounts_matched(snapshot: Snapshot, roster: LobbyRoster) -> int:
+    """How many of a roster's accounts sit at this table.
+
+    The snapshot's account field against the lobby's, as strings, exactly as
+    each spells it — never the per-visit handle, which changes between
+    visits, and never the pseudonym, which is not unique and which a player
+    without one is shown by their account instead.
+
+    Args:
+        snapshot: The table as it described itself.
+        roster: The game being chased.
+
+    Returns:
+        From 0 to 4; only 4 is the table.
+    """
+
+    seated = {
+        player.account for player in snapshot.players.values()
+        if player.account is not None
+    }
+    return len(seated & roster.accounts)
 
 
 def _orientation_holds(

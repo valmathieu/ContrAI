@@ -1,0 +1,152 @@
+@startuml seq_scraper_chase
+title contrai-scraper — one chase, lobby to record (Worker._hall → Recorder.run with a target)
+
+' --- Palette: scraper purple, with contrai-data teal for the record end ---
+skinparam shadowing false
+skinparam sequence {
+    ArrowColor #5E4495
+    LifeLineBorderColor #9B7FCC
+    LifeLineBackgroundColor #EDE7F6
+    ParticipantBorderColor #5E4495
+    ParticipantBackgroundColor #EDE7F6
+    ParticipantFontColor #311B92
+    ActorBorderColor #5E4495
+    ActorBackgroundColor #EDE7F6
+    ActorFontColor #311B92
+    GroupBorderColor #5E4495
+    GroupBackgroundColor #F3E5F5
+    GroupHeaderFontColor #311B92
+    BoxBorderColor #5E4495
+    BoxBackgroundColor #F3E5F5
+    DividerBorderColor #5E4495
+    DividerBackgroundColor #D1C4E9
+    DividerFontColor #311B92
+}
+skinparam note {
+    BackgroundColor #FFFDE7
+    BorderColor #F9A825
+    FontColor #5F4B00
+}
+
+box "one worker" #F3E5F5
+    participant "Worker\n(fleet.py)" as W <<scraper>>
+    participant "Spectator\n(browser.py)" as SP <<scraper>>
+    participant "page\n(its own context)" as PG
+    participant "frames\n+ WireStream" as FS <<scraper>>
+    participant "LobbyWatcher\n(lobby.py)" as LW <<scraper>>
+    participant "Recorder\n(target set)" as R <<scraper>>
+end box
+
+box "shared by the fleet" #EDE7F6
+    participant "TableRegistry\n(registry.py)" as REG <<scraper>>
+end box
+
+participant "RecordWriter" as RW <<from contrai-data>> #E0F5F2
+
+== 0. In the lobby ==
+
+W -> SP : log_in(), enter_lobby()
+SP -> PG : online · new games · the variant
+SP -> PG : what is under the centre?
+note right of SP
+  The first-visit overlay goes at any click,
+  but without it a click at the centre sits
+  the account down at a table slot: so the
+  click is made only when the list is not
+  what lies under it.
+end note
+W -> SP : read_tournament_hash()
+SP --> W : the tournament row's hash
+note right of W
+  Read off the page once. The socket
+  says everything about a row except
+  which one is the tournament's.
+end note
+
+loop until the tournament row raises its **full** flag
+    FS -> LW : lobby_table event
+    LW -> LW : seats = this event's whole map
+end
+LW --> W : LobbyRoster(seats, at) · named by its digest
+note right of LW
+  Never merged with the last event: nothing
+  vacates a seat on the wire, so adding events
+  up leaves ghosts and invents rosters that
+  never sat together.
+end note
+
+alt older than ""roster_max_age_s""
+    W -> W : roster_stale, and keep waiting
+else another worker read it first
+    W -> REG : claim_roster(accounts)
+    REG --> W : refused · roster_taken, and keep waiting
+else claimed
+    W -> REG : claim_roster(accounts)
+    REG --> W : granted
+
+    == 1. Out to a table ==
+
+    W -> SP : enter_table_from_lobby()
+    loop back, until observe is in reach
+        SP -> PG : read every back control and its screen's style
+        SP -> PG : click the best-ranked one on the screen shown
+    end
+    SP -> PG : observe · the variant
+    W -> R : Recorder(target = ChaseTarget, claims).run()
+    activate R
+
+    == 2. The blind scan ==
+
+    loop until the table is found, ""distinct_budget"" tables are judged, or ""scan_deadline_s"" passes
+        FS -> R : a join snapshot · not the table just left
+        R -> REG : seen(table) · into the census
+        R -> REG : holder(table)
+        alt another worker is watching it
+            R -> SP : next_table() · claimed_by_other
+        else fewer than four of the roster's accounts
+            R -> SP : next_table() · roster_mismatch, how many matched
+        else all four
+            R -> R : chase_matched · distinct tables, seconds since the roster
+        end
+    end
+
+    == 3. The table ==
+
+    R -> SP : read_options(), read_scoreboard()
+    note right of R
+      Every gate a table meets under ""run""
+      still applies: a chase is not a way
+      round the tournament, options or
+      orientation checks.
+    end note
+    R -> REG : claim_table(table) · atomic, on acceptance
+    note right of REG
+      Claimed only now, not on arrival: a scan
+      passing through a table never holds it,
+      so it never keeps out the worker that
+      came to find it.
+    end note
+    loop the game, refreshing the claim on every frame
+        FS -> R : WireEvent
+    end
+    R -> R : split_visits(buffer) · one game, one table?
+    R -> RW : one record · game_recorded carries first_round
+    R -> REG : release_table(table)
+    R --> W : SessionSummary · chase_ended or chase_gave_up
+    deactivate R
+    W -> REG : release_roster(accounts)
+
+    == 4. Back to the lobby ==
+
+    W -> SP : return_to_lobby()
+    opt a table is showing, and the profile names table_exit
+        SP -> PG : reveal the rail · the table's exit\nlands on the online menu
+    end
+    alt a step does not land
+        W -> W : return_rebuilt · a fresh session, no budget spent
+    else
+        SP -> PG : back until new games is in reach · the variant
+    end
+end
+
+@enduml

@@ -71,6 +71,16 @@ class RoundRecord <<from contrai-data>> #E0F5F2 {
     + trick~_winners : tuple<Position> <<property>>
 }
 class RoundScored <<from contrai-data>> #E0F5F2
+class Verdict      <<from contrai-data>> #E0F5F2
+class RoundVerdict <<from contrai-data>> #E0F5F2
+class "catalog.py" as p_catalog_data <<from contrai-data>> #E0F5F2 {
+    build~_catalog(root) : CatalogSummary
+    player~_games(root, player) : PlayerReport
+}
+class GameVerdict  <<from contrai-data>> #E0F5F2 {
+    + verdict : Verdict <<property>>
+    + counts : dict<Verdict, int> <<property>>
+}
 
 ' =========================================================
 ' model/player/ — Player hierarchy + pluggable AI strategies
@@ -272,6 +282,7 @@ package "model/game.py" as p_game {
         + round_number : int
         + scores : dict<TeamSide, int>
         + unconfirmed_belote : dict<TeamSide, int>
+        + dispute_pot : int
         + rules : RuleConfig
         + deal_source : DealSource
         --
@@ -400,6 +411,7 @@ package "model/round/ package" as p_round {
         + dealer : Player
         + deck : Deck
         + round_number : int
+        + dispute_pot : int
         + contract : Contract?
         + auction : Auction?
         + play_state : PlayState?
@@ -416,7 +428,7 @@ package "model/round/ package" as p_round {
         + bid_decisions : list<BidDecision>
         + card_decisions : list<CardDecision>
         --
-        + __init__(players_order, dealer, deck, round_number, rules=None)
+        + __init__(players_order, dealer, deck, round_number, rules=None, dispute_pot=0)
         + deal_cards() : None
         + manage_bidding(view=None) : Contract?
         + play_trick(view=None) : None
@@ -438,7 +450,7 @@ package "model/round/ package" as p_round {
     ' --- scoring.py: the pure scoring transformation ---
     class "scoring.py" as r_scoring <<module>> #FFEFD9 {
         score_round(round) : RoundScore
-        sweep_substitute(tag) : int
+        sweep_substitute(tag, rules) : int
         count_player_tricks(trick_winners, player) : int
         UnannouncedSlam <<enum>> : {SLAM, GRAND_SLAM}
     }
@@ -452,6 +464,9 @@ package "model/round/ package" as p_round {
         + card_points : dict<TeamSide, int>
         + last_trick_side : TeamSide?
         + multiplier : int
+        + held : int
+        + carried_over : dict<TeamSide, int>
+        + is_held : bool <<property>>
     }
 
     ' --- components.py: the §7.2 arithmetic, over plain ints ---
@@ -1006,62 +1021,10 @@ package "replay/ package" as p_replay {
         + on~_round~_complete(round, running~_scores) : None
     }
 
-    enum Verdict #FFEFD9 {
-        VERIFIED
-        PARTIAL
-        SUSPECT
-    }
-
-    enum MismatchKind #FFEFD9 {
-        ILLEGAL~_BID
-        ILLEGAL~_PLAY
-        TRICK~_WINNER
-        BELOTE
-        SCORE
-    }
-
-    class Mismatch <<frozen dataclass>> #FFEFD9 {
-        + kind : MismatchKind
-        + detail : str
-        + position : str?
-        + trick : int?
-        + seq : int?
-        + expected : str?
-        + observed : str?
-    }
-
-    class RoundVerdict <<frozen dataclass>> #FFEFD9 {
-        + number : int
-        + verdict : Verdict
-        + mismatches : tuple<Mismatch>
-        + unchecked : tuple<str>
-        + replayed : bool = True
-        --
-        + {static} decide(number, mismatches, unchecked, *, replayed) : RoundVerdict
-    }
-
-    class GameVerdict <<frozen dataclass>> #FFEFD9 {
-        + game~_id : str
-        + source : str
-        + preset : str
-        + rounds : tuple<RoundVerdict>
-        + notes : tuple<str>
-        --
-        + verdict : Verdict <<property>>
-        + counts : dict<Verdict, int> <<property>>
-        + as~_json() : dict
-    }
-
     class "verify.py" as p_verify_fn <<module>> #FFEFD9 {
         verify~_game(record: GameRecord) : GameVerdict
         verify~_record(path, *, out=None) : GameVerdict
         default~_out~_root(path) : Path
-    }
-
-    class "verdict.py" as p_verdict_fn <<module>> #FFEFD9 {
-        verdicts~_dir(root) : Path
-        verdict~_path(root, game~_id) : Path
-        write~_verdict(root, verdict: GameVerdict) : Path
     }
 
     note bottom of RoundScript
@@ -1149,25 +1112,7 @@ package "replay/ package" as p_replay {
       one with nothing looking wrong.
     end note
 
-    note bottom of Verdict
-      **""partial"" is the interesting one.** It means every
-      check that ran passed, but one could not run for want
-      of something to check against — overwhelmingly a
-      round with no ""round~_scored"" event, which is the
-      //common// case in an observed game: a spectator sees
-      the cards long before a score sheet.
-      So a corpus gate reads "no round is suspect", not
-      "every round is verified". A game takes the **worst**
-      verdict among its rounds, so one bad round is never
-      averaged away by good ones.
-    end note
-
-    RoundVerdict "1" *-- "0..N" Mismatch : mismatches
-    GameVerdict "1" *-- "0..N" RoundVerdict : rounds
-    Mismatch --> MismatchKind : kind
-    RoundVerdict --> Verdict : verdict
     RecordedPlayer --> RoundScript : script
-    p_verdict_fn ..> GameVerdict : <<writes it under verdicts/>>
 }
 
 ' =========================================================
@@ -1343,8 +1288,12 @@ ReplayController ..> VerifyingObserver : <<notifies as a view>>
 VerifyingObserver --> GameRecord : record
 VerifyingObserver ..> RoundScored : <<compares score_round against>>
 VerifyingObserver ..> GameVerdict : <<builds>>
+GameVerdict "1" *-- "0..N" RoundVerdict : rounds
+RoundVerdict --> Verdict : verdict
+p_verify_fn ..> GameVerdict : <<write~_verdict>>
 p_verify_fn ..> ReplayController : <<drives round by round>>
 Cli ..> p_verify_fn : <<verify PATH...>>
+Cli ..> p_catalog_data : <<catalog [ROOT] [--player]>>
 
 ' Stepping is replay with the keyboard in the view's place.
 ReplayController ..> SteppingView : <<notifies as a view>>

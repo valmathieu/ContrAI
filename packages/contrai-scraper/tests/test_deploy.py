@@ -15,7 +15,9 @@ _ALLOWED = re.compile(r"^(192\.0\.2|198\.51\.100|203\.0\.113)\.\d{1,3}$|^127\.|^
 _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 
 #: What must never enter the build context, even inside an allowed directory.
-_LOCAL_MATERIAL = ("**/profile.toml", "**/.env", "**/*.env", "**/records", "**/raw")
+_LOCAL_MATERIAL = (
+    "**/profile.toml", "**/accounts.toml", "**/.env", "**/*.env", "**/records", "**/raw",
+)
 
 
 class TestDeployFiles:
@@ -67,4 +69,21 @@ class TestDeployFiles:
                            (DEPLOY / "compose.yml").read_text(encoding="utf-8"), re.M)
         assert (target in command, any(item.endswith(f":{target}:ro") for item in items)) == (
             True, True
+        )
+
+    def test_the_fleet_reads_its_files_where_compose_mounts_them(self):
+        # The override's command names two files: the profile, mounted by
+        # compose.yml, and the accounts, mounted by the override itself. A path
+        # in the command that no layer mounts read-only is a fleet that starts
+        # and then cannot log anyone in.
+        def items(name):
+            text = (DEPLOY / name).read_text(encoding="utf-8")
+            return re.findall(r"^\s*-\s*(\S+)\s*$", text, re.M)
+
+        fleet = items("compose.fleet.yml")
+        named = [item for item in fleet if item.startswith("/etc/contrai/") and ":" not in item]
+        mounted = {item.split(":")[1] for item in [*items("compose.yml"), *fleet]
+                   if item.endswith(":ro")}
+        assert (fleet[0], named, set(named) <= mounted) == (
+            "fleet", ["/etc/contrai/profile.toml", "/etc/contrai/accounts.toml"], True
         )

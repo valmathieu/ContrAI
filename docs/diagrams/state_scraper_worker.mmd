@@ -1,0 +1,72 @@
+---
+title: contrai-scraper — a fleet worker (Worker.run)
+---
+stateDiagram-v2
+    direction TB
+
+    [*] --> Out : the window opens<br/>every worker logged out
+
+    Out : <b>logged out</b><br/>queued for a place, longest-waiting first<br/>no browser context
+    Egress : <b>egress gate</b><br/>one SharedEgressGate for the fleet
+    Session : <b>session</b><br/>a fresh context on the shared Chromium<br/>a raw log of its own · log in
+    Census : <b>census</b> · once a process<br/>opening watchers only · census_hops tables<br/>read into the registry, nothing recorded<br/>skipped while bootstrap_enabled
+    Boot : <b>startup recording</b> · the window's opening<br/>observe · any running tournament table<br/>every gate, already_recorded included<br/>one game from the mid-game join<br/>seats nothing after bootstrap_scan_s
+    Spare : <b>standing by</b> · the spare<br/>logged in, off the lobby<br/>frames to the raw log · spare_silent
+    Hall : <b>in the lobby</b> · at most lobby_watchers<br/>LobbyWatcher reads the socket until<br/>the tournament row raises its full flag
+    Claim : <b>claim the roster</b><br/>TableRegistry, keyed by the four accounts
+    Chasing : <b>chasing</b><br/>out to observe · a blind scan<br/>four accounts, or roster_mismatch and a hop<br/>gives up on distinct_budget, deadline<br/>or target_refused
+    Recording : <b>recording</b><br/>every other gate · the table claimed<br/>watch to the end · one record
+    state Done <<choice>>
+    Back : <b>walk back</b><br/>egress, then return_to_lobby, in the page
+    Failed : <b>session_failed</b><br/>the place is given up at once
+    Down : <b>worker_down</b><br/>for the rest of the process
+    Handback : <b>exit 3</b><br/>most of the fleet is down
+
+    Out --> Egress : the rota has a place<br/>login_stagger_s after the last login
+    Egress --> Session : egress_ok
+    Egress --> Out : refused · place given up<br/>wait idle_poll_minutes
+    Egress --> Down : 6 refusals in a row
+    Session --> Census : a watcher's first session<br/>in the opening wave
+    Session --> Hall : watcher · enter_lobby
+    Session --> Spare : spare
+    Session --> Boot : startup worker<br/>after the first watcher
+    Boot --> Done : game over · or no table found,<br/>which ends the startup phase
+    Census --> Back : the sweep is done
+    Spare --> Hall : a watcher chases · promoted<br/>egress, then walk in · no login
+    Hall --> Claim : roster_announced
+    Claim --> Hall : roster_taken · roster_stale
+    Claim --> Chasing : chase_started<br/>the spare is sent in, the next<br/>logged-out worker woken as spare
+    Chasing --> Recording : chase_matched
+    Chasing --> Done : chase_gave_up
+    Recording --> Done : chase_ended
+    Done --> Back : the lobby is short
+    Done --> Spare : the spare's place is open<br/>exit_table first
+    Done --> Out : both full · parked<br/>the session closes
+    Back --> Hall : the list is showing
+    Back --> Egress : a step does not land<br/>return_rebuilt · place kept, no budget
+    Hall --> Egress : silent 60 s · hall_deaf<br/>place kept, no budget the first time
+    Session --> Failed : any step raises<br/>or the lobby deaf again, no roster since
+    Failed --> Out : after idle_poll_minutes
+    Failed --> Down : 3 in a row
+    Down --> Handback : down × 2 > workers
+    Down --> [*]
+    Hall --> [*] : window closed · limits met
+
+    note right of Failed
+        A chase that ran its course,
+        whatever it found, clears the streak:
+        a profile every chase breaks on
+        cannot keep logging in forever.
+    end note
+
+    classDef gate fill:#DCD2F0,stroke:#5E4495,stroke-width:2px,color:#2E1F52
+    classDef work fill:#EDE7F6,stroke:#5E4495,stroke-width:1px,color:#2E1F52
+    classDef idle fill:#F5F3FA,stroke:#8E7CB8,stroke-width:1px,color:#2E1F52,stroke-dasharray:4 3
+    classDef record fill:#E0F5F2,stroke:#2E7D6F,stroke-width:2px,color:#123E36
+    classDef fault fill:#FDECEA,stroke:#B3261E,stroke-width:2px,color:#5F1410
+
+    class Egress,Claim gate
+    class Session,Census,Hall,Chasing,Back work
+    class Out,Spare idle
+    class Recording,Boot record
+    class Failed,Down,Handback fault

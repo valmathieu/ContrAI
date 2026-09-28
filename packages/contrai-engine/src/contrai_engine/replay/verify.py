@@ -33,6 +33,11 @@ round would never catch it — by then the replay has already diverged.
 diverged from the record's, so every later check in that round would be
 comparing two different games. The round is reported ``suspect`` with
 what was found, and the next round starts from its own recorded deal.
+
+The replay also gives back one thing it did not check: a record that
+ended without its final totals — an observed table whose final read never
+came — gets them rebuilt in its verdict, from the last totals it states
+and what the replay scored after them (:func:`_replayed_totals`).
 """
 
 from __future__ import annotations
@@ -43,10 +48,12 @@ from pathlib import Path
 from typing import Any
 
 from contrai_core import PRESETS, Card, Position, Rank, Suit, TeamSide
+from contrai_core.bid import SlamLevel
 from contrai_core.exceptions import IllegalBidError, IllegalPlayError
 from contrai_data import (
     BeloteHeld,
     GameRecord,
+    RoundOutcome,
     RoundRecord,
     SlamOutcome,
     load_game,
@@ -56,7 +63,7 @@ from ..model.round import marked_components
 from ..recording import _outcome, _slam
 from .controller import ReplayController
 from .exceptions import ReplayError, ScriptExhaustedError, SeatMismatchError
-from .verdict import (
+from contrai_data import (
     GameVerdict,
     Mismatch,
     MismatchKind,
@@ -147,6 +154,13 @@ class VerifyingObserver:
         self.rounds: list[RoundVerdict] = []
         self.notes: list[str] = list(_ruleset_notes(record))
         self._current: _RoundCheck | None = None
+        # What the replay scored for each round it played out, by the
+        # record's round number — the raw material of the replayed totals.
+        self._scored: dict[int, Any] = {}
+        # Whether the replay's dispute pot is the table's, decided at the
+        # first round walked and then followed round by round.
+        self._pot_known = False
+        self._last_number: int | None = None
 
     # --- driven by the verifier, not by the engine -----------------------
 
@@ -165,7 +179,26 @@ class VerifyingObserver:
             round_: The recorded round the next ``manage_round`` replays.
         """
 
+        self._follow(round_)
         self._current = _RoundCheck(round_)
+
+    def _follow(self, round_: RoundRecord) -> None:
+        """Note the next recorded round, and what it means for the pot.
+
+        The replay starts with an empty pot, which is the table's only when
+        the record starts at the game's first deal: otherwise a tie held
+        before the record began may be waiting to be paid. A round missing
+        from the numbering later may have been such a tie too.
+
+        Args:
+            round_: The recorded round now being walked.
+        """
+
+        if self._last_number is None:
+            self._pot_known = self.record.observed_from is None and round_.number == 1
+        elif round_.number != self._last_number + 1:
+            self._pot_known = False
+        self._last_number = round_.number
 
     # --- hooks ----------------------------------------------------------
 
@@ -208,10 +241,16 @@ class VerifyingObserver:
         check = self._current
         if check is None:
             return
+        self._scored[check.record.number] = round_.round_score
         _check_auction(check, round_)
         _check_trick_winners(check, round_)
         _check_belote(check, round_)
-        _check_score(check, round_)
+        _check_score(check, round_, pot_known=self._pot_known)
+        score = round_.round_score
+        if score is not None and score.contract_made is not None and not score.is_held:
+            # A contract made or failed pays any pot out and opens none, so
+            # from here the replay's empty pot is the table's too.
+            self._pot_known = True
         self.rounds.append(
             RoundVerdict.decide(
                 check.record.number,
@@ -230,6 +269,9 @@ class VerifyingObserver:
         """
 
         check = self._current or _RoundCheck(round_)
+        # The replay stopped part-way: whatever the round did to the pot,
+        # the replay did not do it.
+        self._pot_known = False
         kind, detail = _classify(check.phase, exc)
         check.fault(kind, detail)
         self.rounds.append(
@@ -249,6 +291,9 @@ class VerifyingObserver:
             round_: The recorded round that was not replayed.
         """
 
+        # Not replayed, so a tie it held never reached the replay's pot.
+        self._follow(round_)
+        self._pot_known = False
         self.rounds.append(
             RoundVerdict.decide(
                 round_.number,
@@ -270,6 +315,9 @@ class VerifyingObserver:
             preset=self.record.preset,
             rounds=tuple(self.rounds),
             notes=tuple(self.notes),
+            replayed_totals=_replayed_totals(
+                self.record, self._scored, self.rounds
+            ),
         )
 
 
@@ -498,7 +546,7 @@ def _deal_supports(hands: Any, belote: BeloteHeld) -> bool:
     return {Card(suit, Rank.KING), Card(suit, Rank.QUEEN)} <= held
 
 
-def _check_score(check: _RoundCheck, round_: Any) -> None:
+def _check_score(check: _RoundCheck, round_: Any, *, pot_known: bool = True) -> None:
     """The replayed score line must be the recorded one, field by field.
 
     When the record carries no ``round_scored`` event there is nothing to
@@ -509,6 +557,8 @@ def _check_score(check: _RoundCheck, round_: Any) -> None:
     Args:
         check: The round's accumulating checks.
         round_: The engine round, scored.
+        pot_known: Whether the replay's dispute pot is the table's going into
+            this round — see :func:`_check_carried_over`.
     """
 
     recorded = check.record.score
@@ -526,7 +576,7 @@ def _check_score(check: _RoundCheck, round_: Any) -> None:
         return
 
     contract = round_.contract
-    outcome = _outcome(score.contract_made)
+    outcome = _outcome(score)
     if outcome is not recorded.outcome:
         check.fault(
             MismatchKind.SCORE,
@@ -571,7 +621,9 @@ def _check_score(check: _RoundCheck, round_: Any) -> None:
             observed=str({s.value: m for s, m in wanted.items()}),
         )
 
-    if not _taken_agrees(score, recorded, slam):
+    if not _taken_agrees(
+        score, recorded, slam, defense_sweeper=_defense_sweeper(round_)
+    ):
         check.fault(
             MismatchKind.SCORE,
             "the captured card points differ",
@@ -602,6 +654,54 @@ def _check_score(check: _RoundCheck, round_: Any) -> None:
                 expected=str(score.last_trick_side),
                 observed=str(recorded.last_trick),
             )
+
+    _check_carried_over(check, score, recorded, pot_known=pot_known)
+
+
+def _check_carried_over(
+    check: _RoundCheck, score: Any, recorded: Any, *, pot_known: bool = True
+) -> None:
+    """The dispute pot paid out this round must be the one recorded (§7.5).
+
+    A record that cannot say — an observed round whose running total
+    before it was never read — carries ``None``, and a claim never made is
+    not a disagreement: the check is left unchecked, as a missing last
+    trick is, and ``score`` is named unchecked once however many of its
+    parts could not be compared.
+
+    The replay can be the one that cannot say. A record joined after the
+    first deal starts the replay with an empty pot, while the table may be
+    about to pay one a tie held before the record began: the record infers
+    that carry from the running totals, and the replay never saw the tie.
+    Until a settled contract empties the pot for both, a carry the replay
+    disagrees with is left unchecked the same way; one it agrees with
+    still passes.
+
+    Args:
+        check: The round's accumulating checks.
+        score: The replayed round score.
+        recorded: The recorded score line.
+        pot_known: Whether the replay's pot is the table's going into this
+            round.
+    """
+
+    if recorded.carried_over is None:
+        if _SCORE not in check.unchecked:
+            check.unchecked.append(_SCORE)
+        return
+    mine = {side: score.carried_over.get(side, 0) for side in TeamSide}
+    theirs = {side: recorded.carried_over.get(side, 0) for side in TeamSide}
+    if mine != theirs and not pot_known:
+        if _SCORE not in check.unchecked:
+            check.unchecked.append(_SCORE)
+        return
+    if mine != theirs:
+        check.fault(
+            MismatchKind.SCORE,
+            "the carried-over points differ",
+            expected=str(_side_totals(mine)),
+            observed=str(_side_totals(theirs)),
+        )
 
 
 def _check_contract_terms(
@@ -637,18 +737,89 @@ def _check_contract_terms(
         )
 
 
-def _taken_agrees(score: Any, recorded: Any, slam: SlamOutcome) -> bool:
-    """Whether the captured card points agree, allowing a sweep's 250.
+def _sweep_substitute(slam: SlamOutcome) -> int | None:
+    """The flat figure an observed table writes in place of a swept pile.
+
+    §7.2: the substitute is the base value of the Slam-family level the
+    round carries — **500** for an announced Solo Slam, **250** for an
+    announced Slam and for an unannounced sweep alike. The engine's own
+    personal-sweep premium (:func:`sweep_substitute`, which pays a
+    declarer's solo sweep the Solo Slam's 500) is a *marking* rule and
+    never reaches this column: an unannounced sweep is written 250
+    whoever took the tricks.
+
+    Args:
+        slam: The round's slam classification.
+
+    Returns:
+        The substitute figure, or ``None`` when the round is no sweep at
+        all and the real pile is the only acceptable answer.
+    """
+
+    if slam is SlamOutcome.SOLO_SLAM:
+        return SlamLevel.SOLO_SLAM.base_value
+    if slam in (SlamOutcome.SLAM, SlamOutcome.UNANNOUNCED):
+        return SlamLevel.SLAM.base_value
+    return None
+
+
+def _defense_sweeper(round_: Any) -> TeamSide | None:
+    """The defending side, when it took every trick of the replayed round.
+
+    Read off the replay's own trick winners rather than the piles: a
+    trick of sevens and eights is worth nothing, so a zero pile does not
+    mean a side won no trick.
+
+    Args:
+        round_: The engine round, played out.
+
+    Returns:
+        The defense's side when it won all 8 tricks, else ``None`` —
+        including when the declaring side swept, which the round's slam
+        classification already covers.
+    """
+
+    contract = getattr(round_, "contract", None)
+    state = getattr(round_, "play_state", None)
+    if contract is None or state is None:
+        return None
+    winners = state.trick_winners
+    if len(winners) != 8:
+        return None
+    sides = {winner.position.team_side for winner in winners}
+    declaring = contract.player.position.team_side
+    if len(sides) != 1 or declaring in sides:
+        return None
+    return sides.pop()
+
+
+def _taken_agrees(
+    score: Any,
+    recorded: Any,
+    slam: SlamOutcome,
+    *,
+    defense_sweeper: TeamSide | None = None,
+) -> bool:
+    """Whether the captured card points agree, allowing a sweep's substitute.
 
     §4.2.1: an observed table records a sweeping side's card points as
-    the **250** of the Slam substitute rather than the 162 actually on
-    the table, while the engine records the real pile. Both are true
-    statements about the same round, so a sweep accepts either.
+    the flat Slam substitute rather than the 162 actually on the table,
+    while the engine records the real pile. Both are true statements
+    about the same round, so a sweep accepts either — but only its *own*
+    substitute, so a Solo Slam's 500 and a Slam's 250 stay distinct and
+    a wrong figure is still a fault.
+
+    The table writes a *defense's* sweep the same way, as the team's 250
+    — a recording convention, whatever the ruleset then marks for it —
+    so a defense that took every trick widens the tolerance too, though
+    the round carries no slam classification.
 
     Args:
         score: The replayed round score.
         recorded: The recorded score line.
         slam: The round's slam classification.
+        defense_sweeper: The defending side when it took all 8 tricks
+            (:func:`_defense_sweeper`), else ``None``.
 
     Returns:
         Whether the two card-point lines describe the same round.
@@ -658,17 +829,130 @@ def _taken_agrees(score: Any, recorded: Any, slam: SlamOutcome) -> bool:
     theirs = {side: recorded.taken.get(side, 0) for side in TeamSide}
     if mine == theirs:
         return True
-    if slam is SlamOutcome.NONE:
-        return False
-    # A sweep: the side that took everything is the one whose pile the
-    # substitute stands in for, and the other side's zero must still be a
-    # zero on both sides of the comparison.
-    sweeper = next((side for side, points in mine.items() if points > 0), None)
+    substitute = _sweep_substitute(slam)
+    if substitute is None:
+        if defense_sweeper is None:
+            return False
+        # The defense swept: its pile is the one the 250 stands in for.
+        substitute, sweeper = SlamLevel.SLAM.base_value, defense_sweeper
+    else:
+        # A sweep: the side that took everything is the one whose pile the
+        # substitute stands in for, and the other side's zero must still be
+        # a zero on both sides of the comparison.
+        sweeper = next(
+            (side for side, points in mine.items() if points > 0), None
+        )
     if sweeper is None:
         return False
     return theirs == {
-        side: (250 if side is sweeper else 0) for side in TeamSide
+        side: (substitute if side is sweeper else 0) for side in TeamSide
     }
+
+
+# ---------------------------------------------------------------------------
+# Replayed totals
+# ---------------------------------------------------------------------------
+
+
+def _replayed_totals(
+    record: GameRecord,
+    scored: dict[int, Any],
+    verdicts: list[RoundVerdict],
+) -> dict[TeamSide, int] | None:
+    """The final totals of a record that ended without stating them.
+
+    An observed game that reached the target often ends with ``null``
+    totals: the table's final read never came, so its last round has no
+    score line. The record rightly keeps them ``null`` — a record holds
+    what was observed — but the replay has scored that round anyway. So
+    the totals are rebuilt here, as a derived value for the verdict: the
+    last totals the record states, plus what the replay marked for every
+    round after them.
+
+    Only when that sum is safe. A held dispute's pot (§7.5) is paid into
+    the next contract winner's total and the replay's own pot is only as
+    good as the rounds it saw, so the rebuild requires that no pot can be
+    pending — the stated totals follow a made or failed contract, or the
+    game's first deal — and that no round after them is held or pays one
+    out. Every round after them must be there, in sequence, replayed and
+    free of mismatches: a round missing or suspect is a round whose marks
+    are not known.
+
+    Args:
+        record: The record being verified.
+        scored: The replay's ``RoundScore`` per round it played out, by the
+            record's round number; ``None`` for a round passed out.
+        verdicts: The round verdicts, in file order.
+
+    Returns:
+        The rebuilt totals, or ``None`` when the record states its own or
+        they cannot be rebuilt safely.
+    """
+
+    ended = record.ended
+    if ended is None or ended.totals is not None:
+        return None
+    rounds = record.rounds
+    anchor = next(
+        (
+            index for index in reversed(range(len(rounds)))
+            if rounds[index].score is not None
+            and rounds[index].score.totals is not None
+        ),
+        None,
+    )
+    if anchor is None or not _no_pot_pending(record, anchor):
+        return None
+    after = rounds[anchor + 1:]
+    first = rounds[anchor].number + 1
+    if not after or [r.number for r in after] != list(
+        range(first, first + len(after))
+    ):
+        return None
+    by_number = {verdict.number: verdict for verdict in verdicts}
+    totals = dict(rounds[anchor].score.totals)
+    for round_ in after:
+        verdict = by_number.get(round_.number)
+        if verdict is None or not verdict.replayed or verdict.mismatches:
+            return None
+        if round_.contract is None:
+            # Passed out: nothing marked, nothing paid.
+            continue
+        score = scored.get(round_.number)
+        if score is None or score.is_held or any(score.carried_over.values()):
+            return None
+        for side in TeamSide:
+            totals[side] += score.scores[side]
+    return totals
+
+
+def _no_pot_pending(record: GameRecord, anchor: int) -> bool:
+    """Whether no dispute pot can be open after the round at ``anchor``.
+
+    A pot is opened by a held round and paid by the next contract, made
+    or failed. So walking back from ``anchor`` past passed-out rounds, the
+    first contracted round settles it; reaching the game's first deal
+    with nothing in between settles it too. A gap in the round numbers
+    could hide a held round, and leaves it unsettled.
+
+    Args:
+        record: The record being verified.
+        anchor: Index of the last round whose totals are stated.
+
+    Returns:
+        Whether the totals at ``anchor`` carry no pending pot.
+    """
+
+    rounds = record.rounds
+    for index in range(anchor, -1, -1):
+        round_ = rounds[index]
+        if index < anchor and round_.number != rounds[index + 1].number - 1:
+            return False
+        if round_.contract is None:
+            continue
+        outcome = round_.score.outcome if round_.score is not None else None
+        return outcome in (RoundOutcome.MADE, RoundOutcome.FAILED)
+    return record.observed_from is None and rounds[0].number == 1
 
 
 def _ruleset_notes(record: GameRecord) -> list[str]:

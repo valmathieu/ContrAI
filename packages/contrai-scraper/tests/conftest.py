@@ -31,6 +31,7 @@ from contrai_core import (
     Suit,
     TeamSide,
     TrickRecord,
+    rules_for,
 )
 from contrai_data import (
     FORMAT,
@@ -131,6 +132,14 @@ seat_element = "#seat-{seat}"
 player_panel = ".player-panel"
 player_id_title = ".player-panel .title"
 player_id_prefix = "no. "
+mode_new_games = "#new-games"
+lobby_variant = "#new-variant"
+lobby_tables = ".slot-list"
+lobby_back = ["#tool-back", "#tool-close"]
+lobby_layer = ".screen"
+lobby_row_tournament_class = "cup-row"
+lobby_row_hash_attr = "data-key"
+table_exit = "#leave"
 
 [wire]
 socket_url_pattern = "^wss://example\\\\.invalid/sock/\\\\d+$"
@@ -144,11 +153,13 @@ round_state_prefix = "round."
 resume_action = "resume"
 resume_room_prefix = "room-"
 resume_param = "lastSeen"
+draw_verb = "lots"
 
 [wire.events]
 join_snapshot = "joinTable"
 table_update = "updateTable"
 counters = "counters"
+lobby_table = "slot"
 
 # Dotted paths, each resolved relative to the payload it is looked up in:
 # the table/state names walk from a snapshot's root, the player names from one
@@ -205,6 +216,10 @@ ended = "over"
 left = "gone"
 spectators = "watchers"
 observable_tables = "tables"
+lobby_hash = "key"
+lobby_seats = "chairs"
+lobby_seat_account = "acct"
+lobby_full = "ready"
 
 [wire.tokens]
 seats = { top = "N", right = "E", bottom = "S", left = "W" }
@@ -254,6 +269,20 @@ raw_retention_days = 30
 
 [privacy]
 pseudonym_salt = "unused-in-4a"
+
+[fleet]
+workers = 2
+login_stagger_s = 0
+scan_distinct_budget = 5
+scan_deadline_s = 60
+roster_max_age_s = 30
+claim_ttl_s = 600
+egress_cache_s = 60
+census_enabled = false
+census_hops = 3
+# Off here, so a fleet test is about the lobby unless it asks for the
+# startup phase; the default is on.
+bootstrap_enabled = false
 """
 
 
@@ -580,13 +609,20 @@ def _after(declarer):
 
 
 def round_events(number, dealer, declarer, value, suit, made, totals, *,
-                 auction=None, multiplier=1):
+                 auction=None, multiplier=1, carried_over=None):
     """One complete round of a record: deal, auction, play, score.
 
     ``auction`` replaces the default auction — the declarer's bid and three
     passes — with bids of its own; ``multiplier`` is the contract's, 2 when
-    doubled and 4 when redoubled.
+    doubled and 4 when redoubled. ``carried_over`` is what the parser can
+    infer for the round: ``None`` when the totals around its row leave it
+    unknown, else the per-side carry. The marks go to the declaring
+    side when the contract is made and to the defense when it fails, so a
+    made row never marks its declarer 0 / 0 — the shape of a held dispute.
     """
+
+    declaring = declarer.team_side
+    defending = next(side for side in TeamSide if side is not declaring)
 
     hands = _deal(_deck(number * 5), dealer)
     events = [
@@ -608,7 +644,18 @@ def round_events(number, dealer, declarer, value, suit, made, totals, *,
                 think_ms=None, ts=TS)
         for seq, bid in enumerate(auction, start=1)
     ]
+    # The card points are the tricks' own piles, the last-trick bonus on the
+    # side that took the eighth — what the site states, and so what lets the
+    # parser name that side.
+    taken = dict.fromkeys(TeamSide, 0)
+    last_trick = None
     for index, trick in enumerate(_tricks(hands, dealer.next_in(DIRECTION), suit), start=1):
+        last_trick = (
+            TrickRecord(ObservedPlay(seat, card) for seat, card in trick)
+            .winner(suit)
+            .position.team_side
+        )
+        taken[last_trick] += sum(rules_for(suit).points(card) for _, card in trick)
         events += [
             CardPlayed(round=number, trick=index, position=seat, card=card,
                        derived=index == 8, think_ms=None, ts=TS)
@@ -624,19 +671,65 @@ def round_events(number, dealer, declarer, value, suit, made, totals, *,
             outcome=RoundOutcome.MADE if made else RoundOutcome.FAILED,
             declarer=declarer,
             contract=ContractTerms(value=value, suit=suit, multiplier=multiplier),
-            taken={TeamSide.NS: 90, TeamSide.EW: 72},
+            taken={**taken, last_trick: taken[last_trick] + 10},
             belote={TeamSide.NS: 0, TeamSide.EW: 0},
             announcements={TeamSide.NS: 0, TeamSide.EW: 0},
-            carried_over={TeamSide.NS: 0, TeamSide.EW: 0},
+            carried_over=None if carried_over is None else dict(carried_over),
             marked={
-                TeamSide.NS: SideMark(
+                declaring: SideMark(
                     made=90 if made else 0,
                     announced=marked_points(value) if made else 0),
-                TeamSide.EW: SideMark(
+                defending: SideMark(
                     made=0 if made else 162,
                     announced=0 if made else marked_points(value)),
             },
             totals=dict(totals),
+            last_trick=last_trick,
+            slam=SlamOutcome.NONE,
+            source=ScoreSource.SNAPSHOT,
+            ts=TS,
+        )
+    )
+    return events
+
+
+def passed_round(number, dealer, totals=None):
+    """One passed-out round of a record: the deal, four passes, no play.
+
+    Its score line is the parser's own: nothing marked, nothing paid out,
+    and ``totals`` — the totals standing before the round, or ``None`` when
+    no read covered them. The synthesizer sends no row for it, since the
+    site's score sheet has none for a round nobody bid.
+    """
+
+    hands = _deal(_deck(number * 5), dealer)
+    speaker = dealer.next_in(DIRECTION)
+    events = [
+        RoundDealt(
+            round=number,
+            dealer=dealer,
+            hands=hands,
+            hands_derivation=HandsDerivation.DEALT_FROM_DECK,
+            ts=TS,
+        )
+    ]
+    for seq in range(1, 5):
+        events.append(BidMade(round=number, seq=seq, position=speaker,
+                              bid=PassBid(player=speaker), think_ms=None, ts=TS))
+        speaker = speaker.next_in(DIRECTION)
+    nothing = {TeamSide.NS: 0, TeamSide.EW: 0}
+    events.append(
+        RoundScored(
+            round=number,
+            outcome=RoundOutcome.ALL_PASS,
+            declarer=None,
+            contract=None,
+            taken=dict(nothing),
+            belote=dict(nothing),
+            announcements=dict(nothing),
+            carried_over=dict(nothing),
+            marked={side: SideMark(made=0, announced=0) for side in TeamSide},
+            totals=None if totals is None else dict(totals),
             last_trick=None,
             slam=SlamOutcome.NONE,
             source=ScoreSource.SNAPSHOT,
@@ -680,7 +773,7 @@ def game_events(*rounds, reason=EndReason.OBSERVER_LEFT):
     for round_ in rounds:
         events += round_
         for event in round_:
-            if isinstance(event, RoundScored):
+            if isinstance(event, RoundScored) and event.totals is not None:
                 last_totals = event.totals
     events.append(
         GameEnded(totals=last_totals, winner=None, reason=reason, ts=TS)
@@ -699,10 +792,15 @@ def source_game():
     # Each round is dealt by the seat before its declarer, so the declarer
     # speaks first and the auction is its bid and three passes.
     return game_events(
+        # Every game starts at 0 / 0, and the totals after each round are
+        # read, so both carries are inferable: the totals moved by exactly
+        # West's 90 + 80, then South's 90 + 110, so nothing was carried.
         round_events(1, Position.SOUTH, Position.WEST, 80, Suit.SPADES, True,
-                     {TeamSide.NS: 0, TeamSide.EW: 170}),
+                     {TeamSide.NS: 0, TeamSide.EW: 170},
+                     carried_over={TeamSide.NS: 0, TeamSide.EW: 0}),
         round_events(2, Position.EAST, Position.SOUTH, 110, Suit.HEARTS, True,
-                     {TeamSide.NS: 200, TeamSide.EW: 170}),
+                     {TeamSide.NS: 200, TeamSide.EW: 170},
+                     carried_over={TeamSide.NS: 0, TeamSide.EW: 0}),
     )
 
 
@@ -784,6 +882,9 @@ def synthesize_frames(events, *, game="g1", table="t1", frame_prefix="",
                         index=_index_in_trick(round_events_, event),
                         actor=HANDLE_OF_SEAT[event.position],
                         card=card_glyph(event.card)))
+                case RoundScored() if event.outcome is RoundOutcome.ALL_PASS:
+                    # No row and no read: the site's sheet skips the round.
+                    continue
                 case RoundScored():
                     rows.append(_wire_row(event))
                     texts.append(envelope(
@@ -940,9 +1041,11 @@ def game_builders():
 
     return SimpleNamespace(
         round_events=round_events,
+        passed_round=passed_round,
         game_events=game_events,
         card_glyph=card_glyph,
         stock_for=stock_for,
+        wire_row=_wire_row,
         rotation=ROTATION,
         handle_of_seat=HANDLE_OF_SEAT,
         seat_of_handle=SEAT_OF_HANDLE,

@@ -100,6 +100,7 @@ nav:
   - Architecture: architecture.md
   - Engine:
       - Overview: engine/index.md
+      - Replaying a game: engine/replay.md
       - API reference: engine/api.md
   - Core:
       - Overview: core/index.md

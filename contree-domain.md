@@ -337,8 +337,11 @@ If the declaring team wins **all 8 tricks** on a numeric contract *without havin
 
 - If the two partners split the 8 tricks between them, the substitute is **250**. If the **declarer** personally took all 8, it is **500** (where the Solo Slam bid is authorized, §9.4) — the sweep the declarer could have bid as a Solo Slam. A *partner's* solo sweep is not that shape and scores the ordinary **250** team substitute.
 - **Declaring team only.** If the *defense* takes all 8 tricks the declarer has simply failed — mark it as an ordinary failed contract, not as a Slam.
-- **Un-doubled only.** A doubled or redoubled sweep uses the winner-takes-all grid above, pile flat at 160; the substitute does **not** apply.
+- **Table option — the defense's sweep marks the substitute** (off by default, §9): switched on, a defense that takes all 8 tricks of a numeric contract marks the team's flat **250** as its made points instead of the failure's flat 160 — never the 500, which rewards a bidder's call. The contract still fails, and the announced component is whatever a failure marks. The observed online tournament tables play it on: a 120 doubled swept by the defense was marked 250 × 2 = 500 made.
+- **Table option — the personal sweep marks the Solo Slam** (on by default, §9): switched off, the declarer's solo sweep marks the team's **250** like any other, and the 500 premium above is not played. The observed online tournament tables play it off — all 49 unannounced sweeps in the V5 capture are marked 250, the personal ones included.
+- **Table option — the substitute survives doubling** (off by default, §9): by default a doubled or redoubled sweep uses the winner-takes-all grid above, pile flat at 160, and the substitute does **not** apply. Switched on, the substitute applies to a doubled contract too and is multiplied with the rest of the mark — which is what the observed tables do: a doubled sweep is marked `250 × M`, not `160 × M`.
 - **Table option — unannounced-Slam substitute** (on by default, §9): switched off, a sweep marks the ordinary pile like any other made contract.
+- Whether the sweep is *recognized* is not a table option: eight tricks taken uncalled is a fact about the round, and the three options above decide only what it is worth. A sweep is therefore always **made** — the contract cannot fail once every trick is in — whatever the contract value and whatever the multiplier.
 - **Belote (+20)** still layers on top for the holding team, as everywhere.
 
 > Worked example: contract `100 ♠`, declaring team sweeps all 8 → declarer
@@ -427,10 +430,18 @@ contract value — are already round, so in practice only a shared pile moves.
 
 **Table option — the attack must out-score the defense** (on by default, §9): to make its contract the attack must not only reach `C` but also score **strictly more than the defense** (`P_attack > P_defense`), Belote included on both sides whenever it counts toward the contract (§6.6).
 
-A **dispute** is an exact tie. On cards alone that is 81 / 81 (the pile being 162). When **one** side's Belote counts it is 91 / 91 — 71 + 20 against 91, out of 182. And where the all-trump *four*-belote regime (§6.6) puts a Belote on each side, 101 / 101 — 81 + 20 each, out of 202. The option settles the tie on its own, so there is nothing further to agree:
+A **dispute** is an exact tie. On cards alone that is 81 / 81 (the pile being 162). When **one** side's Belote counts it is 91 / 91 — 71 + 20 against 91, out of 182. And where the all-trump *four*-belote regime (§6.6) puts a Belote on each side, 101 / 101 — 81 + 20 each, out of 202.
 
-- **On** (default): the attack has not out-scored the defense, so the contract **fails** and ordinary failed-contract marking applies.
-- **Off**: only `P_attack ≥ C` matters, so a tie leaves the contract made whenever the attack reached its value, and each team marks its own points as usual.
+- **Off**: only `P_attack ≥ C` matters, so a tie leaves the contract made whenever the attack reached its value, and each team marks its own points as usual. There is no dispute to settle.
+- **On** (default): a tie means the attack has not out-scored the defense. Where the attack did not even reach `C`, that is an ordinary failure. Where it did, the round is a genuine dispute, settled by the next option.
+
+**Table option — dispute resolution** (`failed` by default, §9), consulted for a dispute on any numeric contract, doubled or not:
+
+- **Failed** (default): the contract fails and ordinary failed-contract marking applies.
+- **Shared**: the contract is made and each team marks its own points — at 81 / 81 on an 80, the attack marks 81 + 80 = 161 and the defense 81.
+- **Held** (*litige*): the contract is judged made, but the attack's mark — its made and announced points as they would have been written — is **held** rather than marked. The defense marks its own points, and any Belote stays with its holder. The held points are paid, flat, to the side that wins the **next** contract: the declaring side if it is made, the defense if it fails, and a double on that contract does not multiply them. A next round that is itself held pays nothing and adds its own held points to the pot, an all-pass redeal leaves the pot waiting, and a pot still open when the game ends is lost.
+
+A **doubled or redoubled** dispute follows the same option. Judged made, it marks what a made double marks — winner-takes-all, so the defense marks nothing — and under *held* that whole doubled mark goes into the pot: at 81 / 81 on an 80 doubled, with the whole mark multiplied, (160 + 80) × 2 = 480.
 
 ### 7.6. Double/ Redouble multiplier
 
@@ -515,13 +526,17 @@ The *documented only* rows are tracked together as a deferred-variants checklist
 | Only announced points are multiplied           | **on** / off                       | configurable | §7.2  |
 | Any failure marks 160                          | **off** / on                       | configurable | §7.2  |
 | Unannounced-Slam substitute (250 / 500)        | **on** / off                       | configurable | §7.2  |
+| The substitute survives doubling               | **off** / on                       | configurable | §7.2  |
+| The personal sweep marks the Solo Slam         | **on** / off                       | configurable | §7.2  |
+| The defense's sweep marks the substitute       | **off** / on                       | configurable | §7.2  |
 | Failed Slam marks 250 / 500 — made points      | **on** / off                       | configurable | §7.2  |
 | Failed Slam marks 250 / 500 — announced points | **on** / off                       | configurable | §7.2  |
 | The attack must out-score the defense          | **on** / off                       | configurable | §7.5  |
+| Dispute resolution                             | **failed** / shared / held         | configurable | §7.5  |
 | Rounding                                       | **exact** / nearest 10 / nearest 5 | configurable | §7.4  |
 | Win on Belote points alone                     | **on** / off                       | configurable | §8    |
 
-At least one of the two marking conventions must be on, and *failed Slam marks 250 / 500 — announced points* has no effect unless *any failure marks 160* is on. Every other combination in this table is free.
+At least one of the two marking conventions must be on, and *failed Slam marks 250 / 500 — announced points* has no effect unless *any failure marks 160* is on. *The substitute survives doubling* and *the personal sweep marks the Solo Slam* likewise have no effect unless *unannounced-Slam substitute* is on — they shape a substitute that is not being marked at all. *Dispute resolution* has no effect unless *the attack must out-score the defense* is on — with it off, reaching `C` already decides a tie. Every other combination in this table is free.
 
 ### 9.7. Table aids
 
@@ -567,7 +582,7 @@ For the bilingual report and for keeping Claude consistent across languages.
 | Fournir                 | To follow suit                |                                                                             |
 | Générale                | Solo Slam                     | Regional synonym of *capot général*                                         |
 | Levée                   | Trick                         | Synonym of *pli*                                                            |
-| Litige                  | Dispute                       | An exact tie between the two sides (§7.5)                                   |
+| Litige                  | Dispute                       | An exact tie between the two sides (§7.5); under the *held* option its points wait for the next contract |
 | Main                    | Hand                          | The 8 cards a player holds                                                  |
 | Manche                  | Game                          | A sequence of rounds played to the target score (§8) — *not* a single round |
 | Maître / Maîtresse      | Master                        | A card guaranteed to win (in its suit, given what has fallen)               |

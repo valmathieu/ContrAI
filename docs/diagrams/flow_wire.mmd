@@ -33,10 +33,11 @@ flowchart TD
     Lz --> Deal
     Deal["deal<br/>3-2-3 hands, dealer,<br/>the forced eighth trick"]
 
-    Snapshot --> Session
+    Snapshot --> Sheet["sheet<br/>each row on its round, by position<br/>carry = step between anchors"]
+    Sheet --> Session
     LiveEv --> Session
     Deal --> Session
-    Session["parse_session<br/>skip the joining round<br/>no score row → no round_scored"]
+    Session["parse_session<br/>skip the joining round<br/>passed-out rounds kept, dealer from the auction<br/>no score row → no round_scored"]
 
     Session --> Record[("contrai-data record<br/>one JSONL per game")]
     Record --> Verify(["contrai verify"])
@@ -52,6 +53,6 @@ flowchart TD
     class Replay entry;
     class Live future;
     class PageSrc,LogSrc,RawFrames,Stream,Ordered,Events,Lz,Log scraper;
-    class Translate,Snapshot,LiveEv,Deal,Session parse;
+    class Translate,Snapshot,Sheet,LiveEv,Deal,Session parse;
     class Record,Verify data;
     class Profile config;

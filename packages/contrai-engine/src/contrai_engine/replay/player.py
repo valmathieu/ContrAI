@@ -36,8 +36,9 @@ next leader is not the seat core says won.
 from __future__ import annotations
 
 import dataclasses
+import random
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
 
 from contrai_core.bid import Bid
 from contrai_core.position import Position
@@ -58,6 +59,35 @@ if TYPE_CHECKING:
 #: even have been an engine — so the rationale names the source instead of
 #: inventing a rule that fired.
 _REPLAY_RULE = "recorded action"
+
+_DecisionT = TypeVar("_DecisionT")
+
+
+@dataclass(frozen=True, slots=True)
+class ReplayedBid(BidDecision):
+    """A recorded bid, explained by the AI the record says made it.
+
+    Attributes:
+        preferred: What that AI would bid *now*, rendered, when it is not
+            the recorded bid; ``None`` when the two agree. A difference
+            is information, not an error: the strategy may have changed
+            since the game was played.
+    """
+
+    preferred: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReplayedCard(CardDecision):
+    """A recorded card, explained by the AI the record says played it.
+
+    Attributes:
+        preferred: What that AI would play *now*, rendered, when it is
+            not the recorded card and the recorded one was not among the
+            level cards it draws between at random; ``None`` otherwise.
+    """
+
+    preferred: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,14 +208,35 @@ class RecordedPlayer(Player):
     handing the recorded action to the real rules and letting them object
     *is* the verification.
 
+    **Explaining an AI seat.** A record keeps each action, never the
+    reasoning behind it. When the record says an engine strategy sat
+    here, the controller can hand the seat that strategy pair: at every
+    action the seat then asks it what it would do and why — from exactly
+    the view the seat had, since the strategies are built onto *this*
+    player and read its hand, seat and team — and returns the recorded
+    action carrying that answer's rationale. The recorded action is what
+    is played, always; the strategy only explains it, and says so when
+    it would now choose otherwise. A seat without strategies — a human,
+    an observed player, a level this engine does not know — answers with
+    the plain "recorded action" rationale.
+
     Attributes:
         script: The round currently being replayed, or ``None`` between
             rounds. The controller re-points it before each round rather
             than rebuilding the seats, so the four players — and the
             teams the game wired onto them — survive the whole game.
+        bidding: The explaining bidding strategy, or ``None``.
+        cardplay: The explaining card-play strategy, or ``None``.
     """
 
-    def __init__(self, name: str, position: Position) -> None:
+    def __init__(
+        self,
+        name: str,
+        position: Position,
+        *,
+        strategies: tuple[Callable[[Any], Any], Callable[[Any], Any]]
+        | None = None,
+    ) -> None:
         """Seat a recorded player.
 
         Args:
@@ -194,10 +245,41 @@ class RecordedPlayer(Player):
                 actions are addressed by. Required, unlike
                 :class:`~contrai_core.BasePlayer`'s optional seat: a seat
                 with no position has no actions to look up.
+            strategies: A ``(bidding, cardplay)`` pair of strategy
+                factories — an :data:`~contrai_engine.model.player.AI_LEVELS`
+                entry — to explain this seat's actions with, or ``None``
+                to replay them unexplained.
         """
 
         super().__init__(name, position)
         self.script: RoundScript | None = None
+        self.bidding: Any = None
+        self.cardplay: Any = None
+        if strategies is not None:
+            bidding, cardplay = strategies
+            self.bidding = bidding(self)
+            self.cardplay = cardplay(self)
+
+    @staticmethod
+    def _ask(question: Callable[[], _DecisionT]) -> _DecisionT:
+        """Ask an explaining strategy, leaving the global RNG as it was.
+
+        A strategy may draw from the global RNG — the expert card play
+        does, to break a tie. Asking it is an aside, not a move, so it
+        must not shift anything a later draw would have produced.
+
+        Args:
+            question: The call to make.
+
+        Returns:
+            Its answer.
+        """
+
+        state = random.getstate()
+        try:
+            return question()
+        finally:
+            random.setstate(state)
 
     def _due(self) -> RoundScript:
         """The script for the round in progress.
@@ -234,8 +316,9 @@ class RecordedPlayer(Player):
                 step.
 
         Returns:
-            The recorded bid, re-seated, with a rationale naming the
-            record as its source.
+            The recorded bid, re-seated. Explained, it is a
+            :class:`ReplayedBid` carrying the strategy's rationale;
+            otherwise a rationale naming the record as its source.
 
         Raises:
             ScriptExhaustedError: If this seat ran past its recorded
@@ -252,8 +335,19 @@ class RecordedPlayer(Player):
             if getattr(bid.player, "position", bid.player) is self.position
         )
         recorded = self._due().bid_at(ordinal, self.position)
+        bid = dataclasses.replace(recorded, player=self)
+        if self.bidding is not None:
+            answer = self._ask(lambda: self.bidding.choose_bid(auction))
+            # Compared re-seated: the strategy seats its bid on this
+            # player too, but nothing below should depend on it.
+            agrees = dataclasses.replace(answer.bid, player=self) == bid
+            return ReplayedBid(
+                bid=bid,
+                rationale=answer.rationale,
+                preferred=None if agrees else str(answer.bid),
+            )
         return BidDecision(
-            bid=dataclasses.replace(recorded, player=self),
+            bid=bid,
             rationale=Rationale(
                 rule=_REPLAY_RULE,
                 detail=f"{self.position} bid {recorded} in the record",
@@ -271,9 +365,11 @@ class RecordedPlayer(Player):
                 in progress — are the address of the play now due.
 
         Returns:
-            The recorded card, with a rationale naming the record as its
-            source. The card object is the record's own; the play state
-            matches by value, so identity is not load-bearing here.
+            The recorded card. Explained, it is a :class:`ReplayedCard`
+            carrying the strategy's rationale; otherwise a rationale
+            naming the record as its source. The card object is the
+            record's own; the play state matches by value, so identity is
+            not load-bearing here.
 
         Raises:
             ScriptExhaustedError: If the round ran past the record.
@@ -284,6 +380,21 @@ class RecordedPlayer(Player):
             observation.current_trick
         )
         card = self._due().play_at(played, self.position)
+        if self.cardplay is not None:
+            answer = self._ask(lambda: self.cardplay.choose_card(observation))
+            # A card the strategy draws at random may come out differently
+            # on a second asking. If the recorded card is one of the level
+            # cards it draws between, the two agree; the rationale's own
+            # ``drawn_from`` says that it was a draw.
+            agrees = (
+                answer.card == card
+                or str(card) in answer.rationale.drawn_from
+            )
+            return ReplayedCard(
+                card=card,
+                rationale=answer.rationale,
+                preferred=None if agrees else str(answer.card),
+            )
         return CardDecision(
             card=card,
             rationale=Rationale(

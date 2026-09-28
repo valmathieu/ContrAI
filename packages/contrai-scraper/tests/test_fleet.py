@@ -1,0 +1,1136 @@
+"""Pins the fleet: workers in the lobby, one chase per roster, budgets per worker."""
+
+import asyncio
+import dataclasses
+import json
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+
+import pytest
+from contrai_core import Position, Suit, TeamSide
+from contrai_data import EndReason
+
+from contrai_scraper import (
+    FAILURE_BUDGET,
+    AccountSection,
+    BrowserError,
+    EgressReading,
+    EgressRefusal,
+    Fleet,
+    HealthLog,
+    LabelledAccount,
+    OptionsReading,
+    ProfileError,
+    RawFrame,
+    RecorderLimits,
+    ScoreboardReading,
+    SessionSummary,
+    ShiftError,
+    StopReason,
+    TableRegistry,
+    parse_range,
+)
+from contrai_scraper.fleet import FIRST_RETRY_S
+
+OPEN =EgressReading(refusal=None, exit_ip="203.0.113.7", country="XX", route_device=None)
+BLOCKED = EgressReading(refusal=EgressRefusal.PROBE_FAILED, exit_ip=None, country=None,
+                        route_device=None)
+
+#: The tournament row's hash, and the four players ``session_frames`` seats.
+CUP = "cfg-42"
+FOUR = ("1001", "1002", "1003", "1004")
+OTHERS = ("3001", "3002", "3003", "3004")
+
+
+@pytest.fixture(autouse=True)
+def quick_hall(monkeypatch):
+    """A worker in the lobby, or standing by, looks up every hundredth of a second."""
+
+    monkeypatch.setattr("contrai_scraper.fleet.HALL_POLL_S", 0.01)
+    monkeypatch.setattr("contrai_scraper.fleet.STANDBY_POLL_S", 0.01)
+
+
+def accounts(count):
+    """Labelled accounts ``bot01`` onwards, each with an address of its own."""
+
+    return tuple(
+        LabelledAccount(
+            label=f"bot{index:02}",
+            account=AccountSection(f"bot{index:02}@example.invalid", "0000"),
+        )
+        for index in range(1, count + 1)
+    )
+
+
+def received(text, at=0.0):
+    return RawFrame(socket=0, direction="recv", at=at, text=text)
+
+
+def full_row(builders, seats=FOUR, *, frame_id="l1", at=0.0):
+    """The lobby event a tournament game starts on: four seats and the flag."""
+
+    data = {"key": CUP, "ready": True, "chairs": {
+        placement: {"acct": account}
+        for placement, account in zip(("top", "right", "bottom", "left"), seats,
+                                      strict=True)
+    }}
+    return received(builders.envelope("payload", "slot", data, frame_id=frame_id), at)
+
+
+class Frames:
+    """Scripted frames; once spent, a live socket with nothing to say.
+
+    A live socket still says *something*: its keepalive. Once the script is
+    spent each poll hears one, the way a page with no news still answers its
+    pings — which is what keeps a lobby waiting on a quiet night from being
+    taken for a deaf one. ``deaf`` makes it say nothing at all instead.
+
+    ``on_empty`` runs each time the script is found empty, which is how a
+    test ends a run once its scenario has played out. ``ends`` makes the
+    source stop instead, the way it does when its page has gone.
+    """
+
+    def __init__(self, frames=(), *, on_empty=None, ends=False, deaf=False):
+        self._frames = list(frames)
+        self._taken = 0
+        self._on_empty = on_empty
+        self._ends = ends
+        self._deaf = deaf
+
+    @property
+    def pending(self):
+        return 0
+
+    @property
+    def elapsed(self):
+        return float(self._taken)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._frames:
+            self._taken += 1
+            return self._frames.pop(0)
+        if self._ends:
+            raise StopAsyncIteration
+        if self._on_empty is not None:
+            self._on_empty()
+        if self._deaf or self._frames:
+            # Deaf, or ``on_empty`` has just queued frames of its own: this
+            # poll hears nothing, and the next takes what was queued.
+            await asyncio.sleep(3600)
+        # Yield, but take no time: any real sleep can outlast the patched
+        # poll on a coarse timer, and a keepalive cut off there is a silence.
+        await asyncio.sleep(0)
+        return received("tick")
+
+
+class Walker:
+    """A spectator whose walk is scripted; a named step may raise."""
+
+    def __init__(self, *, fail=None, table_hash=CUP):
+        self.calls: list[str] = []
+        self._fail = dict(fail or {})
+        self._hash = table_hash
+
+    def _step(self, name):
+        self.calls.append(name)
+        if name in self._fail:
+            raise BrowserError(self._fail[name])
+
+    async def log_in(self):
+        self._step("log_in")
+
+    async def enter_lobby(self):
+        self._step("enter_lobby")
+        return False
+
+    async def enter_variant(self):
+        self._step("enter_variant")
+        return False
+
+    async def read_tournament_hash(self):
+        self.calls.append("read_tournament_hash")
+        return self._hash
+
+    async def enter_table_from_lobby(self):
+        self._step("enter_table_from_lobby")
+
+    async def return_to_lobby(self):
+        self._step("return_to_lobby")
+
+    async def exit_table(self):
+        self.calls.append("exit_table")
+        return True
+
+    async def capture(self, stem):
+        self.calls.append("capture")
+        return (stem.with_suffix(".png"),)
+
+    # -- what a real recorder asks of it -------------------------------------
+
+    async def read_options(self, expected):
+        return OptionsReading(observed=dict(expected), missing=(), extra=(), differing=())
+
+    async def read_scoreboard(self):
+        return ScoreboardReading(rows=(), text="")
+
+    async def request_state(self, table_id, last_event_id, *, avoid=None):
+        return None
+
+    async def next_table(self):
+        self.calls.append("next_table")
+
+
+def summary(reason=StopReason.CHASE_ENDED, games=1):
+    return SessionSummary(games_recorded=games, tables_seated=games, tables_rejected=0,
+                          records=(), stop_reason=reason)
+
+
+class Recorders:
+    """Builds recorders that answer from a script, taking their time about it.
+
+    The pause is what lets a second worker read the same roster while the
+    first is still chasing it, as it would live.
+    """
+
+    def __init__(self, *summaries):
+        self._summaries = list(summaries)
+        self.built: list[dict] = []
+
+    def __call__(self, spectator, frames, profile, health, **kwargs):
+        self.built.append({"account": profile.account.email, **kwargs})
+        result = self._summaries.pop(0)
+
+        class Scripted:
+            async def run(self):
+                await asyncio.sleep(0.05)
+                return result
+
+        return Scripted()
+
+
+class Scanners(Recorders):
+    """Recorders that take a table first, as a real one does on accepting it.
+
+    Each script entry is ``(table id or None, summary, seconds)``: a table is
+    claimed through the claims the recorder was given before the pause, which
+    is the moment a startup worker's taking is heard; ``None`` finds none. The
+    pause is how long the game or the scan lasts, in real time.
+    """
+
+    def __call__(self, spectator, frames, profile, health, **kwargs):
+        self.built.append({"account": profile.account.email, **kwargs})
+        table_id, result, seconds = self._summaries.pop(0)
+        claims = kwargs["claims"]
+
+        class Scripted:
+            async def run(self):
+                if table_id is not None:
+                    claims.holder(table_id)
+                    claims.claim(table_id)
+                    claims.claim(table_id)
+                await asyncio.sleep(seconds)
+                return result
+
+        return Scripted()
+
+
+def empty_scan():
+    """A startup worker's recorder that found no table to take."""
+
+    return SessionSummary(games_recorded=0, tables_seated=0, tables_rejected=2,
+                          records=(), stop_reason=StopReason.WINDOW_CLOSED)
+
+
+def starting(profile):
+    """The fixture profile with the startup phase switched on."""
+
+    return dataclasses.replace(profile, fleet=dataclasses.replace(
+        profile.fleet, bootstrap_enabled=True))
+
+
+class Harness:
+    """A fleet over fakes: a hand-moved clock, scripted sessions, one log.
+
+    ``idle_sessions`` gives a worker that logs in with nothing scripted a page
+    that says nothing, instead of a failed session: the extra workers of a
+    larger fleet, which a test wants logged in but not doing anything. Their
+    pages end the run once ``until`` says so.
+    """
+
+    def __init__(self, profile, workers=1, *, egress=(OPEN,), recorder=None,
+                 limits=RecorderLimits(max_seconds=1e6), clock=None,
+                 idle_sessions=False):
+        self.profile = profile
+        self.accounts = accounts(workers)
+        self.now = 0.0
+        self.lines: list[str] = []
+        self.sessions: dict[str, list] = {}
+        self.opened: list[str] = []
+        self.walkers: dict[str, list[Walker]] = {}
+        self.browsers = 0
+        self.sleeps: list[float] = []
+        self._egress = list(egress)
+        self.recorder = recorder if recorder is not None else Recorders()
+        self.limits = limits
+        self.clock = clock
+        self.idle_sessions = idle_sessions
+        self.until = None
+
+    def script(self, label, *sessions):
+        """The sessions one worker will open, in order: ``(walker, frames)``."""
+
+        email = f"{label}@example.invalid"
+        self.sessions.setdefault(email, []).extend(sessions)
+
+    def end(self):
+        """Put the clock past every deadline: the run is over."""
+
+        self.now = 1e9
+
+    def end_when_done(self):
+        """End the run once ``until`` holds; an ``on_empty`` for any page."""
+
+        if self.until is not None and self.until():
+            self.end()
+
+    def idle(self):
+        """A session whose page says nothing, and ends the run when it is time."""
+
+        return Walker(), Frames(deaf=True, on_empty=self.end_when_done)
+
+    def logins(self, label):
+        """How many sessions one worker has opened."""
+
+        return self.opened.count(f"{label}@example.invalid")
+
+    def roles(self):
+        """Every change of role, as ``(worker, now, why)``."""
+
+        return [(entry["worker"], entry["now"], entry["why"])
+                for entry in self.events("role")]
+
+    def saw(self, name):
+        return any(json.loads(line)["event"] == name for line in self.lines)
+
+    def events(self, name):
+        return [entry for entry in map(json.loads, self.lines) if entry["event"] == name]
+
+    def fleet(self):
+        harness = self
+
+        class Egress:
+            probes = 0
+
+            async def check(self):
+                reading = harness._egress[0] if len(harness._egress) == 1 \
+                    else harness._egress.pop(0)
+                return reading
+
+        @asynccontextmanager
+        async def open_browser(profile, *, headless=None):
+            harness.browsers += 1
+            yield object()
+
+        @asynccontextmanager
+        async def open_session(browser, profile, *, health):
+            email = profile.account.email
+            harness.opened.append(email)
+            queue = harness.sessions.get(email, [])
+            if queue:
+                session = queue.pop(0)
+            elif harness.idle_sessions:
+                session = harness.idle()
+            else:
+                raise BrowserError("no session scripted for this account")
+            harness.walkers.setdefault(email.split("@")[0], []).append(session[0])
+            yield session
+
+        async def sleep(seconds):
+            harness.sleeps.append(seconds)
+            harness.now += seconds
+            await asyncio.sleep(0)
+
+        return Fleet(
+            self.profile, self.accounts,
+            HealthLog(write=self.lines.append, monotonic=lambda: harness.now),
+            open_browser=open_browser, open_session=open_session, egress=Egress(),
+            registry=TableRegistry(claim_ttl_s=600, monotonic=lambda: harness.now),
+            limits=self.limits, clock=self.clock, monotonic=lambda: harness.now,
+            sleep=sleep, recorder=self.recorder,
+        )
+
+    def run(self):
+        return asyncio.run(self.fleet().run())
+
+
+def _finished_game(game_builders):
+    """One round played to the target, so the table closes its record itself."""
+
+    return game_builders.game_events(
+        game_builders.round_events(1, Position.SOUTH, Position.WEST, 80, Suit.SPADES,
+                                   True, {TeamSide.NS: 0, TeamSide.EW: 170}),
+        reason=EndReason.TARGET_REACHED,
+    )
+
+
+class TestTheChase:
+    def test_one_worker_catches_a_game_from_the_lobby(
+        self, profile, builders, session_frames, game_builders
+    ):
+        # The whole route with the real recorder: the lobby announces the
+        # start, the worker claims it, walks to a table and records the game.
+        from contrai_scraper import Recorder
+
+        harness = Harness(profile, recorder=Recorder,
+                          limits=RecorderLimits(max_games=1))
+        walker = Walker()
+        filling = received(builders.envelope("payload", "slot", {
+            "key": CUP, "chairs": {"top": {"acct": "1001"}, "left": {"acct": "1004"}},
+        }, frame_id="l0"))
+        harness.script("bot01", (walker, Frames(
+            [filling, full_row(builders),
+             *session_frames(_finished_game(game_builders))])))
+        result = harness.run()
+        recorded = harness.events("game_recorded")[0]
+        assert (result.games_recorded, result.chases, recorded["worker"],
+                recorded["first_round"], walker.calls) == (
+            1, 1, "bot01", 1,
+            ["log_in", "enter_lobby", "read_tournament_hash", "enter_table_from_lobby"])
+        assert result.records[0].exists()
+
+    def test_two_workers_seeing_one_start_chase_it_once(self, profile, builders):
+        harness = Harness(profile, workers=2, recorder=Recorders(summary()))
+        for label in ("bot01", "bot02"):
+            harness.script(label, (Walker(), Frames([full_row(builders)],
+                                                     on_empty=harness.end)))
+        result = harness.run()
+        assert (result.chases, len(harness.events("roster_taken"))) == (1, 1)
+
+    def test_a_start_heard_on_both_sockets_is_announced_once(self, profile, builders):
+        # The lobby sends every event on both connections. The worker that
+        # finds the roster taken goes back to waiting, and the copy that
+        # arrives next is not a second start. Seen live on 2026-09-25.
+        harness = Harness(profile, workers=2, recorder=Recorders(summary()))
+        harness.script("bot01", (Walker(), Frames([full_row(builders)],
+                                                  on_empty=harness.end)))
+        start = full_row(builders)
+        copy = dataclasses.replace(start, socket=1)
+        harness.script("bot02", (Walker(), Frames([start, copy], on_empty=harness.end)))
+        harness.run()
+        announced = [entry["worker"] for entry in harness.events("roster_announced")]
+        assert (sorted(announced), len(harness.events("roster_taken"))) == (
+            ["bot01", "bot02"], 1)
+
+    def test_the_chase_carries_the_fleets_budget_and_its_claims(self, profile, builders):
+        recorders = Recorders(summary())
+        harness = Harness(profile, recorder=recorders)
+        harness.script("bot01", (Walker(), Frames([full_row(builders)],
+                                                  on_empty=harness.end)))
+        harness.run()
+        built = recorders.built[0]
+        assert (built["target"].distinct_budget, built["target"].deadline_s,
+                built["target"].roster.accounts, built["claims"].worker) == (
+            5, 60, frozenset(FOUR), "bot01")
+
+    def test_a_roster_read_too_late_is_not_chased(self, profile, builders):
+        # Two keepalives came first, so the roster is two ticks old when read;
+        # a game that old is already under way.
+        stale = dataclasses.replace(
+            profile, fleet=dataclasses.replace(profile.fleet, roster_max_age_s=1))
+        harness = Harness(stale)
+        harness.script("bot01", (Walker(), Frames(
+            [received("tick"), received("tick"), full_row(builders)],
+            on_empty=harness.end)))
+        result = harness.run()
+        assert (result.chases, harness.events("roster_stale")[0]["age_s"]) == (0, 3.0)
+
+    def test_a_chase_given_up_goes_back_to_the_lobby_for_the_next(
+        self, profile, builders
+    ):
+        harness = Harness(profile, recorder=Recorders(
+            summary(StopReason.CHASE_GAVE_UP, games=0), summary()))
+        walker = Walker()
+        harness.script("bot01", (walker, Frames(
+            [full_row(builders), full_row(builders, OTHERS, frame_id="l2")],
+            on_empty=harness.end)))
+        result = harness.run()
+        assert ((result.chases, result.chases_given_up, result.games_recorded),
+                walker.calls.count("return_to_lobby")) == ((2, 1, 1), 2)
+
+
+class TestSessions:
+    def test_a_failed_walk_back_rebuilds_the_session_and_spends_no_budget(
+        self, profile, builders
+    ):
+        harness = Harness(profile, recorder=Recorders(summary()))
+        harness.script(
+            "bot01",
+            (Walker(fail={"return_to_lobby": "[selectors].mode_new_games was not in "
+                                             "reach after 4 steps back"}),
+             Frames([full_row(builders)])),
+            (Walker(), Frames(on_empty=harness.end)),
+        )
+        harness.run()
+        assert (len(harness.opened), harness.saw("return_rebuilt"),
+                harness.saw("session_failed")) == (2, True, False)
+
+    def test_a_lobby_with_no_tournament_row_fails_the_session_and_keeps_the_page(
+        self, profile
+    ):
+        capturing = dataclasses.replace(
+            profile, browser=dataclasses.replace(profile.browser, screenshot_on_error=True))
+        harness = Harness(capturing)
+        walker = Walker(table_hash=None)
+        harness.script("bot01", (walker, Frames()), (Walker(), Frames(on_empty=harness.end)))
+        harness.run()
+        failed = harness.events("session_failed")[0]
+        assert ("lobby_row_tournament_class" in failed["error"], "capture" in walker.calls,
+                harness.saw("failure_captured")) == (True, True, True)
+
+    def test_a_page_that_goes_away_in_the_lobby_fails_the_session(self, profile):
+        harness = Harness(profile)
+        harness.script("bot01", (Walker(), Frames(ends=True)),
+                       (Walker(), Frames(on_empty=harness.end)))
+        harness.run()
+        assert "the page has gone" in harness.events("session_failed")[0]["error"]
+
+    def test_a_chase_whose_frames_ended_fails_the_session(self, profile, builders):
+        harness = Harness(profile, recorder=Recorders(
+            summary(StopReason.SOURCE_ENDED, games=0)))
+        harness.script("bot01", (Walker(), Frames([full_row(builders)])),
+                       (Walker(), Frames(on_empty=harness.end)))
+        harness.run()
+        assert harness.events("session_failed")[0]["attempt"] == 1
+
+    def test_a_first_failure_retries_soon_and_a_second_waits_the_poll(self, profile):
+        # One failed session gave up the only lobby place for a 5-minute poll
+        # in a live run; a streak still backs off as far as it did.
+        harness = Harness(profile)
+        harness.script("bot01", (Walker(), Frames(ends=True)),
+                       (Walker(), Frames(ends=True)),
+                       (Walker(), Frames(on_empty=harness.end)))
+        harness.run()
+        assert ([failed["attempt"] for failed in harness.events("session_failed")],
+                [seconds for seconds in harness.sleeps if seconds]) == (
+            [1, 2], [FIRST_RETRY_S, 300.0])
+
+    def test_a_chase_stopped_by_the_egress_leaves_the_page_where_it_is(
+        self, profile, builders
+    ):
+        # Nothing more goes to the site on a session whose tunnel just
+        # failed; the worker's own loop checks the egress before the next.
+        harness = Harness(profile, recorder=Recorders(
+            summary(StopReason.EGRESS_BLOCKED, games=0)))
+        walker = Walker()
+        harness.script("bot01", (walker, Frames([full_row(builders)])),
+                       (Walker(), Frames(on_empty=harness.end)))
+        harness.run()
+        assert ("return_to_lobby" in walker.calls, len(harness.opened)) == (False, 2)
+
+    def test_logins_arrive_one_at_a_time(self, profile):
+        staggered = dataclasses.replace(
+            profile, fleet=dataclasses.replace(profile.fleet, login_stagger_s=20))
+        harness = Harness(staggered, workers=3)
+        for label in ("bot01", "bot02", "bot03"):
+            harness.script(label, (Walker(), Frames(on_empty=harness.end)))
+        harness.run()
+        # Each login takes its turn a stagger after the last one's. The test
+        # clock moves with every pause, so the third waits 20 s past the
+        # second's 20 s: turns at 0, 20 and 40 s.
+        assert harness.sleeps[:2] == [20, 20]
+
+
+def _ticking(harness, seconds, *, then=None, after=None):
+    """An ``on_empty`` moving the fleet's clock on by ``seconds`` per poll.
+
+    ``then`` runs instead once ``after`` polls have gone by.
+    """
+
+    polls = [0]
+
+    def advance():
+        polls[0] += 1
+        if after is not None and polls[0] > after:
+            then()
+            return
+        harness.now += seconds
+
+    return advance
+
+
+class TestDeafLobby:
+    def test_a_lobby_gone_silent_rebuilds_the_session_for_free(self, profile):
+        # bot06 in the 10-worker ramp: both sockets closed 36 s into the
+        # lobby and it sat there for 57 minutes. One poll every 5 s here.
+        harness = Harness(profile)
+        harness.script("bot01",
+                       (Walker(), Frames(deaf=True, on_empty=_ticking(harness, 5.0))),
+                       (Walker(), Frames(on_empty=harness.end)))
+        harness.run()
+        deaf = harness.events("hall_deaf")
+        assert (len(deaf), 60.0 <= deaf[0]["silent_s"] <= 65.0,
+                len(harness.opened), harness.saw("session_failed")) == (
+            1, True, 2, False)
+
+    def test_keepalives_with_no_lobby_news_keep_the_worker_waiting(self, profile):
+        # The lobby itself can be quiet for minutes; its page never is.
+        harness = Harness(profile)
+        harness.script("bot01", (Walker(), Frames(
+            on_empty=_ticking(harness, 20.0, then=harness.end, after=10))))
+        harness.run()
+        assert (harness.saw("hall_deaf"), len(harness.opened)) == (False, 1)
+
+    def test_a_second_deafness_in_a_row_counts_against_the_worker(self, profile):
+        # An account the site keeps kicking out must not log in every minute.
+        harness = Harness(profile)
+        harness.script(
+            "bot01",
+            (Walker(), Frames(deaf=True, on_empty=_ticking(harness, 5.0))),
+            (Walker(), Frames(deaf=True, on_empty=_ticking(harness, 5.0))),
+            (Walker(), Frames(on_empty=harness.end)),
+        )
+        harness.run()
+        failed = harness.events("session_failed")
+        assert (len(harness.events("hall_deaf")), [f["attempt"] for f in failed],
+                "again" in failed[0]["error"]) == (2, [1], True)
+
+    def test_a_roster_heard_in_between_makes_the_next_deafness_free(
+        self, profile, builders
+    ):
+        harness = Harness(profile, recorder=Recorders(summary()))
+        harness.script(
+            "bot01",
+            (Walker(), Frames(deaf=True, on_empty=_ticking(harness, 5.0))),
+            (Walker(), Frames([full_row(builders)], deaf=True,
+                              on_empty=_ticking(harness, 5.0))),
+            (Walker(), Frames(on_empty=harness.end)),
+        )
+        harness.run()
+        assert (len(harness.events("hall_deaf")), harness.saw("session_failed"),
+                len(harness.opened)) == (2, False, 3)
+
+    def test_what_the_page_sends_is_not_hearing(self, profile, builders):
+        # Only received frames say the connection is alive; our own sent
+        # frames go out whether anything is listening or not.
+        harness = Harness(profile)
+        sent = RawFrame(socket=0, direction="sent", at=0.0, text="ping")
+        frames = Frames(deaf=True)
+        advance = _ticking(harness, 5.0)
+
+        def send_and_wait():
+            advance()
+            frames._frames.append(sent)
+
+        frames._on_empty = send_and_wait
+        harness.script("bot01", (Walker(), frames),
+                       (Walker(), Frames(on_empty=harness.end)))
+        harness.run()
+        assert harness.saw("hall_deaf")
+
+
+class TestBudgets:
+    def test_a_worker_that_keeps_failing_goes_down_alone(self, profile):
+        harness = Harness(profile, workers=3)
+
+        def end_once_down():
+            if harness.saw("worker_down"):
+                harness.end()
+
+        harness.script("bot01", *[(Walker(fail={"log_in": "refused"}), Frames())] * 3)
+        for label in ("bot02", "bot03"):
+            harness.script(label, (Walker(), Frames(on_empty=end_once_down)))
+        result = harness.run()
+        assert (result.workers_down, harness.opened.count("bot01@example.invalid")) == (
+            ("bot01",), FAILURE_BUDGET)
+
+    @pytest.mark.parametrize("workers", [1, 2])
+    def test_a_majority_down_hands_the_process_back(self, profile, workers):
+        harness = Harness(profile, workers=workers)
+        with pytest.raises(ShiftError, match=f"{workers} of {workers} workers are down"):
+            harness.run()
+
+    def test_a_finished_chase_clears_a_workers_failures(self, profile, builders):
+        # Two failures, then a chase that ran its course, then two more: never
+        # three in a row, so the worker is still up.
+        harness = Harness(profile, recorder=Recorders(summary()))
+        broken = (Walker(fail={"log_in": "refused"}), Frames())
+        harness.script(
+            "bot01", broken, broken,
+            (Walker(fail={"return_to_lobby": "out of reach"}), Frames([full_row(builders)])),
+            broken, broken,
+            (Walker(), Frames(on_empty=harness.end)),
+        )
+        result = harness.run()
+        assert (result.workers_down, len(harness.events("session_failed"))) == ((), 4)
+
+    def test_a_worker_behind_a_refused_egress_goes_down_after_its_budget(self, profile):
+        # The fleet's own check passes; every one of the worker's is refused.
+        harness = Harness(profile, egress=(OPEN, *[BLOCKED] * 6))
+        with pytest.raises(ShiftError, match="1 of 1 workers are down"):
+            harness.run()
+        assert [entry["attempt"] for entry in harness.events("egress_blocked")] == [
+            1, 2, 3, 4, 5, 6]
+
+    def test_a_refused_egress_waits_and_lets_the_worker_through_after(
+        self, profile, builders
+    ):
+        # Bounded by a game count alone, so the wait has no deadline to cut it.
+        harness = Harness(profile, egress=(OPEN, BLOCKED, OPEN),
+                          recorder=Recorders(summary()),
+                          limits=RecorderLimits(max_games=1))
+        harness.script("bot01", (Walker(), Frames([full_row(builders)])))
+        result = harness.run()
+        assert (len(harness.events("egress_blocked")), harness.sleeps,
+                result.games_recorded) == (1, [300.0], 1)
+
+    def test_a_blocked_tunnel_takes_the_fleet_down_worker_by_worker(self, profile):
+        # Every worker is refused in turn; the first to spend its budget goes
+        # down alone, and the second makes a majority.
+        # (The third may spend its last attempt before the group is cancelled;
+        # the process ends on the first majority either way.)
+        harness = Harness(profile, workers=3, egress=(OPEN, BLOCKED))
+        with pytest.raises(ShiftError, match="2 of 3 workers are down"):
+            harness.run()
+        assert [entry["worker"] for entry in harness.events("worker_down")][:2] == [
+            "bot01", "bot02"]
+
+
+class TestWindows:
+    def test_a_refused_egress_opens_no_browser_and_ends_on_its_budget(self, profile):
+        harness = Harness(profile, egress=(BLOCKED,))
+        with pytest.raises(ShiftError, match="refused 6 times"):
+            harness.run()
+        assert harness.browsers == 0
+
+    def test_a_closed_schedule_opens_no_browser(self, profile):
+        night = dataclasses.replace(
+            profile, schedule=dataclasses.replace(
+                profile.schedule, active=(parse_range("01:00-02:00"),)))
+        harness = Harness(night, clock=lambda: datetime(2026, 9, 24, 10, 0, tzinfo=UTC),
+                          limits=RecorderLimits(max_seconds=900.0))
+        result = harness.run()
+        assert (harness.browsers, harness.saw("schedule_idle"), result.windows) == (
+            0, True, 0)
+
+    def test_a_schedule_that_reopens_says_so(self, profile):
+        night = dataclasses.replace(
+            profile, schedule=dataclasses.replace(
+                profile.schedule, active=(parse_range("01:00-02:00"),)))
+        instants = iter([datetime(2026, 9, 24, 22, 0, tzinfo=UTC),
+                         datetime(2026, 9, 24, 23, 30, tzinfo=UTC)])
+        harness = Harness(night, clock=lambda: next(instants))
+        harness.script("bot01", (Walker(), Frames(on_empty=harness.end)))
+        harness.run()
+        assert (harness.saw("schedule_resume"), harness.browsers) == (True, 1)
+
+    def test_a_window_closing_ends_the_wait_in_the_lobby(self, profile):
+        # Open 01:00-02:00 Paris, which is 23:00-00:00 UTC in September: the
+        # window opens at 23:59 UTC with a minute to run, and the lobby says
+        # nothing for longer than that.
+        night = dataclasses.replace(
+            profile, schedule=dataclasses.replace(
+                profile.schedule, active=(parse_range("01:00-02:00"),)))
+        instants = iter([datetime(2026, 9, 24, 23, 59, tzinfo=UTC)])
+        harness = Harness(
+            night, limits=RecorderLimits(max_seconds=100.0),
+            clock=lambda: next(instants, datetime(2026, 9, 25, 0, 30, tzinfo=UTC)))
+
+        def a_minute_passes():
+            harness.now += 61.0
+
+        harness.script("bot01", (Walker(), Frames(on_empty=a_minute_passes)))
+        result = harness.run()
+        assert (result.windows, harness.saw("fleet_window_closed"),
+                harness.saw("schedule_idle")) == (1, True, True)
+
+    def test_old_raw_logs_are_pruned_before_a_window(self, profile, tmp_path):
+        from contrai_scraper import raw_path
+
+        old = raw_path(profile.output.raw_root, "20200101T000000Z-aaaaaa")
+        old.parent.mkdir(parents=True, exist_ok=True)
+        old.write_text("", encoding="utf-8")
+        harness = Harness(profile, clock=lambda: datetime(2099, 1, 1, tzinfo=UTC))
+        harness.script("bot01", (Walker(), Frames(on_empty=harness.end)))
+        harness.run()
+        assert (harness.saw("raw_logs_pruned"), old.exists()) == (True, False)
+
+    def test_a_down_worker_sits_out_the_next_window(self, profile):
+        # A worker that spent its budget stays down for the process: the
+        # operator is told once, rather than the account failing every night.
+        harness = Harness(profile, workers=3)
+        for label in ("bot02", "bot03"):
+            harness.script(label, (Walker(), Frames(on_empty=harness.end)))
+        fleet = harness.fleet()
+        fleet.worker_down("bot01")
+        asyncio.run(fleet.run())
+        assert (harness.events("fleet_window_opened")[0]["workers"],
+                "bot01@example.invalid" in harness.opened) == (2, False)
+
+
+class TestHeartbeat:
+    def test_the_fleet_beats_with_its_workers_added_up(self, profile):
+        beating = dataclasses.replace(
+            profile, recorder=dataclasses.replace(profile.recorder, health_interval_s=0))
+        harness = Harness(beating, workers=2)
+        for label in ("bot01", "bot02"):
+            harness.script(label, (Walker(), Frames(on_empty=harness.end)))
+        harness.run()
+        beat = harness.events("fleet_heartbeat")[0]
+        roles = beat["hall"] + beat["spare"] + beat["chase"] + beat["out"]
+        assert (beat["workers"], beat["down"], beat["egress_probes"], roles,
+                "logins" in beat) == (2, 0, 0, 2, True)
+
+    def test_a_worker_in_the_lobby_beats_too(self, profile):
+        beating = dataclasses.replace(
+            profile, recorder=dataclasses.replace(profile.recorder, health_interval_s=0))
+        harness = Harness(beating)
+        harness.script("bot01", (Walker(), Frames(on_empty=harness.end)))
+        harness.run()
+        hall = [beat for beat in harness.events("heartbeat") if beat.get("state") == "hall"]
+        assert hall[0]["worker"] == "bot01"
+
+
+def table(builders, table_id, *, frame_id, cup=True, suit="wood"):
+    """A join snapshot a census hop lands on."""
+
+    payload = builders.snapshot_payload(table_id=table_id,
+                                        rows=[builders.score_row(suit=suit)])
+    payload["table"]["cup"] = cup
+    return received(builders.envelope("payload", "joinTable", payload, frame_id=frame_id))
+
+
+def censusing(profile, hops=3):
+    """The fixture profile with the startup census switched on."""
+
+    return dataclasses.replace(profile, fleet=dataclasses.replace(
+        profile.fleet, census_enabled=True, census_hops=hops))
+
+
+class TestCensus:
+    def test_each_worker_sweeps_before_its_first_lobby(self, profile, builders):
+        harness = Harness(censusing(profile))
+        walker = Walker()
+        harness.script("bot01", (walker, Frames(
+            [table(builders, "tA", frame_id="a"), table(builders, "tB", frame_id="b"),
+             table(builders, "tA", frame_id="a2")],
+            on_empty=harness.end)))
+        harness.run()
+        census = harness.events("census")[-1]
+        assert ((census["tournament_tables"], census["sightings"], census["pending"]),
+                walker.calls) == (
+            (2, 3, 0),
+            ["log_in", "enter_variant", "next_table", "next_table", "return_to_lobby",
+             "read_tournament_hash"])
+        assert census["estimate"] is not None
+
+    def test_the_table_just_left_is_not_counted_twice(self, profile, builders):
+        # The snapshot waiting after a hop is routinely the last table's; a
+        # resighting counted there never happened.
+        harness = Harness(censusing(profile, hops=2))
+        harness.script("bot01", (Walker(), Frames(
+            [table(builders, "tA", frame_id="a"), table(builders, "tA", frame_id="a2"),
+             table(builders, "tB", frame_id="b")],
+            on_empty=harness.end)))
+        harness.run()
+        assert [entry["table"] for entry in harness.events("census_seen")] == ["tA", "tB"]
+
+    def test_a_table_this_profile_cannot_read_is_not_counted(self, profile, builders):
+        harness = Harness(censusing(profile, hops=1))
+        harness.script("bot01", (Walker(), Frames(
+            [received("tick"), table(builders, "tX", frame_id="x", suit="everything"),
+             table(builders, "tA", frame_id="a")],
+            on_empty=harness.end)))
+        harness.run()
+        assert [entry["table"] for entry in harness.events("census_seen")] == ["tA"]
+
+    def test_plain_tables_are_seen_but_not_counted_as_the_population(
+        self, profile, builders
+    ):
+        harness = Harness(censusing(profile, hops=2))
+        harness.script("bot01", (Walker(), Frames(
+            [table(builders, "tA", frame_id="a"),
+             table(builders, "tP", frame_id="p", cup=False)],
+            on_empty=harness.end)))
+        harness.run()
+        census = harness.events("census")[-1]
+        assert (census["tables"], census["tournament_tables"]) == (2, 1)
+
+    def test_the_census_happens_once_a_process(self, profile, builders):
+        # The walk back after the sweep fails: the rebuilt session goes
+        # straight to the lobby rather than sweeping again.
+        harness = Harness(censusing(profile, hops=1))
+        second = Walker()
+        harness.script(
+            "bot01",
+            (Walker(fail={"return_to_lobby": "out of reach"}),
+             Frames([table(builders, "tA", frame_id="a")])),
+            (second, Frames(on_empty=harness.end)),
+        )
+        harness.run()
+        assert (len(harness.events("census")), second.calls[:2]) == (
+            1, ["log_in", "enter_lobby"])
+
+    def test_a_census_that_hears_nothing_moves_on(self, profile):
+        harness = Harness(censusing(profile, hops=2))
+
+        def time_passes():
+            harness.now += 31.0
+            if harness.saw("census_done"):
+                harness.end()
+
+        harness.script("bot01", (Walker(), Frames(deaf=True, on_empty=time_passes)))
+        harness.run()
+        assert harness.events("census_done")[0]["seen"] == 0
+
+    def test_a_refused_egress_cuts_the_census_short(self, profile, builders):
+        # The fleet's check and the worker's pass; the census's next hop is
+        # refused, so the page stays put and the worker asks again.
+        harness = Harness(censusing(profile), egress=(OPEN, OPEN, BLOCKED, OPEN))
+        harness.script(
+            "bot01",
+            (Walker(), Frames([table(builders, "tA", frame_id="a")])),
+            (Walker(), Frames(on_empty=harness.end)),
+        )
+        harness.run()
+        assert (harness.events("census_stopped")[0]["reason"],
+                harness.events("census")[-1]["tournament_tables"]) == ("egress_blocked", 1)
+
+    def test_a_stopping_fleet_cuts_the_census_short(self, profile, builders):
+        harness = Harness(censusing(profile))
+        harness.script("bot01", (Walker(), Frames(
+            [table(builders, "tA", frame_id="a")], on_empty=harness.end)))
+        harness.run()
+        assert harness.events("census_stopped")[0]["reason"] == "fleet_stopping"
+
+    def test_a_census_whose_page_goes_away_still_reports(self, profile, builders):
+        harness = Harness(censusing(profile))
+        harness.script("bot01",
+                       (Walker(), Frames([table(builders, "tA", frame_id="a")], ends=True)),
+                       (Walker(), Frames(on_empty=harness.end)))
+        harness.run()
+        assert (harness.events("census")[0]["tournament_tables"],
+                harness.saw("session_failed")) == (1, True)
+
+
+def parked(harness):
+    """Workers whose sessions ended because the rota had no place for them."""
+
+    return [entry["worker"] for entry in harness.events("session_ended")
+            if entry["reason"] == "parked"]
+
+
+def standing(harness, label):
+    """Whether one worker has stood by as a spare."""
+
+    return any(entry["worker"] == label for entry in harness.events("standing_by"))
+
+
+def start_once(harness, row, *, when):
+    """A lobby page that announces ``row`` once ``when`` holds, and is quiet otherwise.
+
+    The fakes run a worker's whole walk without yielding, so a start scripted
+    up front is chased before the other workers have even logged in. Holding
+    it back until, say, the spare stands by is what makes a scenario of it.
+    """
+
+    frames = Frames(deaf=True)
+    announced = []
+
+    def poll():
+        if not announced and when():
+            frames._frames.append(row)
+            announced.append(row)
+        harness.end_when_done()
+
+    frames._on_empty = poll
+    return frames
+
+
+class TestRota:
+    def test_workers_past_the_watchers_and_the_spare_never_log_in(self, profile):
+        harness = Harness(profile, workers=7, idle_sessions=True)
+        harness.until = lambda: harness.saw("standing_by")
+        harness.run()
+        # Then each logged-in worker gives its place up as the run ends.
+        assert (sorted(set(harness.opened)), harness.roles()[:3],
+                {why for _, _, why in harness.roles()[3:]}) == (
+            [f"bot0{index}@example.invalid" for index in (1, 2, 3)],
+            [("bot01", "hall", "watcher_wanted"), ("bot02", "hall", "watcher_wanted"),
+             ("bot03", "spare", "spare_wanted")],
+            {"stopped"})
+
+    def test_a_chase_sends_the_spare_in_and_logs_the_next_worker_in(
+        self, profile, builders
+    ):
+        harness = Harness(profile, workers=4, recorder=Recorders(summary()),
+                          idle_sessions=True)
+        harness.script("bot01", (Walker(), start_once(
+            harness, full_row(builders), when=lambda: standing(harness, "bot03"))))
+        harness.until = lambda: parked(harness)
+        harness.run()
+        # The spare walks in without a login; bot04 logs in to stand by in its
+        # place, and the chaser, back to a full lobby, logs out.
+        assert (harness.walkers["bot03"][0].calls, harness.logins("bot03"),
+                harness.logins("bot04"), parked(harness), harness.roles()[3:7]) == (
+            ["log_in", "enter_lobby", "read_tournament_hash"], 1, 1, ["bot01"],
+            [("bot01", "chase", "chase"), ("bot03", "hall", "promoted"),
+             ("bot04", "spare", "spare_wanted"), ("bot01", "out", "parked")])
+
+    def test_a_chaser_left_as_the_spare_steps_off_its_table_and_walks_back_later(
+        self, profile, builders
+    ):
+        # Three workers: nobody is queued behind the spare, so the chaser
+        # comes back as the next one, and is sent in by the next start.
+        harness = Harness(profile, workers=3, recorder=Recorders(summary(), summary()),
+                          idle_sessions=True)
+        chaser = Walker()
+        harness.script("bot01", (chaser, start_once(
+            harness, full_row(builders), when=lambda: standing(harness, "bot03"))))
+        harness.script("bot02", (Walker(), start_once(
+            harness, full_row(builders, OTHERS, frame_id="l2"),
+            when=lambda: standing(harness, "bot01"))))
+        harness.until = lambda: "return_to_lobby" in chaser.calls
+        harness.run()
+        assert (chaser.calls, harness.logins("bot01"),
+                harness.events("table_exited")[0]["exited"]) == (
+            ["log_in", "enter_lobby", "read_tournament_hash", "enter_table_from_lobby",
+             "exit_table", "return_to_lobby"], 1, True)
+
+    def test_two_starts_in_a_row_send_in_a_spare_still_logging_in(
+        self, profile, builders
+    ):
+        harness = Harness(profile, workers=5, recorder=Recorders(summary(), summary()),
+                          idle_sessions=True)
+        harness.script("bot01", (Walker(), Frames([full_row(builders)], deaf=True)))
+        harness.script("bot02", (Walker(), Frames(
+            [full_row(builders, OTHERS, frame_id="l2")], deaf=True)))
+        harness.until = lambda: len(parked(harness)) == 2
+        result = harness.run()
+        assert (result.chases, harness.walkers["bot04"][0].calls[:2],
+                harness.logins("bot05"), sorted(parked(harness))) == (
+            2, ["log_in", "enter_lobby"], 1, ["bot01", "bot02"])
+
+    def test_a_refused_egress_as_the_spare_walks_in_ends_its_session(
+        self, profile, builders
+    ):
+        # The fleet's check and three logins pass; the spare's walk in is refused.
+        harness = Harness(profile, workers=3, recorder=Recorders(summary()),
+                          egress=(OPEN, OPEN, OPEN, OPEN, BLOCKED, OPEN),
+                          idle_sessions=True)
+        harness.script("bot01", (Walker(), start_once(
+            harness, full_row(builders), when=lambda: standing(harness, "bot03"))))
+        harness.until = lambda: harness.logins("bot03") == 2
+        harness.run()
+        ended = [entry["reason"] for entry in harness.events("session_ended")
+                 if entry["worker"] == "bot03"]
+        assert (ended[0], harness.walkers["bot03"][0].calls) == (
+            "egress_blocked", ["log_in"])
+
+    def test_a_counted_failure_hands_the_place_on_at_once(self, profile):
+        harness = Harness(profile, workers=4, idle_sessions=True)
+        harness.script("bot01", (Walker(fail={"log_in": "refused"}), Frames()))
+        harness.until = lambda: harness.logins("bot04") == 1
+        harness.run()
+        assert harness.roles()[3:6] == [
+            ("bot01", "out", "session_failed"), ("bot03", "hall", "promoted"),
+            ("bot04", "spare", "spare_wanted")]
+
+    def test_a_spare_says_when_its_page_goes_quiet_and_beats_as_a_spare(self, profile):
+        quiet = dataclasses.replace(
+            profile, fleet=dataclasses.replace(profile.fleet, lobby_watchers=1),
+            recorder=dataclasses.replace(profile.recorder, health_interval_s=0))
+        harness = Harness(quiet, workers=2)
+        harness.script("bot01", (Walker(), Frames()))
+        sent = RawFrame(socket=0, direction="sent", at=0.0, text="ping")
+        harness.script("bot02", (Walker(), Frames(
+            [received("hello"), sent], deaf=True,
+            on_empty=_ticking(harness, 5.0, then=harness.end, after=20))))
+        harness.run()
+        silent = harness.events("spare_silent")
+        spare_beats = [beat for beat in harness.events("heartbeat")
+                       if beat.get("state") == "spare"]
+        assert (len(silent), 60.0 <= silent[0]["silent_s"] <= 65.0,
+                spare_beats[0]["worker"], harness.saw("hall_deaf")) == (
+            1, True, "bot02", False)
+
+    def test_a_spare_whose_page_goes_away_fails_its_session(self, profile):
+        harness = Harness(profile, workers=3, idle_sessions=True)
+        harness.script("bot03", (Walker(), Frames(ends=True)))
+        harness.until = lambda: harness.saw("session_failed")
+        harness.run()
+        failed = harness.events("session_failed")[0]
+        assert (failed["worker"], "the page has gone" in failed["error"]) == (
+            "bot03", True)
+
+    def test_only_the_opening_watchers_sweep(self, profile, builders):
+        harness = Harness(censusing(profile, hops=1), workers=3, idle_sessions=True)
+        for label, table_id in (("bot01", "tA"), ("bot02", "tB")):
+            harness.script(label, (Walker(), Frames(
+                [table(builders, table_id, frame_id=table_id)], deaf=True,
+                on_empty=harness.end_when_done)))
+        harness.until = lambda: (len(harness.events("census")) == 2
+                                 and standing(harness, "bot03"))
+        harness.run()
+        census = harness.events("census")
+        assert (census[-1]["pending"], census[-1]["tournament_tables"],
+                harness.walkers["bot03"][0].calls) == (0, 2, ["log_in"])
+
+
+class TestStartup:
+    def test_a_window_records_the_games_already_running_until_a_scan_finds_none(
+        self, profile
+    ):
+        # Five workers: one watcher, then bot02 takes a running table and
+        # bot03 is sent at once; bot03 finds none, so the phase ends and it
+        # walks back to the lobby as the second watcher. bot02's game outlasts
+        # bot03's scan, as a mid-game recording outlasts a minute's scan.
+        scanners = Scanners(("t1", summary(StopReason.MAX_GAMES), 0.2),
+                            (None, empty_scan(), 0.05))
+        harness = Harness(starting(profile), workers=5, recorder=scanners,
+                          idle_sessions=True)
+        harness.until = lambda: "bot02" in parked(harness)
+        result = harness.run()
+        done = harness.events("bootstrap_done")[0]
+        built = scanners.built[0]
+        assert ((result.bootstraps, result.bootstrap_games, result.chases,
+                 result.games_recorded),
+                (done["reason"], done["sent"]),
+                (built["limits"].max_games, built["limits"].seat_until_s,
+                 "target" in built),
+                harness.walkers["bot02"][0].calls,
+                harness.walkers["bot03"][0].calls) == (
+            (2, 1, 0, 1), ("empty", 2), (1, 60, False),
+            ["log_in", "enter_variant"],
+            ["log_in", "enter_variant", "return_to_lobby", "read_tournament_hash"])
+
+    def test_the_next_startup_worker_goes_when_the_last_takes_its_table(self, profile):
+        scanners = Scanners(("t1", summary(StopReason.MAX_GAMES), 0.05),
+                            ("t2", summary(StopReason.MAX_GAMES), 0.05))
+        harness = Harness(starting(profile), workers=5, recorder=scanners,
+                          idle_sessions=True)
+        harness.until = lambda: len(parked(harness)) == 2
+        harness.run()
+        # bot03 was sent on bot02's claim, while bot02's game was still on.
+        sent = [(worker, why) for worker, now, why in harness.roles() if now == "boot"]
+        assert (sent, harness.events("bootstrap_done")[0]["reason"]) == (
+            [("bot02", "bootstrap"), ("bot03", "bootstrap")], "exhausted")
+
+    def test_the_census_gives_way_to_the_startup_phase(self, profile, builders):
+        both = starting(censusing(profile))
+        harness = Harness(both)
+        walker = Walker()
+        harness.script("bot01", (walker, Frames(on_empty=harness.end)))
+        harness.run()
+        assert (harness.events("census_skipped")[0]["reason"], walker.calls,
+                harness.saw("census")) == (
+            "bootstrap", ["log_in", "enter_lobby", "read_tournament_hash"], False)
+
+
+class TestConstruction:
+    def test_a_profile_that_cannot_run_a_fleet_is_refused(self, profile):
+        bare = dataclasses.replace(profile, fleet=None)
+        with pytest.raises(ProfileError, match=r"a \[fleet\] section"):
+            Harness(bare).fleet()

@@ -169,6 +169,11 @@ package "rule_config.py" as p_rule_config {
         NEAREST_10 = "nearest_10"
         NEAREST_5  = "nearest_5"
     }
+    enum DisputeResolution <<enum>> {
+        FAILED = "failed"
+        SHARED = "shared"
+        HELD   = "held"
+    }
 
     class RuleConfig <<frozen dataclass>> {
         .. §9.1 general ..
@@ -194,9 +199,13 @@ package "rule_config.py" as p_rule_config {
         + only_announced_points_multiplied : bool = True
         + any_failure_marks_160 : bool = False
         + unannounced_slam_substitute : bool = True
+        + substitute_survives_doubling : bool = False
+        + personal_sweep_marks_solo_slam : bool = True
+        + defense_sweep_marks_substitute : bool = False
         + failed_slam_marks_made_points : bool = True
         + failed_slam_marks_announced_points : bool = True
         + attack_must_outscore_defense : bool = True
+        + dispute_resolution : DisputeResolution = FAILED
         + rounding : Rounding = EXACT
         + win_on_belote_points_alone : bool = True
         --
@@ -967,11 +976,12 @@ SingleSuitRules --> Suit : suit
 p_rules_fn ..> TrumpRules : <<resolves singleton>>
 TrumpRules ..> Card : points / rank_in_suit / trick_rank
 
-' The table-rule catalogue: three enums typed onto RuleConfig fields,
+' The table-rule catalogue: four enums typed onto RuleConfig fields,
 ' the presets registry naming ready-made configs.
 RuleConfig --> TurnDirection  : turn_direction
 RuleConfig --> AllTrumpBelote : all_trump_belote
 RuleConfig --> Rounding       : rounding
+RuleConfig --> DisputeResolution : dispute_resolution
 RuleConfig ..> InvalidRuleConfigError : <<raises in post-init>>
 p_rule_config_fn ..> RuleConfig : <<PRESETS>>
 PlayState "1" o-- "1" RuleConfig : rules

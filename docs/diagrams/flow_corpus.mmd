@@ -1,0 +1,54 @@
+---
+title: contrai-scraper + contrai-data — building and saving a corpus (contrai-scrape corpus)
+---
+flowchart TD
+    %% ---------- Where the raw logs come from ----------
+    Box[/"box raw logs<br/>(fetched weekly)"/]
+    Laptop[/"laptop raw logs"/]
+    Box -- "--source box=DIR" --> Import
+    Laptop -- "--source laptop=DIR" --> Import
+
+    %% ---------- The one thing kept by hand ----------
+    Import["import_raw<br/>judge every log before copying any<br/>identical → present · extends → grown<br/>shorter snapshot → stale · differs → refused"]
+    Import --> Raw[("raw/&lt;source&gt;/*.jsonl<br/>never edited, never pruned")]
+
+    %% ---------- Rebuilt from raw, every time ----------
+    Raw --> Cached{"cache entry for this log<br/>same sha256 + same parser fingerprint?"}
+    Cached -- "yes" --> Cache[("cache/&lt;source&gt;/*.json<br/>derived, never backed up")]
+    Cached -- "no: new, grown,<br/>or the parser changed" --> Parse["log parsed on its own, in memory<br/>(the parse path: visits, tournament gate)<br/>no record is ever appended to"]
+    Profile[/"profile.toml<br/>loaded without its secrets"/] --> Parse
+    Parse -- "saved" --> Cache
+    Cache --> Copies["RecordCopy per game per log"]
+    Copies --> Choose{"choose_copy<br/>scored rounds › rounds ›<br/>final totals › earliest join ›<br/>source, origin"}
+    Choose -- "kept" --> Write["write_games<br/>only records that changed are written<br/>their verdicts + the catalog removed"]
+    Choose -- "rejected, with a reason" --> Report[("build.json")]
+    Write --> Games[("games/obs-*.jsonl<br/>one record per game")]
+
+    %% ---------- The follow-up commands ----------
+    Games --> Verify(["contrai verify --stale ROOT/games<br/>only games newer than their verdict"])
+    Verify --> Verdicts[("verdicts/")]
+    Verdicts --> Catalog(["contrai catalog ROOT"])
+    Games --> Catalog
+    Catalog --> Sqlite[("catalog.sqlite<br/>validated = clean_rounds")]
+
+    %% ---------- Saving what cannot be rebuilt ----------
+    Raw --> Backup["backup_corpus<br/>raw/ + games/ + build.json<br/>+ MANIFEST.json (sha256, size)"]
+    Games --> Backup
+    Report --> Backup
+    Backup --> Zip[("contrai-corpus-STAMP.zip<br/>laptop · external drive · off-site")]
+    Zip --> Check(["corpus check<br/>missing · altered · unreadable · unlisted"])
+
+    %% ---------- palette ----------
+    classDef entry fill:#9B7FCC,stroke:#5E4495,stroke-width:2px,color:#FFFFFF;
+    classDef scraper fill:#EDE7F6,stroke:#5E4495,stroke-width:1px,color:#2E1F52;
+    classDef data fill:#E0F5F2,stroke:#2E7D74,stroke-width:2px,color:#1F544E;
+    classDef store fill:#5FBFB5,stroke:#2E7D74,stroke-width:2px,color:#10302C;
+    classDef engine fill:#FFEFD9,stroke:#B26A28,stroke-width:2px,color:#5C3A14;
+    classDef config fill:#FFF3E0,stroke:#B26A28,stroke-width:1px,color:#5C3A14;
+
+    class Box,Laptop,Profile config;
+    class Parse scraper;
+    class Import,Copies,Choose,Write,Backup,Cached data;
+    class Raw,Games,Report,Verdicts,Sqlite,Zip,Cache store;
+    class Check entry;
+    class Verify,Catalog engine;

@@ -59,12 +59,18 @@ class Rationale:
             — runner-up contracts, the cards ranked below the chosen one.
         citations: The table knobs consulted, as :class:`RuleCitation`
             records.
+        drawn_from: When the rule left several options exactly level and
+            the choice among them was **drawn at random**, those options,
+            rendered; empty when the rule settled it. It is what tells a
+            reader that asking again may get a different answer — and
+            that the rule named here did not pick *this* one over them.
     """
 
     rule: str
     detail: str
     considered: tuple[str, ...] = ()
     citations: tuple[RuleCitation, ...] = ()
+    drawn_from: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

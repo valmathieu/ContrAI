@@ -139,19 +139,24 @@ def _seat(player: Any) -> Seat:
     )
 
 
-def _outcome(contract_made: bool | None) -> RoundOutcome:
-    """Translate ``RoundScore.contract_made`` into a record outcome.
+def _outcome(score: Any) -> RoundOutcome:
+    """Translate a :class:`RoundScore` into a record outcome.
+
+    A held dispute (§7.5) is judged made, but its attack's mark went into
+    the pot rather than onto the sheet, so the record says ``held``.
 
     Args:
-        contract_made: The round's made/failed signal — ``None`` when the
+        score: The round's score; ``contract_made`` is ``None`` when the
             round was passed out.
 
     Returns:
         The matching :class:`~contrai_data.RoundOutcome`.
     """
-    if contract_made is None:
+    if score.contract_made is None:
         return RoundOutcome.ALL_PASS
-    return RoundOutcome.MADE if contract_made else RoundOutcome.FAILED
+    if score.is_held:
+        return RoundOutcome.HELD
+    return RoundOutcome.MADE if score.contract_made else RoundOutcome.FAILED
 
 
 def _slam(contract: Any, score: Any) -> SlamOutcome:
@@ -521,7 +526,7 @@ class RecordingView:
         self._record_write(
             RoundScored(
                 round=round_.round_number,
-                outcome=_outcome(score.contract_made),
+                outcome=_outcome(score),
                 declarer=contract.player.position if contract is not None else None,
                 contract=(
                     ContractTerms(
@@ -535,7 +540,9 @@ class RecordingView:
                 taken=dict(score.card_points),
                 belote=dict(score.belote_points),
                 announcements={side: 0 for side in TeamSide},
-                carried_over={side: 0 for side in TeamSide},
+                carried_over={
+                    side: score.carried_over.get(side, 0) for side in TeamSide
+                },
                 marked={
                     # What the sheet would carry, multiplier included: the
                     # scorer works in components, a record states the figures.

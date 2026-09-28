@@ -198,6 +198,67 @@ class TestSecrets:
         with pytest.raises(ProfileError, match="CONTRAI_SCRAPER_EMAIL"):
             load_profile(path)
 
+    def test_a_variable_holding_an_indirection_is_refused(self, tmp_path, profile_text,
+                                                          monkeypatch):
+        # An unresolved ``env:`` value is how an offline load marks a secret
+        # it never read, and the egress section skips its address check on
+        # one. A live load producing that shape would pass the check blind.
+        monkeypatch.setenv("CONTRAI_HOME_IP", "env:ELSEWHERE")
+        path = tmp_path / "p.toml"
+        path.write_text(
+            profile_text.replace('home_ip = "198.51.100.1"',
+                                 'home_ip = "env:CONTRAI_HOME_IP"'), encoding="utf-8")
+        with pytest.raises(ProfileError, match="another indirection"):
+            load_profile(path)
+
+
+class TestOfflineLoading:
+    @pytest.fixture
+    def indirected(self, tmp_path, profile_text, monkeypatch):
+        # Every secret the profile can hold, indirected, with none of the
+        # variables set: the state of a laptop re-parsing logs.
+        for name in ("CONTRAI_SCRAPER_EMAIL", "CONTRAI_SCRAPER_CODE",
+                     "CONTRAI_HOME_IP", "CONTRAI_SCRAPER_SALT"):
+            monkeypatch.delenv(name, raising=False)
+        text = (profile_text
+                .replace('email = "watcher@example.invalid"',
+                         'email = "env:CONTRAI_SCRAPER_EMAIL"')
+                .replace('verification_code = "0000"',
+                         'verification_code = "env:CONTRAI_SCRAPER_CODE"')
+                .replace('home_ip = "198.51.100.1"', 'home_ip = "env:CONTRAI_HOME_IP"')
+                .replace('pseudonym_salt = "unused-in-4a"',
+                         'pseudonym_salt = "env:CONTRAI_SCRAPER_SALT"'))
+        path = tmp_path / "p.toml"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_a_live_load_still_needs_the_variables(self, indirected):
+        with pytest.raises(ProfileError, match="not set in the environment"):
+            load_profile(indirected)
+
+    def test_an_offline_load_keeps_every_indirection_unread(self, indirected):
+        profile = load_profile(indirected, resolve_secrets=False)
+        assert (profile.account.email, profile.account.verification_code,
+                profile.egress.home_ip, profile.privacy.pseudonym_salt) == (
+            "env:CONTRAI_SCRAPER_EMAIL", "env:CONTRAI_SCRAPER_CODE",
+            "env:CONTRAI_HOME_IP", "env:CONTRAI_SCRAPER_SALT")
+
+    def test_an_offline_load_reads_the_wire_as_a_live_one_does(self, indirected, profile):
+        assert load_profile(indirected, resolve_secrets=False).wire == profile.wire
+
+    def test_an_offline_load_passes_literals_through(self, profile_path):
+        profile = load_profile(profile_path, resolve_secrets=False)
+        assert (profile.account.email, profile.egress.home_ip) == (
+            "watcher@example.invalid", "198.51.100.1")
+
+    def test_an_offline_load_still_checks_a_literal_home_ip(self, tmp_path, profile_text):
+        path = tmp_path / "p.toml"
+        path.write_text(
+            profile_text.replace('home_ip = "198.51.100.1"', 'home_ip = "home"'),
+            encoding="utf-8")
+        with pytest.raises(ProfileError, match="home_ip"):
+            load_profile(path, resolve_secrets=False)
+
 
 class TestSelectors:
     def test_a_single_string_and_a_candidate_list_both_load(self, profile):
@@ -233,16 +294,229 @@ class TestSelectors:
         assert profile.selectors.scoreboard_row == ".score-row"
 
     def test_the_retired_selectors_are_refused(self, tmp_path, profile_text):
-        # A profile still naming the v1 table list or the exit control is out
-        # of date in a way that matters: the server seats you, and the exit
-        # control is unrecoverable. Refusing is how the operator finds out.
+        # A profile still naming the v1 table list or its leave step is out of
+        # date in a way that matters: the server seats you, and leaving a table
+        # never led to another one. Refusing is how the operator finds out.
         path = tmp_path / "fixture-profile.toml"
         path.write_text(
-            profile_text.replace("variant = ", 'table_row = ".t"\nvariant = '),
+            profile_text.replace("\nvariant = ", '\ntable_row = ".t"\nvariant = '),
             encoding="utf-8",
         )
         with pytest.raises(ProfileError, match="table_row"):
             load_profile(path)
+
+
+#: The lobby's seven selector lines in the fixture profile, removable as one.
+LOBBY_LINES = (
+    'mode_new_games = "#new-games"\n'
+    'lobby_variant = "#new-variant"\n'
+    'lobby_tables = ".slot-list"\n'
+    'lobby_back = ["#tool-back", "#tool-close"]\n'
+    'lobby_layer = ".screen"\n'
+    'lobby_row_tournament_class = "cup-row"\n'
+    'lobby_row_hash_attr = "data-key"\n'
+)
+
+
+class TestLobbySelectors:
+    def test_the_lobby_is_read(self, profile):
+        selectors = profile.selectors
+        assert (selectors.has_lobby, selectors.mode_new_games, selectors.lobby_back,
+                selectors.lobby_row_hash_attr) == (
+            True, "#new-games", ("#tool-back", "#tool-close"), "data-key")
+
+    def test_a_profile_naming_no_lobby_still_loads(self, tmp_path, profile_text):
+        # `run` never goes to the lobby, so today's profiles must keep loading.
+        assert LOBBY_LINES in profile_text
+        path = tmp_path / "p.toml"
+        path.write_text(profile_text.replace(LOBBY_LINES, ""), encoding="utf-8")
+        selectors = load_profile(path).selectors
+        assert (selectors.has_lobby, selectors.lobby_back) == (False, None)
+
+    def test_a_lobby_described_in_part_is_refused(self, tmp_path, profile_text):
+        # Half a lobby loads cleanly and fails hours into a shift.
+        path = tmp_path / "p.toml"
+        path.write_text(profile_text.replace('lobby_layer = ".screen"\n', ""),
+                        encoding="utf-8")
+        with pytest.raises(ProfileError, match="the lobby only in part; missing: lobby_layer"):
+            load_profile(path)
+
+    def test_a_single_back_control_is_a_ranking_of_one(self, tmp_path, profile_text):
+        path = tmp_path / "p.toml"
+        path.write_text(
+            profile_text.replace('["#tool-back", "#tool-close"]', '"#tool-back"'),
+            encoding="utf-8",
+        )
+        assert load_profile(path).selectors.lobby_back == ("#tool-back",)
+
+    def test_the_table_exit_is_read(self, profile):
+        assert profile.selectors.table_exit == "#leave"
+
+    def test_a_lobby_without_a_table_exit_still_loads(self, tmp_path, profile_text):
+        # Outside the lobby group: a fleet without one still runs, returning
+        # from each table by rebuilding its session.
+        path = tmp_path / "p.toml"
+        path.write_text(profile_text.replace('table_exit = "#leave"\n', ""),
+                        encoding="utf-8")
+        selectors = load_profile(path).selectors
+        assert (selectors.has_lobby, selectors.table_exit) == (True, None)
+
+
+#: The lobby's four field paths in the fixture profile, removable as one.
+LOBBY_FIELD_LINES = (
+    'lobby_hash = "key"\n'
+    'lobby_seats = "chairs"\n'
+    'lobby_seat_account = "acct"\n'
+    'lobby_full = "ready"\n'
+)
+LOBBY_EVENT_LINE = 'lobby_table = "slot"\n'
+
+
+def _write(tmp_path, text):
+    path = tmp_path / "p.toml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+class TestLobbyWire:
+    def test_the_lobbys_event_and_paths_are_read(self, profile):
+        wire = profile.wire
+        assert (wire.has_lobby, wire.events.lobby_table, wire.fields["lobby_full"],
+                wire.draw_verb) == (True, "slot", "ready", "lots")
+
+    def test_a_profile_that_reads_no_lobby_still_loads(self, tmp_path, profile_text):
+        assert LOBBY_FIELD_LINES in profile_text and LOBBY_EVENT_LINE in profile_text
+        text = profile_text.replace(LOBBY_FIELD_LINES, "").replace(LOBBY_EVENT_LINE, "")
+        wire = load_profile(_write(tmp_path, text)).wire
+        assert (wire.has_lobby, "lobby_full" in wire.fields) == (False, False)
+
+    def test_paths_named_in_part_are_refused(self, tmp_path, profile_text):
+        text = profile_text.replace('lobby_full = "ready"\n', "")
+        with pytest.raises(ProfileError, match="lobby only in part; missing: lobby_full"):
+            load_profile(_write(tmp_path, text))
+
+    def test_an_event_nothing_can_read_is_refused(self, tmp_path, profile_text):
+        text = profile_text.replace(LOBBY_FIELD_LINES, "")
+        with pytest.raises(ProfileError, match="go together"):
+            load_profile(_write(tmp_path, text))
+
+    def test_paths_for_an_event_nobody_names_are_refused(self, tmp_path, profile_text):
+        text = profile_text.replace(LOBBY_EVENT_LINE, "")
+        with pytest.raises(ProfileError, match="go together"):
+            load_profile(_write(tmp_path, text))
+
+    def test_the_draw_verb_is_optional(self, tmp_path, profile_text):
+        text = profile_text.replace('draw_verb = "lots"\n', "")
+        assert load_profile(_write(tmp_path, text)).wire.draw_verb is None
+
+
+#: The fixture profile's [fleet] section, removable as one.
+FLEET_SECTION = (
+    "\n[fleet]\n"
+    "workers = 2\n"
+    "login_stagger_s = 0\n"
+    "scan_distinct_budget = 5\n"
+    "scan_deadline_s = 60\n"
+    "roster_max_age_s = 30\n"
+    "claim_ttl_s = 600\n"
+    "egress_cache_s = 60\n"
+    "census_enabled = false\n"
+    "census_hops = 3\n"
+    "# Off here, so a fleet test is about the lobby unless it asks for the\n"
+    "# startup phase; the default is on.\n"
+    "bootstrap_enabled = false\n"
+)
+
+
+class TestFleet:
+    def test_the_fleet_is_read(self, profile):
+        fleet = profile.fleet
+        assert (fleet.workers, fleet.scan_distinct_budget, fleet.claim_ttl_s,
+                profile.fleet_gaps()) == (2, 5, 600, ())
+
+    def test_a_profile_with_no_fleet_loads_and_says_what_a_fleet_needs(
+        self, tmp_path, profile_text
+    ):
+        assert FLEET_SECTION in profile_text
+        text = profile_text.replace(FLEET_SECTION, "")
+        text = text.replace(LOBBY_LINES, "").replace(LOBBY_FIELD_LINES, "")
+        text = text.replace(LOBBY_EVENT_LINE, "")
+        loaded = load_profile(_write(tmp_path, text))
+        assert (loaded.fleet, len(loaded.fleet_gaps())) == (None, 3)
+
+    @pytest.mark.parametrize("workers", [0, 26])
+    def test_a_worker_count_out_of_range_is_refused(self, tmp_path, profile_text,
+                                                    workers):
+        text = profile_text.replace("workers = 2", f"workers = {workers}")
+        with pytest.raises(ProfileError, match="between 1 and 25"):
+            load_profile(_write(tmp_path, text))
+
+    def test_a_twenty_worker_fleet_loads(self, tmp_path, profile_text):
+        # The size the box runs at, from a day's table counts.
+        text = profile_text.replace("workers = 2", "workers = 20")
+        assert load_profile(_write(tmp_path, text)).fleet.workers == 20
+
+    def test_a_negative_stagger_is_refused(self, tmp_path, profile_text):
+        text = profile_text.replace("login_stagger_s = 0", "login_stagger_s = -1")
+        with pytest.raises(ProfileError, match="login_stagger_s may not be negative"):
+            load_profile(_write(tmp_path, text))
+
+    def test_a_scan_with_no_budget_is_refused(self, tmp_path, profile_text):
+        text = profile_text.replace("scan_distinct_budget = 5", "scan_distinct_budget = 0")
+        with pytest.raises(ProfileError, match="scan_distinct_budget must be positive"):
+            load_profile(_write(tmp_path, text))
+
+    def test_a_profile_written_before_the_rota_gets_its_defaults(self, profile):
+        # The fixture profile, like the private ones, names neither key.
+        assert (profile.fleet.lobby_watchers, profile.fleet.spares) == (2, 1)
+
+    def test_the_rota_numbers_are_read(self, tmp_path, profile_text):
+        text = profile_text.replace("workers = 2", "workers = 2\nlobby_watchers = 3\nspares = 0")
+        fleet = load_profile(_write(tmp_path, text)).fleet
+        assert (fleet.lobby_watchers, fleet.spares) == (3, 0)
+
+    def test_a_lobby_with_no_watcher_is_refused(self, tmp_path, profile_text):
+        text = profile_text.replace("workers = 2", "workers = 2\nlobby_watchers = 0")
+        with pytest.raises(ProfileError, match="lobby_watchers must be positive"):
+            load_profile(_write(tmp_path, text))
+
+    def test_a_negative_spare_count_is_refused(self, tmp_path, profile_text):
+        text = profile_text.replace("workers = 2", "workers = 2\nspares = -1")
+        with pytest.raises(ProfileError, match="spares may not be negative"):
+            load_profile(_write(tmp_path, text))
+
+    def test_an_optional_number_is_still_type_checked(self, tmp_path, profile_text):
+        text = profile_text.replace("workers = 2", 'workers = 2\nspares = "one"')
+        with pytest.raises(ProfileError, match=r"\[fleet\]\.spares must be int, not str"):
+            load_profile(_write(tmp_path, text))
+
+    def test_startup_recording_is_on_unless_a_profile_says_otherwise(
+        self, tmp_path, profile_text
+    ):
+        text = profile_text.replace("bootstrap_enabled = false\n", "")
+        fleet = load_profile(_write(tmp_path, text)).fleet
+        assert (fleet.bootstrap_enabled, fleet.bootstrap_scan_s) == (True, 60)
+
+    def test_the_startup_keys_are_read(self, profile, tmp_path, profile_text):
+        text = profile_text.replace("workers = 2", "workers = 2\nbootstrap_scan_s = 90")
+        fleet = load_profile(_write(tmp_path, text)).fleet
+        assert (profile.fleet.bootstrap_enabled, fleet.bootstrap_scan_s) == (False, 90)
+
+    def test_a_startup_scan_with_no_time_is_refused(self, tmp_path, profile_text):
+        text = profile_text.replace("workers = 2", "workers = 2\nbootstrap_scan_s = 0")
+        with pytest.raises(ProfileError, match="bootstrap_scan_s must be positive"):
+            load_profile(_write(tmp_path, text))
+
+    def test_an_optional_switch_is_still_type_checked(self, tmp_path, profile_text):
+        text = profile_text.replace("bootstrap_enabled = false", "bootstrap_enabled = 1")
+        with pytest.raises(ProfileError,
+                           match=r"\[fleet\]\.bootstrap_enabled must be bool, not int"):
+            load_profile(_write(tmp_path, text))
+
+    def test_an_unknown_fleet_key_is_refused(self, tmp_path, profile_text):
+        text = profile_text.replace("workers = 2", "workers = 2\ncamp = true")
+        with pytest.raises(ProfileError, match=r"\[fleet\] has unknown keys: camp"):
+            load_profile(_write(tmp_path, text))
 
 
 class TestWire:

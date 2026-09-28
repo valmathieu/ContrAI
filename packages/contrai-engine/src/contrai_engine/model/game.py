@@ -202,6 +202,11 @@ class Game:
         self.unconfirmed_belote: dict[TeamSide, int] = {
             side: 0 for side in TeamSide
         }
+        # The points a held dispute left waiting for the next contract to
+        # be won (contree-domain.md §7.5). Handed to each new Round, which
+        # pays it out or passes it on; a pot still open when the game ends
+        # is simply never paid.
+        self.dispute_pot: int = 0
         # The table ruleset is game-level state: it is fixed when the
         # table sits down and every round inherits it unchanged.
         self.rules: RuleConfig = rules if rules is not None else RuleConfig()
@@ -248,6 +253,7 @@ class Game:
             self.deck,
             self.round_number,
             rules=self.rules,
+            dispute_pot=self.dispute_pot,
         )
 
         # Deal cards
@@ -301,9 +307,13 @@ class Game:
 
         self._track_unconfirmed_belote()
 
-        # Update total scores
+        # Update total scores: the round's own marks plus any dispute pot
+        # it paid out, which sits beside them on the score line — then
+        # carry forward whatever pot is still open (§7.5).
+        score = self.current_round.round_score
         for side, points in round_scores.items():
-            self.scores[side] += points
+            self.scores[side] += points + score.carried_over.get(side, 0)
+        self.dispute_pot += score.held - sum(score.carried_over.values())
 
         self._log_round_result()
 
@@ -324,6 +334,9 @@ class Game:
         A redeal needs no special case: it publishes an all-zero
         ``RoundScore``, so it neither confirms nor owes anything and the
         standing credit simply persists.
+
+        A dispute pot paid out counts as points from play: it is card
+        points and a contract value (§7.5).
         """
 
         score = self.current_round.round_score
@@ -334,7 +347,11 @@ class Game:
 
         for side in TeamSide:
             belote = score.belote_points.get(side, 0)
-            play = score.scores.get(side, 0) - belote
+            play = (
+                score.scores.get(side, 0)
+                - belote
+                + score.carried_over.get(side, 0)
+            )
             if play > 0:
                 self.unconfirmed_belote[side] = 0
             self.unconfirmed_belote[side] += belote

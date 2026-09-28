@@ -9,6 +9,9 @@ auction's own length cannot.
 
 from __future__ import annotations
 
+import dataclasses
+import random
+
 import pytest
 from contrai_core import (
     Auction,
@@ -24,12 +27,18 @@ from contrai_core import (
     TrickRecord,
 )
 
+from contrai_engine.model.player.rationale import (
+    BidDecision,
+    CardDecision,
+    Rationale,
+)
 from contrai_engine.replay import (
     RecordedPlayer,
     RoundScript,
     ScriptExhaustedError,
     SeatMismatchError,
 )
+from contrai_engine.replay.player import ReplayedBid, ReplayedCard
 
 
 # ---------------------------------------------------------------------------
@@ -350,3 +359,151 @@ class TestRecordedPlayer:
 
         with pytest.raises(ScriptExhaustedError):
             player.choose_card(_Observation())
+
+
+# ---------------------------------------------------------------------------
+# Explaining an AI seat
+# ---------------------------------------------------------------------------
+
+
+def _strategies(*, bid=None, card=None, drawn_from=(), draws=False):
+    """A ``(bidding, cardplay)`` factory pair answering fixed decisions.
+
+    Args:
+        bid: The bid the stand-in strategy would make; seated on the
+            player it is built onto.
+        card: The card it would play.
+        drawn_from: The rationale's ``drawn_from`` for that card.
+        draws: Whether answering consumes the global RNG, the way the
+            expert card play's tie-break does.
+    """
+
+    built: list = []
+
+    class _Strategy:
+        def __init__(self, player):
+            self.player = player
+            built.append(player)
+
+        def choose_bid(self, auction):
+            if draws:
+                random.random()
+            return BidDecision(
+                dataclasses.replace(bid, player=self.player),
+                Rationale("open on strength", "the strategy's own words."),
+            )
+
+        def choose_card(self, observation):
+            if draws:
+                random.random()
+            return CardDecision(
+                card,
+                Rationale(
+                    "concede cheaply",
+                    "the strategy's own words.",
+                    drawn_from=drawn_from,
+                ),
+            )
+
+    return (_Strategy, _Strategy), built
+
+
+class TestExplainedPlayer:
+    """A seat given its strategy explains each recorded action with it."""
+
+    @staticmethod
+    def _seated(script, strategies, seat=Position.NORTH):
+        player = RecordedPlayer("N", seat, strategies=strategies)
+        player.script = script
+        return player
+
+    BID_SCRIPT = RoundScript(
+        number=1, bids=(ContractBid(Position.NORTH, 80, Suit.SPADES),)
+    )
+    CARD_SCRIPT = RoundScript(
+        number=1, plays=(ObservedPlay(Position.NORTH, SPADE_7),)
+    )
+
+    def test_the_strategies_are_built_onto_the_seat_itself(self):
+        # So they read this seat's hand, position and team — the view the
+        # seat really had.
+        strategies, built = _strategies(card=SPADE_7)
+
+        player = RecordedPlayer("N", Position.NORTH, strategies=strategies)
+
+        assert built == [player, player]
+
+    def test_an_agreeing_bid_carries_the_strategy_s_rationale(self):
+        strategies, _ = _strategies(bid=ContractBid(None, 80, Suit.SPADES))
+        player = self._seated(self.BID_SCRIPT, strategies)
+
+        decision = player.choose_bid(Auction())
+
+        assert isinstance(decision, ReplayedBid)
+        assert decision.rationale.rule == "open on strength"
+        assert decision.preferred is None
+        # The recorded bid is what is played, re-seated as ever.
+        assert decision.bid.player is player
+        assert decision.bid.value == 80
+
+    def test_a_bid_the_strategy_would_not_make_names_its_own(self):
+        strategies, _ = _strategies(bid=ContractBid(None, 100, Suit.HEARTS))
+        player = self._seated(self.BID_SCRIPT, strategies)
+
+        decision = player.choose_bid(Auction())
+
+        assert decision.bid.value == 80
+        assert "100" in decision.preferred
+
+    def test_an_agreeing_card_carries_the_strategy_s_rationale(self):
+        strategies, _ = _strategies(card=SPADE_7)
+        player = self._seated(self.CARD_SCRIPT, strategies)
+
+        decision = player.choose_card(_Observation())
+
+        assert isinstance(decision, ReplayedCard)
+        assert decision.card == SPADE_7
+        assert decision.rationale.rule == "concede cheaply"
+        assert decision.preferred is None
+
+    def test_a_card_the_strategy_would_not_play_names_its_own(self):
+        strategies, _ = _strategies(card=SPADE_9)
+        player = self._seated(self.CARD_SCRIPT, strategies)
+
+        decision = player.choose_card(_Observation())
+
+        assert decision.card == SPADE_7
+        assert decision.preferred == str(SPADE_9)
+
+    def test_a_card_among_the_strategy_s_random_draw_agrees(self):
+        # Asked again, the strategy drew the other 7; the recorded one
+        # was just as likely, so this is no disagreement.
+        strategies, _ = _strategies(
+            card=HEART_7, drawn_from=(str(SPADE_7), str(HEART_7))
+        )
+        player = self._seated(self.CARD_SCRIPT, strategies)
+
+        decision = player.choose_card(_Observation())
+
+        assert decision.preferred is None
+        assert decision.rationale.drawn_from == (str(SPADE_7), str(HEART_7))
+
+    def test_asking_leaves_the_global_rng_where_it_was(self):
+        strategies, _ = _strategies(
+            bid=ContractBid(None, 80, Suit.SPADES), card=SPADE_7, draws=True
+        )
+        player = self._seated(
+            RoundScript(
+                number=1,
+                bids=self.BID_SCRIPT.bids,
+                plays=self.CARD_SCRIPT.plays,
+            ),
+            strategies,
+        )
+        random.seed(42)
+        before = random.getstate()
+
+        player.choose_bid(Auction())
+        player.choose_card(_Observation())
+
+        assert random.getstate() == before

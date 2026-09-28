@@ -8,6 +8,8 @@ The stages run one way, each knowing only the one below it:
   the wire never sends;
 * :mod:`~contrai_scraper.parse.snapshot` reads the table description the
   socket opens with;
+* :mod:`~contrai_scraper.parse.sheet` places each score row on its round and
+  reads what each round carried;
 * :mod:`~contrai_scraper.parse.live` turns keyed events into bids and plays;
 * :mod:`~contrai_scraper.parse.forced_passes` puts back the passes the wire
   never sends;

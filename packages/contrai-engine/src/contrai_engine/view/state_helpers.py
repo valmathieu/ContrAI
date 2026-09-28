@@ -4,7 +4,8 @@ Pure functions that read a slice of round/trick state and answer one
 question the screens need: who is currently winning the trick, which
 trick of the eight is on the table, what constraint applies to the
 human's playable cards, how to order the hand for display, which seats
-have announced belote, and the env-tunable AI pacing delay. No I/O
+have announced belote, how much dispute pot a round leaves open, and
+the env-tunable AI pacing delay. No I/O
 beyond ``os.environ`` (read-only, for pacing).
 """
 
@@ -20,6 +21,8 @@ from contrai_core import (
     NoTrumpRules,
     Play,
     Position,
+    Rank,
+    Suit,
     rules_for,
 )
 from contrai_core.trick import current_winner
@@ -161,6 +164,53 @@ def _belote_by_position(round_) -> dict[Position, tuple[Suit, ...]]:
     return badges
 
 
+def _belote_badges_by_trick(
+    round_,
+) -> dict[int, dict[Position, tuple[Suit, ...]]]:
+    """Place each announced belote on the tricks where it was said.
+
+    The live diamond badges a seat from its announcement to the end of
+    the round, because it only ever shows the trick on the table. The
+    replay's trick grid shows all eight at once, where a badge on every
+    later trick would say nothing about *when*: there the badge belongs
+    on the trick whose K or Q the announcement was made with — the
+    belote's trick, and the rebelote's.
+
+    Only :attr:`~contrai_engine.model.round.Round.announced_belotes` is
+    read for *which* pairs to show, for the reason
+    :func:`_belote_by_position` gives: it is the regime's own verdict on
+    which announcements mark.
+
+    Args:
+        round_: The round, complete or in progress, or ``None``.
+
+    Returns:
+        0-based trick index → seat → the suits announced in that trick.
+        The trick in progress, if any, is indexed after the completed
+        ones. Tricks with no announcement are absent.
+    """
+    play_state = getattr(round_, "play_state", None) if round_ else None
+    announced = getattr(round_, "announced_belotes", None) or ()
+    if play_state is None or not announced:
+        return {}
+    tricks = list(play_state.completed_tricks)
+    if play_state.current_trick:
+        tricks.append(play_state.current_trick)
+    pairs = {(player, suit) for player, suit in announced}
+    placed: dict[int, dict[Position, tuple[Suit, ...]]] = {}
+    for index, trick in enumerate(tricks):
+        for player, card in trick:
+            if (player, card.suit) not in pairs:
+                continue
+            if card.rank not in (Rank.KING, Rank.QUEEN):
+                continue
+            seats = placed.setdefault(index, {})
+            seats[player.position] = (
+                seats.get(player.position, ()) + (card.suit,)
+            )
+    return placed
+
+
 def _resolve_delay(env_var: str, default: float) -> float:
     """Read a float pacing value from the environment with a default.
 
@@ -176,3 +226,24 @@ def _resolve_delay(env_var: str, default: float) -> float:
     except (TypeError, ValueError):
         return default
     return max(0.0, value)
+
+
+def _dispute_pot_after(round_) -> int:
+    """The dispute pot left open once ``round_`` is scored (§7.5).
+
+    What the round was handed, plus what a held tie put in, minus what a
+    won contract paid out — the arithmetic ``Game.manage_round`` folds,
+    read off the round alone so the recap needs no game handle. An
+    unscored round leaves the pot it was handed.
+
+    Args:
+        round_: The just-finished round.
+
+    Returns:
+        The points still waiting for the next contract to be won.
+    """
+    pot = getattr(round_, "dispute_pot", 0)
+    score = getattr(round_, "round_score", None)
+    if score is None:
+        return pot
+    return pot + score.held - sum(score.carried_over.values())

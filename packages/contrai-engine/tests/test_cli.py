@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -28,15 +30,27 @@ import pytest
 from contrai_core.position import Position
 from contrai_core.rule_config import PRESETS, RuleConfig
 from contrai_core.team_side import TeamSide
-from contrai_data import EndReason, GameEnded, read_events
+from contrai_data import (
+    CatalogSummary,
+    EndReason,
+    GameEnded,
+    PlayerGame,
+    PlayerReport,
+    SkippedFile,
+    read_events,
+)
 from contrai_engine import cli as cli_module
 from contrai_engine.cli import (
     _apply_seed,
     _build_game,
+    _catalog_lines,
+    _catalog_root,
     _normalise_argv,
     _parse_args,
     _parse_argv,
+    _player_lines,
     _record_paths,
+    _run_catalog,
     _run_replay,
     _run_verify,
     main,
@@ -48,6 +62,7 @@ from contrai_engine.model.round.scoring import RoundScore
 from contrai_engine.options import DebugOptions, TableAids
 from contrai_engine.recording import RecordingView, RecordRequest
 from contrai_engine.ruleset import TableSetup, load_setup, save_setup, setup_path
+from contrai_engine.view.parsing import RoundPick
 
 @pytest.fixture
 def contrai_home(tmp_path):
@@ -1300,6 +1315,12 @@ class TestVerifyArguments:
         assert args.json is False
         assert args.out is None
         assert args.no_write is False
+        assert args.stale is False
+
+    def test_stale_is_a_flag(self):
+        args, _ = _parse_argv(["verify", "a.jsonl", "--stale"])
+
+        assert args.stale is True
 
     def test_out_takes_a_directory(self, tmp_path):
         args, _ = _parse_argv(["verify", "a.jsonl", "--out", str(tmp_path)])
@@ -1420,7 +1441,7 @@ class TestRunVerify:
     def _args(paths, **overrides):
         """The ``verify`` namespace, with every flag off unless overridden."""
 
-        fields = {"json": False, "out": None, "no_write": False}
+        fields = {"json": False, "out": None, "no_write": False, "stale": False}
         fields.update(overrides)
         return argparse.Namespace(paths=list(paths), **fields)
 
@@ -1465,7 +1486,7 @@ class TestRunVerify:
         assert payload[0]["verdict"] == "verified"
 
     def test_a_suspect_record_exits_one(self, record_root, capsys, monkeypatch):
-        from contrai_engine.replay.verdict import (
+        from contrai_data import (
             GameVerdict,
             Mismatch,
             MismatchKind,
@@ -1520,6 +1541,111 @@ class TestRunVerify:
         assert code == 1
         assert "no records found" in capsys.readouterr().err
 
+    # --- --stale: re-verify only what moved -------------------------------
+
+    @staticmethod
+    def _only_verdict(root):
+        (verdict,) = (root / "verdicts").glob("*.json")
+        return verdict
+
+    def test_stale_verifies_a_record_that_has_no_verdict(self, record_root, capsys):
+        assert _run_verify(self._args([record_root], stale=True)) == 0
+        assert "verified" in capsys.readouterr().out
+        assert self._only_verdict(record_root).is_file()
+
+    def test_stale_skips_a_record_whose_verdict_is_newer(
+        self, record_root, capsys, monkeypatch
+    ):
+        _run_verify(self._args([record_root]))
+        capsys.readouterr()
+
+        def _refuse(path, out=None):
+            raise AssertionError(f"{path} was verified again")
+
+        monkeypatch.setattr(cli_module, "verify_record", _refuse)
+
+        assert _run_verify(self._args([record_root], stale=True)) == 0
+        assert "1 of 1 records skipped" in capsys.readouterr().out
+
+    def test_stale_verifies_a_record_rewritten_after_its_verdict(
+        self, record_root, capsys
+    ):
+        # What a corpus build does to a game it changed: the record's mtime
+        # moves past its verdict's.
+        _run_verify(self._args([record_root]))
+        verdict = self._only_verdict(record_root)
+        (record,) = (record_root / "games").glob("*.jsonl")
+        later = verdict.stat().st_mtime_ns + 1_000_000_000
+        os.utime(record, ns=(later, later))
+        capsys.readouterr()
+
+        _run_verify(self._args([record_root], stale=True))
+
+        out = capsys.readouterr().out
+        assert "verified" in out and "skipped" not in out
+
+    def test_stale_verifies_a_record_whose_verdict_does_not_read(
+        self, record_root, capsys
+    ):
+        _run_verify(self._args([record_root]))
+        self._only_verdict(record_root).write_text("not a verdict", encoding="utf-8")
+        capsys.readouterr()
+
+        _run_verify(self._args([record_root], stale=True))
+
+        assert "skipped" not in capsys.readouterr().out
+
+    def test_a_skipped_suspect_verdict_still_fails_the_run(self, record_root):
+        from contrai_data import (
+            GameVerdict,
+            Mismatch,
+            MismatchKind,
+            RoundVerdict,
+            write_verdict,
+        )
+
+        (record,) = (record_root / "games").glob("*.jsonl")
+        write_verdict(
+            record_root,
+            GameVerdict(
+                game_id=record.stem,
+                source="engine",
+                preset="classic",
+                rounds=(
+                    RoundVerdict.decide(
+                        1,
+                        mismatches=(
+                            Mismatch(
+                                kind=MismatchKind.SCORE,
+                                detail="the marked points differ",
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        assert _run_verify(self._args([record_root], stale=True)) == 1
+
+    def test_stale_looks_for_verdicts_under_out(self, record_root, tmp_path, capsys):
+        elsewhere = tmp_path / "elsewhere"
+        _run_verify(self._args([record_root], out=elsewhere))
+        capsys.readouterr()
+
+        _run_verify(self._args([record_root], out=elsewhere, stale=True))
+
+        assert "1 of 1 records skipped" in capsys.readouterr().out
+
+    def test_stale_under_json_keeps_stdout_one_document(self, record_root, capsys):
+        _run_verify(self._args([record_root]))
+        capsys.readouterr()
+
+        _run_verify(self._args([record_root], stale=True, json=True))
+
+        captured = capsys.readouterr()
+        assert json.loads(captured.out) == []
+        assert "1 of 1 records skipped" in captured.err
+
 
 class TestRunReplay:
     """``_run_replay`` against a real record and a scripted view."""
@@ -1553,6 +1679,8 @@ class TestRunReplay:
                 self.summaries: list[tuple] = []
                 self.recaps = 0
                 self.steps = 0
+                self.grids: list[tuple] = []
+                self.redraws = 0
                 self._picks = list(picks)
                 self._keys = list(keys)
 
@@ -1585,9 +1713,23 @@ class TestRunReplay:
 
             def show_replay_summary(self, rows, game_id):
                 self.summaries.append((tuple(rows), game_id))
-                return self._picks.pop(0) if self._picks else None
+                pick = self._picks.pop(0) if self._picks else None
+                # A bare number scripts "step that round".
+                return RoundPick(pick) if isinstance(pick, int) else pick
 
-            def show_replay_step(self, *, can_go_back):
+            def show_replay_grid(self, round_, bids):
+                self.grids.append((round_, list(bids)))
+
+            def show_replay_notice(self, text):
+                self.console.print(text)
+
+            def redraw_screen(self):
+                self.redraws += 1
+
+            def show_replay_contract(self, round_):
+                pass
+
+            def show_replay_step(self, *, can_go_back, **_offered):
                 self.steps += 1
                 return self._keys.pop(0) if self._keys else "r"
 
@@ -1692,6 +1834,191 @@ class TestRunReplay:
 
         assert _run_replay(self._args(record_path)) == 0
         assert view.recaps == 2
+
+    def test_a_grid_pick_shows_the_grid_and_returns_to_the_picker(
+        self, record_path, monkeypatch
+    ):
+        view = self._view([RoundPick(2, grid=True), None], [])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        (round_, bids), = view.grids
+        # Rounds 1 and 2 were replayed, unseen, to reach it.
+        assert round_.round_number == 2
+        assert len(bids) == len(round_.auction.bids) >= 4
+        assert view.recaps == 0
+        assert view.steps == 0
+        assert len(view.summaries) == 2
+
+    def test_a_grid_carries_every_trick_of_a_played_round(
+        self, tmp_path, monkeypatch
+    ):
+        from tests.test_replay.conftest import play_and_record
+
+        # Seed 7 passes its first round out and plays the second.
+        play_and_record(tmp_path, seed=7, rounds=2)
+        (path,) = (tmp_path / "games").glob("*.jsonl")
+        view = self._view([RoundPick(2, grid=True), None], [])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        _run_replay(self._args(path))
+
+        (round_, _), = view.grids
+        assert round_.contract is not None
+        assert len(round_.play_state.completed_tricks) == 8
+
+    def test_a_grid_round_that_diverges_says_so(
+        self, record_path, monkeypatch
+    ):
+        from contrai_engine.replay.exceptions import ReplayError
+
+        class _Diverging(cli_module.ReplayController):
+            def replay_round(self, round_):
+                if round_.number == 2:
+                    raise ReplayError("the record ran out")
+                super().replay_round(round_)
+
+        monkeypatch.setattr(cli_module, "ReplayController", _Diverging)
+        view = self._view([RoundPick(2, grid=True), None], [])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        assert view.grids == []
+        assert any("diverges" in line for line in view.console.printed)
+        assert view.steps == 1
+
+    def test_g_at_the_recap_shows_the_round_then_the_recap_again(
+        self, record_path, monkeypatch
+    ):
+        # 'r' to the recap, 'g' there, then 'q' back to the picker.
+        view = self._view([1, None], ["r", "g", "q"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        (round_, bids), = view.grids
+        assert round_.round_number == 1
+        assert len(bids) == len(round_.auction.bids)
+        assert view.redraws == 1
+        assert view.recaps == 1
+
+    def test_g_at_a_divergence_shows_the_round_as_far_as_it_got(
+        self, record_path, monkeypatch
+    ):
+        from contrai_engine.replay.exceptions import ReplayError
+
+        class _Diverging(cli_module.ReplayController):
+            def replay_round(self, round_):
+                if round_.number == 2:
+                    raise ReplayError("the record ran out")
+                super().replay_round(round_)
+
+        monkeypatch.setattr(cli_module, "ReplayController", _Diverging)
+        view = self._view([2, None], ["g", "q"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        _run_replay(self._args(record_path))
+
+        assert len(view.grids) == 1
+        assert view.steps == 2
+
+    def test_a_stepped_round_that_diverges_says_so(
+        self, record_path, monkeypatch
+    ):
+        from contrai_engine.replay.exceptions import ReplayError
+
+        class _Diverging(cli_module.ReplayController):
+            def replay_round(self, round_):
+                if round_.number == 2:
+                    raise ReplayError("the record ran out")
+                super().replay_round(round_)
+
+        monkeypatch.setattr(cli_module, "ReplayController", _Diverging)
+        view = self._view([2, None], [])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        assert _run_replay(self._args(record_path)) == 0
+        assert any("diverges" in line for line in view.console.printed)
+        assert view.recaps == 0
+        assert view.steps == 1
+
+    def _explains(self, monkeypatch) -> list[bool]:
+        """Record the ``explain`` flag of every controller the CLI builds."""
+
+        flags: list[bool] = []
+
+        class _Watched(cli_module.ReplayController):
+            def __init__(self, record, view=None, *, explain=False):
+                flags.append(explain)
+                super().__init__(record, view, explain=explain)
+
+        monkeypatch.setattr(cli_module, "ReplayController", _Watched)
+        return flags
+
+    def test_a_record_of_engine_ai_seats_shows_their_reasons(
+        self, record_path, monkeypatch
+    ):
+        flags = self._explains(monkeypatch)
+        view = self._view([1, None], ["r"])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        _run_replay(self._args(record_path))
+
+        assert view.rationale == "compact"
+        assert flags and all(flags)
+
+    def test_a_record_with_no_engine_ai_shows_no_reasons_at_all(
+        self, record_path, monkeypatch
+    ):
+        import dataclasses
+
+        from contrai_data import Seat, SeatKind
+
+        real_load = cli_module.load_game
+
+        def _observed(path):
+            record = real_load(path)
+            seats = {
+                seat: Seat(None, "someone", None, SeatKind.OBSERVED, None)
+                for seat in record.seats
+            }
+            return dataclasses.replace(record, seats=seats)
+
+        monkeypatch.setattr(cli_module, "load_game", _observed)
+        flags = self._explains(monkeypatch)
+        view = self._view([1, None], ["r"])
+        view.rationale = None
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        _run_replay(self._args(record_path))
+
+        assert view.rationale is None
+        assert flags and not any(flags)
+
+    def test_a_suspect_earlier_round_is_stepped_past(
+        self, record_path, monkeypatch
+    ):
+        from contrai_engine.replay.exceptions import ReplayError
+
+        cleared: list[int] = []
+
+        class _EarlierDiverges(cli_module.ReplayController):
+            def replay_round(self, round_):
+                if round_.number == 1:
+                    raise ReplayError("round 1 is suspect")
+                super().replay_round(round_)
+
+            def clear_hands(self):
+                cleared.append(1)
+                super().clear_hands()
+
+        monkeypatch.setattr(cli_module, "ReplayController", _EarlierDiverges)
+        view = self._view([RoundPick(2, grid=True), None], [])
+        monkeypatch.setattr(cli_module, "RichView", lambda *a, **k: view)
+
+        _run_replay(self._args(record_path))
+
+        assert cleared == [1]
+        assert len(view.grids) == 1
 
     def test_an_unknown_round_exits_one(
         self, record_path, monkeypatch, capsys
@@ -1798,6 +2125,366 @@ class TestMainDispatch:
             cli_module,
             "_build_game",
             lambda *a, **k: pytest.fail("replay must not build a game"),
+        )
+
+        with pytest.raises(SystemExit):
+            main()
+
+
+class TestNormaliseArgvCatalog:
+    def test_catalog_is_a_subcommand(self):
+        assert _normalise_argv(["catalog", "--player", "x"]) == [
+            "catalog",
+            "--player",
+            "x",
+        ]
+
+
+class TestCatalogArguments:
+    def test_the_root_is_optional(self):
+        args, _ = _parse_argv(["catalog"])
+
+        assert args.command == "catalog"
+        assert args.root is None
+
+    def test_the_root_is_a_path(self, tmp_path):
+        args, _ = _parse_argv(["catalog", str(tmp_path)])
+
+        assert args.root == tmp_path
+
+    def test_player_defaults_to_none(self):
+        args, _ = _parse_argv(["catalog"])
+
+        assert args.player is None
+
+    @pytest.mark.parametrize("player", ["p-123", "Some Name"])
+    def test_player_takes_an_id_or_a_name(self, player):
+        args, _ = _parse_argv(["catalog", "--player", player])
+
+        assert args.player == player
+
+
+class TestCatalogRoot:
+    def test_no_argument_is_the_records_root(self, contrai_home):
+        assert _catalog_root(None) == contrai_home / "records"
+
+    def test_a_games_directory_stands_for_its_parent(self, tmp_path):
+        assert _catalog_root(tmp_path / "corpus" / "games") == tmp_path / "corpus"
+
+    def test_any_other_directory_is_itself(self, tmp_path):
+        assert _catalog_root(tmp_path / "corpus") == tmp_path / "corpus"
+
+
+def _summary(tmp_path, **overrides):
+    """A catalog summary with everything a clean corpus would say."""
+
+    fields = {
+        "path": tmp_path / "catalog.sqlite",
+        "built_at": "2026-09-24T12:00:00Z",
+        "games_by_source": {"observed": 3, "engine": 1},
+        "round_count": 20,
+        "complete_round_count": 19,
+        "clean_round_count": 18,
+        "game_verdicts": {"partial": 3, "suspect": 1},
+        "verdict_statuses": {"fresh": 4},
+        "round_verdicts": {"partial": 18, "suspect": 1},
+        "player_count": 12,
+        "skipped": (),
+    }
+    fields.update(overrides)
+    return CatalogSummary(**fields)
+
+
+class TestCatalogLines:
+    def test_it_names_the_catalog_and_its_build_time(self, tmp_path):
+        first = _catalog_lines(_summary(tmp_path))[0]
+
+        assert str(tmp_path / "catalog.sqlite") in first
+        assert "2026-09-24T12:00:00Z" in first
+
+    def test_it_counts_by_source_and_by_status(self, tmp_path):
+        lines = _catalog_lines(_summary(tmp_path))
+
+        assert "games: 4 (engine 1, observed 3)" in lines
+        assert "rounds: 20, complete 19, clean 18" in lines
+        assert "game verdicts: partial 3, suspect 1" in lines
+        assert "verdict status: fresh 4" in lines
+        assert "round verdicts: partial 18, suspect 1" in lines
+        assert "players: 12" in lines
+
+    def test_missing_and_stale_verdicts_point_at_verify(self, tmp_path):
+        lines = _catalog_lines(
+            _summary(tmp_path, verdict_statuses={"fresh": 1, "missing": 2, "stale": 1})
+        )
+
+        (hint,) = [line for line in lines if "contrai verify" in line]
+        assert hint.strip().startswith("without a fresh verdict: 3 — run: contrai verify")
+        assert str(tmp_path) in hint
+
+    def test_an_empty_tally_reads_none(self, tmp_path):
+        lines = _catalog_lines(_summary(tmp_path, game_verdicts={}))
+
+        assert "game verdicts: none" in lines
+
+    def test_skipped_files_are_listed(self, tmp_path):
+        skipped = (
+            SkippedFile("games/bad.jsonl", "record", "RecordFormatError: x"),
+            SkippedFile("verdicts/o.json", "verdict", "no indexed record"),
+        )
+
+        lines = _catalog_lines(_summary(tmp_path, skipped=skipped))
+
+        assert "skipped: 2" in lines
+        assert "    record games/bad.jsonl — RecordFormatError: x" in lines
+        assert "    verdict verdicts/o.json — no indexed record" in lines
+
+    def test_nothing_skipped_prints_no_block(self, tmp_path):
+        lines = _catalog_lines(_summary(tmp_path))
+
+        assert not [line for line in lines if line.startswith("skipped")]
+        assert not [line for line in lines if "contrai verify" in line]
+
+
+def _player_game(**overrides):
+    fields = {
+        "created_at": "2026-09-20T10:00:00Z",
+        "game_id": "obs-0001",
+        "player_id": "p-n",
+        "name": "north",
+        "position": "N",
+        "side": "NS",
+        "partner": "south",
+        "result": "won",
+        "end_reason": "target_reached",
+        "total_ns": 2010,
+        "total_ew": 1500,
+        "verdict": "partial",
+        "verdict_status": "fresh",
+    }
+    fields.update(overrides)
+    return PlayerGame(**fields)
+
+
+class TestPlayerLines:
+    def _lines(self, *games):
+        return _player_lines(
+            PlayerReport(player="p-n", built_at="2026-09-24T12:00:00Z", games=games)
+        )
+
+    def test_totals_the_replay_rebuilt_are_marked(self):
+        _, line = self._lines(_player_game(totals_basis="replayed"))
+
+        assert "won  NS 2010 – EW 1500 (replayed)  partial" in line
+
+    def test_the_header_names_the_player_and_the_build(self):
+        header = self._lines(_player_game())[0]
+
+        assert header == "p-n — games: 1 (catalog built 2026-09-24T12:00:00Z)"
+
+    def test_seats_are_counted_apart_when_a_name_sits_twice_in_a_game(self):
+        # Every engine AI seat is ``ai:<level>``, so one game can hold the
+        # looked-up name four times.
+        header = self._lines(
+            _player_game(position="N"),
+            _player_game(position="S"),
+            _player_game(game_id="obs-0002"),
+        )[0]
+
+        assert header.startswith("p-n — games: 2, seats: 3 (")
+
+    def test_one_line_per_game(self):
+        line = self._lines(_player_game())[1]
+
+        assert line == (
+            "2026-09-20  obs-0001  p-n  north  seat N  partner south  "
+            "won  NS 2010 – EW 1500  partial"
+        )
+
+    def test_an_unknown_result_shows_the_end_reason(self):
+        line = self._lines(
+            _player_game(result=None, end_reason="observer_left", total_ns=None,
+                         total_ew=None)
+        )[1]
+
+        assert "observer_left  NS ? – EW ?" in line
+
+    def test_an_unfinished_game_says_so(self):
+        line = self._lines(_player_game(result=None, end_reason=None))[1]
+
+        assert "  unfinished  " in line
+
+    @pytest.mark.parametrize(
+        ("status", "verdict", "shown"),
+        [
+            ("stale", "partial", "partial (stale)"),
+            ("missing", None, "no verdict"),
+            ("unreadable", None, "unreadable verdict"),
+        ],
+    )
+    def test_a_verdict_that_is_not_fresh_is_marked(self, status, verdict, shown):
+        line = self._lines(_player_game(verdict_status=status, verdict=verdict))[1]
+
+        assert line.endswith(shown)
+
+    def test_an_engine_seat_has_no_player_id(self):
+        line = self._lines(_player_game(player_id=None, partner=None))[1]
+
+        assert "  obs-0001  -  north  " in line
+        assert "partner -" in line
+
+
+class TestRunCatalog:
+    @staticmethod
+    def _args(root=None, player=None):
+        return argparse.Namespace(root=root, player=player)
+
+    @pytest.fixture
+    def record_root(self, tmp_path):
+        """A records root holding one verified 4-AI game."""
+
+        from tests.test_replay.conftest import play_and_record
+
+        root = tmp_path / "records"
+        play_and_record(root, seed=1)
+        return root
+
+    def test_it_builds_and_exits_zero(self, record_root, capsys):
+        code = _run_catalog(self._args(record_root))
+
+        assert code == 0
+        assert (record_root / "catalog.sqlite").is_file()
+        assert "games: 1 (engine 1)" in capsys.readouterr().out
+
+    def test_the_default_root_is_the_records_root(self, contrai_home, capsys):
+        from tests.test_replay.conftest import play_and_record
+
+        play_and_record(contrai_home / "records", seed=1)
+
+        assert _run_catalog(self._args()) == 0
+        assert (contrai_home / "records" / "catalog.sqlite").is_file()
+
+    def test_a_root_without_games_exits_one(self, tmp_path, capsys):
+        code = _run_catalog(self._args(tmp_path))
+
+        assert code == 1
+        assert "nothing to index" in capsys.readouterr().err
+        assert not (tmp_path / "catalog.sqlite").exists()
+
+    def test_an_unreplaceable_catalog_exits_one_and_says_why(
+        self, record_root, capsys, monkeypatch
+    ):
+        def refuse(root):
+            raise PermissionError(13, "in use")
+
+        monkeypatch.setattr(cli_module, "build_catalog", refuse)
+
+        code = _run_catalog(self._args(record_root))
+
+        assert code == 1
+        err = capsys.readouterr().err
+        assert "Close the program holding it open" in err
+        assert "the old catalog is unchanged" in err
+
+    def test_player_reads_without_rebuilding(self, record_root, monkeypatch, capsys):
+        _run_catalog(self._args(record_root))
+        name = self._a_seat_name(record_root)
+        monkeypatch.setattr(
+            cli_module,
+            "build_catalog",
+            lambda *a, **k: pytest.fail("--player must not rebuild"),
+        )
+
+        assert _run_catalog(self._args(record_root, player=name)) == 0
+
+    def test_player_without_a_catalog_exits_one_with_the_hint(
+        self, record_root, capsys
+    ):
+        code = _run_catalog(self._args(record_root, player="anyone"))
+
+        assert code == 1
+        assert f"contrai catalog {record_root}" in capsys.readouterr().err
+        assert not (record_root / "catalog.sqlite").exists()
+
+    def test_player_on_a_foreign_file_exits_one(self, tmp_path, capsys):
+        (tmp_path / "catalog.sqlite").write_text("not sqlite\n" * 50, encoding="utf-8")
+
+        code = _run_catalog(self._args(tmp_path, player="anyone"))
+
+        assert code == 1
+        assert "not a catalog" in capsys.readouterr().err
+
+    def test_a_player_with_no_game_exits_one(self, record_root, capsys):
+        _run_catalog(self._args(record_root))
+
+        code = _run_catalog(self._args(record_root, player="nobody"))
+
+        assert code == 1
+        assert "nobody: no game" in capsys.readouterr().err
+
+    def test_play_verify_then_catalog_end_to_end(self, record_root, capsys):
+        # The whole corpus path on a real game: record it, verify it,
+        # index it, then query what the catalog says about it.
+        assert (
+            _run_verify(
+                argparse.Namespace(
+                    paths=[record_root], json=False, out=None, no_write=False,
+                    stale=False,
+                )
+            )
+            == 0
+        )
+
+        assert _run_catalog(self._args(record_root)) == 0
+
+        connection = sqlite3.connect(record_root / "catalog.sqlite")
+        try:
+            status = connection.execute(
+                "SELECT verdict_status FROM games"
+            ).fetchall()
+            complete = connection.execute(
+                "SELECT COUNT(*) FROM rounds WHERE complete = 1"
+            ).fetchone()[0]
+            clean = connection.execute(
+                "SELECT COUNT(*) FROM clean_rounds"
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        assert status == [("fresh",)]
+        assert clean == complete > 0
+
+        name = self._a_seat_name(record_root)
+        capsys.readouterr()
+        assert _run_catalog(self._args(record_root, player=name)) == 0
+        out = capsys.readouterr().out.splitlines()
+        assert out[0].startswith(f"{name} — games: ")
+        assert len(out) > 1
+
+    @staticmethod
+    def _a_seat_name(root):
+        connection = sqlite3.connect(root / "catalog.sqlite")
+        try:
+            return connection.execute("SELECT name FROM seats LIMIT 1").fetchone()[0]
+        finally:
+            connection.close()
+
+
+class TestMainDispatchCatalog:
+    def test_catalog_exits_with_its_own_code(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["contrai", "catalog"])
+        monkeypatch.setattr(cli_module, "_run_catalog", lambda args: 5)
+
+        with pytest.raises(SystemExit) as excinfo:
+            main()
+
+        assert excinfo.value.code == 5
+
+    def test_catalog_never_reaches_the_game_loop(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["contrai", "catalog"])
+        monkeypatch.setattr(cli_module, "_run_catalog", lambda args: 0)
+        monkeypatch.setattr(
+            cli_module,
+            "_build_game",
+            lambda *a, **k: pytest.fail("catalog must not build a game"),
         )
 
         with pytest.raises(SystemExit):
