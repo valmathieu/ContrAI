@@ -199,7 +199,7 @@ class TestFleetCommand:
             main(["fleet", "--profile", str(profile_path), "--workers", "2"])
         assert exc.value.code == 2
 
-    @pytest.mark.parametrize("workers", ["0", "11"])
+    @pytest.mark.parametrize("workers", ["0", "26"])
     def test_a_worker_count_out_of_range_is_a_usage_error(self, handed, profile_path,
                                                           tmp_path, workers):
         with pytest.raises(SystemExit):
@@ -986,6 +986,68 @@ class TestParse:
             main(["parse", str(raw_log_path), "--profile", str(bad)])
         assert exc.value.code == 2
 
+    def test_a_record_is_stamped_when_its_game_was_heard_not_when_parsed(
+        self, tmp_path, profile_path, raw_log_path
+    ):
+        # The fixture frames carry no server clock, so the stamp falls back to
+        # the log's own start — the same bytes however often it is re-parsed.
+        import json
+
+        from contrai_data import game_path, read_events
+
+        started = json.loads(raw_log_path.read_text(encoding="utf-8").splitlines()[0])
+        main(["parse", str(raw_log_path), "--profile", str(profile_path),
+              "--out", str(tmp_path / "a")])
+        main(["parse", str(raw_log_path), "--profile", str(profile_path),
+              "--out", str(tmp_path / "b")])
+        first = game_path(tmp_path / "a", "obs-g1")
+        assert read_events(first).events[0].created_at == started["started_at"]
+        assert first.read_bytes() == game_path(tmp_path / "b", "obs-g1").read_bytes()
+
+    def test_parsing_twice_into_one_root_leaves_the_record_as_it_was(
+        self, tmp_path, profile_path, raw_log_path
+    ):
+        # The writer appends: a second parse used to leave two headers and
+        # every round twice in the same file.
+        from contrai_data import game_path
+
+        argv = ["parse", str(raw_log_path), "--profile", str(profile_path),
+                "--out", str(tmp_path)]
+        main(argv)
+        before = game_path(tmp_path, "obs-g1").read_bytes()
+        assert main(argv) == 0
+        assert game_path(tmp_path, "obs-g1").read_bytes() == before
+
+    def test_a_record_already_there_is_reported(
+        self, tmp_path, profile_path, raw_log_path, capsys
+    ):
+        argv = ["parse", str(raw_log_path), "--profile", str(profile_path),
+                "--out", str(tmp_path)]
+        main(argv)
+        capsys.readouterr()
+        main(argv + ["--dry-run"])
+        assert "already recorded, left as it is" in capsys.readouterr().out
+
+    def test_the_account_variables_are_not_needed(
+        self, tmp_path, profile_text, raw_log_path, monkeypatch
+    ):
+        # Re-parsing never touches the site, so a laptop without the
+        # account's variables set must still be able to do it.
+        for name in ("CONTRAI_SCRAPER_EMAIL", "CONTRAI_SCRAPER_CODE",
+                     "CONTRAI_HOME_IP"):
+            monkeypatch.delenv(name, raising=False)
+        indirected = tmp_path / "indirected-profile.toml"
+        indirected.write_text(
+            profile_text
+            .replace('email = "watcher@example.invalid"',
+                     'email = "env:CONTRAI_SCRAPER_EMAIL"')
+            .replace('verification_code = "0000"',
+                     'verification_code = "env:CONTRAI_SCRAPER_CODE"')
+            .replace('home_ip = "198.51.100.1"', 'home_ip = "env:CONTRAI_HOME_IP"'),
+            encoding="utf-8")
+        assert main(["parse", str(raw_log_path), "--profile", str(indirected),
+                     "--out", str(tmp_path)]) == 0
+
 
 class TestReporting:
     def test_each_log_reports_its_game_and_round_count(
@@ -1002,3 +1064,42 @@ class TestReporting:
         main(["parse", str(partial_raw_log_path), "--profile", str(profile_path),
               "--out", str(tmp_path)])
         assert "skipped" in capsys.readouterr().out
+
+
+class TestParseStamp:
+    def _event(self, received_ms):
+        from contrai_scraper import WireEvent
+
+        return WireEvent(kind="x", key=None, data=None, received_ms=received_ms)
+
+    def test_the_latest_server_instant_of_the_visit_is_the_stamp(self):
+        from datetime import UTC, datetime
+
+        from contrai_scraper.cli import _visit_stamp
+
+        visit = [self._event(1_789_510_540_000), self._event(None),
+                 self._event(1_789_510_543_721)]
+        assert _visit_stamp(visit, None) == datetime.fromtimestamp(
+            1_789_510_543.721, UTC)
+
+    def test_a_visit_without_a_clock_takes_the_log_start(self):
+        from datetime import UTC, datetime
+
+        from contrai_scraper.cli import _visit_stamp
+
+        started = datetime(2026, 9, 15, 22, 15, 18, tzinfo=UTC)
+        assert _visit_stamp([self._event(None)], started) == started
+
+    @pytest.mark.parametrize(
+        "first_line",
+        ["", "not json\n", '{"kind": "frame"}\n', '{"started_at": "someday"}\n'],
+        ids=["empty", "not-json", "no-stamp", "bad-stamp"],
+    )
+    def test_a_log_without_a_readable_start_leaves_the_wall_clock(
+        self, tmp_path, first_line
+    ):
+        from contrai_scraper.cli import _log_started
+
+        log = tmp_path / "raw.jsonl"
+        log.write_text(first_line, encoding="utf-8")
+        assert _log_started(log) is None

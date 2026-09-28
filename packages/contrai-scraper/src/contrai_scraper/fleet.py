@@ -500,7 +500,7 @@ class Fleet:
         The line is the fleet's first measurement of the population it is
         sized against: how many different tournament tables the sweeps met,
         how many times in all, and what population that resighting rate
-        suggests — which is what says whether a ceiling of ten is right. It
+        suggests — which is what says whether the fleet's size is right. It
         is written after every sweep with the number of sweeps still under
         way, rather than once at the end, so a worker that goes down before
         its sweep costs the report one worker's sightings and not the report.

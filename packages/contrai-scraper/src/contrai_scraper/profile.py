@@ -391,22 +391,30 @@ class EgressSection:
     """The device the site's route must leave through, where one can be asked."""
 
     def __post_init__(self) -> None:
-        try:
-            ipaddress.ip_address(self.home_ip)
-        except ValueError:
-            # The value is never echoed: it may well be a real address, and a
-            # refusal message is the one place it must not appear.
-            raise ProfileError("[egress].home_ip is not an IP address") from None
+        # An indirection left unresolved is what an offline load keeps: it has
+        # no environment to read and no gate to run. A live load can never
+        # produce one (``_secret`` refuses a variable that looks like one), so
+        # skipping the check here cannot let a live gate run against a string.
+        if not self.home_ip.startswith(_ENV_PREFIX):
+            try:
+                ipaddress.ip_address(self.home_ip)
+            except ValueError:
+                # The value is never echoed: it may well be a real address,
+                # and a refusal message is the one place it must not appear.
+                raise ProfileError(
+                    "[egress].home_ip is not an IP address"
+                ) from None
         if len(self.expected_country) != 2 or not self.expected_country.isalpha():
             raise ProfileError(
                 "[egress].expected_country must be a two-letter country code"
             )
 
 
-#: The most workers a fleet may run. Ten is about the whole tournament
-#: population: a courtesy ceiling, since every worker is one more spectator
-#: the tables can count.
-FLEET_CEILING: int = 10
+#: The most workers a fleet may run. A day on the box met up to ~40 distinct
+#: tournament tables an hour at the peak, so the fleet is sized at about twenty;
+#: the ceiling leaves that some margin and stays a courtesy, since every worker
+#: is one more spectator the tables can count.
+FLEET_CEILING: int = 25
 
 #: Workers waiting in the lobby when ``[fleet].lobby_watchers`` is not set.
 #: Starts come one every 2.5-5 minutes, and a chase leaves its watcher's place
@@ -720,29 +728,40 @@ class _Table:
         raise ProfileError(f"{self.label} has unknown keys: {names}")
 
 
-def _secret(label: str, value: str) -> str:
+def _secret(label: str, value: str, *, resolve: bool = True) -> str:
     """Resolve an ``env:NAME`` indirection, or pass the literal through.
 
     Args:
         label: The profile key, for the error message.
         value: The raw value read from the document.
+        resolve: Whether to read the environment at all. ``False`` hands an
+            indirection back as the ``env:NAME`` text it is, which is what
+            an offline command wants: it never uses the secret.
 
     Returns:
-        The secret itself.
+        The secret itself, or the unresolved indirection.
 
     Raises:
-        ProfileError: The named environment variable is not set.
+        ProfileError: The named environment variable is not set, or holds
+            a value that is itself an indirection.
     """
 
-    if not value.startswith(_ENV_PREFIX):
+    if not value.startswith(_ENV_PREFIX) or not resolve:
         return value
     name = value[len(_ENV_PREFIX):]
     try:
-        return os.environ[name]
+        resolved = os.environ[name]
     except KeyError:
         raise ProfileError(
             f"{label} reads {name}, which is not set in the environment"
         ) from None
+    # An unresolved indirection is how an offline load marks a secret it
+    # never read, and ``EgressSection`` skips its address check on one. A
+    # live load must therefore never produce that shape, or a home address
+    # could reach the egress gate unchecked.
+    if resolved.startswith(_ENV_PREFIX):
+        raise ProfileError(f"{label} reads {name}, which holds another indirection")
+    return resolved
 
 
 def _tokens(table: _Table, key: str, vocabulary: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -821,13 +840,15 @@ def _site(table: _Table) -> SiteSection:
     return section
 
 
-def _account(table: _Table) -> AccountSection:
+def _account(table: _Table, resolve: bool) -> AccountSection:
     """Read ``[account]``, resolving both values' indirection."""
 
     section = AccountSection(
-        email=_secret("[account].email", table.string("email")),
+        email=_secret("[account].email", table.string("email"), resolve=resolve),
         verification_code=_secret(
-            "[account].verification_code", table.string("verification_code")
+            "[account].verification_code",
+            table.string("verification_code"),
+            resolve=resolve,
         ),
     )
     table.done()
@@ -1011,11 +1032,11 @@ def _schedule(table: _Table) -> Schedule:
     return section
 
 
-def _egress(table: _Table) -> EgressSection:
+def _egress(table: _Table, resolve: bool) -> EgressSection:
     """Read ``[egress]``, resolving the home address's indirection."""
 
     section = EgressSection(
-        home_ip=_secret("[egress].home_ip", table.string("home_ip")),
+        home_ip=_secret("[egress].home_ip", table.string("home_ip"), resolve=resolve),
         expected_country=table.string("expected_country"),
         probe_url=table.string("probe_url"),
         probe_ip_field=table.string("probe_ip_field"),
@@ -1071,20 +1092,31 @@ def _fleet(table: _Table) -> FleetSection:
     return section
 
 
-def _privacy(table: _Table) -> PrivacySection:
+def _privacy(table: _Table, resolve: bool) -> PrivacySection:
     """Read ``[privacy]``; the salt may be absent entirely."""
 
     raw = table.optional_string("pseudonym_salt")
-    salt = None if raw is None else _secret("[privacy].pseudonym_salt", raw)
+    salt = (
+        None
+        if raw is None
+        else _secret("[privacy].pseudonym_salt", raw, resolve=resolve)
+    )
     table.done()
     return PrivacySection(pseudonym_salt=salt)
 
 
-def load_profile(path: Path | str) -> Profile:
+def load_profile(path: Path | str, *, resolve_secrets: bool = True) -> Profile:
     """Read and validate a profile document.
 
     Args:
         path: The ``profile.toml`` to read.
+        resolve_secrets: Whether to read ``env:NAME`` values from the
+            environment. The commands that touch the site need them; the
+            offline ones (re-parsing raw logs, building a corpus) only read
+            the wire vocabulary, and pass ``False`` so they run on a machine
+            where the account's variables are not set. The indirections are
+            then kept as their ``env:NAME`` text, and every other key is
+            validated exactly as before.
 
     Returns:
         The parsed :class:`Profile`.
@@ -1108,16 +1140,16 @@ def load_profile(path: Path | str) -> Profile:
     root = _Table(_ROOT, raw)
     profile = Profile(
         site=_site(root.section("site")),
-        account=_account(root.section("account")),
+        account=_account(root.section("account"), resolve_secrets),
         browser=_browser(root.section("browser")),
         selectors=_selectors(root.section("selectors")),
         wire=_wire(root.section("wire")),
         rules=_rules(root.section("rules")),
         recorder=_recorder(root.section("recorder")),
         schedule=_schedule(root.section("schedule")),
-        egress=_egress(root.section("egress")),
+        egress=_egress(root.section("egress"), resolve_secrets),
         output=_output(root.section("output"), path.parent),
-        privacy=_privacy(root.section("privacy")),
+        privacy=_privacy(root.section("privacy"), resolve_secrets),
         fleet=_fleet(root.section("fleet")) if root.has("fleet") else None,
     )
     root.done()

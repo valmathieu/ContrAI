@@ -9,13 +9,14 @@ Source lives at `packages/contrai-data/src/contrai_data/`:
 
 | Module          | Contents                                                                                  |
 | --------------- | ----------------------------------------------------------------------------------------- |
-| `exceptions.py` | `RecordError` (base), `RecordFormatError`, `UnsupportedFormatError`, `VerdictFormatError`, and `CatalogError` — all of them both a `ContraiError` and a `ValueError` |
+| `exceptions.py` | `RecordError` (base), `RecordFormatError`, `UnsupportedFormatError`, `VerdictFormatError`, `CatalogError` and `CorpusError` — all of them both a `ContraiError` and a `ValueError` |
 | `events.py`     | One frozen dataclass per event (`Header`, `GameStarted`, `RoundDealt`, `BidMade`, `CardPlayed`, `BeloteHeld`, `RoundScored`, `GameEnded`), the five value objects (`Seat`, `ObservedFrom`, `Ruleset`, `SideMark`, `ContractTerms`), and the eight closed vocabularies |
 | `tokens.py`     | Domain value ⇄ ASCII token, both ways and strictly — seats, sides, cards, contract suits and values, whole bids, whole rulesets, and the UTC timestamp check |
 | `codec.py`      | `encode` / `decode` — one event ⇄ one JSON line — plus `FORMAT` and the major-version gate |
 | `store.py`      | Records on disk: `RecordWriter`, `read_events` / `ReadResult`, `records_root` / `games_dir` / `game_path`, `new_game_id` |
 | `projection.py` | `GameRecord` / `RoundRecord`, and the `project` / `load_game` fold that re-derives the contract, the tricks and their winners |
 | `catalog.py`    | `build_catalog` / `CatalogSummary` / `SkippedFile` — the SQLite index over a records root — and `player_games` / `PlayerReport` / `PlayerGame` to read one player back |
+| `corpus.py`     | A corpus of scraped games: `RecordCopy` / `choose_copy` / `CopyChoice` / `Rejection`, which keep one record per game among several copies; `import_raw` / `RawImport` / `ImportStatus` and `raw_logs` for its raw logs; `write_games` / `GamesUpdate`, which rewrite only the games that changed; `backup_corpus` / `BackupSummary` and `check_archive` / `ArchiveCheck` for backups |
 | `verdict.py`    | What `contrai verify` concluded: `Verdict` (`verified` / `partial` / `suspect`), the five `MismatchKind` classes, `Mismatch` / `RoundVerdict` / `GameVerdict`, `verdicts_dir` / `verdict_path` / `write_verdict`, and the strict `read_verdict` |
 
 Everything above is re-exported from `contrai_data/__init__.py` and is part of the public API.
@@ -805,3 +806,120 @@ FROM mismatches m JOIN games g USING (game_id)
 WHERE g.verdict_status = 'fresh' AND m.n = 1
 GROUP BY m.kind ORDER BY rounds DESC;
 ```
+
+## The corpus
+
+A corpus is every scraped game kept once, rebuilt from the raw wire logs that saw it. The raw logs
+are the only data kept by hand; the records, the verdicts and the catalog are all build outputs.
+`contrai-scrape corpus build` drives it (see the [scraper docs](../scraper/index.md#the-corpus));
+this package holds the parts that know nothing of the wire.
+
+| Path | Role | Rebuildable? |
+| ---- | ---- | ------------ |
+| `raw/<source>/*.jsonl` | The verbatim wire logs, one directory per source label (`box`, `laptop`). The source of truth. | No: this is what gets backed up. |
+| `games/*.jsonl` | One record per game, the best copy among every raw log that saw it. | Yes, from `raw/`. |
+| `verdicts/*.json` | `contrai verify`'s output. | Yes. |
+| `catalog.sqlite` | `contrai catalog`'s index; "validated" is the `clean_rounds` view. | Yes. |
+| `build.json` | The last build's report: imports, counts, every rejected copy and why. | Yes. |
+| `cache/<source>/*.json` | `contrai-scrape corpus build`'s parse of each raw log, reused while neither the log nor the parser changed. | Yes; never backed up. |
+
+JSONL stays canonical and SQLite stays the index because replay and verify already read records;
+a training export (Parquet, tensors) would be one more derived layer, not a replacement.
+
+### Raw logs in
+
+`import_raw(root, {label: [paths]})` is the one door into `raw/`. A label is one lowercase path
+segment. Every log is judged before any is copied, and each gets an `ImportStatus`:
+
+| Status | When |
+| ------ | ---- |
+| `copied` | The name is new to the source. |
+| `present` | The same bytes are already kept. |
+| `grown` | The kept log is a byte prefix of this one, which replaces it. |
+| `stale` | This log is a byte prefix of the kept one, which stays. |
+
+`grown` exists because a raw log is only ever appended to: a log fetched while its session was
+still running is a prefix of the one fetched later, and refusing it would block every periodic
+pull. Any other difference under a taken name raises `CorpusError`, naming every conflict, and
+nothing is copied. A copy goes to a temporary file first and is renamed into place, so a crash
+never leaves a half-copied log that the next import would take for a conflict. `raw_logs(root)`
+lists them back by source, then name.
+
+### Games out
+
+`write_games(root, copies)` makes `games/` hold exactly one record per copy, and touches only what
+changed. It returns a `GamesUpdate` naming the games `added`, `changed` and `removed`, and counting
+the `unchanged` ones.
+
+- A record already byte for byte right is left alone: same file, same modification time. Its
+  verdict stays, and still reads as fresh, which is what lets `contrai verify --stale` re-check
+  only what a build changed.
+- A new or different record is written to a temporary file and renamed into place, so it is never
+  seen half-written; a game no copy names is deleted.
+- Every verdict that no longer describes the record beside it — for a game added, changed or gone,
+  or a verdict with no record at all — is deleted before any record moves.
+- The catalog indexes the games as a whole, so it is deleted whenever anything changed, and first
+  of all: on Windows it is the file another program most often holds open, and failing there
+  changes nothing.
+
+A failure part-way leaves each record either old or new, and never a verdict newer than a record it
+no longer describes; the next build finishes the job. Two copies of one game are refused before
+anything is written: the second would be appended to the first.
+
+### One copy per game
+
+One game can reach a corpus more than once: the box and a fleet worker may watch the same table,
+and one session may leave a table and be seated back at it. Each raw log that saw the game yields
+its own record, and the copies differ by how much of the game each saw. `choose_copy` keeps one.
+
+The ranking is lexicographic: a later tier only counts on a tie in every earlier one.
+
+| Tier | The better copy has | Why |
+| ---- | ------------------- | --- |
+| 1 | more rounds with a score line | a scored round is what verification and training both consume |
+| 2 | more rounds | an unscored round still carries its deal, auction and play |
+| 3 | a `game_ended` stating totals | the game's result is known, not inferred |
+| 4 | the lower first round | it saw more of the opening |
+| 5 | the first source label, then the first origin, in sorted order | two builds over the same logs keep the same file |
+
+Each copy that loses carries a `Rejection` naming the first tier it fell behind on, with both
+values: `fewer scored rounds (3 against 5)`, `joined later (round 4 against round 1)`. The order
+the candidates are handed over in never changes the choice. `CopyChoice.as_report()` is the
+JSON form the build report lists for every game seen more than once.
+
+```python
+from contrai_data import RecordCopy, choose_copy
+
+choice = choose_copy([
+    RecordCopy.of("box", "raw/box/a.jsonl", box_events),
+    RecordCopy.of("laptop", "raw/laptop/b.jsonl", laptop_events),
+])
+choice.chosen.origin, [r.reason for r in choice.rejected]
+```
+
+### Backups
+
+`backup_corpus(root, destination)` writes `contrai-corpus-<UTC stamp>.zip`, holding `raw/`,
+`games/` and `build.json` beside a `MANIFEST.json`:
+
+```json
+{
+  "format": "contrai-corpus-backup/1",
+  "created_at": "2026-09-28T12:00:00Z",
+  "generator": "contrai-data 0.5.0",
+  "counts": {"raw_logs": 412, "games": 731},
+  "files": {"games/obs-d0570bbb.jsonl": {"sha256": "…", "size": 48213}}
+}
+```
+
+The raw logs go in because nothing else can rebuild them, the games because rebuilding them needs
+this exact parser, and the build report because it says how they were chosen. Verdicts and the
+catalog stay out: `contrai verify` and `contrai catalog` rebuild them after a restore, which is an
+unzip followed by those two commands. The archive is written under a temporary name and renamed
+once complete, and an existing archive is never overwritten.
+
+`check_archive(path)` re-hashes every member against the manifest and returns an `ArchiveCheck`
+listing every problem, not only the first: `missing`, `altered` (hash or size), `unreadable` (the
+zip's own CRC failed) and `unlisted` (a member the manifest does not name). A file that is not a
+zip, or holds no manifest of this format, raises `CorpusError`. The check needs only the archive,
+so a copy on an external drive can be proven whole without the corpus it came from.

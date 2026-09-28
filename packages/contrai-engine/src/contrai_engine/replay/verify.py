@@ -157,6 +157,10 @@ class VerifyingObserver:
         # What the replay scored for each round it played out, by the
         # record's round number — the raw material of the replayed totals.
         self._scored: dict[int, Any] = {}
+        # Whether the replay's dispute pot is the table's, decided at the
+        # first round walked and then followed round by round.
+        self._pot_known = False
+        self._last_number: int | None = None
 
     # --- driven by the verifier, not by the engine -----------------------
 
@@ -175,7 +179,26 @@ class VerifyingObserver:
             round_: The recorded round the next ``manage_round`` replays.
         """
 
+        self._follow(round_)
         self._current = _RoundCheck(round_)
+
+    def _follow(self, round_: RoundRecord) -> None:
+        """Note the next recorded round, and what it means for the pot.
+
+        The replay starts with an empty pot, which is the table's only when
+        the record starts at the game's first deal: otherwise a tie held
+        before the record began may be waiting to be paid. A round missing
+        from the numbering later may have been such a tie too.
+
+        Args:
+            round_: The recorded round now being walked.
+        """
+
+        if self._last_number is None:
+            self._pot_known = self.record.observed_from is None and round_.number == 1
+        elif round_.number != self._last_number + 1:
+            self._pot_known = False
+        self._last_number = round_.number
 
     # --- hooks ----------------------------------------------------------
 
@@ -222,7 +245,12 @@ class VerifyingObserver:
         _check_auction(check, round_)
         _check_trick_winners(check, round_)
         _check_belote(check, round_)
-        _check_score(check, round_)
+        _check_score(check, round_, pot_known=self._pot_known)
+        score = round_.round_score
+        if score is not None and score.contract_made is not None and not score.is_held:
+            # A contract made or failed pays any pot out and opens none, so
+            # from here the replay's empty pot is the table's too.
+            self._pot_known = True
         self.rounds.append(
             RoundVerdict.decide(
                 check.record.number,
@@ -241,6 +269,9 @@ class VerifyingObserver:
         """
 
         check = self._current or _RoundCheck(round_)
+        # The replay stopped part-way: whatever the round did to the pot,
+        # the replay did not do it.
+        self._pot_known = False
         kind, detail = _classify(check.phase, exc)
         check.fault(kind, detail)
         self.rounds.append(
@@ -260,6 +291,9 @@ class VerifyingObserver:
             round_: The recorded round that was not replayed.
         """
 
+        # Not replayed, so a tie it held never reached the replay's pot.
+        self._follow(round_)
+        self._pot_known = False
         self.rounds.append(
             RoundVerdict.decide(
                 round_.number,
@@ -512,7 +546,7 @@ def _deal_supports(hands: Any, belote: BeloteHeld) -> bool:
     return {Card(suit, Rank.KING), Card(suit, Rank.QUEEN)} <= held
 
 
-def _check_score(check: _RoundCheck, round_: Any) -> None:
+def _check_score(check: _RoundCheck, round_: Any, *, pot_known: bool = True) -> None:
     """The replayed score line must be the recorded one, field by field.
 
     When the record carries no ``round_scored`` event there is nothing to
@@ -523,6 +557,8 @@ def _check_score(check: _RoundCheck, round_: Any) -> None:
     Args:
         check: The round's accumulating checks.
         round_: The engine round, scored.
+        pot_known: Whether the replay's dispute pot is the table's going into
+            this round — see :func:`_check_carried_over`.
     """
 
     recorded = check.record.score
@@ -619,10 +655,12 @@ def _check_score(check: _RoundCheck, round_: Any) -> None:
                 observed=str(recorded.last_trick),
             )
 
-    _check_carried_over(check, score, recorded)
+    _check_carried_over(check, score, recorded, pot_known=pot_known)
 
 
-def _check_carried_over(check: _RoundCheck, score: Any, recorded: Any) -> None:
+def _check_carried_over(
+    check: _RoundCheck, score: Any, recorded: Any, *, pot_known: bool = True
+) -> None:
     """The dispute pot paid out this round must be the one recorded (§7.5).
 
     A record that cannot say — an observed round whose running total
@@ -631,10 +669,20 @@ def _check_carried_over(check: _RoundCheck, score: Any, recorded: Any) -> None:
     trick is, and ``score`` is named unchecked once however many of its
     parts could not be compared.
 
+    The replay can be the one that cannot say. A record joined after the
+    first deal starts the replay with an empty pot, while the table may be
+    about to pay one a tie held before the record began: the record infers
+    that carry from the running totals, and the replay never saw the tie.
+    Until a settled contract empties the pot for both, a carry the replay
+    disagrees with is left unchecked the same way; one it agrees with
+    still passes.
+
     Args:
         check: The round's accumulating checks.
         score: The replayed round score.
         recorded: The recorded score line.
+        pot_known: Whether the replay's pot is the table's going into this
+            round.
     """
 
     if recorded.carried_over is None:
@@ -643,6 +691,10 @@ def _check_carried_over(check: _RoundCheck, score: Any, recorded: Any) -> None:
         return
     mine = {side: score.carried_over.get(side, 0) for side in TeamSide}
     theirs = {side: recorded.carried_over.get(side, 0) for side in TeamSide}
+    if mine != theirs and not pot_known:
+        if _SCORE not in check.unchecked:
+            check.unchecked.append(_SCORE)
+        return
     if mine != theirs:
         check.fault(
             MismatchKind.SCORE,

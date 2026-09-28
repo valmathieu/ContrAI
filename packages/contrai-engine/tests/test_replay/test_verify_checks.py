@@ -577,6 +577,29 @@ class TestCheckScore:
         check = self._run(_Scored(), score=score)
         assert "the carried-over points differ" in _details(check)
 
+    def test_a_carry_the_replay_cannot_know_is_unchecked_not_a_fault(self):
+        # A record joined after the first deal: the table pays a pot from a
+        # tie the replay never saw.
+        check = self._run(
+            _Scored(carried_over={TeamSide.NS: 0, TeamSide.EW: 161}),
+            pot_known=False,
+        )
+        assert "carried-over" not in _details(check)
+        assert check.unchecked == ["score"]
+
+    def test_an_unknowable_carry_names_score_unchecked_once(self):
+        # A scraped round with no last trick, joined late: still one
+        # unchecked "score".
+        check = self._run(
+            _Scored(carried_over={TeamSide.NS: 0, TeamSide.EW: 161}, last_trick=None),
+            pot_known=False,
+        )
+        assert check.unchecked == ["score"]
+
+    def test_an_agreeing_carry_passes_even_with_the_pot_unknown(self):
+        check = self._run(_Scored(), pot_known=False)
+        assert ("carried-over" in _details(check), check.unchecked) == (False, [])
+
     def test_an_unknown_carry_is_unchecked_not_a_fault(self):
         check = self._run(_Scored(carried_over=None))
         assert "carried-over" not in _details(check)
@@ -599,7 +622,7 @@ class TestCheckScore:
         assert "the round resolved differently" not in _details(check)
 
     @staticmethod
-    def _run(recorded, *, score=None, contract=None, rules=None):
+    def _run(recorded, *, score=None, contract=None, rules=None, pot_known=True):
         check = _RoundCheck(_Record(score=recorded))
         _check_score(
             check,
@@ -608,6 +631,7 @@ class TestCheckScore:
                 contract=contract,
                 rules=rules,
             ),
+            pot_known=pot_known,
         )
         return check
 

@@ -135,7 +135,7 @@ working profile, keeping §3's box values, then set:
 
 ```toml
 [fleet]
-workers = 7                 # how many accounts to use, from the top of accounts.toml; at most 10
+workers = 20                # how many accounts to use, from the top of accounts.toml; at most 25
 scan_distinct_budget = 20   # the chase budget measured at a ~14-table peak
 scan_deadline_s = 60
 ```
@@ -145,7 +145,8 @@ and a restart. Reinstall the profile as in §3 and check the **installed** copy,
 
 **Memory.** About 0.43 GB per live browser context plus 0.2 GB for the browser. Seven workers
 peaked at 3.4–3.6 GB on a laptop, with every worker at a table or in the lobby; leave at least 1 GB
-over that for the host and the VPN (`free -h`).
+over that for the host and the VPN (`free -h`). Twenty workers all seated come to about 8.8 GB, which
+the box's 15 GiB holds; idle workers log out, so the day's usage stays well under that.
 
 **Commands.** Every command of §4 takes both files:
 
@@ -376,3 +377,43 @@ bonus into the row's card points and never names the side that took it, which th
 as unchecked rather than as a fault. The six suspects are all disagreements about how a sweep or a
 tied round is *scored*, not capture faults: the wire data matched the replay in every other
 respect.
+
+### Fleet validation (2026-09-28)
+
+The same host and sidecar, the image switched to a fleet by `compose.fleet.yml` (§5): seven
+workers, headless, behind a freshly issued WireGuard file. Every figure was read from the journal,
+from `docker stats` or from `contrai verify`; no address, host name or site string is recorded.
+
+| Check | Result |
+| --- | --- |
+| C1 — `check-profile` in the container | Every line `ok`, the lobby walk and both returns included. The egress line showed the expected country and `route tun0`. One `options match` failed on a table that was not a tournament — the check's fault, since fixed: such a table's options are now read but not compared |
+| C2 — the gate refuses the home address | `FAIL … exit_is_home`, exit 1, no browser |
+| C3 — the first 40 minutes | 15 chases, **15 matched**; 12 games, 119 rounds; **0 sockets closed**, 0 restarts; 2.35–2.61 GiB |
+| C4 — 20 hours unattended | 179 games, 1868 rounds, **0 restarts**. Detail below |
+
+**C4 — 20 hours unattended.** No intervention. 19 h 52 m elapsed, of which **13 h 7 m** inside the
+schedule's window.
+
+| Measure | Result |
+| --- | --- |
+| Restarts / workers down / failed sessions | **0 / 0 / 0** |
+| Games / rounds | **179 / 1868** → **142 rounds/h** active, against V5's 32.9 for `run` |
+| Starts chased / matched | 186 / **180 (97%)**; 2 gave up at the deadline, 3 on a hop the page would not take (`hop_failed`) |
+| Chase match time | median 8.0 s, 90th percentile 25.1 s |
+| Records starting at round 1 | **117 of 175** chased games; 54 from round 2 |
+| Lobby without a watcher | 36 of 784 in-window minutes: 14 at the window's close, as designed, 6 in the outage below, 16 at the busiest evening hour |
+| Window close → `fleet_window_closed` | +15 min 37 s, finishing the games in hand; reopened +44 s after the opening |
+| Logins | at most 12 in any hour |
+| Heartbeat gaps over 180 s in the window | **0** |
+| Unanswered score requests | 33% |
+| Container memory | 1.0–3.1 GiB in the window, 0.15 GiB idle |
+
+**An outage, unrehearsed.** At one point every page's sockets closed within five seconds and
+every egress probe failed. The games in hand were written, each session ended `egress_blocked`,
+and the workers polled: the first new session came 10 minutes later, two watchers and the spare
+were back 12 minutes after the drop, and no worker went down and nothing restarted.
+
+`contrai verify` over the 181 records: **155 `verified`, 26 `partial`, 0 `suspect`**. Every
+`partial` round is a score read the table never answered. One record had first read `suspect`: it
+was joined during round 1's auction and paid out a pot from a tie in that round, which the replay
+never saw — the verifier now leaves such a carry unchecked.

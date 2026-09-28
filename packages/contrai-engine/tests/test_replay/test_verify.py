@@ -508,6 +508,73 @@ class TestScore:
         assert verdict.counts[Verdict.PARTIAL] == len(recorded_game.rounds)
 
 
+def _without_round(number):
+    """A mutation: round ``number`` gone entirely, as a late join leaves it."""
+
+    def mutate(events):
+        return [e for e in events if getattr(e, "round", None) != number]
+
+    return mutate
+
+
+def _paying_a_pot(number):
+    """A mutation: round ``number``'s score line pays a 161 pot to East-West."""
+
+    def mutate(events):
+        return [
+            dataclasses.replace(e, carried_over={TeamSide.NS: 0, TeamSide.EW: 161})
+            if isinstance(e, RoundScored) and e.round == number
+            else e
+            for e in events
+        ]
+
+    return mutate
+
+
+class TestCarryBeforeTheRecord:
+    """A pot from a tie held before the record began is the replay's blind spot."""
+
+    @staticmethod
+    def _contracted(record):
+        return [r.number for r in record.rounds if r.contract is not None]
+
+    def test_a_late_record_s_first_contract_may_pay_an_unseen_pot(self, recorded_game):
+        # Round 1 is not in the record, so a tie it held is invisible to the
+        # replay: the carry the record infers cannot be held against it.
+        late = rebuilt(recorded_game, _without_round(1))
+        first = self._contracted(late)[0]
+
+        verdict = verify_game(rebuilt(late, _paying_a_pot(first)))
+
+        reported = _round_verdict(verdict, first)
+        assert (reported.verdict, reported.unchecked) == (Verdict.PARTIAL, ("score",))
+
+    def test_after_a_settled_contract_the_carry_is_checked_again(self, recorded_game):
+        late = rebuilt(recorded_game, _without_round(1))
+        second = self._contracted(late)[1]
+
+        verdict = verify_game(rebuilt(late, _paying_a_pot(second)))
+
+        assert _round_verdict(verdict, second).verdict is Verdict.SUSPECT
+
+    def test_a_record_seen_from_its_first_deal_checks_every_carry(self, recorded_game):
+        first = self._contracted(recorded_game)[0]
+
+        verdict = verify_game(rebuilt(recorded_game, _paying_a_pot(first)))
+
+        assert _round_verdict(verdict, first).verdict is Verdict.SUSPECT
+
+    def test_a_gap_in_the_numbering_loses_the_pot(self, recorded_game):
+        # A missing round may have been a held tie the replay never saw.
+        numbers = self._contracted(recorded_game)
+        gapped = rebuilt(recorded_game, _without_round(numbers[1]))
+        after_gap = next(n for n in self._contracted(gapped) if n > numbers[1])
+
+        verdict = verify_game(rebuilt(gapped, _paying_a_pot(after_gap)))
+
+        assert _round_verdict(verdict, after_gap).verdict is Verdict.PARTIAL
+
+
 # ---------------------------------------------------------------------------
 # Incomplete rounds and ruleset drift
 # ---------------------------------------------------------------------------

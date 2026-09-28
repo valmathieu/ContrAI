@@ -45,6 +45,17 @@ class CatalogError(ContraiError, ValueError):
     """
 
 
+class CorpusError(ContraiError, ValueError):
+    """A corpus operation was refused before it changed anything.
+
+    Raised when raw logs cannot be imported — a source label that is not
+    one plain path segment, or a log whose name is already taken by
+    different content — and when a backup archive fails its manifest. Not
+    a :class:`RecordError`: nothing here says a record is malformed, only
+    that the corpus would stop being what its raw logs describe.
+    """
+
+
 class VerdictFormatError(RecordError):
     """A verdict file does not say what ``write_verdict`` would have written.
 

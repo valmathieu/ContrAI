@@ -296,7 +296,7 @@ raw_retention_days = 30
 # describes the lobby (the lobby keys under [selectors], [wire.events] and
 # [wire.fields]) can run one. Policy, not site vocabulary.
 [fleet]
-# At most 10 — about the whole tournament population. Without --accounts the
+# At most 25; about twenty covers a peak hour's tournament tables. Without --accounts the
 # fleet is one worker on [account] whatever this says.
 workers = 2
 # Seconds between one worker's first login and the next's.

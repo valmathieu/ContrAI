@@ -39,13 +39,15 @@ the same reason.
 | `contrai_scraper.fleet` | `Fleet` / `Worker` — the same gates for N workers on one browser, waiting in the lobby and chasing each game; budgets per worker. |
 | `contrai_scraper.rota` | `Rota` — a fleet's roles: who waits in the lobby, who stands by logged in as the spare, and who is logged out. |
 | `contrai_scraper.health` | `HealthLog` and `Counters` — one JSON line per transition, on stderr. |
-| `contrai_scraper.cli` | `contrai-scrape`: `run` (the default), `fleet`, `check-profile` and `parse`. |
+| `contrai_scraper.cli` | `contrai-scrape`: `run` (the default), `fleet`, `check-profile`, `parse` and `corpus build` / `backup` / `check`. |
 
 ```bash
 uv run contrai-scrape run --profile profile.toml --headless    # watch tables
 uv run contrai-scrape fleet --profile profile.toml --accounts accounts.toml --workers 5 --headless
 uv run contrai-scrape check-profile profile.toml               # validate before a shift
 uv run contrai-scrape parse RAW... --profile profile.toml      # re-parse stored logs
+uv run contrai-scrape corpus build --profile profile.toml --corpus ROOT --source box=DIR
+uv run contrai-scrape corpus backup ROOT --to DIR                # save it; corpus check ARCHIVE
 ```
 
 `run` takes `--max-games N` and `--minutes N`, and `--headless` / `--headed` override
@@ -104,7 +106,16 @@ seat that had a choice is a lost bid, and that round is skipped with a note inst
 
 The raw log is what makes all of this correctable. Frames are stored verbatim *before* anything
 is interpreted, so a parser fix applies to games already watched — `contrai-scrape parse` is that
-re-run, and it is the same code path a live session takes.
+re-run, and it is the same code path a live session takes. Like the live gate's `already_recorded`,
+it leaves a game whose record already exists under the output root untouched and says so: the
+writer appends, so parsing into such a root once wrote a second header and every round twice. A
+re-parse that should replace records goes to a fresh root, or through `corpus build`.
+
+A re-parsed record is stamped with the instant its game was last heard from: the latest server
+clock (`received_ms`) among its visit's events, else the raw log's own `started_at`. The live
+recorder stamps a record when it writes it, which is that same moment, so a re-parse keeps the
+date the game was played on rather than the date of the re-parse — and parsing one log twice
+gives the same bytes, which is what lets `corpus build` rebuild without drift.
 
 A panel read is filed in that same timeline, and stamped with `FrameSource.elapsed` — the clock
 frames themselves are stamped on, so the two are comparable. It matters because a DOM reading is
@@ -261,8 +272,15 @@ silently wrong data.
 | `[schedule]` | When the scraper may watch: a timezone, daily ranges that may cross midnight, and how long a closing range lets the game in hand run on. |
 | `[egress]` | The gate before any site traffic: the home address (through the environment), the expected country, an echo service, and the tunnel device the route must use. |
 | `[output]` | Where records and raw logs go; both roots resolve relative to the profile, and both name the same directory. |
-| `[fleet]` | Optional, read by `fleet` alone: how many workers (at most 10), their login stagger, a chase's distinct-table budget and deadline, how old a roster may be, the registry's and egress gate's timings, the startup census, the rota's `lobby_watchers` (default 2) and `spares` (default 1), and the startup phase's `bootstrap_enabled` (default on) and `bootstrap_scan_s` (default 60) — these four a profile may leave out. |
+| `[fleet]` | Optional, read by `fleet` alone: how many workers (at most 25), their login stagger, a chase's distinct-table budget and deadline, how old a roster may be, the registry's and egress gate's timings, the startup census, the rota's `lobby_watchers` (default 2) and `spares` (default 1), and the startup phase's `bootstrap_enabled` (default on) and `bootstrap_scan_s` (default 60) — these four a profile may leave out. |
 | `[privacy]` | Inputs to the pseudonymisation step, which is not built yet. |
+
+The `env:NAME` values are read only by the commands that reach the site. `parse` never does, so it
+loads the profile with `load_profile(path, resolve_secrets=False)`: every `env:` value is kept as
+its own text, unread, and every other key is validated as strictly as before. A laptop re-parsing
+logs therefore needs none of the account's variables set. The home address's IP check is skipped
+for such an unread value alone, and a live load refuses a variable whose value is itself an
+`env:` indirection, so an unread-looking address can never reach the egress gate.
 
 A fleet logs in with several accounts, and they do not multiply the profile. They live in a second
 git-ignored document, `accounts.toml` beside `profile.toml` (`accounts.example.toml` is its
@@ -736,7 +754,7 @@ watchers sweep in parallel, and after each sweep the fleet writes a `census` lin
 under way (`pending`, counted as sweeps start), distinct tournament tables, how many sightings, and a resighting-based estimate of the population — the `N` for which uniform draws with
 replacement would leave exactly as many distinct tables as were seen (`estimate_population`). The
 walk is not a uniform draw, so the figure is a sizing indicator, not a count; it is what says whether
-ten workers is about the whole population. Re-read on the chase probe's walks it comes to 12 and 14
+the fleet is about the size of the population. Re-read on the chase probe's walks it comes to 12 and 14
 tables of every kind, against "rarely more than about ten tournament tables". A sweep skips the
 table it has just left, so a stale snapshot cannot pose as a resighting; a sweep cut short by a
 stopping fleet or a refused egress still reports what it saw. Set `census_enabled = false` to go
@@ -781,12 +799,97 @@ capture — live in `deploy/install.md`. The same image runs a fleet through a C
 
 *Rendered from [`deploy_scraper.mmd`](../diagrams/deploy_scraper.mmd).*
 
+## The corpus
+
+Scraped games pile up in several places: the box's output root, the laptop's, and scratch roots
+from re-parses. `parse` keeps whatever record it finds, so gathering them by re-parsing into one
+root keeps the first copy of each game, not the best. `corpus build` chooses among them, and can be
+re-run as often as needed:
+
+```powershell
+uv run contrai-scrape corpus build --profile ..\ContrAI-captures\profile.toml `
+    --corpus ..\ContrAI-captures\corpus `
+    --source box=..\ContrAI-captures\box-raw-2026-09-28 `
+    --source laptop=..\ContrAI-captures\scraped\raw
+uv run contrai verify --stale ..\ContrAI-captures\corpus\games
+uv run contrai catalog ..\ContrAI-captures\corpus
+```
+
+`--stale` replays only the games this build added or changed: every other game kept its record
+untouched and its verdict with it. Drop it after an engine change to the verifier.
+
+1. **Import.** Each `--source LABEL=DIR` copies the raw logs under `DIR` (and `DIR/raw`, as `parse`
+   searches) into `ROOT/raw/LABEL/`. Every log is judged before any is copied. A log already
+   there is `present`. A longer log whose start is the kept one byte for byte is `grown` and
+   replaces it: raw logs are only appended to, so a log fetched while its session was still
+   running is a prefix of the one fetched next week. A shorter such log is `stale` and left out.
+   Any other difference under a taken name refuses the whole build, before anything changes.
+2. **Parse.** Every raw log the corpus holds is accounted for, each on its own and in memory,
+   through `parse`'s own path (visits, tournament gate). No record is appended to. A log already
+   parsed by an earlier build is read back from `ROOT/cache/` instead of parsed again, as long as
+   neither the log nor the parser changed since (see [The parse cache](#the-parse-cache)).
+3. **Choose.** The records are grouped by game, and `choose_copy` keeps one per game: the most
+   scored rounds, then rounds, then a closing total, then the earliest join (see the
+   [data docs](../data/index.md#the-corpus)).
+4. **Write.** Only the records that differ from `ROOT/games/` are written, and the games no longer
+   kept are deleted; the command prints how many were added, changed, unchanged and removed. An
+   unchanged game keeps its verdict. The verdicts of the games that moved, and `catalog.sqlite` if
+   anything moved, are removed, and the command prints the `contrai verify` and `contrai catalog`
+   runs that rebuild them. `ROOT/build.json` records what was imported, the visits, the ids of the
+   games that moved, and every rejected copy with its reason.
+
+With no `--source`, the build re-reads the corpus's own `raw/`, which is how a parser fix reaches
+every game already watched. A copy the parser produces but the projection cannot fold is reported
+and left out rather than failing the build. The profile is loaded without its secrets, so none of
+the account's variables need to be set. The corpus stays private and outside git: its raw logs
+carry session tokens and player names.
+
+The records the live recorder wrote on the box are not imported: only what the raw logs rebuild is
+in the corpus, which is what keeps it reproducible.
+
+### The parse cache
+
+Parsing is the step whose cost grows with every log ever kept — 18 s for the first 100 logs and
+766 games — while a weekly pull adds a handful of logs and grows one or two. So each log's parse is
+kept, per log, in `ROOT/cache/<source>/<log>.json`, and a build reads an entry back instead of
+parsing whenever both of its keys still match:
+
+- the log's **SHA-256**: a log that grew since the last fetch, or a new one, is parsed;
+- the **parser fingerprint**: a hash of the `contrai-core`, `contrai-data` and `contrai-scraper`
+  source files and of the profile's `[wire]` and `[rules]` sections.
+
+The fingerprint is deliberately coarse. Any edit to those packages — even one the parse never
+calls — turns every entry stale, and the next build parses everything once. The opposite mistake,
+a fingerprint too narrow to see a real parser change, would keep games parsed by the old code, and
+nothing downstream could tell. The choice of one copy per game still runs over every copy, cached
+or fresh, so a cached build writes exactly the games a full one would. `--full` ignores the cache;
+entries for logs no longer in `raw/` are pruned. The cache is derived: it is not backed up, a
+damaged entry reads as a miss, and deleting it only makes the next build slower.
+
+To save it, back it up and check the archive:
+
+```powershell
+uv run contrai-scrape corpus backup ..\ContrAI-captures\corpus --to E:\contrai-backups
+uv run contrai-scrape corpus check E:\contrai-backups\contrai-corpus-20260928T120000Z.zip
+```
+
+The zip holds `raw/`, `games/` and `build.json` with a manifest of every file's SHA-256 and size;
+`check` re-hashes it and exits 1 on any missing, altered, unreadable or unlisted file (see the
+[data docs](../data/index.md#backups)). A restore is an unzip, then `contrai verify` and
+`contrai catalog`. Keep three copies — the laptop, an external drive, and an encrypted off-site
+one — and never an unencrypted cloud copy: the raw logs carry session tokens and player names.
+
+![Building a corpus, from raw logs to the catalog](../diagrams/flow_corpus.png)
+
+*Rendered from [`flow_corpus.mmd`](../diagrams/flow_corpus.mmd).*
+
 ## Pending
 
-- Sizing the fleet. The ramp ran two, five, then ten workers, and a context costs about 0.43 GB
-  plus 0.2 GB per browser. But the table count varies: at a ~14-table peak seven workers were all
-  at tables or chasing for a quarter of an hour, and the lobby went unwatched. The worker count
-  waits on a full day's table counts from the box.
+- Checking the fleet's size. The ramp ran two, five, then ten workers, and a context costs about
+  0.43 GB plus 0.2 GB per browser. Over the box's first full day, seven workers left the lobby
+  unwatched 36 of 784 minutes, and the random draws met up to ~40 distinct tournament tables an
+  hour at the peak against ~20 starts chased. The fleet is now sized at about twenty
+  (`FLEET_CEILING` 25). Whether the extra tables are games the lobby never announces is still open.
 - `observed_from.round` is still the join read's round index plus one, which names a passed-out
   round rather than the one being watched when passed-out rounds came just before the join. The
   carry is keyed on rows and unaffected; the field is not.

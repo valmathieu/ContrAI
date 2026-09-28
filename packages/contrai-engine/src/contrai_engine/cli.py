@@ -75,7 +75,9 @@ from contrai_data import (
     games_dir,
     load_game,
     player_games,
+    read_verdict,
     records_root,
+    verdict_path,
 )
 from contrai_engine.log_setup import configure_logging
 from contrai_engine.model.game import Game
@@ -309,6 +311,12 @@ def _add_verify_parser(subcommands: Any) -> argparse.ArgumentParser:
         "--no-write",
         action="store_true",
         help="report only; do not write any verdict file",
+    )
+    verify.add_argument(
+        "--stale",
+        action="store_true",
+        help="skip a record whose verdict is newer than it; re-run without "
+        "this after the verifier itself changed",
     )
     return verify
 
@@ -660,8 +668,42 @@ def _verdict_lines(verdict: GameVerdict) -> list[str]:
     return lines
 
 
+def _fresh_verdict(path: Path, root: Path) -> GameVerdict | None:
+    """The verdict already written for a record, if it is newer than the record.
+
+    The same test the catalog applies to call a verdict fresh: a record
+    rewritten after its verdict — a corpus build that changed the game —
+    has the later modification time. The game id is read off the file
+    name, which is what both producers name a record by; a record named
+    otherwise simply finds no verdict and is verified.
+
+    Args:
+        path: A record file.
+        root: The records root its verdict would live under.
+
+    Returns:
+        The verdict, or ``None`` when there is none, it is older than the
+        record, or it cannot be read.
+    """
+
+    try:
+        verdict = verdict_path(root, path.stem)
+        if verdict.stat().st_mtime_ns < path.stat().st_mtime_ns:
+            return None
+        return read_verdict(verdict)
+    except (OSError, ValueError):
+        # No verdict, a stem that is no game id, or a verdict file that does
+        # not read back: every doubt means "verify it".
+        return None
+
+
 def _run_verify(args: argparse.Namespace) -> int:
     """Verify every record the ``verify`` arguments name.
+
+    With ``--stale``, a record whose verdict is newer than it is skipped:
+    nothing it could be checked against has moved since. Its verdict still
+    counts toward the exit code, so a suspect game found last week keeps
+    failing the run until it is looked at.
 
     Args:
         args: The parsed ``verify`` arguments.
@@ -678,8 +720,15 @@ def _run_verify(args: argparse.Namespace) -> int:
         return 1
 
     failed = False
+    skipped = 0
     payloads: list[dict] = []
     for path in paths:
+        if args.stale:
+            known = _fresh_verdict(path, args.out or default_out_root(path))
+            if known is not None:
+                skipped += 1
+                failed |= known.verdict is Verdict.SUSPECT
+                continue
         try:
             verdict = verify_record(
                 path,
@@ -702,6 +751,12 @@ def _run_verify(args: argparse.Namespace) -> int:
                 print(line)
     if args.json:
         print(json.dumps(payloads, indent=2, sort_keys=True))
+    if skipped:
+        # stderr under --json, so the payload on stdout stays one document.
+        print(
+            f"{skipped} of {len(paths)} records skipped: their verdict is newer",
+            file=sys.stderr if args.json else sys.stdout,
+        )
     return 1 if failed else 0
 
 
