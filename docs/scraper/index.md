@@ -269,7 +269,7 @@ silently wrong data.
 | `[schedule]` | When the scraper may watch: a timezone, daily ranges that may cross midnight, and how long a closing range lets the game in hand run on. |
 | `[egress]` | The gate before any site traffic: the home address (through the environment), the expected country, an echo service, and the tunnel device the route must use. |
 | `[output]` | Where records and raw logs go; both roots resolve relative to the profile, and both name the same directory. |
-| `[fleet]` | Optional, read by `fleet` alone: how many workers (at most 10), their login stagger, a chase's distinct-table budget and deadline, how old a roster may be, the registry's and egress gate's timings, the startup census, the rota's `lobby_watchers` (default 2) and `spares` (default 1), and the startup phase's `bootstrap_enabled` (default on) and `bootstrap_scan_s` (default 60) — these four a profile may leave out. |
+| `[fleet]` | Optional, read by `fleet` alone: how many workers (at most 25), their login stagger, a chase's distinct-table budget and deadline, how old a roster may be, the registry's and egress gate's timings, the startup census, the rota's `lobby_watchers` (default 2) and `spares` (default 1), and the startup phase's `bootstrap_enabled` (default on) and `bootstrap_scan_s` (default 60) — these four a profile may leave out. |
 | `[privacy]` | Inputs to the pseudonymisation step, which is not built yet. |
 
 The `env:NAME` values are read only by the commands that reach the site. `parse` never does, so it
@@ -751,7 +751,7 @@ watchers sweep in parallel, and after each sweep the fleet writes a `census` lin
 under way (`pending`, counted as sweeps start), distinct tournament tables, how many sightings, and a resighting-based estimate of the population — the `N` for which uniform draws with
 replacement would leave exactly as many distinct tables as were seen (`estimate_population`). The
 walk is not a uniform draw, so the figure is a sizing indicator, not a count; it is what says whether
-ten workers is about the whole population. Re-read on the chase probe's walks it comes to 12 and 14
+the fleet is about the size of the population. Re-read on the chase probe's walks it comes to 12 and 14
 tables of every kind, against "rarely more than about ten tournament tables". A sweep skips the
 table it has just left, so a stale snapshot cannot pose as a resighting; a sweep cut short by a
 stopping fleet or a refused egress still reports what it saw. Set `census_enabled = false` to go
@@ -856,10 +856,11 @@ one — and never an unencrypted cloud copy: the raw logs carry session tokens a
 
 ## Pending
 
-- Sizing the fleet. The ramp ran two, five, then ten workers, and a context costs about 0.43 GB
-  plus 0.2 GB per browser. But the table count varies: at a ~14-table peak seven workers were all
-  at tables or chasing for a quarter of an hour, and the lobby went unwatched. The worker count
-  waits on a full day's table counts from the box.
+- Checking the fleet's size. The ramp ran two, five, then ten workers, and a context costs about
+  0.43 GB plus 0.2 GB per browser. Over the box's first full day, seven workers left the lobby
+  unwatched 36 of 784 minutes, and the random draws met up to ~40 distinct tournament tables an
+  hour at the peak against ~20 starts chased. The fleet is now sized at about twenty
+  (`FLEET_CEILING` 25). Whether the extra tables are games the lobby never announces is still open.
 - `observed_from.round` is still the join read's round index plus one, which names a passed-out
   round rather than the one being watched when passed-out rounds came just before the join. The
   carry is keyed on rows and unaffected; the field is not.

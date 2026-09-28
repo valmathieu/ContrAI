@@ -410,10 +410,11 @@ class EgressSection:
             )
 
 
-#: The most workers a fleet may run. Ten is about the whole tournament
-#: population: a courtesy ceiling, since every worker is one more spectator
-#: the tables can count.
-FLEET_CEILING: int = 10
+#: The most workers a fleet may run. A day on the box met up to ~40 distinct
+#: tournament tables an hour at the peak, so the fleet is sized at about twenty;
+#: the ceiling leaves that some margin and stays a courtesy, since every worker
+#: is one more spectator the tables can count.
+FLEET_CEILING: int = 25
 
 #: Workers waiting in the lobby when ``[fleet].lobby_watchers`` is not set.
 #: Starts come one every 2.5-5 minutes, and a chase leaves its watcher's place

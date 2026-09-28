@@ -135,7 +135,7 @@ working profile, keeping §3's box values, then set:
 
 ```toml
 [fleet]
-workers = 7                 # how many accounts to use, from the top of accounts.toml; at most 10
+workers = 20                # how many accounts to use, from the top of accounts.toml; at most 25
 scan_distinct_budget = 20   # the chase budget measured at a ~14-table peak
 scan_deadline_s = 60
 ```
@@ -145,7 +145,8 @@ and a restart. Reinstall the profile as in §3 and check the **installed** copy,
 
 **Memory.** About 0.43 GB per live browser context plus 0.2 GB for the browser. Seven workers
 peaked at 3.4–3.6 GB on a laptop, with every worker at a table or in the lobby; leave at least 1 GB
-over that for the host and the VPN (`free -h`).
+over that for the host and the VPN (`free -h`). Twenty workers all seated come to about 8.8 GB, which
+the box's 15 GiB holds; idle workers log out, so the day's usage stays well under that.
 
 **Commands.** Every command of §4 takes both files:
 

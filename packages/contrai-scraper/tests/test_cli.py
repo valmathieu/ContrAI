@@ -199,7 +199,7 @@ class TestFleetCommand:
             main(["fleet", "--profile", str(profile_path), "--workers", "2"])
         assert exc.value.code == 2
 
-    @pytest.mark.parametrize("workers", ["0", "11"])
+    @pytest.mark.parametrize("workers", ["0", "26"])
     def test_a_worker_count_out_of_range_is_a_usage_error(self, handed, profile_path,
                                                           tmp_path, workers):
         with pytest.raises(SystemExit):

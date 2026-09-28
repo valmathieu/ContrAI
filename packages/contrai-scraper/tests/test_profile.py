@@ -444,12 +444,17 @@ class TestFleet:
         loaded = load_profile(_write(tmp_path, text))
         assert (loaded.fleet, len(loaded.fleet_gaps())) == (None, 3)
 
-    @pytest.mark.parametrize("workers", [0, 11])
+    @pytest.mark.parametrize("workers", [0, 26])
     def test_a_worker_count_out_of_range_is_refused(self, tmp_path, profile_text,
                                                     workers):
         text = profile_text.replace("workers = 2", f"workers = {workers}")
-        with pytest.raises(ProfileError, match="between 1 and 10"):
+        with pytest.raises(ProfileError, match="between 1 and 25"):
             load_profile(_write(tmp_path, text))
+
+    def test_a_twenty_worker_fleet_loads(self, tmp_path, profile_text):
+        # The size the box runs at, from a day's table counts.
+        text = profile_text.replace("workers = 2", "workers = 20")
+        assert load_profile(_write(tmp_path, text)).fleet.workers == 20
 
     def test_a_negative_stagger_is_refused(self, tmp_path, profile_text):
         text = profile_text.replace("login_stagger_s = 0", "login_stagger_s = -1")
