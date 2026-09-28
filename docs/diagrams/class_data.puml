@@ -531,6 +531,15 @@ package "corpus.py" as p_corpus {
         --
         + counts() : dict<str, dict<str, int>>
     }
+    class GamesUpdate <<frozen dataclass>> {
+        + added : tuple<str>
+        + changed : tuple<str>
+        + unchanged : int
+        + removed : tuple<str>
+        --
+        + games : int <<property>>
+        + touched : bool <<property>>
+    }
     class BackupSummary <<frozen dataclass>> {
         + path : Path
         + files : int
@@ -553,9 +562,10 @@ package "corpus.py" as p_corpus {
         + choose~_copy(candidates) : CopyChoice
         + import~_raw(root, sources) : RawImport
         + raw~_logs(root) : tuple<(str, Path)>
-        + write~_games(root, copies) : int
+        + write~_games(root, copies) : GamesUpdate
         + backup~_corpus(root, destination, *, now) : BackupSummary
         + check~_archive(path) : ArchiveCheck
+        + file~_sha256(path) : str
     }
 }
 
@@ -566,6 +576,7 @@ CopyChoice *-- "0..N" Rejection
 RawImport ..> ImportStatus
 m_corpus ..> CopyChoice : <<ranks>>
 m_corpus ..> RawImport : <<imports>>
+m_corpus ..> GamesUpdate : <<writes what changed>>
 m_corpus ..> BackupSummary : <<backs up>>
 m_corpus ..> ArchiveCheck : <<checks>>
 m_corpus ..> RecordWriter : <<writes games/>>
@@ -579,7 +590,8 @@ note as N_corpus
   then rounds, then a closing total, then the earliest join.
   A raw log is only appended to, so a longer log extending the
   kept one is ""grown""; any other clash is refused.
-  ""games/"" is written to a staging directory and swapped in whole.
+  Only the records that changed are written, so every other
+  game keeps its verdict; the catalog goes when anything moved.
   The wire parsing is ""contrai-scrape corpus build""'s.
 end note
 p_corpus .. N_corpus

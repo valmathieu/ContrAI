@@ -1,5 +1,5 @@
 """Pins the corpus: which copy of a game is kept, how raw logs come in, and
-how a new ``games/`` replaces the old one."""
+how a build writes only the games that changed."""
 
 from __future__ import annotations
 
@@ -13,10 +13,12 @@ from contrai_data import (
     CopyChoice,
     CorpusError,
     GameEnded,
+    GamesUpdate,
     GameEvent,
     ImportStatus,
     RawImport,
     RecordCopy,
+    RecordWriter,
     RoundScored,
     catalog_path,
     choose_copy,
@@ -307,48 +309,97 @@ class TestRawLogs:
 
 
 class TestWriteGames:
+    GAME = "engine-20260910T181815Z-a1b2c3"
+
+    def _seed(self, corpus, name: str, text: str = "old\n") -> Path:
+        path = game_path(corpus, name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        return path
+
+    def _verdict(self, corpus, name: str) -> Path:
+        path = verdicts_dir(corpus) / f"{name}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}")
+        return path
+
     def test_each_copy_becomes_one_loadable_record(self, corpus, three_round_game):
-        assert write_games(corpus, [_copy(three_round_game)]) == 1
-        record = load_game(game_path(corpus, "engine-20260910T181815Z-a1b2c3"))
-        assert len(record.rounds) == 3
+        update = write_games(corpus, [_copy(three_round_game)])
+        assert update == GamesUpdate(added=(self.GAME,), changed=(), unchanged=0,
+                                     removed=())
+        assert len(load_game(game_path(corpus, self.GAME)).rounds) == 3
 
-    def test_the_old_games_are_replaced_whole(self, corpus, three_round_game):
-        stale = game_path(corpus, "obs-gone")
-        stale.parent.mkdir(parents=True)
-        stale.write_text("an old record\n")
-        write_games(corpus, [_copy(three_round_game)])
-        assert [path.name for path in (corpus / "games").iterdir()] == [
-            "engine-20260910T181815Z-a1b2c3.jsonl"]
-        # Nothing is left behind beside games/: no staging, no retired copy.
-        assert sorted(path.name for path in corpus.iterdir()) == ["games"]
-
-    def test_the_verdicts_and_catalog_go_with_the_old_games(self, corpus,
+    def test_a_record_is_written_as_the_record_writer_would(self, corpus,
                                                             three_round_game):
-        verdicts_dir(corpus).mkdir(parents=True)
-        (verdicts_dir(corpus) / "old.json").write_text("{}")
+        with RecordWriter(corpus / "reference.jsonl") as writer:
+            for event in three_round_game:
+                writer.write(event)
+        write_games(corpus, [_copy(three_round_game)])
+        assert game_path(corpus, self.GAME).read_bytes() == (
+            (corpus / "reference.jsonl").read_bytes())
+
+    def test_an_unchanged_record_and_its_verdict_are_left_alone(self, corpus,
+                                                               three_round_game):
+        # What lets a weekly build re-verify only what it changed: the
+        # record keeps its mtime, so its verdict still reads as fresh.
+        write_games(corpus, [_copy(three_round_game)])
+        record = game_path(corpus, self.GAME)
+        before = record.stat().st_mtime_ns
+        verdict = self._verdict(corpus, self.GAME)
+        catalog_path(corpus).write_text("index")
+        update = write_games(corpus, [_copy(three_round_game)])
+        assert (update.unchanged, update.touched) == (1, False)
+        assert record.stat().st_mtime_ns == before
+        assert (verdict.exists(), catalog_path(corpus).exists()) == (True, True)
+
+    def test_a_changed_record_is_replaced_and_loses_its_verdict(self, corpus,
+                                                                three_round_game):
+        record = self._seed(corpus, self.GAME)
+        verdict = self._verdict(corpus, self.GAME)
+        update = write_games(corpus, [_copy(three_round_game)])
+        assert update.changed == (self.GAME,)
+        assert (len(load_game(record).rounds), verdict.exists()) == (3, False)
+
+    def test_a_game_no_copy_names_is_removed_with_its_verdict(self, corpus,
+                                                              three_round_game):
+        gone = self._seed(corpus, "obs-gone")
+        verdict = self._verdict(corpus, "obs-gone")
+        update = write_games(corpus, [_copy(three_round_game)])
+        assert (update.removed, gone.exists(), verdict.exists()) == (
+            ("obs-gone",), False, False)
+
+    def test_a_verdict_beside_no_record_is_removed(self, corpus, three_round_game):
+        write_games(corpus, [_copy(three_round_game)])
+        orphan = self._verdict(corpus, "obs-never-recorded")
+        write_games(corpus, [_copy(three_round_game)])
+        assert not orphan.exists()
+
+    def test_the_catalog_goes_whenever_anything_changed(self, corpus, three_round_game):
+        catalog_path(corpus).parent.mkdir(parents=True, exist_ok=True)
         catalog_path(corpus).write_text("stale")
         write_games(corpus, [_copy(three_round_game)])
-        assert (verdicts_dir(corpus).exists(), catalog_path(corpus).exists()) == (
-            False, False)
+        assert not catalog_path(corpus).exists()
+
+    def test_the_update_counts_what_games_holds(self, corpus, three_round_game):
+        self._seed(corpus, self.GAME)
+        self._seed(corpus, "obs-gone")
+        update = write_games(corpus, [_copy(three_round_game)])
+        assert (update.games, update.touched) == (1, True)
 
     def test_two_copies_of_one_game_are_refused_and_change_nothing(
         self, corpus, three_round_game
     ):
-        kept = game_path(corpus, "obs-kept")
-        kept.parent.mkdir(parents=True)
-        kept.write_text("kept\n")
+        kept = self._seed(corpus, "obs-kept", "kept\n")
         with pytest.raises(ValueError, match="Two copies"):
             write_games(corpus, [_copy(three_round_game), _copy(three_round_game)])
         assert kept.read_text() == "kept\n"
-        assert sorted(path.name for path in corpus.iterdir()) == ["games"]
+        assert [path.name for path in (corpus / "games").iterdir()] == ["obs-kept.jsonl"]
 
     def test_a_catalog_held_open_changes_nothing(self, corpus, three_round_game,
                                                  monkeypatch):
         # On Windows another program holding the catalog makes the unlink
-        # fail: the previous games must survive it.
-        kept = game_path(corpus, "obs-kept")
-        kept.parent.mkdir(parents=True)
-        kept.write_text("kept\n")
+        # fail: it is the first thing tried, so nothing else has moved.
+        kept = self._seed(corpus, "obs-kept", "kept\n")
         catalog_path(corpus).write_text("open elsewhere")
         real_unlink = Path.unlink
 
@@ -361,17 +412,27 @@ class TestWriteGames:
         with pytest.raises(PermissionError):
             write_games(corpus, [_copy(three_round_game)])
         assert kept.read_text() == "kept\n"
-        assert sorted(path.name for path in corpus.iterdir()) == [
-            "catalog.sqlite", "games"]
+        assert [path.name for path in (corpus / "games").iterdir()] == ["obs-kept.jsonl"]
+
+    def test_a_failed_write_leaves_the_old_record_whole(self, corpus, three_round_game,
+                                                        monkeypatch):
+        record = self._seed(corpus, self.GAME)
+
+        def broken(source, target):
+            raise OSError("disk full")
+
+        monkeypatch.setattr("contrai_data.corpus.os.replace", broken)
+        with pytest.raises(OSError, match="disk full"):
+            write_games(corpus, [_copy(three_round_game)])
+        assert record.read_text() == "old\n"
+        assert [path.name for path in (corpus / "games").iterdir()] == [record.name]
 
     def test_no_copy_leaves_an_empty_games(self, corpus):
-        assert write_games(corpus, []) == 0
+        assert write_games(corpus, []).games == 0
         assert list((corpus / "games").iterdir()) == []
 
     def test_a_rebuild_writes_the_same_bytes(self, corpus, three_round_game):
-        # A second build over the same copies replaces the first rather than
-        # appending to it: the append trap the offline parse falls into.
-        path = game_path(corpus, "engine-20260910T181815Z-a1b2c3")
+        path = game_path(corpus, self.GAME)
         write_games(corpus, [_copy(three_round_game)])
         first = path.read_bytes()
         write_games(corpus, [_copy(three_round_game)])

@@ -20,7 +20,7 @@ flowchart TD
     Parse -- "saved" --> Cache
     Cache --> Copies["RecordCopy per game per log"]
     Copies --> Choose{"choose_copy<br/>scored rounds › rounds ›<br/>final totals › earliest join ›<br/>source, origin"}
-    Choose -- "kept" --> Write["write_games<br/>staging dir, swapped in whole<br/>stale verdicts/ + catalog removed"]
+    Choose -- "kept" --> Write["write_games<br/>only records that changed are written<br/>their verdicts + the catalog removed"]
     Choose -- "rejected, with a reason" --> Report[("build.json")]
     Write --> Games[("games/obs-*.jsonl<br/>one record per game")]
 

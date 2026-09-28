@@ -828,10 +828,12 @@ uv run contrai catalog ..\ContrAI-captures\corpus
 3. **Choose.** The records are grouped by game, and `choose_copy` keeps one per game: the most
    scored rounds, then rounds, then a closing total, then the earliest join (see the
    [data docs](../data/index.md#the-corpus)).
-4. **Swap.** The kept records are written to a staging directory, which replaces `ROOT/games/`
-   whole. The old `verdicts/` and `catalog.sqlite` describe files that are gone, so they are
-   removed; the command prints the `contrai verify` and `contrai catalog` runs that rebuild them.
-   `ROOT/build.json` records what was imported, the visits, and every rejected copy with its reason.
+4. **Write.** Only the records that differ from `ROOT/games/` are written, and the games no longer
+   kept are deleted; the command prints how many were added, changed, unchanged and removed. An
+   unchanged game keeps its verdict. The verdicts of the games that moved, and `catalog.sqlite` if
+   anything moved, are removed, and the command prints the `contrai verify` and `contrai catalog`
+   runs that rebuild them. `ROOT/build.json` records what was imported, the visits, the ids of the
+   games that moved, and every rejected copy with its reason.
 
 With no `--source`, the build re-reads the corpus's own `raw/`, which is how a parser fix reaches
 every game already watched. A copy the parser produces but the projection cannot fold is reported

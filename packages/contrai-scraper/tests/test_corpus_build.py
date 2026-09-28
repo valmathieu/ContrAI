@@ -139,15 +139,32 @@ class TestRebuild:
         assert _build(root, profile_path) == 0
         assert game_path(root, "obs-g1").read_bytes() == first
 
-    def test_a_rebuild_removes_the_stale_verdicts_and_catalog(
-        self, root, profile_path, raw_log_path
+    def test_a_rebuild_that_changes_nothing_keeps_verdicts_and_catalog(
+        self, root, profile_path, raw_log_path, capsys
     ):
         _build(root, profile_path, f"box={raw_log_path.parent}")
         verdicts_dir(root).mkdir()
         (verdicts_dir(root) / "obs-g1.json").write_text("{}")
-        catalog_path(root).write_text("stale")
+        catalog_path(root).write_text("index")
+        capsys.readouterr()
         _build(root, profile_path)
-        assert (verdicts_dir(root).exists(), catalog_path(root).exists()) == (False, False)
+        assert "0 added, 0 changed, 1 unchanged, 0 removed" in capsys.readouterr().out
+        assert ((verdicts_dir(root) / "obs-g1.json").exists(),
+                catalog_path(root).exists()) == (True, True)
+
+    def test_a_game_that_changed_loses_its_verdict_and_the_catalog(
+        self, root, profile_path, raw_log_path, partial_raw_log_path
+    ):
+        # The laptop saw the game from its second round; the box's log, added
+        # later, saw it whole — so the kept copy changes.
+        _build(root, profile_path, f"laptop={partial_raw_log_path.parent}")
+        verdicts_dir(root).mkdir()
+        (verdicts_dir(root) / "obs-g1.json").write_text("{}")
+        catalog_path(root).write_text("index")
+        _build(root, profile_path, f"box={raw_log_path.parent}")
+        assert _report(root)["games_changed"] == ["obs-g1"]
+        assert ((verdicts_dir(root) / "obs-g1.json").exists(),
+                catalog_path(root).exists()) == (False, False)
 
 
 class TestRefusals:

@@ -25,7 +25,8 @@ records-root layout (``games/``, ``verdicts/``, ``catalog.sqlite``) plus
 are imported, never edited and never pruned; everything else is rebuilt
 from them, which is what lets a parser fix reach every game already
 watched. :func:`import_raw` is the one door into ``raw/``, and
-:func:`write_games` swaps a whole new ``games/`` in at once.
+:func:`write_games` writes only the records that changed, so every other
+record keeps its verdict.
 
 **A backup is one zip with a manifest.** :func:`backup_corpus` packs the
 raw logs, the games and the build report beside a ``MANIFEST.json`` of
@@ -52,10 +53,11 @@ from pathlib import Path
 from typing import Any, Final
 
 from .catalog import catalog_path
+from .codec import encode
 from .events import GameEvent
 from .exceptions import CorpusError
 from .projection import GameRecord, project
-from .store import RecordWriter, game_path, games_dir
+from .store import game_path, games_dir
 from .verdict import verdicts_dir
 
 #: The corpus's raw-log directory, one subdirectory per source label.
@@ -478,20 +480,80 @@ def raw_logs(root: Path | str) -> tuple[tuple[str, Path], ...]:
 
 
 # ----------------------------------------------------------------------
-# Games: rebuilt whole, swapped in at once
+# Games: only what changed is written
 # ----------------------------------------------------------------------
 
 
-def write_games(root: Path | str, copies: Iterable[RecordCopy]) -> int:
-    """Replace ``<root>/games/`` with exactly these records.
+@dataclass(frozen=True, slots=True)
+class GamesUpdate:
+    """What :func:`write_games` changed in ``games/``.
 
-    The records are written into a temporary directory beside ``games/``
-    and swapped in only once every one of them is on disk, so a build that
-    fails leaves the previous games untouched. A new ``games/`` makes the
-    old verdicts and catalog describe files that no longer exist, so both
-    are removed before the swap — the catalog first, since on Windows it
-    is the file another program is most likely to hold open, and failing
-    there changes nothing.
+    Attributes:
+        added: The games that had no record before, by id.
+        changed: The games whose record was replaced, by id.
+        unchanged: How many records were already byte for byte right, and
+            were left untouched with their verdicts.
+        removed: The games no copy was handed in for, whose record and
+            verdict were deleted, by id.
+    """
+
+    added: tuple[str, ...]
+    changed: tuple[str, ...]
+    unchanged: int
+    removed: tuple[str, ...]
+
+    @property
+    def games(self) -> int:
+        """How many records ``games/`` holds now."""
+
+        return len(self.added) + len(self.changed) + self.unchanged
+
+    @property
+    def touched(self) -> bool:
+        """Whether any record was written or deleted."""
+
+        return bool(self.added or self.changed or self.removed)
+
+
+def _record_bytes(copy: RecordCopy) -> bytes:
+    """A copy's record exactly as :class:`RecordWriter` would write it."""
+
+    return "".join(encode(event) + "\n" for event in copy.events).encode("utf-8")
+
+
+def _replace_file(path: Path, data: bytes) -> None:
+    """Write a file through a temporary one, so it is never seen half-written."""
+
+    descriptor, name = tempfile.mkstemp(
+        dir=path.parent, prefix=f"{path.name}.", suffix=".tmp"
+    )
+    os.close(descriptor)
+    temporary = Path(name)
+    try:
+        temporary.write_bytes(data)
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def write_games(root: Path | str, copies: Iterable[RecordCopy]) -> GamesUpdate:
+    """Make ``<root>/games/`` hold exactly these records, touching only what changed.
+
+    A record that is already byte for byte right is left alone — same file,
+    same modification time — and so is its verdict, which therefore still
+    reads as fresh: that is what lets ``contrai verify --stale`` re-check only
+    the games a build actually changed. A record that is new or different is
+    written through a temporary file and renamed into place; one no copy was
+    handed in for is deleted. Every verdict that no longer describes the
+    record beside it — for a game added, changed or gone — is deleted first.
+
+    The catalog indexes the games as a whole, so it is deleted whenever
+    anything changed, and deleted first of all: on Windows it is the file
+    another program most often holds open, and failing there changes
+    nothing. A failure part-way leaves each record either old or new, never
+    half-written, and a verdict never newer than a record it no longer
+    describes; the next build finishes the job.
 
     Args:
         root: The corpus root. Created if missing.
@@ -499,44 +561,55 @@ def write_games(root: Path | str, copies: Iterable[RecordCopy]) -> int:
             ``chosen``.
 
     Returns:
-        How many records were written.
+        Which games were added, changed and removed.
 
     Raises:
         ValueError: If two copies are records of the same game — the
-            second would be appended to the first.
-        PermissionError: If the catalog or ``games/`` is held open by
-            another program. The previous games are left as they were.
+            second would be appended to the first. Raised before anything
+            is written.
+        PermissionError: If the catalog is held open by another program.
+            Nothing is changed.
     """
 
     root = Path(root)
-    root.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(dir=root, prefix="games.", suffix=".tmp"))
-    written: set[str] = set()
-    retired: Path | None = None
-    try:
-        for copy in copies:
-            if copy.game_id in written:
-                raise ValueError(f"Two copies of {copy.game_id} were handed in")
-            written.add(copy.game_id)
-            # ``game_path`` validates the id as one path segment.
-            name = game_path(root, copy.game_id).name
-            with RecordWriter(staging / name) as writer:
-                for event in copy.events:
-                    writer.write(event)
+    games = games_dir(root)
+    games.mkdir(parents=True, exist_ok=True)
+    wanted: dict[str, bytes] = {}
+    for copy in copies:
+        if copy.game_id in wanted:
+            raise ValueError(f"Two copies of {copy.game_id} were handed in")
+        game_path(root, copy.game_id)  # validates the id as one path segment
+        wanted[copy.game_id] = _record_bytes(copy)
+
+    present = {path.stem: path for path in games.glob("*.jsonl")}
+    added = tuple(sorted(wanted.keys() - present.keys()))
+    removed = tuple(sorted(present.keys() - wanted.keys()))
+    changed = tuple(
+        sorted(
+            game_id
+            for game_id in wanted.keys() & present.keys()
+            if present[game_id].read_bytes() != wanted[game_id]
+        )
+    )
+    update = GamesUpdate(
+        added=added,
+        changed=changed,
+        unchanged=len(wanted) - len(added) - len(changed),
+        removed=removed,
+    )
+    if update.touched:
         catalog_path(root).unlink(missing_ok=True)
-        if verdicts_dir(root).exists():
-            shutil.rmtree(verdicts_dir(root))
-        games = games_dir(root)
-        if games.exists():
-            retired = root / f"{staging.name}.old"
-            games.rename(retired)
-        staging.rename(games)
-    except BaseException:
-        shutil.rmtree(staging, ignore_errors=True)
-        raise
-    if retired is not None:
-        shutil.rmtree(retired)
-    return len(written)
+    # A verdict survives only beside the unchanged record it judged.
+    outdated = {*added, *changed}
+    if verdicts_dir(root).is_dir():
+        for verdict in verdicts_dir(root).glob("*.json"):
+            if verdict.stem in outdated or verdict.stem not in wanted:
+                verdict.unlink()
+    for game_id in (*added, *changed):
+        _replace_file(game_path(root, game_id), wanted[game_id])
+    for game_id in removed:
+        present[game_id].unlink()
+    return update
 
 
 # ----------------------------------------------------------------------

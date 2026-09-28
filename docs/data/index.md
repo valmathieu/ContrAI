@@ -16,7 +16,7 @@ Source lives at `packages/contrai-data/src/contrai_data/`:
 | `store.py`      | Records on disk: `RecordWriter`, `read_events` / `ReadResult`, `records_root` / `games_dir` / `game_path`, `new_game_id` |
 | `projection.py` | `GameRecord` / `RoundRecord`, and the `project` / `load_game` fold that re-derives the contract, the tricks and their winners |
 | `catalog.py`    | `build_catalog` / `CatalogSummary` / `SkippedFile` — the SQLite index over a records root — and `player_games` / `PlayerReport` / `PlayerGame` to read one player back |
-| `corpus.py`     | A corpus of scraped games: `RecordCopy` / `choose_copy` / `CopyChoice` / `Rejection`, which keep one record per game among several copies; `import_raw` / `RawImport` / `ImportStatus` and `raw_logs` for its raw logs; `write_games`, which swaps a new `games/` in whole; `backup_corpus` / `BackupSummary` and `check_archive` / `ArchiveCheck` for backups |
+| `corpus.py`     | A corpus of scraped games: `RecordCopy` / `choose_copy` / `CopyChoice` / `Rejection`, which keep one record per game among several copies; `import_raw` / `RawImport` / `ImportStatus` and `raw_logs` for its raw logs; `write_games` / `GamesUpdate`, which rewrite only the games that changed; `backup_corpus` / `BackupSummary` and `check_archive` / `ArchiveCheck` for backups |
 | `verdict.py`    | What `contrai verify` concluded: `Verdict` (`verified` / `partial` / `suspect`), the five `MismatchKind` classes, `Mismatch` / `RoundVerdict` / `GameVerdict`, `verdicts_dir` / `verdict_path` / `write_verdict`, and the strict `read_verdict` |
 
 Everything above is re-exported from `contrai_data/__init__.py` and is part of the public API.
@@ -847,11 +847,24 @@ lists them back by source, then name.
 
 ### Games out
 
-`write_games(root, copies)` writes one record per copy into a staging directory beside `games/`,
-then swaps it in whole; a failure leaves the previous games untouched. A new `games/` makes the
-old verdicts and catalog stale, so both are removed before the swap — the catalog first, because
-on Windows it is the file another program most often holds open, and failing there changes
-nothing. Two copies of one game are refused: the second would be appended to the first.
+`write_games(root, copies)` makes `games/` hold exactly one record per copy, and touches only what
+changed. It returns a `GamesUpdate` naming the games `added`, `changed` and `removed`, and counting
+the `unchanged` ones.
+
+- A record already byte for byte right is left alone: same file, same modification time. Its
+  verdict stays, and still reads as fresh, which is what lets `contrai verify --stale` re-check
+  only what a build changed.
+- A new or different record is written to a temporary file and renamed into place, so it is never
+  seen half-written; a game no copy names is deleted.
+- Every verdict that no longer describes the record beside it — for a game added, changed or gone,
+  or a verdict with no record at all — is deleted before any record moves.
+- The catalog indexes the games as a whole, so it is deleted whenever anything changed, and first
+  of all: on Windows it is the file another program most often holds open, and failing there
+  changes nothing.
+
+A failure part-way leaves each record either old or new, and never a verdict newer than a record it
+no longer describes; the next build finishes the job. Two copies of one game are refused before
+anything is written: the second would be appended to the first.
 
 ### One copy per game
 

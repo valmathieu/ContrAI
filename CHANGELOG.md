@@ -38,7 +38,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) A fleet keeps at most two workers in the lobby and one logged-in spare; other idle workers log out until needed (`[fleet].lobby_watchers`, `spares`). See [scraper docs](docs/scraper/index.md).
 - (scraper) A fleet window records the tournament games already running when it opens, one worker per table, from the mid-game join (`[fleet].bootstrap_enabled`). See [scraper docs](docs/scraper/index.md).
 - (data) `choose_copy` keeps one record per game among several copies (scored rounds, rounds, final totals, earliest join) and says why each other lost. See [data docs](docs/data/index.md).
-- (data) `import_raw`, `raw_logs` and `write_games` keep a corpus's raw logs append-only and swap in a rebuilt `games/` whole. See [data docs](docs/data/index.md#the-corpus).
+- (data) `import_raw` and `raw_logs` keep a corpus's raw logs append-only; `write_games` rewrites only the games that changed, so the others keep their verdicts. See [data docs](docs/data/index.md#the-corpus).
 - (scraper) `contrai-scrape corpus build` gathers raw logs from every machine and rebuilds one record per game, safely re-runnable, with a `build.json` report. See [scraper docs](docs/scraper/index.md#the-corpus).
 - (scraper) `corpus build` reuses each unchanged raw log's parse from `ROOT/cache/`, so adding logs parses only the new or grown ones; `--full` re-parses all. See [scraper docs](docs/scraper/index.md#the-parse-cache).
 - (scraper) `contrai-scrape corpus backup ROOT --to DIR` zips raw logs, games and report with a SHA-256 manifest; `corpus check` re-verifies an archive. See [scraper docs](docs/scraper/index.md#the-corpus).

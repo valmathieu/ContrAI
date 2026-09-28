@@ -51,6 +51,7 @@ from contrai_data import (
     backup_corpus,
     check_archive,
     CopyChoice,
+    GamesUpdate,
     RecordCopy,
     RecordFormatError,
     RecordWriter,
@@ -1094,9 +1095,10 @@ def _run_corpus_build(args: argparse.Namespace) -> int:
     appended to: the append trap of ``parse`` cannot happen here even when
     one log holds two visits to the same table. A log whose bytes and parser
     are both unchanged since the last build is read back from the corpus's
-    parse cache instead (``--full`` parses every log). The records are grouped by
-    game, one copy is kept per game, and the new ``games/`` replaces the
-    old one whole — taking the now-stale verdicts and catalog with it.
+    parse cache instead (``--full`` parses every log). The records are
+    grouped by game and one copy is kept per game; only the records that
+    differ from ``games/`` are written, so every other game keeps its
+    verdict, and the catalog is dropped whenever anything changed.
 
     Args:
         args: The parsed ``corpus build`` arguments.
@@ -1167,9 +1169,9 @@ def _run_corpus_build(args: argparse.Namespace) -> int:
         print(f"{len(logs)} raw logs held no game; {root / 'games'} left as it was")
         return 1
     choices = [choose_copy(group) for _, group in sorted(copies.items())]
-    written = write_games(root, [choice.chosen for choice in choices])
+    update = write_games(root, [choice.chosen for choice in choices])
     report = _build_report(
-        imported.counts(), logs, cached, visits, not_tournament, unusable, choices, written
+        imported.counts(), logs, cached, visits, not_tournament, unusable, choices, update
     )
     (root / BUILD_FILE).write_text(
         json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
@@ -1178,7 +1180,11 @@ def _run_corpus_build(args: argparse.Namespace) -> int:
     print(
         f"{len(logs)} raw logs, {visits} table visits ({not_tournament} not a "
         f"tournament) -> {sum(len(group) for group in copies.values())} copies of "
-        f"{written} games, {duplicates} seen more than once"
+        f"{update.games} games, {duplicates} seen more than once"
+    )
+    print(
+        f"games/: {len(update.added)} added, {len(update.changed)} changed, "
+        f"{update.unchanged} unchanged, {len(update.removed)} removed"
     )
     print(f"report: {root / BUILD_FILE}")
     print("next:")
@@ -1243,7 +1249,7 @@ def _build_report(
     not_tournament: int,
     unusable: list[dict[str, str]],
     choices: Sequence[CopyChoice],
-    written: int,
+    update: GamesUpdate,
 ) -> dict[str, Any]:
     """The build's account of itself, written to ``build.json``.
 
@@ -1267,7 +1273,13 @@ def _build_report(
         "not_tournament": not_tournament,
         "unusable": unusable,
         "copies": sum(1 + len(choice.rejected) for choice in choices),
-        "games": written,
+        "games": update.games,
+        # Ids, not counts, for what moved: they are what a reader checks
+        # a surprising build against, and a weekly build moves few.
+        "games_added": list(update.added),
+        "games_changed": list(update.changed),
+        "games_unchanged": update.unchanged,
+        "games_removed": list(update.removed),
         "duplicates": [choice.as_report() for choice in choices if choice.rejected],
     }
 
