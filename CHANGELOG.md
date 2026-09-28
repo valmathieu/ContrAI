@@ -61,6 +61,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) A record whose session missed its first round's deal (a late chase, even after passed-out rounds) now carries `observed_from` instead of claiming the game seen whole. See [scraper docs](docs/scraper/index.md).
 - (scraper) A game seated again after it was recorded is refused (`already_recorded`) instead of appended as a second record to the same file. See [scraper docs](docs/scraper/index.md).
 - (engine) `contrai replay` frames fit a 40-row terminal (they were 42–54 rows): one-line keys, a shorter log, a repaint instead of more output. See [Replaying a game](docs/engine/replay.md).
+- (engine) `contrai verify` no longer calls a late-joined record suspect for paying a pot from a tie it never saw; that carry reads `unchecked`. See [engine docs](docs/engine/index.md).
 - (engine) `contrai verify` accepts an announced Solo Slam's 500 in a swept round's card-points column, not 250 only. See [engine docs](docs/engine/index.md).
 - (engine) `contrai verify` accepts a defense sweep's card points stated as 250, as the observed tables write them. See [engine docs](docs/engine/index.md).
 - (engine) A doubled sweep is tagged an unannounced slam and always made, so a swept doubled 170 no longer scores as a failure. See [engine docs](docs/engine/index.md).
