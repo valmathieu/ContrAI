@@ -8,6 +8,10 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-28
+
+Fleet and corpus release: the scraper stops hopping tables blind. `contrai-scrape fleet` runs up to 25 accounts that wait in the lobby and chase each tournament game from its first card; on the box, a 20-hour run matched 97% of starts and recorded 142 rounds/h against `run`'s ~33. Observed tables now score as they really do (held disputes and their carried pot, the sweep substitutes) in a `contrai-record/2` format. Scraped games gather into one corpus: `contrai-scrape corpus build` rebuilds one record per game from every machine's raw logs, `contrai verify --stale` and `contrai catalog` judge and index it, and `corpus backup` / `corpus check` save it. `contrai replay` gains a trick grid and the AI's reasons.
+
 ### Added
 
 - (engine) `contrai replay` trick grid: `g N` on the picker, or `g` at any stop, shows the round's tricks 4 × 2 with leader, winner, points, belote and auction. See [Replaying a game](docs/engine/replay.md).
@@ -311,7 +315,8 @@ First playable release: a complete CLI Contrée engine backed by a shared domain
 - (analyzer) Streamlit opening-hand strength dashboard built on the suit-agnostic `SuitSlot` abstraction — hypergeometric distribution plots and a bidding truth-table.
 - (scraper) Playwright spectator-mode scraper v1 for the target site: login, Online → Spectator → Contree → Tournament navigation, seat identification, and round-counter polling.
 
-[Unreleased]: https://github.com/valmathieu/ContrAI/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/valmathieu/ContrAI/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/valmathieu/ContrAI/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/valmathieu/ContrAI/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/valmathieu/ContrAI/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/valmathieu/ContrAI/compare/v0.2.0...v0.3.0
