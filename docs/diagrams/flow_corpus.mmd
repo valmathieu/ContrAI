@@ -13,9 +13,12 @@ flowchart TD
     Import --> Raw[("raw/&lt;source&gt;/*.jsonl<br/>never edited, never pruned")]
 
     %% ---------- Rebuilt from raw, every time ----------
-    Raw --> Parse["each log parsed on its own, in memory<br/>(the parse path: visits, tournament gate)<br/>no record is ever appended to"]
+    Raw --> Cached{"cache entry for this log<br/>same sha256 + same parser fingerprint?"}
+    Cached -- "yes" --> Cache[("cache/&lt;source&gt;/*.json<br/>derived, never backed up")]
+    Cached -- "no: new, grown,<br/>or the parser changed" --> Parse["log parsed on its own, in memory<br/>(the parse path: visits, tournament gate)<br/>no record is ever appended to"]
     Profile[/"profile.toml<br/>loaded without its secrets"/] --> Parse
-    Parse --> Copies["RecordCopy per game per log"]
+    Parse -- "saved" --> Cache
+    Cache --> Copies["RecordCopy per game per log"]
     Copies --> Choose{"choose_copy<br/>scored rounds › rounds ›<br/>final totals › earliest join ›<br/>source, origin"}
     Choose -- "kept" --> Write["write_games<br/>staging dir, swapped in whole<br/>stale verdicts/ + catalog removed"]
     Choose -- "rejected, with a reason" --> Report[("build.json")]
@@ -45,7 +48,7 @@ flowchart TD
 
     class Box,Laptop,Profile config;
     class Parse scraper;
-    class Import,Copies,Choose,Write,Backup data;
-    class Raw,Games,Report,Verdicts,Sqlite,Zip store;
+    class Import,Copies,Choose,Write,Backup,Cached data;
+    class Raw,Games,Report,Verdicts,Sqlite,Zip,Cache store;
     class Check entry;
     class Verify,Catalog engine;

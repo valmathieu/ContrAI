@@ -821,8 +821,10 @@ uv run contrai catalog ..\ContrAI-captures\corpus
    replaces it: raw logs are only appended to, so a log fetched while its session was still
    running is a prefix of the one fetched next week. A shorter such log is `stale` and left out.
    Any other difference under a taken name refuses the whole build, before anything changes.
-2. **Parse.** Every raw log the corpus holds is parsed, not only the new ones, each on its own and
-   in memory, through `parse`'s own path (visits, tournament gate). No record is appended to.
+2. **Parse.** Every raw log the corpus holds is accounted for, each on its own and in memory,
+   through `parse`'s own path (visits, tournament gate). No record is appended to. A log already
+   parsed by an earlier build is read back from `ROOT/cache/` instead of parsed again, as long as
+   neither the log nor the parser changed since (see [The parse cache](#the-parse-cache)).
 3. **Choose.** The records are grouped by game, and `choose_copy` keeps one per game: the most
    scored rounds, then rounds, then a closing total, then the earliest join (see the
    [data docs](../data/index.md#the-corpus)).
@@ -831,7 +833,7 @@ uv run contrai catalog ..\ContrAI-captures\corpus
    removed; the command prints the `contrai verify` and `contrai catalog` runs that rebuild them.
    `ROOT/build.json` records what was imported, the visits, and every rejected copy with its reason.
 
-With no `--source`, the build re-parses the corpus's own `raw/`, which is how a parser fix reaches
+With no `--source`, the build re-reads the corpus's own `raw/`, which is how a parser fix reaches
 every game already watched. A copy the parser produces but the projection cannot fold is reported
 and left out rather than failing the build. The profile is loaded without its secrets, so none of
 the account's variables need to be set. The corpus stays private and outside git: its raw logs
@@ -839,6 +841,25 @@ carry session tokens and player names.
 
 The records the live recorder wrote on the box are not imported: only what the raw logs rebuild is
 in the corpus, which is what keeps it reproducible.
+
+### The parse cache
+
+Parsing is the step whose cost grows with every log ever kept — 18 s for the first 100 logs and
+766 games — while a weekly pull adds a handful of logs and grows one or two. So each log's parse is
+kept, per log, in `ROOT/cache/<source>/<log>.json`, and a build reads an entry back instead of
+parsing whenever both of its keys still match:
+
+- the log's **SHA-256**: a log that grew since the last fetch, or a new one, is parsed;
+- the **parser fingerprint**: a hash of the `contrai-core`, `contrai-data` and `contrai-scraper`
+  source files and of the profile's `[wire]` and `[rules]` sections.
+
+The fingerprint is deliberately coarse. Any edit to those packages — even one the parse never
+calls — turns every entry stale, and the next build parses everything once. The opposite mistake,
+a fingerprint too narrow to see a real parser change, would keep games parsed by the old code, and
+nothing downstream could tell. The choice of one copy per game still runs over every copy, cached
+or fresh, so a cached build writes exactly the games a full one would. `--full` ignores the cache;
+entries for logs no longer in `raw/` are pruned. The cache is derived: it is not backed up, a
+damaged entry reads as a miss, and deleting it only makes the next build slower.
 
 To save it, back it up and check the archive:
 

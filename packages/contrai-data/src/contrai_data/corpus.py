@@ -583,11 +583,18 @@ class ArchiveCheck:
         return not self.problems
 
 
-def _sha256(path: Path) -> str:
-    """A file's SHA-256, read in chunks so a large log never sits in memory."""
+def file_sha256(path: Path | str) -> str:
+    """A file's SHA-256, read in chunks so a large log never sits in memory.
+
+    Args:
+        path: The file.
+
+    Returns:
+        The hex digest.
+    """
 
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
+    with Path(path).open("rb") as handle:
         while chunk := handle.read(_CHUNK):
             digest.update(chunk)
     return digest.hexdigest()
@@ -657,7 +664,7 @@ def backup_corpus(
     if archive.exists():
         raise CorpusError(f"{archive} already exists")
     listed = {
-        name: {"sha256": _sha256(root / name), "size": (root / name).stat().st_size}
+        name: {"sha256": file_sha256(root / name), "size": (root / name).stat().st_size}
         for name in names
     }
     raw_prefix, games_prefix = f"{RAW_DIR}/", f"{games_dir(root).name}/"

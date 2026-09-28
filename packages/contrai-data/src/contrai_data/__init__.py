@@ -116,6 +116,7 @@ from .corpus import (
     ArchiveCheck,
     backup_corpus,
     check_archive,
+    file_sha256,
 )
 
 __all__: list[str] = [
@@ -214,4 +215,5 @@ __all__: list[str] = [
     "ArchiveCheck",
     "backup_corpus",
     "check_archive",
+    "file_sha256",
 ]

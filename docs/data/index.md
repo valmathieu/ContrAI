@@ -821,6 +821,7 @@ this package holds the parts that know nothing of the wire.
 | `verdicts/*.json` | `contrai verify`'s output. | Yes. |
 | `catalog.sqlite` | `contrai catalog`'s index; "validated" is the `clean_rounds` view. | Yes. |
 | `build.json` | The last build's report: imports, counts, every rejected copy and why. | Yes. |
+| `cache/<source>/*.json` | `contrai-scrape corpus build`'s parse of each raw log, reused while neither the log nor the parser changed. | Yes; never backed up. |
 
 JSONL stays canonical and SQLite stays the index because replay and verify already read records;
 a training export (Parquet, tensors) would be one more derived layer, not a replacement.

@@ -62,6 +62,13 @@ from contrai_data import (
 )
 
 from contrai_scraper.accounts import LabelledAccount, load_accounts
+from contrai_scraper.corpus_cache import (
+    ParsedLog,
+    cache_path,
+    parse_or_load,
+    parser_fingerprint,
+    prune_cache,
+)
 from contrai_scraper.browser import open_browser, open_session, open_spectator
 from contrai_scraper.egress import EgressGate, EgressReading, SharedEgressGate
 from contrai_scraper.exceptions import (
@@ -1085,7 +1092,9 @@ def _run_corpus_build(args: argparse.Namespace) -> int:
 
     Each raw log is parsed on its own, in memory, so no record is ever
     appended to: the append trap of ``parse`` cannot happen here even when
-    one log holds two visits to the same table. The records are grouped by
+    one log holds two visits to the same table. A log whose bytes and parser
+    are both unchanged since the last build is read back from the corpus's
+    parse cache instead (``--full`` parses every log). The records are grouped by
     game, one copy is kept per game, and the new ``games/`` replaces the
     old one whole — taking the now-stale verdicts and catalog with it.
 
@@ -1119,26 +1128,40 @@ def _run_corpus_build(args: argparse.Namespace) -> int:
             "snapshots left out"
         )
 
+    def parse(log: Path) -> ParsedLog:
+        results, seen, refused = _parse_log(log, profile)
+        return ParsedLog(seen, refused, tuple(tuple(r.events) for r in results))
+
     logs = raw_logs(root)
+    fingerprint = parser_fingerprint(profile)
     copies: dict[str, list[RecordCopy]] = {}
-    visits = not_tournament = 0
+    visits = not_tournament = cached = 0
     unusable: list[dict[str, str]] = []
     for label, log in logs:
-        results, seen, refused = _parse_log(log, profile)
-        visits += seen
-        not_tournament += refused
+        # Only a log that is new, grew, or was last parsed by other code is
+        # parsed; every other one is read back from the cache. The choice
+        # below still runs over every copy, so the games come out the same
+        # as a full rebuild's.
+        parsed, hit = parse_or_load(
+            root, label, log, fingerprint=fingerprint, parse=parse, force=args.full
+        )
+        cached += hit
+        visits += parsed.visits
+        not_tournament += parsed.not_tournament
         origin = log.relative_to(root).as_posix()
-        for result in results:
+        for events in parsed.records:
             try:
-                copy = RecordCopy.of(label, origin, result.events)
+                copy = RecordCopy.of(label, origin, events)
             except RecordFormatError as error:
                 # A parser bug on one game must not cost the corpus the rest
                 # of them; it is reported and left out instead.
-                game_id = result.events[0].game_id
+                game_id = events[0].game_id
                 print(f"  {origin}: {game_id} could not be folded: {error}")
                 unusable.append({"origin": origin, "game_id": game_id, "reason": str(error)})
                 continue
             copies.setdefault(copy.game_id, []).append(copy)
+    prune_cache(root, (cache_path(root, label, log) for label, log in logs))
+    print(f"{len(logs) - cached} raw logs parsed, {cached} read from the cache")
 
     if not copies:
         print(f"{len(logs)} raw logs held no game; {root / 'games'} left as it was")
@@ -1146,7 +1169,7 @@ def _run_corpus_build(args: argparse.Namespace) -> int:
     choices = [choose_copy(group) for _, group in sorted(copies.items())]
     written = write_games(root, [choice.chosen for choice in choices])
     report = _build_report(
-        imported.counts(), logs, visits, not_tournament, unusable, choices, written
+        imported.counts(), logs, cached, visits, not_tournament, unusable, choices, written
     )
     (root / BUILD_FILE).write_text(
         json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
@@ -1215,6 +1238,7 @@ def _run_corpus_check(args: argparse.Namespace) -> int:
 def _build_report(
     imported: dict[str, dict[str, int]],
     logs: Sequence[tuple[str, Path]],
+    cached: int,
     visits: int,
     not_tournament: int,
     unusable: list[dict[str, str]],
@@ -1238,6 +1262,7 @@ def _build_report(
         "generator": _generator(),
         "imported": imported,
         "raw_logs": per_source,
+        "cached_logs": cached,
         "visits": visits,
         "not_tournament": not_tournament,
         "unusable": unusable,
@@ -1546,6 +1571,11 @@ def _build_parser() -> tuple[
             "import the raw logs under DIR (and DIR/raw) as source LABEL, e.g. "
             "box=box-raw; repeatable; none rebuilds from the corpus's own raw/"
         ),
+    )
+    build.add_argument(
+        "--full",
+        action="store_true",
+        help="parse every raw log again, ignoring the parse cache",
     )
     backup = corpus_commands.add_parser(
         "backup",

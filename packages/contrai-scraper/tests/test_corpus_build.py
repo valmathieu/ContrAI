@@ -295,3 +295,72 @@ class TestBackupCommands:
         path.write_text("plain text")
         assert main(["corpus", "check", str(path)]) == 1
         assert "corpus check failed" in capsys.readouterr().err
+
+
+class TestParseCache:
+    def test_a_second_build_reads_every_unchanged_log_from_the_cache(
+        self, root, profile_path, raw_log_path, partial_raw_log_path, capsys
+    ):
+        sources = (f"box={raw_log_path.parent}", f"laptop={partial_raw_log_path.parent}")
+        _build(root, profile_path, *sources)
+        first = game_path(root, "obs-g1").read_bytes()
+        capsys.readouterr()
+        assert _build(root, profile_path) == 0
+        assert "0 raw logs parsed, 2 read from the cache" in capsys.readouterr().out
+        assert game_path(root, "obs-g1").read_bytes() == first
+        assert _report(root)["cached_logs"] == 2
+
+    def test_a_cached_log_is_not_parsed_at_all(self, root, profile_path, raw_log_path,
+                                               monkeypatch):
+        _build(root, profile_path, f"box={raw_log_path.parent}")
+
+        def refuse(log, profile):
+            raise AssertionError(f"{log} was parsed again")
+
+        monkeypatch.setattr("contrai_scraper.cli._parse_log", refuse)
+        assert _build(root, profile_path) == 0
+
+    def test_only_the_log_that_grew_is_parsed_again(
+        self, root, tmp_path, profile_path, source_game, synthesize, capsys
+    ):
+        # The box's live session log, fetched twice: the second fetch holds
+        # the whole game where the first held its opening only.
+        frames = synthesize(source_game)
+        cut = len(frames) // 2
+        early = _write_log(raw_path(tmp_path / "week1", "live"), frames[:cut])
+        _write_log(raw_path(tmp_path / "week1", "done"), synthesize(
+            source_game, game="g2", table="t2", frame_prefix="other-"))
+        _build(root, profile_path, f"box={early.parent}")
+        # Grown from the same writer: rewrite the whole session under the
+        # same name, whose first half is byte for byte the early fetch.
+        grown = raw_path(tmp_path / "week2", "live")
+        grown.parent.mkdir(parents=True)
+        grown.write_bytes(early.read_bytes())
+        with grown.open("a", encoding="utf-8", newline="\n") as handle:
+            for index, (text, socket) in enumerate(frames[cut:], start=cut):
+                handle.write(json.dumps({"kind": "frame", "socket": socket,
+                                         "dir": "recv", "at": index / 10,
+                                         "text": text}) + "\n")
+        capsys.readouterr()
+        assert _build(root, profile_path, f"box={grown}") == 0
+        printed = capsys.readouterr().out
+        assert "1 grown" in printed and "1 raw logs parsed, 1 read from the cache" in printed
+        assert len(load_game(game_path(root, "obs-g1")).rounds) == 2
+
+    def test_full_parses_every_log_again(self, root, profile_path, raw_log_path, capsys):
+        _build(root, profile_path, f"box={raw_log_path.parent}")
+        capsys.readouterr()
+        main(["corpus", "build", "--profile", str(profile_path), "--corpus", str(root),
+              "--full"])
+        assert "1 raw logs parsed, 0 read from the cache" in capsys.readouterr().out
+
+    def test_the_entry_of_a_log_that_left_raw_is_pruned(
+        self, root, profile_path, raw_log_path, partial_raw_log_path
+    ):
+        _build(root, profile_path, f"box={raw_log_path.parent}",
+               f"laptop={partial_raw_log_path.parent}")
+        (root / "raw" / "laptop" / partial_raw_log_path.name).unlink()
+        _build(root, profile_path)
+        assert sorted(p.relative_to(root / "cache").as_posix()
+                      for p in (root / "cache").rglob("*.json")) == [
+            f"box/{raw_log_path.name}.json"]
