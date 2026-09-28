@@ -811,9 +811,12 @@ uv run contrai-scrape corpus build --profile ..\ContrAI-captures\profile.toml `
     --corpus ..\ContrAI-captures\corpus `
     --source box=..\ContrAI-captures\box-raw-2026-09-28 `
     --source laptop=..\ContrAI-captures\scraped\raw
-uv run contrai verify ..\ContrAI-captures\corpus\games
+uv run contrai verify --stale ..\ContrAI-captures\corpus\games
 uv run contrai catalog ..\ContrAI-captures\corpus
 ```
+
+`--stale` replays only the games this build added or changed: every other game kept its record
+untouched and its verdict with it. Drop it after an engine change to the verifier.
 
 1. **Import.** Each `--source LABEL=DIR` copies the raw logs under `DIR` (and `DIR/raw`, as `parse`
    searches) into `ROOT/raw/LABEL/`. Every log is judged before any is copied. A log already

@@ -1188,7 +1188,7 @@ def _run_corpus_build(args: argparse.Namespace) -> int:
     )
     print(f"report: {root / BUILD_FILE}")
     print("next:")
-    print(f"  uv run contrai verify {root / 'games'}")
+    print(f"  uv run contrai verify --stale {root / 'games'}")
     print(f"  uv run contrai catalog {root}")
     return 0
 

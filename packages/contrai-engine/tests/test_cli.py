@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import sqlite3
 import sys
@@ -1314,6 +1315,12 @@ class TestVerifyArguments:
         assert args.json is False
         assert args.out is None
         assert args.no_write is False
+        assert args.stale is False
+
+    def test_stale_is_a_flag(self):
+        args, _ = _parse_argv(["verify", "a.jsonl", "--stale"])
+
+        assert args.stale is True
 
     def test_out_takes_a_directory(self, tmp_path):
         args, _ = _parse_argv(["verify", "a.jsonl", "--out", str(tmp_path)])
@@ -1434,7 +1441,7 @@ class TestRunVerify:
     def _args(paths, **overrides):
         """The ``verify`` namespace, with every flag off unless overridden."""
 
-        fields = {"json": False, "out": None, "no_write": False}
+        fields = {"json": False, "out": None, "no_write": False, "stale": False}
         fields.update(overrides)
         return argparse.Namespace(paths=list(paths), **fields)
 
@@ -1533,6 +1540,111 @@ class TestRunVerify:
 
         assert code == 1
         assert "no records found" in capsys.readouterr().err
+
+    # --- --stale: re-verify only what moved -------------------------------
+
+    @staticmethod
+    def _only_verdict(root):
+        (verdict,) = (root / "verdicts").glob("*.json")
+        return verdict
+
+    def test_stale_verifies_a_record_that_has_no_verdict(self, record_root, capsys):
+        assert _run_verify(self._args([record_root], stale=True)) == 0
+        assert "verified" in capsys.readouterr().out
+        assert self._only_verdict(record_root).is_file()
+
+    def test_stale_skips_a_record_whose_verdict_is_newer(
+        self, record_root, capsys, monkeypatch
+    ):
+        _run_verify(self._args([record_root]))
+        capsys.readouterr()
+
+        def _refuse(path, out=None):
+            raise AssertionError(f"{path} was verified again")
+
+        monkeypatch.setattr(cli_module, "verify_record", _refuse)
+
+        assert _run_verify(self._args([record_root], stale=True)) == 0
+        assert "1 of 1 records skipped" in capsys.readouterr().out
+
+    def test_stale_verifies_a_record_rewritten_after_its_verdict(
+        self, record_root, capsys
+    ):
+        # What a corpus build does to a game it changed: the record's mtime
+        # moves past its verdict's.
+        _run_verify(self._args([record_root]))
+        verdict = self._only_verdict(record_root)
+        (record,) = (record_root / "games").glob("*.jsonl")
+        later = verdict.stat().st_mtime_ns + 1_000_000_000
+        os.utime(record, ns=(later, later))
+        capsys.readouterr()
+
+        _run_verify(self._args([record_root], stale=True))
+
+        out = capsys.readouterr().out
+        assert "verified" in out and "skipped" not in out
+
+    def test_stale_verifies_a_record_whose_verdict_does_not_read(
+        self, record_root, capsys
+    ):
+        _run_verify(self._args([record_root]))
+        self._only_verdict(record_root).write_text("not a verdict", encoding="utf-8")
+        capsys.readouterr()
+
+        _run_verify(self._args([record_root], stale=True))
+
+        assert "skipped" not in capsys.readouterr().out
+
+    def test_a_skipped_suspect_verdict_still_fails_the_run(self, record_root):
+        from contrai_data import (
+            GameVerdict,
+            Mismatch,
+            MismatchKind,
+            RoundVerdict,
+            write_verdict,
+        )
+
+        (record,) = (record_root / "games").glob("*.jsonl")
+        write_verdict(
+            record_root,
+            GameVerdict(
+                game_id=record.stem,
+                source="engine",
+                preset="classic",
+                rounds=(
+                    RoundVerdict.decide(
+                        1,
+                        mismatches=(
+                            Mismatch(
+                                kind=MismatchKind.SCORE,
+                                detail="the marked points differ",
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        assert _run_verify(self._args([record_root], stale=True)) == 1
+
+    def test_stale_looks_for_verdicts_under_out(self, record_root, tmp_path, capsys):
+        elsewhere = tmp_path / "elsewhere"
+        _run_verify(self._args([record_root], out=elsewhere))
+        capsys.readouterr()
+
+        _run_verify(self._args([record_root], out=elsewhere, stale=True))
+
+        assert "1 of 1 records skipped" in capsys.readouterr().out
+
+    def test_stale_under_json_keeps_stdout_one_document(self, record_root, capsys):
+        _run_verify(self._args([record_root]))
+        capsys.readouterr()
+
+        _run_verify(self._args([record_root], stale=True, json=True))
+
+        captured = capsys.readouterr()
+        assert json.loads(captured.out) == []
+        assert "1 of 1 records skipped" in captured.err
 
 
 class TestRunReplay:
@@ -2315,7 +2427,8 @@ class TestRunCatalog:
         assert (
             _run_verify(
                 argparse.Namespace(
-                    paths=[record_root], json=False, out=None, no_write=False
+                    paths=[record_root], json=False, out=None, no_write=False,
+                    stale=False,
                 )
             )
             == 0

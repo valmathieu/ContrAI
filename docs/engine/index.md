@@ -168,9 +168,12 @@ uv run contrai verify ./corpus/games/engine-20260911T120000Z-abc123.jsonl
 uv run contrai verify ./corpus                 # every record under it, games/ included
 uv run contrai verify ./corpus --json          # the verdicts as JSON on stdout
 uv run contrai verify ./corpus --no-write      # report only, write no verdict file
+uv run contrai verify ./corpus --stale         # only records newer than their verdict
 ```
 
 It exits `0` when every round is `verified` or `partial`, `1` when any round is `suspect` or a record cannot be read at all, and `2` on a usage error. Each record's verdict is written to `verdicts/<game_id>.json` beside its own `games/` directory, which `--out DIR` redirects and `--no-write` suppresses.
+
+`--stale` skips a record whose verdict is at least as new as the record — the catalog's own test for a fresh verdict — so after a corpus build, which rewrites only the games it changed, only those are replayed. A skipped verdict still counts toward the exit code: a suspect game keeps failing the run until it is looked at. It trusts that the verifier has not changed since the verdicts were written, so run without it after an engine change that touches verification.
 
 `contrai` became a subcommand CLI to make room for it, and **no existing invocation changed**: `play` is the default, inserted by `_normalise_argv` whenever the first argument is not a known subcommand, so bare `contrai` and every flag it accepted before parse exactly as they did. Two consequences worth knowing: `contrai --help` shows `play`'s help (its epilog names the other subcommand), and `contrai some-game.jsonl` — which would otherwise be an unrecognised `play` argument — is caught and answered with "write: `contrai verify some-game.jsonl`".
 

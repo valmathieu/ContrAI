@@ -25,7 +25,7 @@ flowchart TD
     Write --> Games[("games/obs-*.jsonl<br/>one record per game")]
 
     %% ---------- The follow-up commands ----------
-    Games --> Verify(["contrai verify ROOT/games"])
+    Games --> Verify(["contrai verify --stale ROOT/games<br/>only games newer than their verdict"])
     Verify --> Verdicts[("verdicts/")]
     Verdicts --> Catalog(["contrai catalog ROOT"])
     Games --> Catalog
