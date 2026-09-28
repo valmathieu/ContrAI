@@ -106,7 +106,10 @@ seat that had a choice is a lost bid, and that round is skipped with a note inst
 
 The raw log is what makes all of this correctable. Frames are stored verbatim *before* anything
 is interpreted, so a parser fix applies to games already watched — `contrai-scrape parse` is that
-re-run, and it is the same code path a live session takes.
+re-run, and it is the same code path a live session takes. Like the live gate's `already_recorded`,
+it leaves a game whose record already exists under the output root untouched and says so: the
+writer appends, so parsing into such a root once wrote a second header and every round twice. A
+re-parse that should replace records goes to a fresh root, or through `corpus build`.
 
 A re-parsed record is stamped with the instant its game was last heard from: the latest server
 clock (`received_ms`) among its visit's events, else the raw log's own `started_at`. The live
@@ -799,9 +802,9 @@ capture — live in `deploy/install.md`. The same image runs a fleet through a C
 ## The corpus
 
 Scraped games pile up in several places: the box's output root, the laptop's, and scratch roots
-from re-parses. `parse` appends into whatever record it finds, so gathering them by re-parsing
-into one root doubles games. `corpus build` gathers them safely, and can be re-run as often as
-needed:
+from re-parses. `parse` keeps whatever record it finds, so gathering them by re-parsing into one
+root keeps the first copy of each game, not the best. `corpus build` chooses among them, and can be
+re-run as often as needed:
 
 ```powershell
 uv run contrai-scrape corpus build --profile ..\ContrAI-captures\profile.toml `

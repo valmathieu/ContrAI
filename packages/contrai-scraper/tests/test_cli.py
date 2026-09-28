@@ -1004,6 +1004,30 @@ class TestParse:
         assert read_events(first).events[0].created_at == started["started_at"]
         assert first.read_bytes() == game_path(tmp_path / "b", "obs-g1").read_bytes()
 
+    def test_parsing_twice_into_one_root_leaves_the_record_as_it_was(
+        self, tmp_path, profile_path, raw_log_path
+    ):
+        # The writer appends: a second parse used to leave two headers and
+        # every round twice in the same file.
+        from contrai_data import game_path
+
+        argv = ["parse", str(raw_log_path), "--profile", str(profile_path),
+                "--out", str(tmp_path)]
+        main(argv)
+        before = game_path(tmp_path, "obs-g1").read_bytes()
+        assert main(argv) == 0
+        assert game_path(tmp_path, "obs-g1").read_bytes() == before
+
+    def test_a_record_already_there_is_reported(
+        self, tmp_path, profile_path, raw_log_path, capsys
+    ):
+        argv = ["parse", str(raw_log_path), "--profile", str(profile_path),
+                "--out", str(tmp_path)]
+        main(argv)
+        capsys.readouterr()
+        main(argv + ["--dry-run"])
+        assert "already recorded, left as it is" in capsys.readouterr().out
+
     def test_the_account_variables_are_not_needed(
         self, tmp_path, profile_text, raw_log_path, monkeypatch
     ):

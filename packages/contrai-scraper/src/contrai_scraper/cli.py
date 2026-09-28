@@ -853,11 +853,16 @@ def _orientation_result(snapshot, board) -> tuple[str, bool, str]:
 def _run_parse(args: argparse.Namespace) -> int:
     """Re-parse raw logs into records.
 
+    A game whose record already exists under the output root is reported and
+    left untouched: a game gets one record, and writing it again would append
+    a second copy to the same file.
+
     Args:
         args: The parsed ``parse`` arguments.
 
     Returns:
-        0 when at least one record was produced, 1 when none was.
+        0 when at least one record was produced or found already there, 1 when
+        none was.
 
     Raises:
         SystemExit: If the profile or a path cannot be read (exit code 2).
@@ -866,7 +871,7 @@ def _run_parse(args: argparse.Namespace) -> int:
     profile = _profile_or_exit(args, offline=True)
     logs = _logs(args.paths, args.parser)
     root = args.out or profile.output.root
-    written = 0
+    written = kept = 0
     for log in logs:
         results, visits, refused = _parse_log(log, profile)
         line = f"{log.name}: {visits} table visits, {len(results)} with rounds"
@@ -886,17 +891,24 @@ def _run_parse(args: argparse.Namespace) -> int:
             for note in result.notes:
                 print(f"    - {note}")
 
+            path = game_path(root, header.game_id)
+            if path.exists():
+                # A game gets one record, as the live gate's `already_recorded`
+                # says. The writer appends, so parsing into a root that holds
+                # this game would leave two headers and every round twice.
+                print(f"    already recorded, left as it is: {path}")
+                kept += 1
+                continue
             if args.dry_run:
                 written += 1
                 continue
-            path = game_path(root, header.game_id)
             with RecordWriter(path) as writer:
                 for event in result.events:
                     writer.write(event)
             print(f"    -> {path}")
             written += 1
 
-    return 0 if written else 1
+    return 0 if written or kept else 1
 
 
 def _parse_log(
