@@ -10,6 +10,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 ### Fixed
 
+- (scraper) A fleet worker whose lobby sends only keepalives for 15 min (`HALL_QUIET_S`) now logs `hall_deaf` and rebuilds; such workers sat deaf for 4–15 h. See [scraper docs](docs/scraper/index.md).
 - (scraper) The fleet's `standing_by` journal line names the page's place as `place`; it used to overwrite the line's `at` timestamp with `menu` or `table`.
 
 ## [0.6.0] - 2026-09-28

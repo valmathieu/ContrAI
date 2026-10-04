@@ -583,6 +583,43 @@ class TestDeafLobby:
         harness.run()
         assert (harness.saw("hall_deaf"), len(harness.opened)) == (False, 1)
 
+    def test_keepalives_alone_for_fifteen_minutes_rebuild_the_session_for_free(
+        self, profile
+    ):
+        # bot05 on 2026-10-03: the socket carrying the lobby closed 35 s in,
+        # the other kept answering pings, and nothing else came for 15 hours.
+        harness = Harness(profile)
+        harness.script("bot01",
+                       (Walker(), Frames(on_empty=_ticking(harness, 20.0))),
+                       (Walker(), Frames(on_empty=harness.end)))
+        harness.run()
+        deaf = harness.events("hall_deaf")
+        assert (len(deaf), deaf[0]["silent_s"] < 60.0, 900.0 <= deaf[0]["quiet_s"] <= 920.0,
+                len(harness.opened), harness.saw("session_failed")) == (
+            1, True, True, 2, False)
+
+    def test_a_lobby_event_restarts_the_quiet_clock(self, profile, builders):
+        # A quiet opening hour: one row fills a seat at 10 minutes, then the
+        # page only answers pings again. 13 minutes on, it is still waiting.
+        harness = Harness(profile)
+        filling = received(builders.envelope("payload", "slot", {
+            "key": CUP, "chairs": {"top": {"acct": "1001"}}}, frame_id="l0"))
+        frames = Frames()
+        polls = [0]
+
+        def tick():
+            polls[0] += 1
+            harness.now += 20.0
+            if polls[0] == 30:
+                frames._frames.append(filling)
+            if polls[0] == 70:
+                harness.end()
+
+        frames._on_empty = tick
+        harness.script("bot01", (Walker(), frames))
+        harness.run()
+        assert (harness.saw("hall_deaf"), len(harness.opened)) == (False, 1)
+
     def test_a_second_deafness_in_a_row_counts_against_the_worker(self, profile):
         # An account the site keeps kicking out must not log in every minute.
         harness = Harness(profile)
