@@ -799,7 +799,8 @@ class Worker:
         if at is _Place.TABLE:
             exited = await spectator.exit_table()
             self._health.event("table_exited", exited=exited)
-        self._health.event("standing_by", at=at.value)
+        # ``place``, not ``at``: every line's ``at`` is its timestamp.
+        self._health.event("standing_by", place=at.value)
         iterator = aiter(frames)
         interval = self._profile.recorder.health_interval_s
         heard = fleet.now()

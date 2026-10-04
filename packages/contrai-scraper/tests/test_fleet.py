@@ -962,6 +962,16 @@ class TestRota:
              ("bot03", "spare", "spare_wanted")],
             {"stopped"})
 
+    def test_standing_by_keeps_its_timestamp_and_says_where_the_page_is(self, profile):
+        # The place once went out as ``at``, which overwrote the line's
+        # timestamp with "menu" and broke every reader sorting the journal.
+        harness = Harness(profile, workers=3, idle_sessions=True)
+        harness.until = lambda: harness.saw("standing_by")
+        harness.run()
+        line = harness.events("standing_by")[0]
+        assert (datetime.fromisoformat(line["at"]).tzinfo is not None, line["place"]) == (
+            True, "menu")
+
     def test_a_chase_sends_the_spare_in_and_logs_the_next_worker_in(
         self, profile, builders
     ):
