@@ -8,6 +8,11 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 ## [Unreleased]
 
+### Fixed
+
+- (scraper) A fleet worker whose lobby sends only keepalives for 15 min (`HALL_QUIET_S`) now logs `hall_deaf` and rebuilds; such workers sat deaf for 4–15 h. See [scraper docs](docs/scraper/index.md).
+- (scraper) The fleet's `standing_by` journal line names the page's place as `place`; it used to overwrite the line's `at` timestamp with `menu` or `table`.
+
 ## [0.6.0] - 2026-09-28
 
 Fleet and corpus release: the scraper stops hopping tables blind. `contrai-scrape fleet` runs up to 25 accounts that wait in the lobby and chase each tournament game from its first card; on the box, a 20-hour run matched 97% of starts and recorded 142 rounds/h against `run`'s ~33. Observed tables now score as they really do (held disputes and their carried pot, the sweep substitutes) in a `contrai-record/2` format. Scraped games gather into one corpus: `contrai-scrape corpus build` rebuilds one record per game from every machine's raw logs, `contrai verify --stale` and `contrai catalog` judge and index it, and `corpus backup` / `corpus check` save it. `contrai replay` gains a trick grid and the AI's reasons.

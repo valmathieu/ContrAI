@@ -735,15 +735,28 @@ code 3 only once a majority of its workers are down — one worker's bad account
 others' night — which for a fleet of one is exactly `run`'s rule. A worker whose chase was stopped by
 a refused egress sends nothing more on that session and checks the egress again before the next.
 
-The wait in the lobby has a watchdog on the *connection*, not on the lobby's events. The lobby can
+The wait in the lobby has two watchdogs. The first is on the *connection*. The lobby can
 legitimately stay quiet for over a minute; the page never does, since its keepalive answers every
 20 s, and across the ramp's healthy sessions no received frame came more than 20.9 s after the last.
-So a worker that receives nothing at all for `HALL_SILENCE_S` (60 s) logs `hall_deaf`, with how long
-it was silent and how many lobby states it had read, and rebuilds its session. Only received frames
+So a worker that receives nothing at all for `HALL_SILENCE_S` (60 s) is deaf. Only received frames
 count: what the page sends goes out whether anyone is listening or not. In the 10-worker ramp both of
-one worker's sockets closed 36 s into the lobby and it sat there deaf for 57 minutes. The first
-rebuild spends no budget, as the account is not at fault; a second deafness in a row, with no roster
-heard in between, counts as a failed session, so an account the site keeps kicking out cannot log in
+one worker's sockets closed 36 s into the lobby and it sat there deaf for 57 minutes.
+
+The second is on the *site's events*, because a page can keep answering pings long after it stopped
+hearing the lobby. Either of its two sockets may carry the lobby; when the one carrying it closes,
+the other can go on exchanging keepalives without ever delivering an event, and the first watchdog
+never trips. The harvest of 2026-10-04 found such workers deaf for 4 to 15 hours, and on 10-03 both
+lobby watchers at once, from 16:39 to the window's close: seven peak hours with no game recorded. So
+a worker that receives no site event at all — any event, from either socket, a duplicate included —
+for `HALL_QUIET_S` (15 min) is deaf too. The figure is set by quiet mornings, not by the zombies:
+over 140 h of healthy lobby waits, the longest stretch with no site event was 12.7 min (p99
+6.3 min), every one of them in the hour after the 07:00 UTC opening, when few tables are filling. A
+5-minute deadline would have taken working lobbies for deaf every morning.
+
+Either way the worker logs `hall_deaf` — with `silent_s` since the last frame, `quiet_s` since the
+last site event, and how many lobby states it had read — and rebuilds its session. The first rebuild
+spends no budget, as the account is not at fault; a second deafness in a row, with no roster heard
+in between, counts as a failed session, so an account the site keeps kicking out cannot log in
 every minute.
 
 Once a process, before its first lobby, each of the window's opening watchers can make a **census**:

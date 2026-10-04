@@ -71,6 +71,18 @@ STANDBY_POLL_S: Final[float] = 1.0
 #: rides out the 5-8 s reconnections measured in the 5-worker run.
 HALL_SILENCE_S: Final[float] = 60.0
 
+#: How long a worker in the lobby may hear keepalives and nothing else before
+#: it rebuilds.
+#:
+#: The page holds two sockets, and either may carry the lobby. When the one
+#: carrying it closes, the other can go on answering pings without ever
+#: delivering an event, so ``HALL_SILENCE_S`` never trips: live, such lobbies
+#: sat deaf for 4 to 15 hours. The lobby itself goes quiet for minutes when
+#: few tables are filling: across 140 h of healthy lobby waits on the box, the
+#: longest stretch with no site event at all was 12.7 min (p99 6.3 min), every
+#: one of them in the hour after the 07:00 UTC opening.
+HALL_QUIET_S: Final[float] = 900.0
+
 #: How long a worker waits after the first failed session of a streak before
 #: asking for a place again; later failures in a row wait a schedule poll.
 #:
@@ -162,7 +174,8 @@ class _ReturnFailed(BrowserError):
 
 
 class _HallDeaf(BrowserError):
-    """The lobby's page has heard nothing for ``HALL_SILENCE_S``.
+    """The lobby's page has heard nothing for ``HALL_SILENCE_S``, or only
+    keepalives for ``HALL_QUIET_S``.
 
     Its sockets closed, or stopped delivering, and a wait for a roster would
     last until the fleet stops. The first time is the connection's fault, not
@@ -799,7 +812,8 @@ class Worker:
         if at is _Place.TABLE:
             exited = await spectator.exit_table()
             self._health.event("table_exited", exited=exited)
-        self._health.event("standing_by", at=at.value)
+        # ``place``, not ``at``: every line's ``at`` is its timestamp.
+        self._health.event("standing_by", place=at.value)
         iterator = aiter(frames)
         interval = self._profile.recorder.health_interval_s
         heard = fleet.now()
@@ -1121,8 +1135,9 @@ class Worker:
             The starting roster, or ``None`` once the fleet has stopped.
 
         Raises:
-            _HallDeaf: Nothing was received for ``HALL_SILENCE_S``, the first
-                time since a roster was last heard.
+            _HallDeaf: Nothing was received for ``HALL_SILENCE_S``, or no site
+                event for ``HALL_QUIET_S``, the first time since a roster was
+                last heard.
             BrowserError: The frames ended, or the lobby went deaf again
                 before any roster was heard — which counts against the
                 worker, so an account kicked out at every login cannot log
@@ -1133,25 +1148,31 @@ class Worker:
         iterator = aiter(frames)
         interval = self._profile.recorder.health_interval_s
         self._health.event("in_hall")
-        # The watchdog listens to the connection, not to the lobby's events:
-        # any received frame counts, keepalives included, and only what we
-        # sent ourselves does not.
-        heard = fleet.now()
+        # Two watchdogs. ``heard`` listens to the connection: any received
+        # frame counts, keepalives included, and only what we sent ourselves
+        # does not. ``news`` listens to the site: only a frame that is a site
+        # event counts, any event and from either socket, a copy included.
+        heard = news = fleet.now()
         while not fleet.stopping():
             if self._health.due(interval):
                 self._health.heartbeat(state="hall", lobby_states=watcher.states)
             try:
                 frame = await asyncio.wait_for(anext(iterator), HALL_POLL_S)
             except TimeoutError:
-                self._check_heard(heard, watcher)
+                self._check_heard(heard, news, watcher)
                 continue
             except StopAsyncIteration:
                 raise BrowserError("the frame source ended: the page has gone") from None
+            log.write_frame(frame)
+            # The stream counts every frame that unwrapped to an event before
+            # dropping the copies, so a rise is an event, copy or not.
+            unwrapped = stream.received
+            event = stream.ingest(frame.text, frame.socket)
             if frame.direction == RECEIVED:
                 heard = fleet.now()
-            self._check_heard(heard, watcher)
-            log.write_frame(frame)
-            event = stream.ingest(frame.text, frame.socket)
+                if stream.received > unwrapped:
+                    news = heard
+            self._check_heard(heard, news, watcher)
             if event is None:
                 continue
             roster = watcher.read(event, at=frame.at)
@@ -1161,11 +1182,13 @@ class Worker:
                 return roster
         return None
 
-    def _check_heard(self, heard: float, watcher: LobbyWatcher) -> None:
-        """Give up on a lobby that has sent nothing for ``HALL_SILENCE_S``.
+    def _check_heard(self, heard: float, news: float, watcher: LobbyWatcher) -> None:
+        """Give up on a lobby that has sent nothing for ``HALL_SILENCE_S``,
+        or nothing but keepalives for ``HALL_QUIET_S``.
 
         Args:
             heard: When the last frame was received, on the fleet's clock.
+            news: When the last site event was received, on the same clock.
             watcher: The session's reader of the tournament row, whose count
                 of lobby states the event carries.
 
@@ -1176,14 +1199,19 @@ class Worker:
 
         fleet = self._fleet
         silent = fleet.now() - heard
-        if silent < HALL_SILENCE_S or fleet.stopping():
+        quiet = fleet.now() - news
+        if (silent < HALL_SILENCE_S and quiet < HALL_QUIET_S) or fleet.stopping():
             # A stopping fleet is noticed at the top of the wait, and a clock
             # moved past every deadline is not a silence.
             return
         self._health.event(
-            "hall_deaf", silent_s=round(silent, 1), lobby_states=watcher.states
+            "hall_deaf", silent_s=round(silent, 1), quiet_s=round(quiet, 1),
+            lobby_states=watcher.states,
         )
-        message = f"the lobby sent nothing for {silent:.0f} s"
+        message = (
+            f"the lobby sent nothing for {silent:.0f} s" if silent >= HALL_SILENCE_S
+            else f"the lobby sent only keepalives for {quiet:.0f} s"
+        )
         if self._deaf_streak == 0:
             raise _HallDeaf(message)
         raise BrowserError(f"{message}, again, with no roster heard since")
