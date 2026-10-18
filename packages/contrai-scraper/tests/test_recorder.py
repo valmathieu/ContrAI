@@ -1539,21 +1539,83 @@ class TestRefusals:
 class TestMixedBuffers:
     """A buffer holding two games is refused, never merged into one record."""
 
-    def test_a_second_games_play_refuses_the_record(
+    def test_a_stray_play_is_left_out_and_the_game_recorded(
         self, profile, builders, session_frames, source_game
     ):
-        # A play keyed to another game, landing mid-watch the way the other
-        # table's events did behind a seat taken one table late.
+        # The box's several_games shape: one play of the table the sweep had
+        # just rendered, which no snapshot of the seated table names. It is
+        # no second game, so the seated game is recorded without it.
         lines: list[str] = []
         script = session_frames(source_game)
         script.insert(6, frame(builders.envelope(
             "payload", "g2,1,1,0,card,p9", "2w", frame_id="foreign")))
         summary = run_recorder(FakeSpectator(), script, profile,
                                health=HealthLog(write=lines.append))
+        dropped = _only(lines, "stragglers_dropped")
+        events = {json.loads(line)["event"] for line in lines}
+        assert (summary.games_recorded, records_in(profile)[0].header.game_id,
+                dropped["games"], dropped["events"], "record_refused" in events) == (
+            1, "obs-g1", ["g2"], 1, False)
+
+    def test_an_unreadable_snapshot_names_no_game(
+        self, profile, builders, session_frames, source_game, monkeypatch
+    ):
+        # Looking for strays reads every snapshot in the buffer; one it cannot
+        # read simply names nothing, rather than costing the session.
+        import contrai_scraper.recorder as recorder_module
+        from contrai_scraper import ParseError
+
+        real = recorder_module.read_snapshot
+
+        def brittle(payload, translator, *, at=None):
+            if payload.get("broken"):
+                raise ParseError("unreadable")
+            return real(payload, translator, at=at)
+
+        monkeypatch.setattr(recorder_module, "read_snapshot", brittle)
+        broken = copy.deepcopy(builders.snapshot_payload())
+        broken["broken"] = True
+        lines: list[str] = []
+        script = session_frames(source_game)
+        script[6:6] = [
+            frame(builders.envelope("payload", "joinTable", broken, frame_id="sb")),
+            frame(builders.envelope("payload", "g2,1,1,0,card,p9", "2w",
+                                    frame_id="foreign")),
+        ]
+        summary = run_recorder(FakeSpectator(), script, profile,
+                               health=HealthLog(write=lines.append))
+        assert (summary.games_recorded,
+                _only(lines, "stragglers_dropped")["games"]) == (1, ["g2"])
+
+    def test_a_second_game_with_a_deal_refuses_the_record(
+        self, profile, builders, session_frames, source_game
+    ):
+        # A deal is a game being played, not a play in flight: two games'
+        # rounds would share numbers, so the record is still refused.
+        lines: list[str] = []
+        script = session_frames(source_game)
+        script.insert(6, _foreign_deal(builders))
+        summary = run_recorder(FakeSpectator(), script, profile,
+                               health=HealthLog(write=lines.append))
         refusal = _only(lines, "record_refused")
         assert (summary.games_recorded, records_in(profile),
                 refusal["reason"], refusal["games"]) == (
             0, [], "several_games", ["g1", "g2"])
+
+    def test_a_second_game_of_more_than_a_trick_refuses_the_record(
+        self, profile, builders, session_frames, source_game
+    ):
+        lines: list[str] = []
+        script = session_frames(source_game)
+        script[6:6] = [
+            frame(builders.envelope("payload", f"g2,1,{1 + index // 4},{index % 4},card,p9",
+                                    "2w", frame_id=f"foreign{index}"))
+            for index in range(5)
+        ]
+        summary = run_recorder(FakeSpectator(), script, profile,
+                               health=HealthLog(write=lines.append))
+        assert (summary.games_recorded,
+                _only(lines, "record_refused")["reason"]) == (0, "several_games")
 
     def test_another_tables_snapshot_refuses_the_record(
         self, profile, builders, session_frames, source_game
@@ -1605,8 +1667,7 @@ class TestMixedBuffers:
         # through the same refusal rather than around it.
         lines: list[str] = []
         script = session_frames(source_game)[:12]
-        script.insert(6, frame(builders.envelope(
-            "payload", "g2,1,1,0,card,p9", "2w", frame_id="foreign")))
+        script.insert(6, _foreign_deal(builders))
         script.append(_interrupt)
         with pytest.raises(KeyboardInterrupt):
             run_recorder(FakeSpectator(), script, profile,
@@ -1950,6 +2011,16 @@ def _only(lines, name):
 #: declarer West — the seat after it, clockwise — eighty in spades, made.
 _ROUND_ONE = (Position.SOUTH, Position.WEST, 80, Suit.SPADES, True,
               {TeamSide.NS: 0, TeamSide.EW: 170})
+
+
+def _foreign_deal(builders):
+    """A deal of another game, under a frame id of its own.
+
+    ``deal_frame``'s id is per round, so a foreign round 1 under it would be
+    de-duplicated away as a copy of the seated game's own deal.
+    """
+
+    return frame(builders.envelope("payload", "g2,1,0,0", "", frame_id="foreign-deal"))
 
 
 def _interrupt():

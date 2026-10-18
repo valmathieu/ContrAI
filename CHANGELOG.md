@@ -16,6 +16,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (engine) `contrai verify` refuses a sweep's flat card points when the replay split the pile; it only checked the sweeper's side.
 - (scraper) Each scraping session's state requests carry ids of their own; the site dropped ids a sibling had just sent, leaving 47% of first score reads unanswered with 16 workers. See [scraper docs](docs/scraper/index.md).
 - (scraper) A stray play from the table a worker had just left no longer names the seated table's record; 5 of 19 such corpus games were misfiled. See [scraper docs](docs/scraper/index.md).
+- (scraper) The recorder writes a game whose buffer holds a stray play of the previous table, logging `stragglers_dropped`; 19 such games were refused as `several_games`.
 - (scraper) A player level the site sends as a number (since 2026-10-15) is recorded as text; such records were unreadable, 1057 games in the 2026-10-18 harvest.
 
 ## [0.6.0] - 2026-09-28

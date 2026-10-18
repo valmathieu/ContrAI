@@ -156,6 +156,12 @@ game that arrived without a snapshot of its own leaves nothing to say which half
 seated, and the raw log still holds every frame for `parse` to cut apart. The pre-game draw is keyed
 to the game it opens, so a table caught from its first card is still one game.
 
+A stray is the exception (`Recorder._strays`): a game no join snapshot in the buffer names, beside
+one a snapshot does name, bringing no deal and at most one trick's plays (`STRAY_LIMIT`, 4). That is
+the in-flight shape above, not a second game, and refusing it cost the box all 19 such games. The
+recorder now logs `stragglers_dropped` with the games and their event count, and writes the record,
+the parser leaving the strays out. A second game with a deal or more than a trick is still refused.
+
 Both paths also leave out a game that holds no round, by the same count (`round_count`). `parse`
 always has: most such visits are tables a gate refused seconds after arriving. The recorder now
 does too, logging `record_skipped` with `reason` `no_round` instead of writing a record with no

@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -74,6 +75,10 @@ SCOREBOARD_PANEL = "scoreboard"
 #: came back within 0.22 s (p99 0.17 s), and none came late. So waiting the
 #: whole ``snapshot_timeout_s`` for one buys nothing but a later retry.
 STATE_ANSWER_S: Final[float] = 5.0
+
+#: The most events a stray game may bring and still be left out rather than
+#: refused: one trick's plays. The strays measured on the box brought 1 or 2.
+STRAY_LIMIT: Final[int] = 4
 
 
 @dataclass(slots=True)
@@ -1065,6 +1070,14 @@ class Recorder:
             self._health.event("record_refused", **mixture)
             self._buffer = []
             return
+        strays = self._strays()
+        if strays:
+            # Left out by the parser, with a note; said here too so the
+            # journal counts them without reading every note.
+            self._health.event(
+                "stragglers_dropped", games=sorted(strays),
+                events=sum(strays.values()),
+            )
         try:
             result = parse_session(
                 order_events(self._buffer), self._profile, end_reason=end_reason
@@ -1131,6 +1144,11 @@ class Recorder:
         keyed to the game it opens, so a table caught from its first card is
         still one game.
 
+        A stray is not a second game: a play or two of the table the sweep
+        had just rendered, landing after the seated table's snapshot (see
+        :meth:`_strays`). The parser leaves those out itself, so they are
+        no reason to refuse.
+
         Returns:
             The fields a refusal is logged with — the reason, the wire's game
             ids and the tables in the order they were met — or ``None`` when
@@ -1138,10 +1156,11 @@ class Recorder:
         """
 
         visits = split_visits(self._buffer, self._profile)
+        strays = self._strays()
         games = sorted(
             {event.key.game for event in self._buffer if event.key is not None}
         )
-        if len(visits) <= 1 and len(games) <= 1:
+        if len(visits) <= 1 and len(set(games) - set(strays)) <= 1:
             return None
         tables = [self._translator.field(visit[0].data, "table_id") for visit in visits]
         return {
@@ -1149,6 +1168,43 @@ class Recorder:
             "games": games,
             "tables": list(dict.fromkeys(tables)),
         }
+
+    def _strays(self) -> Counter[str]:
+        """The games in the buffer that are in-flight strays, with their counts.
+
+        On the box, 19 sessions were refused over a game the seated table
+        never played: 1 or 2 plays of the table the sweep had just rendered,
+        arriving 0-4 s after the seated table's snapshot, never with a deal.
+        A game counts as a stray when no join snapshot in the buffer names
+        it, some event belongs to a game one does name, and it brings no
+        deal and no more than one trick's plays. Anything larger is two
+        games mixed, and still refused.
+
+        Returns:
+            Each stray game's wire id and how many events it brought; empty
+            when there is none.
+        """
+
+        named: set[str] = set()
+        for event in self._buffer:
+            if event.kind != self._join_name:
+                continue
+            try:
+                snapshot = read_snapshot(event.data, self._translator, at=None)
+            except ScraperError:
+                continue
+            if snapshot.game_id:
+                named.add(snapshot.game_id)
+        keyed = [event.key for event in self._buffer if event.key is not None]
+        if not named.intersection(key.game for key in keyed):
+            return Counter()
+        foreign = [key for key in keyed if key.game not in named]
+        dealt = {key.game for key in foreign if key.verb == DEAL_VERB}
+        counts = Counter(key.game for key in foreign)
+        return Counter({
+            game: count for game, count in counts.items()
+            if game not in dealt and count <= STRAY_LIMIT
+        })
 
     # -- the wire --------------------------------------------------------
 
