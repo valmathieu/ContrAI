@@ -317,13 +317,30 @@ class TestEffectiveWinner:
 
 
 class TestVerdictStatus:
-    def _status(self, events, verdict, record_s=RECORD_TIME, verdict_s=VERDICT_TIME):
+    def _status(self, events, verdict, record_s=RECORD_TIME, verdict_s=VERDICT_TIME,
+                verifier=None):
         return _verdict_status(
             project(events),
             verdict,
             record_mtime_ns=_ns(record_s),
             verdict_mtime_ns=_ns(verdict_s),
+            verifier=verifier,
         )
+
+    def test_a_verdict_from_another_verifier_is_stale(self, three_round_game):
+        # A verifier fix moves no record, so the mtimes alone would keep
+        # every verdict it overturns "fresh".
+        verdict = dataclasses.replace(_verdict(), verifier="old")
+        assert self._status(three_round_game, verdict, verifier="new") == "stale"
+
+    def test_a_verdict_naming_no_verifier_is_stale_when_one_is_asked(
+        self, three_round_game
+    ):
+        assert self._status(three_round_game, _verdict(), verifier="new") == "stale"
+
+    def test_a_verdict_from_this_verifier_is_fresh(self, three_round_game):
+        verdict = dataclasses.replace(_verdict(), verifier="new")
+        assert self._status(three_round_game, verdict, verifier="new") == "fresh"
 
     def test_a_newer_verdict_is_fresh(self, three_round_game):
         assert self._status(three_round_game, _verdict()) == "fresh"

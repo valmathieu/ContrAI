@@ -552,3 +552,25 @@ class TestReadVerdict:
     def test_a_verdict_format_error_is_a_record_error(self):
         assert issubclass(VerdictFormatError, RecordError)
         assert issubclass(VerdictFormatError, ValueError)
+
+
+class TestVerifier:
+    def test_a_game_without_one_writes_no_key(self):
+        assert "verifier" not in _full_game().as_json()
+
+    def test_it_reads_back_equal(self, tmp_path):
+        game = GameVerdict(game_id="obs-1", source="observed",
+                           preset="tournament", verifier="ab12")
+
+        assert read_verdict(write_verdict(tmp_path, game)) == game
+
+    def test_an_older_file_without_one_still_reads(self):
+        assert GameVerdict.from_json(_payload()).verifier is None
+
+    @pytest.mark.parametrize("value", [None, 3, ""])
+    def test_anything_but_text_is_refused(self, value):
+        payload = _payload()
+        payload["verifier"] = value
+
+        with pytest.raises(VerdictFormatError, match="verifier"):
+            GameVerdict.from_json(payload)

@@ -1584,6 +1584,47 @@ class TestRunVerify:
         out = capsys.readouterr().out
         assert "verified" in out and "skipped" not in out
 
+    def test_a_written_verdict_names_its_verifier(self, record_root):
+        from contrai_data import read_verdict
+
+        from contrai_engine.replay.verify import verifier_fingerprint
+
+        _run_verify(self._args([record_root]))
+        assert read_verdict(self._only_verdict(record_root)).verifier == (
+            verifier_fingerprint())
+
+    def test_stale_verifies_a_record_another_verifier_judged(
+        self, record_root, capsys
+    ):
+        # A verifier fix moves no record: the four failed-Solo-Slam rounds
+        # stayed suspect under --stale after the fix that cleared them.
+        _run_verify(self._args([record_root]))
+        verdict = self._only_verdict(record_root)
+        payload = json.loads(verdict.read_text(encoding="utf-8"))
+        payload["verifier"] = "an-older-verifier"
+        verdict.write_text(json.dumps(payload), encoding="utf-8")
+        capsys.readouterr()
+
+        _run_verify(self._args([record_root], stale=True))
+
+        out = capsys.readouterr().out
+        assert "verified" in out and "skipped" not in out
+
+    def test_stale_verifies_a_verdict_that_names_no_verifier(
+        self, record_root, capsys
+    ):
+        # Every verdict written before verdicts named their verifier.
+        _run_verify(self._args([record_root]))
+        verdict = self._only_verdict(record_root)
+        payload = json.loads(verdict.read_text(encoding="utf-8"))
+        del payload["verifier"]
+        verdict.write_text(json.dumps(payload), encoding="utf-8")
+        capsys.readouterr()
+
+        _run_verify(self._args([record_root], stale=True))
+
+        assert "skipped" not in capsys.readouterr().out
+
     def test_stale_verifies_a_record_whose_verdict_does_not_read(
         self, record_root, capsys
     ):
@@ -1604,6 +1645,8 @@ class TestRunVerify:
             write_verdict,
         )
 
+        from contrai_engine.replay.verify import verifier_fingerprint
+
         (record,) = (record_root / "games").glob("*.jsonl")
         write_verdict(
             record_root,
@@ -1611,6 +1654,7 @@ class TestRunVerify:
                 game_id=record.stem,
                 source="engine",
                 preset="classic",
+                verifier=verifier_fingerprint(),
                 rounds=(
                     RoundVerdict.decide(
                         1,
@@ -2355,6 +2399,35 @@ class TestRunCatalog:
         assert (record_root / "catalog.sqlite").is_file()
         assert "games: 1 (engine 1)" in capsys.readouterr().out
 
+    @staticmethod
+    def _verified(root, verifier=None):
+        """Verify the root's one game, then optionally restamp its verifier."""
+
+        from contrai_engine.replay.verify import verify_record
+
+        (record,) = (root / "games").glob("*.jsonl")
+        verify_record(record, out=root)
+        if verifier is not None:
+            (path,) = (root / "verdicts").glob("*.json")
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["verifier"] = verifier
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_a_verdict_from_this_verifier_is_fresh(self, record_root, capsys):
+        self._verified(record_root)
+
+        _run_catalog(self._args(record_root))
+
+        assert "verdict status: fresh 1" in capsys.readouterr().out
+
+    def test_a_verdict_from_another_verifier_is_stale(self, record_root, capsys):
+        # A verifier fix moves no record, so only the fingerprint can tell.
+        self._verified(record_root, verifier="an-older-verifier")
+
+        _run_catalog(self._args(record_root))
+
+        assert "verdict status: stale 1" in capsys.readouterr().out
+
     def test_the_default_root_is_the_records_root(self, contrai_home, capsys):
         from tests.test_replay.conftest import play_and_record
 
@@ -2373,7 +2446,7 @@ class TestRunCatalog:
     def test_an_unreplaceable_catalog_exits_one_and_says_why(
         self, record_root, capsys, monkeypatch
     ):
-        def refuse(root):
+        def refuse(root, **kwargs):
             raise PermissionError(13, "in use")
 
         monkeypatch.setattr(cli_module, "build_catalog", refuse)

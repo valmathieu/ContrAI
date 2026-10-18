@@ -143,6 +143,15 @@ def _int(value: object, where: str) -> int:
     return value
 
 
+def _verifier(value: object) -> str:
+    """A verifier fingerprint: text, and never empty."""
+
+    text = _str(value, "verifier")
+    if not text:
+        raise VerdictFormatError("verifier is empty")
+    return text
+
+
 def _str(value: object, where: str) -> str:
     """Check ``value`` is a string.
 
@@ -341,8 +350,9 @@ _GAME_KEYS = frozenset(
     {"game_id", "source", "preset", "verdict", "counts", "notes", "rounds"}
 )
 
-#: Present only when the replay rebuilt a final total the record lacks.
-_GAME_OPTIONAL = frozenset({"replayed_totals"})
+#: Present only when the replay rebuilt a final total the record lacks, and
+#: when the verifier's fingerprint is known.
+_GAME_OPTIONAL = frozenset({"replayed_totals", "verifier"})
 
 #: The keys of a per-side object, as the record spells its sides.
 _SIDE_KEYS = frozenset(side_token(side) for side in TeamSide)
@@ -489,6 +499,10 @@ class GameVerdict:
             value, never a checked one: it is the last totals the record
             states plus what the replay marked for every round after
             them, given only when those rounds leave no room for a pot.
+        verifier: A fingerprint of the code that reached this verdict, or
+            ``None`` when it is not known. A verifier fix moves no record,
+            so a verdict's age cannot tell whether it is still current;
+            this can: one reached by other code is stale.
     """
 
     game_id: str
@@ -497,6 +511,7 @@ class GameVerdict:
     rounds: tuple[RoundVerdict, ...] = ()
     notes: tuple[str, ...] = field(default=())
     replayed_totals: Mapping[TeamSide, int] | None = None
+    verifier: str | None = None
 
     @property
     def verdict(self) -> Verdict:
@@ -533,8 +548,9 @@ class GameVerdict:
 
         Returns:
             The record's identity, its overall verdict, the per-verdict
-            counts and every round, plus the replayed totals when there
-            are any — absent otherwise, never ``null``.
+            counts and every round, plus the replayed totals and the
+            verifier's fingerprint when there are any — absent otherwise,
+            never ``null``.
         """
 
         payload: dict[str, Any] = {
@@ -551,6 +567,8 @@ class GameVerdict:
                 side_token(side): points
                 for side, points in self.replayed_totals.items()
             }
+        if self.verifier is not None:
+            payload["verifier"] = self.verifier
         return payload
 
     @classmethod
@@ -593,6 +611,7 @@ class GameVerdict:
                 if "replayed_totals" in data
                 else None
             ),
+            verifier=_verifier(data["verifier"]) if "verifier" in data else None,
         )
 
         # The two summaries are derived from the rounds, so they are

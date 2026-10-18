@@ -99,7 +99,7 @@ from contrai_engine.replay import (
     verify_game,
     verify_record,
 )
-from contrai_engine.replay.verify import default_out_root
+from contrai_engine.replay.verify import default_out_root, verifier_fingerprint
 from contrai_engine.ruleset import TableSetup, resolve_setup, save_setup, setup_path
 from contrai_engine.view.parsing import RoundPick
 from contrai_engine.view.rich_view import RichView
@@ -669,13 +669,15 @@ def _verdict_lines(verdict: GameVerdict) -> list[str]:
 
 
 def _fresh_verdict(path: Path, root: Path) -> GameVerdict | None:
-    """The verdict already written for a record, if it is newer than the record.
+    """The verdict already written for a record, if it still describes it.
 
-    The same test the catalog applies to call a verdict fresh: a record
-    rewritten after its verdict — a corpus build that changed the game —
-    has the later modification time. The game id is read off the file
-    name, which is what both producers name a record by; a record named
-    otherwise simply finds no verdict and is verified.
+    The same two tests the catalog applies to call a verdict fresh. A
+    record rewritten after its verdict — a corpus build that changed the
+    game — has the later modification time. And a verdict another verifier
+    reached, or one naming none, is stale however young: a verifier fix
+    moves no record. The game id is read off the
+    file name, which is what both producers name a record by; a record
+    named otherwise simply finds no verdict and is verified.
 
     Args:
         path: A record file.
@@ -683,18 +685,19 @@ def _fresh_verdict(path: Path, root: Path) -> GameVerdict | None:
 
     Returns:
         The verdict, or ``None`` when there is none, it is older than the
-        record, or it cannot be read.
+        record, another verifier reached it, or it cannot be read.
     """
 
     try:
         verdict = verdict_path(root, path.stem)
         if verdict.stat().st_mtime_ns < path.stat().st_mtime_ns:
             return None
-        return read_verdict(verdict)
+        known = read_verdict(verdict)
     except (OSError, ValueError):
         # No verdict, a stem that is no game id, or a verdict file that does
         # not read back: every doubt means "verify it".
         return None
+    return known if known.verifier == verifier_fingerprint() else None
 
 
 def _run_verify(args: argparse.Namespace) -> int:
@@ -916,7 +919,7 @@ def _run_catalog(args: argparse.Namespace) -> int:
         print(f"{root}: no games/ directory, nothing to index", file=sys.stderr)
         return 1
     try:
-        summary = build_catalog(root)
+        summary = build_catalog(root, verifier=verifier_fingerprint())
     except PermissionError as exc:
         # Windows refuses to replace a file another process holds open —
         # a sqlite3 shell or a notebook still connected to the catalog.

@@ -229,7 +229,9 @@ re-verifying a corpus produces a diff that shows only what changed. It carries t
 source and preset, the game verdict, per-verdict round counts, the notes, and one object per round.
 A game whose record ended without its final totals may also carry `replayed_totals`, the totals the
 replay rebuilt for it (see [The winner](#the-winner)); the key is absent otherwise, never `null`,
-so older verdict files still read.
+so older verdict files still read. A verdict `contrai verify` wrote also names its `verifier`: a
+fingerprint of the `contrai-core`, `contrai-data` and `contrai-engine` sources that reached it,
+absent from older files.
 
 **Reading one back is as strict as reading a record.** `read_verdict()` (and the `from_json`
 classmethods under it) refuses anything `write_verdict` would not have written: an unknown or
@@ -703,12 +705,16 @@ never by position, because round numbers are deal counts that may start above on
 ### Verdict status and clean rounds
 
 A verdict file carries no timestamp and no hash of the record it judged, so whether it still
-describes its record is inferred:
+describes its record is inferred. Its age alone cannot see a verifier fix, which moves no record:
+after the 2026-10-18 failed-Solo-Slam fix, the four rounds it cleared stayed `suspect` and "fresh"
+until verified by name. So `contrai catalog` also passes `build_catalog` the current verifier's
+fingerprint, and a verdict naming another one, or none, is stale. A caller that cannot name the
+verifier passes nothing, and that test is left out.
 
 | `verdict_status` | Meaning |
 | --- | --- |
-| `fresh` | Readable, no older than its record, covering the same round numbers, source and preset |
-| `stale` | Readable, but older than its record, or over other rounds, or naming another source or preset |
+| `fresh` | Readable, no older than its record, covering the same round numbers, source and preset, and reached by the current verifier |
+| `stale` | Readable, but older than its record, or over other rounds, or naming another source, preset or verifier |
 | `missing` | No verdict file — `contrai verify` has not run on this game |
 | `unreadable` | The file fails `read_verdict`, or names another game (also listed in `skipped`) |
 

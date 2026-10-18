@@ -539,13 +539,15 @@ def _verdict_status(
     *,
     record_mtime_ns: int,
     verdict_mtime_ns: int,
+    verifier: str | None = None,
 ) -> str:
     """Whether a readable verdict still describes its record.
 
     A verdict file carries no timestamp and no hash of the record it
     judged, so staleness is inferred. It is ``stale`` when it is older
-    than the record, when it covers other round numbers, or when it
-    names another source or preset. A false "stale" only keeps rounds
+    than the record, when it covers other round numbers, when it names
+    another source or preset, or — when ``verifier`` is given — when
+    other code reached it, which no mtime can show. A false "stale" only keeps rounds
     out of ``clean_rounds`` until the next ``contrai verify``; a false
     "fresh" would let an unchecked round in, so every doubt goes the
     safe way.
@@ -555,6 +557,8 @@ def _verdict_status(
         verdict: Its verdict, already read.
         record_mtime_ns: The record file's modification time.
         verdict_mtime_ns: The verdict file's modification time.
+        verifier: The current verifier's fingerprint, or ``None`` when the
+            caller cannot name it, which leaves it out of the test.
 
     Returns:
         ``fresh`` or ``stale``.
@@ -565,6 +569,8 @@ def _verdict_status(
     if {r.number for r in verdict.rounds} != {r.number for r in record.rounds}:
         return "stale"
     if verdict.source != str(record.header.source) or verdict.preset != record.preset:
+        return "stale"
+    if verifier is not None and verdict.verifier != verifier:
         return "stale"
     return "fresh"
 
@@ -817,11 +823,15 @@ def _reason(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
-def _scan(root: Path) -> tuple[list[_GameRows], list[SkippedFile]]:
+def _scan(
+    root: Path, verifier: str | None = None
+) -> tuple[list[_GameRows], list[SkippedFile]]:
     """Read every record and verdict under ``root`` into rows.
 
     Args:
         root: The records root.
+        verifier: The current verifier's fingerprint, or ``None`` to leave
+            it out of the staleness test.
 
     Returns:
         Each indexed game's rows, in game id order, and every file that
@@ -863,7 +873,9 @@ def _scan(root: Path) -> tuple[list[_GameRows], list[SkippedFile]]:
                     )
                 )
         record = next(rec for path, rec in entries if path == keep)
-        verdict, status = _read_game_verdict(root, game_id, keep, record, skipped)
+        verdict, status = _read_game_verdict(
+            root, game_id, keep, record, skipped, verifier
+        )
         if status != "missing":
             # Read — usable or not, it is this game's file and no orphan.
             claimed.add(verdict_path(root, game_id))
@@ -885,6 +897,7 @@ def _read_game_verdict(
     record_path: Path,
     record: GameRecord,
     skipped: list[SkippedFile],
+    verifier: str | None = None,
 ) -> tuple[GameVerdict | None, str]:
     """Find, read and date one game's verdict.
 
@@ -894,6 +907,7 @@ def _read_game_verdict(
         record_path: The indexed record file, for its modification time.
         record: The indexed record.
         skipped: Appended to when the verdict cannot be used.
+        verifier: The current verifier's fingerprint, or ``None``.
 
     Returns:
         The verdict, or ``None`` when there is none to use, and the
@@ -935,6 +949,7 @@ def _read_game_verdict(
         verdict,
         record_mtime_ns=record_path.stat().st_mtime_ns,
         verdict_mtime_ns=verdict_mtime_ns,
+        verifier=verifier,
     )
     return verdict, status
 
@@ -1045,7 +1060,9 @@ def _write(
     connection.commit()
 
 
-def build_catalog(root: Path | str, *, now: datetime | None = None) -> CatalogSummary:
+def build_catalog(
+    root: Path | str, *, now: datetime | None = None, verifier: str | None = None
+) -> CatalogSummary:
     """Rebuild ``<root>/catalog.sqlite`` from every record and verdict.
 
     Args:
@@ -1053,6 +1070,9 @@ def build_catalog(root: Path | str, *, now: datetime | None = None) -> CatalogSu
             ``verdicts/``. A root with no ``games/`` builds an empty
             catalog.
         now: The build instant to stamp; defaults to now, in UTC.
+        verifier: The current verifier's fingerprint. Given, a verdict
+            another verifier reached counts as ``stale``; ``None`` leaves
+            the verifier out, since this package cannot name it.
 
     Returns:
         What the new catalog holds.
@@ -1068,7 +1088,7 @@ def build_catalog(root: Path | str, *, now: datetime | None = None) -> CatalogSu
     if not root.is_dir():
         raise NotADirectoryError(f"Not a records root: {root}")
     built_at = (now or datetime.now(UTC)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    games, skipped = _scan(root)
+    games, skipped = _scan(root, verifier)
 
     # The descriptor is closed before SQLite opens the file: Windows will
     # not let a second handle delete or replace a file this process still

@@ -43,10 +43,15 @@ and what the replay scored after them (:func:`_replayed_totals`).
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 from dataclasses import dataclass, field
+from functools import cache
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
+import contrai_core
+import contrai_data
 from contrai_core import PRESETS, Card, Position, Rank, Suit, TeamSide
 from contrai_core.bid import SlamLevel
 from contrai_core.exceptions import IllegalBidError, IllegalPlayError
@@ -1059,10 +1064,64 @@ def verify_record(path: Path | str, *, out: Path | str | None = None) -> GameVer
         UnsupportedFormatError: If the header names an unreadable format.
     """
 
-    verdict = verify_game(load_game(path))
+    verdict = dataclasses.replace(
+        verify_game(load_game(path)), verifier=verifier_fingerprint()
+    )
     if out is not None:
         write_verdict(out, verdict)
     return verdict
+
+
+@cache
+def verifier_fingerprint() -> str:
+    """A hash of the code a verdict depends on besides its record.
+
+    A verifier fix moves no record, so a verdict's age cannot show that
+    other code would now judge it otherwise. Every verdict ``verify_record``
+    reaches carries this fingerprint, and ``contrai verify --stale`` and
+    ``contrai catalog`` treat one naming another as stale.
+
+    Deliberately coarse, like the scraper's parser fingerprint: any edit to
+    ``contrai-core``, ``contrai-data`` or ``contrai-engine`` turns every
+    verdict stale. That costs one full ``verify`` run; a fingerprint too
+    narrow to see a real verifier change would keep overturned verdicts.
+
+    Returns:
+        A hex SHA-256 over the three packages' ``.py`` files.
+    """
+
+    # Imported here: the engine package imports this module while loading.
+    import contrai_engine
+
+    return _fingerprint((contrai_core, contrai_data, contrai_engine))
+
+
+#: Between a file's name and its bytes, and after them: a NUL, which no
+#: source file name contains.
+_SEPARATOR: bytes = bytes(1)
+
+
+def _fingerprint(packages: tuple[ModuleType, ...]) -> str:
+    """Hash packages' sources, each file named by its path inside its package.
+
+    Naming files relative to their package keeps the hash independent of
+    where the checkout lives; NUL separators keep a file boundary from
+    shifting into another file with the same concatenated bytes.
+
+    Args:
+        packages: The packages to hash, in a fixed order.
+
+    Returns:
+        The hex SHA-256.
+    """
+
+    digest = hashlib.sha256(b"contrai-verifier/1")
+    for package in packages:
+        base = Path(str(package.__file__)).parent
+        for path in sorted(base.rglob("*.py")):
+            name = f"{package.__name__}/{path.relative_to(base).as_posix()}"
+            digest.update(name.encode() + _SEPARATOR + path.read_bytes() + _SEPARATOR)
+    return digest.hexdigest()
 
 
 def default_out_root(path: Path | str) -> Path:

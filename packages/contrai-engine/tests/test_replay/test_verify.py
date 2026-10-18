@@ -29,7 +29,12 @@ from contrai_data import (
 )
 
 from contrai_engine.replay import Verdict, verify_game, verify_record
-from contrai_engine.replay.verify import _replayed_totals, default_out_root
+from contrai_engine.replay.verify import (
+    _fingerprint,
+    _replayed_totals,
+    default_out_root,
+    verifier_fingerprint,
+)
 
 from .conftest import TS, play_and_record, rebuilt
 
@@ -856,3 +861,43 @@ class TestPublicApi:
 
         assert getattr(contrai_engine.replay, name) is getattr(contrai_data, name)
         assert name in contrai_engine.replay.__all__
+
+
+class TestVerifierFingerprint:
+    @staticmethod
+    def _package(root, name, files):
+        """A stand-in package: a directory of sources and a module naming it."""
+
+        from types import ModuleType
+
+        base = root / name
+        base.mkdir(parents=True)
+        for relative, text in files.items():
+            (base / relative).write_text(text, encoding="utf-8")
+        module = ModuleType(name)
+        module.__file__ = str(base / "__init__.py")
+        return module
+
+    def test_an_edited_source_changes_it(self, tmp_path):
+        before = self._package(tmp_path / "a", "pkg", {"__init__.py": "", "m.py": "x = 1"})
+        after = self._package(tmp_path / "b", "pkg", {"__init__.py": "", "m.py": "x = 2"})
+
+        assert _fingerprint((before,)) != _fingerprint((after,))
+
+    def test_where_the_checkout_lives_does_not(self, tmp_path):
+        files = {"__init__.py": "", "m.py": "x = 1"}
+        here = self._package(tmp_path / "a", "pkg", files)
+        there = self._package(tmp_path / "elsewhere" / "deep", "pkg", files)
+
+        assert _fingerprint((here,)) == _fingerprint((there,))
+
+    def test_a_record_verified_carries_it(self, tmp_path):
+        play_and_record(tmp_path, seed=1)
+        (path,) = (tmp_path / "games").glob("*.jsonl")
+
+        assert verify_record(path).verifier == verifier_fingerprint()
+
+    def test_the_bare_check_leaves_it_out(self, tmp_path):
+        # verify_game judges a record; naming the code is verify_record's job.
+        assert verify_game(play_and_record(tmp_path, seed=1)).verifier is None
+

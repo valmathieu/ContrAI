@@ -13,6 +13,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 - (scraper) A fleet worker whose lobby sends only keepalives for 15 min (`HALL_QUIET_S`) now logs `hall_deaf` and rebuilds; such workers sat deaf for 4–15 h. See [scraper docs](docs/scraper/index.md).
 - (scraper) The fleet's `standing_by` journal line names the page's place as `place`; it used to overwrite the line's `at` timestamp with `menu` or `table`.
 - (engine) `contrai verify` accepts the team's 250 card points on a failed Solo Slam the team swept; all six such corpus rounds were wrongly `suspect`. See [engine docs](docs/engine/index.md).
+- (engine) Verdicts name their verifier; `contrai verify --stale` and `contrai catalog` treat one from other code as stale, so a verifier fix no longer leaves overturned verdicts. See [engine docs](docs/engine/index.md).
 - (engine) `contrai verify` refuses a sweep's flat card points when the replay split the pile; it only checked the sweeper's side.
 - (scraper) Each scraping session's state requests carry ids of their own; the site dropped ids a sibling had just sent, leaving 47% of first score reads unanswered with 16 workers. See [scraper docs](docs/scraper/index.md).
 - (scraper) A stray play from the table a worker had just left no longer names the seated table's record; 5 of 19 such corpus games were misfiled. See [scraper docs](docs/scraper/index.md).
