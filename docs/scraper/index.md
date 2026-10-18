@@ -325,11 +325,15 @@ have had:
   `STATE_ANSWER_S` (5 s) until a join snapshot of *this* table arrives, which is what
   `score_reads_wire` now counts. An unanswered attempt is logged `state_unanswered` — the table, the
   frame source's socket the request went on (learnt from our own sent frame) and the attempt — and
-  counts in `score_reads_unanswered`. The first attempt is retried once on another socket:
-  `SEND_SCRIPT` sends on the newest open socket matching `[wire].socket_url_pattern`, which was never
-  the one the page itself switched to the table's room, so the retry avoids it. That is a measured
-  experiment, not a known cure; how often the retry is answered is read from the next live run. After
-  two silences the panel is read, best-effort: a panel that fails costs `score_reads_failed`, never
+  counts in `score_reads_unanswered`. **The silences were id collisions.** Every session numbered
+  its requests `contrai-1`, `contrai-2`, … from the start, and the site drops a request whose id
+  another session sent in the last five minutes or so: 98% unanswered within 20 s of a sibling's
+  same id, 0% after 6 min, and 99.6% of all unanswered requests had a sibling's id behind them. The
+  share therefore grew with the fleet — first attempts 0.3% unanswered with one worker, 26% with 7,
+  56% with 16 — and the socket made no difference (socket 0 49.8%, socket 1 48.8%). Each
+  `Spectator` now draws a random token once, and its ids read `contrai-<token>-<n>`. The first
+  attempt is still retried once on another socket, a cheap guard against what is left. After two
+  silences the panel is read, best-effort: a panel that fails costs `score_reads_failed`, never
   the game in hand. A request still pending at the next boundary is logged unanswered and replaced,
   since the new one covers the same rows. The closing request takes the same two attempts and stops
   at this table's snapshot, with no panel after them: the end screen covers the page.

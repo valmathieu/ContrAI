@@ -996,7 +996,9 @@ class TestResume:
             page.evaluate = _sending_on(page, 3)
             return await spectator.request_state("t1", "f-42")
 
-        assert drain(scenario) == SentRequest(id="contrai-1", socket=3)
+        sent = drain(scenario)
+        assert (sent.socket, sent.id.startswith("contrai-"), sent.id.endswith("-1")) == (
+            3, True, True)
 
     def test_the_send_passes_the_socket_to_avoid_and_the_url_pattern(self, profile):
         # A retry goes out on another socket than the unanswered attempt, and
@@ -1032,6 +1034,23 @@ class TestResume:
             page.evaluate = _sending_on(page, 0)
             await spectator.request_state("t1", "f-1")
             await spectator.request_state("t1", "f-2")
+
+        drain(scenario)
+        first, second = (sent["envelope"]["id"] for _, sent in page.evaluated)
+        assert first != second
+
+    def test_two_sessions_never_send_the_same_id(self, profile):
+        # Measured live: the site drops a request whose id another session
+        # sent in the last five minutes, and every session counting from 1
+        # left 47% of first attempts unanswered with 16 workers. The n-th
+        # request of two sessions must therefore differ.
+        page = FakePage({})
+
+        async def scenario():
+            for _ in range(2):
+                spectator = Spectator(page, profile)
+                page.evaluate = _sending_on(page, 0)
+                await spectator.request_state("t1", "f-1")
 
         drain(scenario)
         first, second = (sent["envelope"]["id"] for _, sent in page.evaluated)

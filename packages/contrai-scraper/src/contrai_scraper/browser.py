@@ -34,6 +34,7 @@ rule and the only thing that makes a timeout diagnosable.
 
 from __future__ import annotations
 
+import secrets
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -257,7 +258,9 @@ class Spectator:
     retrying.
     """
 
-    __slots__ = ("_page", "_profile", "_selectors", "_translator", "_requests")
+    __slots__ = (
+        "_page", "_profile", "_selectors", "_translator", "_requests", "_token"
+    )
 
     def __init__(self, page: Any, profile: Profile) -> None:
         """Bind to one page.
@@ -276,6 +279,11 @@ class Spectator:
         self._selectors = profile.selectors
         self._translator = Translator(profile)
         self._requests = 0
+        # The site drops a state request whose id another session sent in
+        # the last five minutes or so: every session counting from 1 lost 47%
+        # of first attempts with 16 workers. A token of this session's own
+        # keeps the ids apart while the counter keeps them in order.
+        self._token = secrets.token_hex(6)
 
     async def log_in(self) -> None:
         """Navigate to the lobby and sign in with the spectator account.
@@ -719,7 +727,7 @@ class Spectator:
         wire = self._profile.wire
         self._requests += 1
         envelope = {
-            "id": f"contrai-{self._requests}",
+            "id": f"contrai-{self._token}-{self._requests}",
             "action": wire.resume_action,
             "data": {
                 "room": f"{wire.resume_room_prefix}{table_id}",

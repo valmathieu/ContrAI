@@ -842,11 +842,11 @@ class Recorder:
     async def _unanswered(self) -> None:
         """Settle a request whose answer did not come in time.
 
-        The first attempt is retried once on another socket: the site
-        acknowledges some requests and never answers them, and ours always
-        went out on the newest socket, which was never the one the page itself
-        had switched to the table's room. Whether that helps is measured by
-        this very retry. After two silences the panel is read instead.
+        The first attempt is retried once, on another socket. The silences
+        were measured to come from request ids another session had just sent,
+        not from the socket (socket 0 and 1 went unanswered alike), and each
+        session now draws ids of its own; the retry stays as a cheap guard
+        against what is left. After two silences the panel is read instead.
         """
 
         pending = self._pending
