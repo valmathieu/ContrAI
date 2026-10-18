@@ -205,12 +205,29 @@ def _players(
             id=identity,
             name=translator.field(block, "player_name"),
             account=translator.field(block, "player_account"),
-            level=translator.field(block, "player_level"),
+            level=_level(translator.field(block, "player_level")),
             kind=translator.field(block, "player_kind"),
             team_letter=translator.field(block, "team"),
             position=seats.get(identity) or translator.position(placement),
         )
     return players
+
+
+def _level(value: Any) -> str | None:
+    """Spell a player's level as the text the record keeps.
+
+    The site sent the level as text until 2026-10-15 and as a number since,
+    so both read the same: ``2`` and ``"2"`` are both ``"2"``. A value of any
+    other shape is dropped rather than refused, because the level only
+    describes a seat; refusing it would lose the whole game over it.
+    """
+
+    if isinstance(value, bool):
+        # bool is a subclass of int, and True is no level.
+        return None
+    if isinstance(value, int):
+        return str(value)
+    return value if isinstance(value, str) else None
 
 
 def _round_state(

@@ -46,6 +46,22 @@ class TestPlayers:
         players = read(profile, builders.snapshot_payload()).players
         assert players["p2"].level is None
 
+    @pytest.mark.parametrize(("sent", "read_as"), [(7, "7"), (0, "0")])
+    def test_a_numeric_level_reads_as_its_text(self, profile, builders, sent, read_as):
+        # Measured live: the site switched from "2" to 2 on 2026-10-15, and
+        # level 0 appeared with it. The record keeps the level as text, so a
+        # number is spelled out rather than refused, and 0 is not mistaken
+        # for a missing level.
+        payload = builders.snapshot_payload()
+        payload["state"]["people"]["top"]["grade"] = sent
+        assert read(profile, payload).players["p1"].level == read_as
+
+    @pytest.mark.parametrize("sent", [{"tier": 7}, True])
+    def test_a_level_of_another_type_reads_as_none(self, profile, builders, sent):
+        payload = builders.snapshot_payload()
+        payload["state"]["people"]["top"]["grade"] = sent
+        assert read(profile, payload).players["p1"].level is None
+
     def test_a_player_block_without_an_id_is_skipped(self, profile, builders):
         payload = builders.snapshot_payload()
         payload["state"]["people"]["top"] = {"label": "Nobody"}
