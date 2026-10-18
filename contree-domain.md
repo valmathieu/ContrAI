@@ -375,7 +375,7 @@ The grid is **symmetric**: whichever side wins the contract marks the amount (de
 
 **Slam** is **made** when the declaring team wins **all 8 tricks**. Anything less is a failure → the defense marks the amount.
 
-**Solo Slam** is **made** only when the **declaring player personally** wins every one of the 8 tricks. The team winning all 8 together is **not** enough — if the partner wins any trick, the Solo Slam fails and the defense marks the amount.
+**Solo Slam** is **made** only when the **declaring player personally** wins every one of the 8 tricks. The team winning all 8 together is **not** enough — if the partner wins any trick, the Solo Slam fails and the defense marks the amount. The observed online tables, which write a sweep's card points as a flat figure, write such a team sweep as the team's **250**, keeping the **500** for the Solo Slam the declarer made.
 
 **Belote (+20)** still applies on top of the Slam grid: it goes to whichever team holds the K + Q of trump, independent of which side wins the contract.
 

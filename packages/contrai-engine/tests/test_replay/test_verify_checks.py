@@ -926,13 +926,37 @@ class TestTakenAgrees:
             is True
         )
 
-    def test_a_solo_slam_does_not_accept_the_team_substitute(self):
+    def test_a_made_solo_slam_does_not_accept_the_team_substitute(self):
         # The tolerance widens to the round's own figure, not to "any
-        # slam number": 250 on a Solo Slam is still a disagreement.
+        # slam number": 250 on a made Solo Slam is still a disagreement.
         assert (
             _taken_agrees(
                 _score(card_points={TeamSide.NS: 0, TeamSide.EW: 162}),
                 _Scored(taken={TeamSide.NS: 0, TeamSide.EW: 250}),
+                SlamOutcome.SOLO_SLAM,
+            )
+            is False
+        )
+
+    def test_a_failed_solo_slam_the_team_swept_states_the_team_250(self):
+        # obs-de3fd7d4 round 9: South's Solo Slam, North took a trick, so
+        # the contract failed (§7.2) though the team swept. The site wrote
+        # the team's 250, not the Solo Slam's 500, in the card-points
+        # column, as it did on all six such rounds of the corpus.
+        assert (
+            _taken_agrees(
+                _score(made=False, card_points={TeamSide.NS: 162, TeamSide.EW: 0}),
+                _Scored(taken={TeamSide.NS: 250, TeamSide.EW: 0}),
+                SlamOutcome.SOLO_SLAM,
+            )
+            is True
+        )
+
+    def test_a_failed_solo_slam_does_not_accept_the_500(self):
+        assert (
+            _taken_agrees(
+                _score(made=False, card_points={TeamSide.NS: 162, TeamSide.EW: 0}),
+                _Scored(taken={TeamSide.NS: 500, TeamSide.EW: 0}),
                 SlamOutcome.SOLO_SLAM,
             )
             is False

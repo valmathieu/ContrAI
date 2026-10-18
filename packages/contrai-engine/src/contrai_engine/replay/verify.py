@@ -737,27 +737,33 @@ def _check_contract_terms(
         )
 
 
-def _sweep_substitute(slam: SlamOutcome) -> int | None:
+def _sweep_substitute(slam: SlamOutcome, *, made: bool | None) -> int | None:
     """The flat figure an observed table writes in place of a swept pile.
 
     §7.2: the substitute is the base value of the Slam-family level the
-    round carries — **500** for an announced Solo Slam, **250** for an
-    announced Slam and for an unannounced sweep alike. The engine's own
-    personal-sweep premium (:func:`sweep_substitute`, which pays a
+    round carries — **500** for an announced Solo Slam the declarer made,
+    **250** for an announced Slam and for an unannounced sweep alike. A
+    Solo Slam the *team* swept, the partner taking a trick, has failed
+    (§7.2) and is written as the team's 250: observed on all six such
+    rounds of the 2026-10-18 corpus, each marked 500 to the defense. The
+    engine's own personal-sweep premium (:func:`sweep_substitute`, which pays a
     declarer's solo sweep the Solo Slam's 500) is a *marking* rule and
     never reaches this column: an unannounced sweep is written 250
     whoever took the tricks.
 
     Args:
         slam: The round's slam classification.
+        made: Whether the contract was made, as the replay scored it.
 
     Returns:
         The substitute figure, or ``None`` when the round is no sweep at
         all and the real pile is the only acceptable answer.
     """
 
-    if slam is SlamOutcome.SOLO_SLAM:
+    if slam is SlamOutcome.SOLO_SLAM and made:
         return SlamLevel.SOLO_SLAM.base_value
+    if slam is SlamOutcome.SOLO_SLAM:
+        return SlamLevel.SLAM.base_value
     if slam in (SlamOutcome.SLAM, SlamOutcome.UNANNOUNCED):
         return SlamLevel.SLAM.base_value
     return None
@@ -806,8 +812,8 @@ def _taken_agrees(
     the flat Slam substitute rather than the 162 actually on the table,
     while the engine records the real pile. Both are true statements
     about the same round, so a sweep accepts either — but only its *own*
-    substitute, so a Solo Slam's 500 and a Slam's 250 stay distinct and
-    a wrong figure is still a fault.
+    substitute, so a made Solo Slam's 500 and a Slam's 250 stay distinct
+    and a wrong figure is still a fault.
 
     The table writes a *defense's* sweep the same way, as the team's 250
     — a recording convention, whatever the ruleset then marks for it —
@@ -829,7 +835,7 @@ def _taken_agrees(
     theirs = {side: recorded.taken.get(side, 0) for side in TeamSide}
     if mine == theirs:
         return True
-    substitute = _sweep_substitute(slam)
+    substitute = _sweep_substitute(slam, made=score.contract_made)
     if substitute is None:
         if defense_sweeper is None:
             return False
