@@ -952,6 +952,19 @@ class TestTakenAgrees:
             is True
         )
 
+    def test_a_split_pile_does_not_accept_a_substitute(self):
+        # A substitute stands in for one side's whole pile: a replay that
+        # split the 162 cannot agree with 250 against 0, even under a
+        # slam classification.
+        assert (
+            _taken_agrees(
+                _score(card_points={TeamSide.NS: 140, TeamSide.EW: 22}),
+                _Scored(taken={TeamSide.NS: 250, TeamSide.EW: 0}),
+                SlamOutcome.SLAM,
+            )
+            is False
+        )
+
     def test_a_failed_solo_slam_does_not_accept_the_500(self):
         assert (
             _taken_agrees(

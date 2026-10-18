@@ -850,6 +850,11 @@ def _taken_agrees(
         )
     if sweeper is None:
         return False
+    if any(points for side, points in mine.items() if side is not sweeper):
+        # The replay split the pile: a substitute stands in for a whole
+        # pile only, so a figure on one side and zero on the other cannot
+        # describe this round, whatever its classification says.
+        return False
     return theirs == {
         side: (substitute if side is sweeper else 0) for side in TeamSide
     }
