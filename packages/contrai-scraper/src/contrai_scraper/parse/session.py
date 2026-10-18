@@ -226,6 +226,7 @@ def parse_session(
         raise ParseError(
             "The session carries no join snapshot, so no seat map is known"
         )
+    ordered, stray_notes = _without_strays(ordered, snapshots)
 
     opening = snapshots[0]
     seat_of_player = dict(opening.seats)
@@ -259,7 +260,9 @@ def parse_session(
         ),
     ]
 
-    notes: list[str] = [*_draw_notes(ordered, profile.wire), *sheet.notes]
+    notes: list[str] = [
+        *stray_notes, *_draw_notes(ordered, profile.wire), *sheet.notes
+    ]
     skipped: list[int] = []
     last = max(rounds, default=0)
     for number in sorted(rounds):
@@ -368,6 +371,48 @@ def observed_game_id(wire_game: str) -> str:
     """
 
     return f"obs-{wire_game}"
+
+
+def _without_strays(
+    events: tuple[WireEvent, ...], snapshots: Sequence[Snapshot]
+) -> tuple[tuple[WireEvent, ...], list[str]]:
+    """Leave out the in-game events of a game no snapshot of the table names.
+
+    When a worker is seated, a play or two of the table it had just rendered
+    can still be in flight, and land after the new table's join snapshot —
+    on the box, 19 sessions carried such a stray, 1 or 2 events each, never a
+    deal. Kept, a stray's earliest clock named the whole record after the
+    wrong game, and its round number collided with the seated game's own.
+    Each snapshot names the game it describes, so a game none of them names
+    was never at this table.
+
+    The cut is made only when some event belongs to a game a snapshot names:
+    a join at a game's boundary can name the game just ended while every
+    event is the next one's, and that next game is the visit, not a stray.
+
+    Args:
+        events: The session's events, in order.
+        snapshots: Its join snapshots.
+
+    Returns:
+        The events without the strays, and one note per game left out.
+    """
+
+    named = {snapshot.game_id for snapshot in snapshots if snapshot.game_id}
+    keyed = [event.key.game for event in events if event.key is not None]
+    if not named.intersection(keyed):
+        return events, []
+    strays = Counter(game for game in keyed if game not in named)
+    notes = [
+        f"{count} event(s) of game {game} left out: no snapshot of this table "
+        "names it, so it was in flight from another table"
+        for game, count in strays.items()
+    ]
+    kept = tuple(
+        event for event in events
+        if event.key is None or event.key.game not in strays
+    )
+    return kept, notes
 
 
 def _wire_game_id(events: Sequence[WireEvent]) -> str:

@@ -732,6 +732,51 @@ def _lifecycle(at=None):
     return WireEvent(kind="updateTable", key=None, data={}, received_ms=at)
 
 
+def _with_a_stray(texts, builders):
+    """The session with one play of another game just after its opening read.
+
+    The shape of the box's ``several_games`` sessions: a play of the table
+    the sweep had just rendered lands after the seated table's snapshot, and
+    its clock is the earliest of the session's.
+    """
+
+    stray = (builders.play_frame(game="gx", round_=7, at=1), 0)
+    return [texts[0], stray, *texts[1:]]
+
+
+class TestStrayEvents:
+    def test_a_stray_play_does_not_name_the_record(
+        self, profile, builders, source_game, synthesize
+    ):
+        texts = _with_a_stray(synthesize(source_game), builders)
+        assert _parse(profile, texts).events[0].game_id == "obs-g1"
+
+    def test_a_stray_play_leaves_the_record_as_it_was(
+        self, profile, builders, source_game, synthesize
+    ):
+        texts = synthesize(source_game)
+        clean = _parse(profile, texts)
+        strayed = _parse(profile, _with_a_stray(texts, builders))
+        assert _comparable(strayed.events) == _comparable(clean.events)
+        assert strayed.skipped_rounds == clean.skipped_rounds
+
+    def test_a_left_out_stray_is_noted(
+        self, profile, builders, source_game, synthesize
+    ):
+        texts = _with_a_stray(synthesize(source_game), builders)
+        assert any("gx" in note for note in _parse(profile, texts).notes)
+
+    def test_a_snapshot_naming_no_game_seen_leaves_the_events_alone(
+        self, profile, source_game, synthesize
+    ):
+        # A join at a game's boundary can name the game just ended while
+        # every event belongs to the next one. Nothing the snapshot names is
+        # played, so nothing is a stray: the record is the events' game.
+        result = _parse(profile, synthesize(source_game, game="g2"))
+        assert result.events[0].game_id == "obs-g2"
+        assert not any("left out" in note for note in result.notes)
+
+
 class TestSplitVisits:
     def test_two_tables_become_two_visits(self, profile):
         events = [_snap("t1"), _played("g1", 1), _snap("t2"), _played("g2", 1)]

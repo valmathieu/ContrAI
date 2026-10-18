@@ -119,6 +119,20 @@ class TestBuild:
             "a tie, kept the first origin in sorted order")
 
 
+    def test_a_stray_play_from_another_table_does_not_name_the_game(
+        self, root, tmp_path, profile_path, source_game, synthesize, builders
+    ):
+        # The box's several_games shape: a play of the table rendered just
+        # before lands after the seated table's snapshot, with the earliest
+        # clock. It used to name the record, filing the game as obs-gx.
+        frames = synthesize(source_game)
+        stray = (builders.play_frame(game="gx", round_=7, at=1), 0)
+        _write_log(raw_path(tmp_path / "box-raw", "session-s"),
+                   [frames[0], stray, *frames[1:]])
+        assert _build(root, profile_path, f"box={tmp_path / 'box-raw'}") == 0
+        assert [p.name for p in (root / "games").iterdir()] == ["obs-g1.jsonl"]
+
+
 class TestRebuild:
     def test_a_rebuild_is_idempotent(self, root, profile_path, raw_log_path,
                                      partial_raw_log_path, capsys):

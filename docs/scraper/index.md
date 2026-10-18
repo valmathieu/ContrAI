@@ -135,6 +135,16 @@ how many visits a log carried. Without the cut a re-parse merged tables — roun
 belonged elsewhere were dropped as undealable, records took whichever game id came first, and
 records appeared for games no recorder ever accepted.
 
+Filing by key has one blind spot: a stray whose own table left no trace in the log. When a fleet
+worker is seated, a play or two of the table its sweep had just rendered can land after the seated
+table's snapshot, 0–4 s late and with the earliest clock of the visit — 19 sessions on the box, 1
+or 2 events each, never a deal. Its game was named by no snapshot, so it was filed with the seated
+game, and its clock then named the record: 5 of the 19 were written under the stray's id, one
+displacing the genuine copy of that game and two real games lost as its duplicates. `parse_session`
+now leaves out the in-game events of a game no join snapshot in its input names, with a note — but
+only when some event belongs to a game a snapshot does name, since a join at a game's boundary can
+name the game just ended while every event is the next one's.
+
 The live path makes the same cut, as a check rather than a split. A session buffers one table
 because it seats one table, but that is true only by construction: a seat taken one table behind
 the page once filled a buffer with 108 events of another table against 59 of its own, and the
