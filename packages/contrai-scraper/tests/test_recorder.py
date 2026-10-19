@@ -1858,6 +1858,120 @@ def _finished_game(game_builders):
 STRANGERS = ("2001", "2002", "2003", "2004")
 
 
+def _called_off(called_off, **kwargs):
+    """A chase that asks ``called_off`` whether someone else found its game."""
+
+    import dataclasses
+
+    return dataclasses.replace(_target(**kwargs), called_off=called_off)
+
+
+class LostRace:
+    """A worker's claims that lose the race to the chased table at the last gate.
+
+    Nobody holds the table when the gates start, so the roster is matched;
+    another worker's claim lands while the page is read, so this one's fails.
+    """
+
+    worker = "bot01"
+
+    def __init__(self):
+        self.lost = False
+
+    def seen(self, table_id, **kwargs):
+        pass
+
+    def holder(self, table_id):
+        return "bot02" if self.lost else None
+
+    def claim(self, table_id):
+        self.lost = True
+        return False
+
+    def release(self):
+        pass
+
+
+class TestCalledOff:
+    """A chase run beside others after one game stops once one of them has it."""
+
+    def test_a_chase_called_off_between_tables_hops_no_more(self, profile, builders):
+        found: list[bool] = []
+        lines: list[str] = []
+        spectator = FakeSpectator()
+        script = [lambda: found.append(True),
+                  table_frame(builders, "t0", STRANGERS, frame_id="x0"),
+                  table_frame(builders, "t2", STRANGERS, frame_id="x1")]
+        summary = run_recorder(spectator, script, profile,
+                               target=_called_off(lambda: bool(found)),
+                               health=HealthLog(write=lines.append))
+        events = [json.loads(line)["event"] for line in lines]
+        assert (summary.stop_reason, _only(lines, "hunt_called_off")["distinct"],
+                "chase_gave_up" in events, spectator.calls) == (
+            StopReason.HUNT_CALLED_OFF, 1, False, [])
+
+    def test_a_chase_that_loses_the_claim_race_is_called_off_not_refused(
+        self, profile, builders
+    ):
+        claims = LostRace()
+        lines: list[str] = []
+        spectator = FakeSpectator()
+        script = [table_frame(builders, "t1", T1_ACCOUNTS, frame_id="x0")]
+        summary = run_recorder(spectator, script, profile, claims=claims,
+                               target=_called_off(lambda: claims.lost),
+                               health=HealthLog(write=lines.append))
+        events = [json.loads(line)["event"] for line in lines]
+        assert (summary.stop_reason, "chase_matched" in events, "chase_gave_up" in events,
+                ("next_table",) in spectator.calls) == (
+            StopReason.HUNT_CALLED_OFF, True, False, False)
+
+    def test_a_chase_waiting_for_a_seat_hears_of_it_within_a_slice(
+        self, profile, monkeypatch
+    ):
+        # The page says nothing for a minute; the chase is called off after a
+        # twentieth of a second and must not sit out the whole seat wait.
+        import time
+
+        monkeypatch.setattr("contrai_scraper.recorder.CALL_OFF_POLL_S", 0.01)
+        lines: list[str] = []
+        off_at = time.monotonic() + 0.05
+        started = time.monotonic()
+        summary = run_recorder(FakeSpectator(), [], profile,
+                               source=StallingFrameSource([], stalls=1000),
+                               target=_called_off(lambda: time.monotonic() >= off_at),
+                               health=HealthLog(write=lines.append))
+        events = [json.loads(line)["event"] for line in lines]
+        assert (summary.stop_reason, "seat_timeout" in events,
+                time.monotonic() - started < 5) == (
+            StopReason.HUNT_CALLED_OFF, False, True)
+
+    def test_a_chase_that_can_be_called_off_still_times_its_seat_out(
+        self, profile, builders
+    ):
+        import dataclasses
+
+        quick = dataclasses.replace(profile, recorder=dataclasses.replace(
+            profile.recorder, snapshot_timeout_s=0.02))
+        lines: list[str] = []
+        spectator = FakeSpectator()
+        run_recorder(spectator, [], quick, source=StallingFrameSource([], stalls=2),
+                     target=_called_off(lambda: False),
+                     health=HealthLog(write=lines.append))
+        events = [json.loads(line)["event"] for line in lines]
+        assert ("seat_timeout" in events, ("next_table",) in spectator.calls) == (
+            True, True)
+
+    def test_the_winning_chase_is_never_called_off(
+        self, profile, builders, session_frames, game_builders
+    ):
+        script = [table_frame(builders, "t0", STRANGERS, frame_id="x0"),
+                  *session_frames(_finished_game(game_builders))]
+        summary = run_recorder(FakeSpectator(resume=False), script, profile,
+                               target=_called_off(lambda: False))
+        assert (summary.games_recorded, summary.stop_reason) == (
+            1, StopReason.CHASE_ENDED)
+
+
 class TestChase:
     def test_the_chased_table_is_recorded_and_the_chase_ends_there(
         self, profile, builders, session_frames, game_builders

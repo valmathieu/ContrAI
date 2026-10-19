@@ -80,6 +80,11 @@ STATE_ANSWER_S: Final[float] = 5.0
 #: refused: one trick's plays. The strays measured on the box brought 1 or 2.
 STRAY_LIMIT: Final[int] = 4
 
+#: The longest a chase that can be called off waits for a seat before asking
+#: again, in seconds. Its table found elsewhere, every second it goes on
+#: waiting is a second it is not standing by for the next start.
+CALL_OFF_POLL_S: Final[float] = 1.0
+
 
 @dataclass(slots=True)
 class _PendingRead:
@@ -113,6 +118,9 @@ class StopReason(StrEnum):
     CHASE_GAVE_UP = "chase_gave_up"
     """The chased table was not found in budget, or was found and refused."""
 
+    HUNT_CALLED_OFF = "hunt_called_off"
+    """The chase was one of several after the same game, and another won it."""
+
 
 @dataclass(frozen=True, slots=True)
 class ChaseTarget:
@@ -131,6 +139,10 @@ class ChaseTarget:
 
     deadline_s: float
     """Seconds to look before giving up, from the recorder's start."""
+
+    called_off: Callable[[], bool] | None = None
+    """Asked before every seat and every hop: whether someone else has found
+    the game, so this chase should stop looking. ``None`` is a chase alone."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,18 +362,23 @@ class Recorder:
             if self._past_seat_deadline():
                 self._stop(StopReason.WINDOW_CLOSED)
                 return None
-            if self._past_chase_deadline():
-                # Left to the loop, which gives the chase up and says why.
+            if self._past_chase_deadline() or self._called_off():
+                # Left to the loop, which ends the chase and says why.
                 return None
             remaining = self._capped(
                 timeout - (self._monotonic() - started), seating=True
             )
             if remaining <= 0:
                 return await self._give_up_on_seat()
-            pulled = await self._pull(remaining)
+            # A chase that can be called off waits in slices, so it hears of
+            # it within a second rather than at the end of the whole wait.
+            sliced = self._target is not None and self._target.called_off is not None
+            pulled = await self._pull(min(remaining, CALL_OFF_POLL_S) if sliced else remaining)
             if self._stopped:
                 return None
             if pulled is None:
+                if sliced and remaining > CALL_OFF_POLL_S:
+                    continue
                 return await self._give_up_on_seat()
             frame, event = pulled
             if event is None or event.kind != self._join_name:
@@ -671,6 +688,15 @@ class Recorder:
         target = self._target
         if target is None:
             return False
+        if self._called_off():
+            # First: a chase that lost the race to its own table — found it,
+            # then saw it claimed — was not refused by the table.
+            self._health.event(
+                "hunt_called_off", roster=target.roster.digest,
+                distinct=len(self._scanned),
+            )
+            self._stop(StopReason.HUNT_CALLED_OFF)
+            return True
         if self._found is not None:
             # The table was found and one of its gates refused it; nothing
             # else can be the game the roster started.
@@ -687,6 +713,16 @@ class Recorder:
         )
         self._stop(StopReason.CHASE_GAVE_UP)
         return True
+
+    def _called_off(self) -> bool:
+        """Whether this chase's game has been found by somebody else."""
+
+        target = self._target
+        return (
+            target is not None
+            and target.called_off is not None
+            and target.called_off()
+        )
 
     def _record_path(self, wire_game: str) -> Path:
         """Where the record of the game the site calls ``wire_game`` is written."""
@@ -1024,9 +1060,10 @@ class Recorder:
                 recorder is not chasing.
         """
 
-        if self._finished() or self._found is not None:
+        if self._finished() or self._found is not None or self._called_off():
             # A chase that found its table is over once it is left: the next
-            # table is the lobby's to announce, not the server's to offer.
+            # table is the lobby's to announce, not the server's to offer. One
+            # whose game somebody else found has nothing left to look for.
             return
         if (
             self._egress is not None
