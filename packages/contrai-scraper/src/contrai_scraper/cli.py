@@ -429,6 +429,8 @@ async def _fleet(  # pragma: no cover - needs a real browser
         print(f"  -> {path}")
     if summary.workers_down:
         print(f"  workers down: {', '.join(summary.workers_down)}")
+    if summary.revivals:
+        print(f"  revivals: {summary.revivals}")
     return summary
 
 

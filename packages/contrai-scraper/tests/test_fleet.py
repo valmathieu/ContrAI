@@ -809,17 +809,20 @@ class TestWindows:
         harness.run()
         assert (harness.saw("raw_logs_pruned"), old.exists()) == (True, False)
 
-    def test_a_down_worker_sits_out_the_next_window(self, profile):
-        # A worker that spent its budget stays down for the process: the
-        # operator is told once, rather than the account failing every night.
-        harness = Harness(profile, workers=3)
+    def test_with_revival_off_a_down_worker_sits_out_every_later_window(self, profile):
+        # revive_after_minutes = 0 is the fleet before revival: a worker that
+        # spent its budget stays down for the process, however long it waits.
+        harness = Harness(reviving(profile, after=0), workers=3)
         for label in ("bot02", "bot03"):
             harness.script(label, (Walker(), Frames(on_empty=harness.end)))
         fleet = harness.fleet()
         fleet.worker_down("bot01")
+        harness.now = 1e5
         asyncio.run(fleet.run())
         assert (harness.events("fleet_window_opened")[0]["workers"],
-                "bot01@example.invalid" in harness.opened) == (2, False)
+                harness.events("worker_down")[0]["revive_in_s"],
+                harness.saw("worker_reviving"),
+                "bot01@example.invalid" in harness.opened) == (2, None, False, False)
 
 
 class TestHeartbeat:
@@ -832,8 +835,8 @@ class TestHeartbeat:
         harness.run()
         beat = harness.events("fleet_heartbeat")[0]
         roles = beat["hall"] + beat["spare"] + beat["chase"] + beat["out"]
-        assert (beat["workers"], beat["down"], beat["egress_probes"], roles,
-                "logins" in beat) == (2, 0, 0, 2, True)
+        assert (beat["workers"], beat["down"], beat["probation"], beat["egress_probes"],
+                roles, "logins" in beat) == (2, 0, 0, 0, 2, True)
 
     def test_a_worker_in_the_lobby_beats_too(self, profile):
         beating = dataclasses.replace(
@@ -1191,6 +1194,159 @@ class TestStartup:
         assert (harness.events("census_skipped")[0]["reason"], walker.calls,
                 harness.saw("census")) == (
             "bootstrap", ["log_in", "enter_lobby", "read_tournament_hash"], False)
+
+
+def reviving(profile, *, after=1, most=240, attempts=3):
+    """The fixture profile with revival timed for a test: a minute, by default."""
+
+    return dataclasses.replace(profile, fleet=dataclasses.replace(
+        profile.fleet, revive_after_minutes=after, revive_max_minutes=most,
+        revive_attempts=attempts))
+
+
+def downed_then(harness, *sessions):
+    """bot01 spends its whole failure budget, then opens ``sessions`` on probation."""
+
+    refused = (Walker(fail={"log_in": "refused"}), Frames())
+    harness.script("bot01", *[refused] * FAILURE_BUDGET, *sessions)
+
+
+def past_the_revival(harness):
+    """An ``on_empty`` that moves the clock a minute on once bot01 is down.
+
+    Once only: the lobby's quiet watchdog runs on the same clock, and a
+    clock moved on every poll would take the watchers' lobbies for deaf.
+    """
+
+    moved = []
+
+    def poll():
+        if harness.saw("worker_down") and not moved:
+            moved.append(True)
+            harness.now += 61.0
+        harness.end_when_done()
+
+    return poll
+
+
+class TestRevival:
+    def test_a_down_worker_is_revived_in_the_same_window(self, profile):
+        # bot01 fails three logins in a row and goes down; a minute later it
+        # gets a probation login, stands by as the spare, and is up again.
+        harness = Harness(reviving(profile), workers=3)
+        downed_then(harness, (Walker(), Frames(on_empty=harness.end_when_done)))
+        poll = past_the_revival(harness)
+        for label in ("bot02", "bot03"):
+            harness.script(label, (Walker(), Frames(on_empty=poll)))
+        harness.until = lambda: harness.saw("worker_revived")
+        result = harness.run()
+        down = harness.events("worker_down")[0]
+        assert ((down["worker"], down["revive_in_s"]),
+                [entry["attempt"] for entry in harness.events("worker_reviving")],
+                harness.events("worker_revived")[0]["down"],
+                ("bot01", "out", "revived") in harness.roles(),
+                standing(harness, "bot01"), harness.logins("bot01"),
+                result.revivals, result.workers_down) == (
+            ("bot01", 60.0), [1], 0, True, True, FAILURE_BUDGET + 1, 1, ())
+
+    def test_each_failed_revival_doubles_the_wait_up_to_the_cap_then_retires(
+        self, profile
+    ):
+        harness = Harness(reviving(profile, most=3, attempts=3), workers=3)
+        for label in ("bot02", "bot03"):
+            harness.script(label, (Walker(), Frames(on_empty=harness.end)))
+        fleet = harness.fleet()
+        # A first down, then three probations that failed.
+        for _ in range(4):
+            fleet.worker_down("bot01")
+        harness.now = 1e5
+        result = asyncio.run(fleet.run())
+        assert ([entry["revive_in_s"] for entry in harness.events("worker_down")],
+                [(entry["worker"], entry["attempts"])
+                 for entry in harness.events("worker_retired")],
+                harness.saw("worker_reviving"), result.workers_down) == (
+            [60.0, 120.0, 180.0, None], [("bot01", 3)], False, ("bot01",))
+
+    def test_a_worker_due_while_no_window_was_open_joins_the_next_one(self, profile):
+        harness = Harness(reviving(profile), workers=3)
+        for label in ("bot01", "bot02", "bot03"):
+            harness.script(label, (Walker(), Frames(on_empty=harness.end_when_done)))
+        harness.until = lambda: harness.saw("worker_revived")
+        fleet = harness.fleet()
+        fleet.worker_down("bot01")
+        harness.now = 61.0
+        result = asyncio.run(fleet.run())
+        # bot01 is first in fleet order, so its probation is a watcher's.
+        assert (harness.events("fleet_window_opened")[0]["workers"],
+                harness.events("worker_revived")[0]["worker"],
+                harness.walkers["bot01"][0].calls[:2], result.revivals) == (
+            3, "bot01", ["log_in", "enter_lobby"], 1)
+
+    def test_a_failed_probation_is_one_session_not_a_budget(self, profile):
+        harness = Harness(reviving(profile), workers=3)
+        downed_then(harness, (Walker(fail={"log_in": "still refused"}), Frames()))
+        poll = past_the_revival(harness)
+        for label in ("bot02", "bot03"):
+            harness.script(label, (Walker(), Frames(on_empty=poll)))
+        harness.until = lambda: len(harness.events("worker_down")) == 2
+        result = harness.run()
+        downs = harness.events("worker_down")
+        assert ([entry["revive_in_s"] for entry in downs], harness.logins("bot01"),
+                harness.saw("worker_revived"), result.workers_down) == (
+            [60.0, 120.0], FAILURE_BUDGET + 1, False, ("bot01",))
+
+    def test_a_revived_worker_no_longer_counts_as_down(self, profile):
+        # The majority rule counts the workers down now, not every worker
+        # that ever went down.
+        fleet = Harness(profile, workers=3).fleet()
+        fleet.worker_down("bot01")
+        fleet.worker_revived("bot01")
+        fleet.worker_down("bot02")
+        with pytest.raises(ShiftError, match="2 of 3 workers are down"):
+            fleet.worker_down("bot03")
+
+    def test_the_window_lasts_as_long_as_a_revived_worker_does(self, profile, builders):
+        # Two workers: bot01 goes down, comes back as a watcher and chases a
+        # start. The window then closes while that chase is still on: bot02
+        # is gone, and only the revived task holds the window open — which
+        # the heartbeat must go on saying.
+        beating = dataclasses.replace(
+            reviving(profile), recorder=dataclasses.replace(profile.recorder,
+                                                            health_interval_s=0))
+        harness = Harness(beating, workers=2)
+        beat_while_alone = []
+
+        def originals_gone():
+            return any(entry["worker"] == "bot02" and entry["why"] == "stopped"
+                       for entry in harness.events("role"))
+
+        class Outliving:
+            def __call__(self, spectator, frames, profile, health, **kwargs):
+                class Chase:
+                    async def run(self):
+                        while not originals_gone():
+                            await asyncio.sleep(0.01)
+                        seen = len(harness.events("fleet_heartbeat"))
+                        for _ in range(100):
+                            await asyncio.sleep(0.01)
+                            if len(harness.events("fleet_heartbeat")) > seen:
+                                beat_while_alone.append(True)
+                                break
+                        return summary()
+
+                return Chase()
+
+        class EndingWalker(Walker):
+            async def enter_table_from_lobby(self):
+                await super().enter_table_from_lobby()
+                harness.end()
+
+        harness.recorder = Outliving()
+        downed_then(harness, (EndingWalker(), Frames([full_row(builders)], deaf=True)))
+        harness.script("bot02", (Walker(), Frames(on_empty=past_the_revival(harness))))
+        result = harness.run()
+        assert (beat_while_alone, result.chases, harness.saw("worker_revived")) == (
+            [True], 1, True)
 
 
 class DrainingWalker(Walker):

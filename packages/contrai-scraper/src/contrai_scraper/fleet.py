@@ -21,12 +21,15 @@ whether — one tunnel and one gate for everyone — and inside an open window o
 Chromium carries a session per worker. What changes is failure. A shift's
 budgets end the process, which would take every worker down for one account's
 bad luck; here each worker spends a budget of its own and goes down alone, and
-the process hands itself back only once a majority of workers are down.
+the process hands itself back only once a majority of workers are down. A down
+worker is not lost for good: after a backoff it is given a probation login, and
+only an account that keeps failing those is retired.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import time
 from collections.abc import Awaitable, Callable
@@ -111,6 +114,27 @@ class FleetSummary:
 
     bootstrap_games: int = 0
     """Games those workers recorded, from where they joined."""
+
+    revivals: int = 0
+    """Probation logins given to down workers."""
+
+
+@dataclass(slots=True)
+class _Down:
+    """One down worker: when it may try again, and how often it already has."""
+
+    attempts: int = 0
+    """Revivals that failed since the worker first went down."""
+
+    next_try: float | None = None
+    """When the next revival is due, on the fleet's clock; ``None`` when none
+    is: revival is off, one is under way, or the worker is retired."""
+
+    reviving: bool = False
+    """Whether the worker is on probation now, logged in or logging in."""
+
+    retired: bool = False
+    """Whether it has spent ``revive_attempts`` and stays down for the process."""
 
 
 async def hold_forever() -> None:
@@ -198,7 +222,7 @@ class Fleet:
         "_recorder", "_workers", "_windows", "_chases", "_gave_up", "_games",
         "_seated", "_rejected", "_records", "_down", "_run_deadline",
         "_seat_deadline", "_hard_deadline", "_census_due", "_census_sightings",
-        "_bootstraps", "_bootstrap_games",
+        "_bootstraps", "_bootstrap_games", "_revivals",
         "_rota", "_hold", "_drain_at", "_drained", "_drain_games", "_drain_cut",
     )
 
@@ -276,9 +300,10 @@ class Fleet:
         self._drain_games = self._drain_cut = 0
         self._windows = self._chases = self._gave_up = 0
         self._games = self._seated = self._rejected = 0
-        self._bootstraps = self._bootstrap_games = 0
+        self._bootstraps = self._bootstrap_games = self._revivals = 0
         self._records: list[Path] = []
-        self._down: list[str] = []
+        # Every worker down now, retired ones included, in the order they went.
+        self._down: dict[str, _Down] = {}
         self._run_deadline: float | None = None
         self._seat_deadline: float | None = None
         self._hard_deadline: float | None = None
@@ -371,6 +396,7 @@ class Fleet:
             workers_down=tuple(self._down),
             bootstraps=self._bootstraps,
             bootstrap_games=self._bootstrap_games,
+            revivals=self._revivals,
         )
 
     async def _window(self, now: datetime) -> None:
@@ -390,7 +416,14 @@ class Fleet:
             None if hard_in is None else base + hard_in, self._run_deadline
         )
 
-        live = [worker for worker in self._workers if worker.label not in self._down]
+        # A down worker whose wait ran out while no window was open comes back
+        # with the others, on probation.
+        for worker in self._due():
+            self._begin_revival(worker)
+        live = [
+            worker for worker in self._workers
+            if worker.label not in self._down or self._down[worker.label].reviving
+        ]
         self._windows += 1
         self._health.event("fleet_window_opened", workers=len(live))
         async with self._open_browser(self._profile, headless=self._headless) as browser:
@@ -401,8 +434,14 @@ class Fleet:
             try:
                 async with asyncio.TaskGroup() as group:
                     group.create_task(self._beat(done))
-                    tasks = [group.create_task(worker.run(browser)) for worker in live]
-                    await asyncio.wait(tasks)
+                    tasks = {group.create_task(worker.run(browser)) for worker in live}
+                    group.create_task(self._reviver(done, browser, group, tasks))
+                    # The set grows while the window runs, as workers are
+                    # revived; the window lasts until every one has finished,
+                    # or the heartbeat would stop under a revived worker.
+                    while tasks:
+                        await asyncio.wait(set(tasks))
+                        tasks.difference_update({task for task in tasks if task.done()})
                     done.set()
             except* ShiftError as raised:
                 raise raised.exceptions[0] from None
@@ -418,9 +457,62 @@ class Fleet:
             except TimeoutError:
                 self._health.fleet_heartbeat(
                     down=len(self._down),
+                    probation=sum(entry.reviving for entry in self._down.values()),
                     egress_probes=getattr(self._egress, "probes", None),
                     **self._rota.counts(),
                 )
+
+    async def _reviver(
+        self,
+        done: asyncio.Event,
+        browser: Any,
+        group: asyncio.TaskGroup,
+        tasks: set[asyncio.Task[None]],
+    ) -> None:
+        """Bring down workers back into the window as their waits run out.
+
+        Polled on real time, like the lobby's waits, since the fleet's own
+        clock only moves when somebody reads it. A stopping fleet revives
+        nobody: the worker would only log out again.
+
+        Args:
+            done: Set once every worker of the window has finished.
+            browser: The window's browser, which a revived worker opens on.
+            group: The window's task group, which a revived worker runs in.
+            tasks: The window's worker tasks, which the revived join.
+        """
+
+        while not done.is_set():
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(done.wait(), HALL_POLL_S)
+            if done.is_set() or self.stopping():
+                continue
+            for worker in self._due():
+                self._rota.revive(worker.label)
+                self._begin_revival(worker)
+                tasks.add(group.create_task(worker.run(browser)))
+
+    def _due(self) -> list[Worker]:
+        """The down workers whose wait has run out, in fleet order."""
+
+        now = self._monotonic()
+        return [
+            worker for worker in self._workers
+            if (entry := self._down.get(worker.label)) is not None
+            and entry.next_try is not None and now >= entry.next_try
+        ]
+
+    def _begin_revival(self, worker: Worker) -> None:
+        """Put a down worker on probation: one login, one failure allowed."""
+
+        entry = self._down[worker.label]
+        entry.reviving = True
+        entry.next_try = None
+        worker.probation()
+        self._revivals += 1
+        self._health.event(
+            "worker_reviving", worker=worker.label, attempt=entry.attempts + 1
+        )
 
     def _over(self) -> bool:
         """Whether the run is over: drained, or its own limits met — games or time."""
@@ -623,16 +715,51 @@ class Fleet:
     def worker_down(self, label: str) -> None:
         """Count a worker out, and hand the process back if most of them are.
 
+        A worker going down for the first time waits ``revive_after_minutes``
+        for a probation login; one whose probation failed waits twice as long
+        as the last time, up to ``revive_max_minutes``, and after
+        ``revive_attempts`` failed revivals it is retired for the process.
+        Workers on probation and retired ones still count as down.
+
         Raises:
             ShiftError: Once more than half the fleet is down — the point at
                 which a fresh process is worth more than the workers left.
         """
 
-        self._down.append(label)
-        self._health.event("worker_down", worker=label, down=len(self._down))
+        section = self.section
+        entry = self._down.get(label)
+        if entry is None:
+            entry = self._down[label] = _Down()
+        else:
+            # Only a worker on probation runs while down: its revival failed.
+            entry.reviving = False
+            entry.attempts += 1
+        after = section.revive_after_minutes * _MINUTE_S
+        revive_in: float | None = None
+        # Any earlier revival time is spent, whatever comes next.
+        entry.next_try = None
+        if entry.attempts >= section.revive_attempts:
+            entry.retired = True
+        elif after:
+            revive_in = min(after * 2**entry.attempts, section.revive_max_minutes * _MINUTE_S)
+            entry.next_try = self._monotonic() + revive_in
+        self._health.event(
+            "worker_down", worker=label, down=len(self._down), revive_in_s=revive_in
+        )
+        if entry.retired:
+            self._health.event("worker_retired", worker=label, attempts=entry.attempts)
         self._rota.drop(label)
         if len(self._down) * 2 > len(self._workers):
             raise ShiftError(f"{len(self._down)} of {len(self._workers)} workers are down")
+
+    def worker_revived(self, label: str) -> None:
+        """A worker on probation has reached a place: it is up again."""
+
+        entry = self._down.pop(label)
+        self._health.event(
+            "worker_revived", worker=label, attempt=entry.attempts + 1,
+            down=len(self._down),
+        )
 
     async def pause(self, seconds: float) -> None:
         """Wait on the fleet's own clock."""
@@ -669,7 +796,7 @@ class Worker:
     """One account: log in, wait in the lobby, chase, record, and back again."""
 
     __slots__ = ("_fleet", "_label", "_profile", "_browser", "_health", "_claims",
-                 "_failures", "_censused", "_deaf_streak")
+                 "_failures", "_censused", "_deaf_streak", "_probation")
 
     def __init__(self, fleet: Fleet, account: LabelledAccount) -> None:
         """Bind a worker to its fleet and its account.
@@ -690,12 +817,38 @@ class Worker:
         self._censused = False
         # Free rebuilds of a deaf lobby since a roster was last heard.
         self._deaf_streak = 0
+        self._probation = False
 
     @property
     def label(self) -> str:
         """The account's opaque name."""
 
         return self._label
+
+    def probation(self) -> None:
+        """Come back from down with one failure left before going down again.
+
+        A probation costs one login: a worker revived on an account that
+        still cannot log in is down again after that one session, not after
+        another whole failure budget.
+        """
+
+        self._probation = True
+        self._failures = FAILURE_BUDGET - 1
+        self._deaf_streak = 0
+
+    def _placed(self) -> None:
+        """Mark the first place a session reaches: the lobby, a stand-by, a table.
+
+        For a worker on probation that is the proof the account works again:
+        it is up, and its failures start from nothing like any fresh worker's.
+        """
+
+        if not self._probation:
+            return
+        self._probation = False
+        self._failures = 0
+        self._fleet.worker_revived(self._label)
 
     async def run(self, browser: Any) -> None:
         """Sessions, one after another, until the fleet stops or this worker is down.
@@ -903,6 +1056,7 @@ class Worker:
             self._health.event("table_exited", exited=exited)
         # ``place``, not ``at``: every line's ``at`` is its timestamp.
         self._health.event("standing_by", place=at.value)
+        self._placed()
         iterator = aiter(frames)
         interval = self._profile.recorder.health_interval_s
         heard = fleet.now()
@@ -1237,6 +1391,7 @@ class Worker:
         iterator = aiter(frames)
         interval = self._profile.recorder.health_interval_s
         self._health.event("in_hall")
+        self._placed()
         # Two watchdogs. ``heard`` listens to the connection: any received
         # frame counts, keepalives included, and only what we sent ourselves
         # does not. ``news`` listens to the site: only a frame that is a site
@@ -1349,6 +1504,7 @@ class Worker:
 
         fleet = self._fleet
         await spectator.enter_variant()
+        self._placed()
         seat_in, hard_in = fleet.seconds_left()
         recorder = fleet.recorder(
             spectator, frames, self._profile, self._health,

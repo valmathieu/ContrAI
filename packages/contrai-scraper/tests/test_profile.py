@@ -513,6 +513,31 @@ class TestFleet:
                            match=r"\[fleet\]\.bootstrap_enabled must be bool, not int"):
             load_profile(_write(tmp_path, text))
 
+    def test_revival_is_on_unless_a_profile_says_otherwise(self, profile):
+        fleet = profile.fleet
+        assert (fleet.revive_after_minutes, fleet.revive_max_minutes,
+                fleet.revive_attempts) == (30, 240, 3)
+
+    def test_the_revival_keys_are_read(self, tmp_path, profile_text):
+        text = profile_text.replace(
+            "workers = 2",
+            "workers = 2\nrevive_after_minutes = 0\nrevive_max_minutes = 60\n"
+            "revive_attempts = 1")
+        fleet = load_profile(_write(tmp_path, text)).fleet
+        assert (fleet.revive_after_minutes, fleet.revive_max_minutes,
+                fleet.revive_attempts) == (0, 60, 1)
+
+    @pytest.mark.parametrize(("key", "value", "message"), [
+        ("revive_after_minutes", -1, "revive_after_minutes may not be negative"),
+        ("revive_max_minutes", 0, "revive_max_minutes must be positive"),
+        ("revive_attempts", 0, "revive_attempts must be positive"),
+    ])
+    def test_revival_keys_out_of_range_are_refused(self, tmp_path, profile_text, key,
+                                                   value, message):
+        text = profile_text.replace("workers = 2", f"workers = 2\n{key} = {value}")
+        with pytest.raises(ProfileError, match=message):
+            load_profile(_write(tmp_path, text))
+
     def test_an_unknown_fleet_key_is_refused(self, tmp_path, profile_text):
         text = profile_text.replace("workers = 2", "workers = 2\ncamp = true")
         with pytest.raises(ProfileError, match=r"\[fleet\] has unknown keys: camp"):

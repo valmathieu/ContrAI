@@ -28,7 +28,8 @@ for the 8-18 minutes a mid-game recording lasts.
 
 **Clamped to the fleet.** Both numbers are cut down to the workers still up,
 so a fleet of one has one watcher and no spare, which is exactly the fleet
-before the rota.
+before the rota. A worker that goes down leaves the rota (:meth:`Rota.drop`)
+and a revived one rejoins it logged out (:meth:`Rota.revive`).
 
 **Atomic without a lock**, for the registry's reason: every worker runs in one
 event loop, and nothing here awaits except :meth:`Rota.wait`, which changes
@@ -295,6 +296,28 @@ class Rota:
         self._assign(label, Role.OUT, "down")
         self._live.remove(label)
         del self._roles[label]
+        self._fill()
+
+    def revive(self, label: str) -> None:
+        """Bring a dropped worker back, logged out, at the back of the queue.
+
+        The undoing of :meth:`drop`: the numbers are clamped again to the
+        workers now up, so a revival can give back the spare's place a down
+        worker took away. A worker already on the rota is let be.
+
+        Args:
+            label: The worker coming back.
+        """
+
+        if label in self._roles:
+            return
+        self._live.append(label)
+        self._roles[label] = Role.OUT
+        self._queue.append(label)
+        self._wakes[label] = asyncio.Event()
+        # Not through _assign: a dropped worker has no role to change from.
+        self._health.event("role", worker=label, was="down", now=Role.OUT.value,
+                           why="revived")
         self._fill()
 
     def counts(self) -> dict[str, int]:

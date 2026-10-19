@@ -19,7 +19,8 @@ stateDiagram-v2
     state Done <<choice>>
     Back : <b>walk back</b><br/>egress, then return_to_lobby, in the page
     Failed : <b>session_failed</b><br/>the place is given up at once
-    Down : <b>worker_down</b><br/>for the rest of the process
+    Down : <b>worker_down</b><br/>off the rota · still counted down<br/>waits revive_after_minutes, doubling<br/>up to revive_max_minutes
+    Retired : <b>worker_retired</b><br/>revive_attempts probations failed<br/>down for the rest of the process
     Handback : <b>exit 3</b><br/>most of the fleet is down
     Draining : <b>draining</b> · SIGUSR1<br/>no new seat, chase or login<br/>the game in hand runs at most<br/>max_overrun_minutes, then observer_left
     Drained : <b>fleet_drained</b><br/>the process holds, nothing in hand
@@ -51,7 +52,9 @@ stateDiagram-v2
     Failed --> Out : after idle_poll_minutes
     Failed --> Down : 3 in a row
     Down --> Handback : down × 2 > workers
-    Down --> [*]
+    Down --> Out : worker_reviving · probation<br/>one failure left · up again<br/>at the first place reached
+    Down --> Retired : the probation failed<br/>revive_attempts times
+    Retired --> [*]
     Hall --> [*] : window closed · limits met
     Recording --> Draining : fleet_draining<br/>read live through the curfew
     Chasing --> Drained : fleet_draining<br/>the scan stops · window_closed
@@ -77,4 +80,4 @@ stateDiagram-v2
     class Out,Spare idle
     class Recording,Boot,Draining record
     class Drained idle
-    class Failed,Down,Handback fault
+    class Failed,Down,Retired,Handback fault
