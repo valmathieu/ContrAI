@@ -179,7 +179,7 @@ class Recorder:
         "_seen_snapshots", "_records", "_deadline", "_stopped", "_active",
         "_last_activity", "_seated", "_rejected", "_base", "_egress",
         "_seat_deadline", "_stop_reason", "_left_table", "_claims", "_target",
-        "_scanned", "_chase_deadline", "_found", "_pending",
+        "_scanned", "_chase_deadline", "_found", "_pending", "_curfew",
     )
 
     def __init__(
@@ -195,6 +195,7 @@ class Recorder:
         egress: Any = None,
         claims: Any = None,
         target: ChaseTarget | None = None,
+        curfew: Callable[[], float | None] | None = None,
     ) -> None:
         """Wire the loop up.
 
@@ -226,6 +227,12 @@ class Recorder:
                 is gated like any other and watched to its end, and the
                 recorder stops there — or gives up, with a reason, when the
                 scan runs out. ``None`` takes whatever the server offers.
+            curfew: Asked live whether the run that owns this recorder is
+                draining: ``None`` until it is, then the seconds the game in
+                hand may still run. The first answer that is not ``None``
+                stops the seating at once and pulls the hard deadline in to
+                it, which the limits fixed at the start could not do. Asked
+                only where a deadline is read, and never again once heeded.
         """
 
         self._spectator = spectator
@@ -238,6 +245,7 @@ class Recorder:
         self._egress = egress
         self._claims = claims
         self._target = target
+        self._curfew = curfew
         self._scanned: set[str | None] = set()
         self._chase_deadline: float | None = None
         self._found: str | None = None
@@ -1329,6 +1337,7 @@ class Recorder:
             The wait, cut to the earliest deadline that applies.
         """
 
+        self._heed_curfew()
         deadlines = [self._deadline]
         if seating:
             deadlines += [self._seat_deadline, self._chase_deadline]
@@ -1337,14 +1346,40 @@ class Recorder:
             return remaining
         return min(remaining, min(present) - self._monotonic())
 
+    def _heed_curfew(self) -> None:
+        """Bring both deadlines in, once, if the owning run has started draining.
+
+        A drain is a window closing early: nothing new is seated from now on,
+        and the game in hand runs until the time the curfew grants, or to the
+        recorder's own hard deadline if that comes first. Downstream nothing
+        changes — the seat stops as ``window_closed`` and a game outliving the
+        grant is left as ``observer_left``, exactly as at a schedule's close.
+        """
+
+        if self._curfew is None:
+            return
+        seconds = self._curfew()
+        if seconds is None:
+            return
+        # Heeded once: the deadlines it set are now the recorder's own.
+        self._curfew = None
+        now = self._monotonic()
+        self._seat_deadline = now
+        granted = now + seconds
+        self._deadline = (
+            granted if self._deadline is None else min(self._deadline, granted)
+        )
+
     def _past_deadline(self) -> bool:
         """Whether the run's own time limit has passed."""
 
+        self._heed_curfew()
         return self._deadline is not None and self._monotonic() >= self._deadline
 
     def _past_seat_deadline(self) -> bool:
         """Whether the shift has stopped taking new tables."""
 
+        self._heed_curfew()
         return (
             self._seat_deadline is not None
             and self._monotonic() >= self._seat_deadline

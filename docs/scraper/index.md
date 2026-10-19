@@ -755,6 +755,22 @@ code 3 only once a majority of its workers are down — one worker's bad account
 others' night — which for a fleet of one is exactly `run`'s rule. A worker whose chase was stopped by
 a refused egress sends nothing more on that session and checks the egress again before the next.
 
+**Draining.** Until a fleet could drain, a schedule close was the only way to stop taking tables
+while letting the games in hand finish: a service stop writes each of them `interrupted`. `SIGUSR1`
+drains the fleet instead, and on the box `deploy/drain.sh` sends it. A drain is a schedule close
+brought forward to now. The fleet logs `fleet_draining`, with the games `in_hand` and the
+`overrun_s` they are granted, and from then on starts no chase, no startup recording and no login.
+Workers in the lobby, standing by, logged out or backing off after a failure leave at once. Every
+recorder already running reads the drain through its `curfew`, live, since a recorder's limits are
+fixed when it is built and its game can last 18 minutes: a scan stops as `window_closed`, and a game
+in hand runs on for at most `max_overrun_minutes`, or not at all when `finish_current_game` is off,
+then is written `observer_left`. Once the last game in hand has ended the fleet logs
+`fleet_drained` (`games` recorded since the drain, how many of them were left `observer_left`,
+`waited_s`) and **holds** rather than exit, because an exit 0 would be restarted by the
+`unless-stopped` policy. The stop that follows finds nothing in hand, exits 130, and the container
+stays stopped across a reboot. A second `SIGUSR1` changes nothing. `run` ignores the signal, and
+Windows, which has none, has no drain.
+
 The wait in the lobby has two watchdogs. The first is on the *connection*. The lobby can
 legitimately stay quiet for over a minute; the page never does, since its keepalive answers every
 20 s, and across the ramp's healthy sessions no received frame came more than 20.9 s after the last.

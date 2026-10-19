@@ -201,6 +201,42 @@ def _treat_sigterm_as_interrupt() -> None:
         signal.signal(signal.SIGTERM, handler)
 
 
+def _ignore_usr1() -> None:
+    """Make SIGUSR1, a fleet's drain signal, harmless to a single session.
+
+    Python's default for it ends the process at once, which would leave the
+    game in hand unwritten — an operator draining the service while it runs
+    ``run`` rather than ``fleet`` should lose nothing. A platform without the
+    signal (Windows) has nothing to ignore.
+    """
+
+    number = getattr(signal, "SIGUSR1", None)
+    if number is not None:
+        signal.signal(number, signal.SIG_IGN)
+
+
+def _drain_on_usr1(loop: asyncio.AbstractEventLoop, fleet: Fleet) -> None:
+    """Drain the fleet when the process receives SIGUSR1.
+
+    A loop handler rather than a ``signal.signal`` one: :meth:`Fleet.drain`
+    sets an :class:`asyncio.Event`, which only the loop's own thread may do.
+    A platform without the signal, or a loop that cannot watch signals
+    (Windows), has no drain; Ctrl+C still stops the fleet there.
+
+    Args:
+        loop: The running loop.
+        fleet: The fleet to drain.
+    """
+
+    number = getattr(signal, "SIGUSR1", None)
+    if number is None:
+        return
+    try:
+        loop.add_signal_handler(number, fleet.drain)
+    except NotImplementedError:
+        return
+
+
 def _run_recorder(args: argparse.Namespace) -> int:
     """Watch tables until the limits are reached.
 
@@ -250,6 +286,7 @@ async def _shift(  # pragma: no cover - needs a real browser
     """
 
     _treat_sigterm_as_interrupt()
+    _ignore_usr1()
     shift = Shift(
         profile,
         HealthLog(),
@@ -380,6 +417,7 @@ async def _fleet(  # pragma: no cover - needs a real browser
         headless=headless,
         limits=limits,
     )
+    _drain_on_usr1(asyncio.get_running_loop(), fleet)
     summary = await fleet.run()
     print(
         f"{summary.windows} windows, {summary.chases} chases "
