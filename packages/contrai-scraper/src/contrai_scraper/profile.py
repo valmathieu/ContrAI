@@ -445,6 +445,11 @@ DEFAULT_REVIVE_MAX_MINUTES: int = 240
 #: log in every few hours forever: logins already passed 24/h in some hours.
 DEFAULT_REVIVE_ATTEMPTS: int = 3
 
+#: Workers waiting on the online menu to hunt a start, when ``[fleet].seekers``
+#: is not set: none, which is the fleet before seekers — the watcher that reads
+#: a start chases it alone.
+DEFAULT_SEEKERS: int = 0
+
 
 @dataclass(frozen=True, slots=True)
 class FleetSection:
@@ -498,13 +503,16 @@ class FleetSection:
     revive_attempts: int = DEFAULT_REVIVE_ATTEMPTS
     """Failed revivals after which a worker is retired for the process."""
 
+    seekers: int = DEFAULT_SEEKERS
+    """Workers kept on the online menu, who all hunt a start a watcher reads."""
+
     def __post_init__(self) -> None:
         if not 1 <= self.workers <= FLEET_CEILING:
             raise ProfileError(
                 f"[fleet].workers must be between 1 and {FLEET_CEILING}"
             )
         for name in ("login_stagger_s", "egress_cache_s", "spares",
-                     "revive_after_minutes"):
+                     "revive_after_minutes", "seekers"):
             if getattr(self, name) < 0:
                 raise ProfileError(f"[fleet].{name} may not be negative")
         for name in ("scan_distinct_budget", "scan_deadline_s", "roster_max_age_s",
@@ -1122,6 +1130,7 @@ def _fleet(table: _Table) -> FleetSection:
         revive_attempts=table.optional_integer(
             "revive_attempts", DEFAULT_REVIVE_ATTEMPTS
         ),
+        seekers=table.optional_integer("seekers", DEFAULT_SEEKERS),
     )
     table.done()
     return section

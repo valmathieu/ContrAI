@@ -3,6 +3,8 @@
 import asyncio
 import json
 
+import pytest
+
 from contrai_scraper import HealthLog, Role, Rota
 
 
@@ -17,13 +19,14 @@ class Clock:
 
 
 def rota(*, watchers=2, spares=1, stagger_s=0.0, stopping=lambda: False, clock=None,
-         bootstrap=False):
+         bootstrap=False, seekers=0):
     """A rota writing to a list, and the list."""
 
     lines: list[str] = []
     made = Rota(watchers=watchers, spares=spares, stagger_s=stagger_s,
                 monotonic=clock if clock is not None else Clock(), stopping=stopping,
-                health=HealthLog(write=lines.append), bootstrap=bootstrap)
+                health=HealthLog(write=lines.append), bootstrap=bootstrap,
+                seekers=seekers)
     return made, lines
 
 
@@ -233,8 +236,8 @@ class TestLogins:
         made.open(labels(5))
         made.logged_in()
         made.chasing("bot01")
-        assert made.counts() == {"out": 1, "hall": 2, "spare": 1, "chase": 1, "boot": 0,
-                                 "logins": 1}
+        assert made.counts() == {"out": 1, "hall": 2, "spare": 1, "seek": 0, "hunt": 0,
+                                 "chase": 1, "boot": 0, "logins": 1}
 
 
 def phase(lines):
@@ -311,6 +314,86 @@ class TestStartup:
         # the lobby and the spare are full, so bot02 is parked after its game.
         assert (made.done("bot02"), roles(made, 5)) == (
             Role.OUT, ["hall", "out", "boot", "hall", "spare"])
+
+
+class TestSeekers:
+    """Seekers wait on the online menu, and hunt a start beside the others."""
+
+    @pytest.mark.parametrize("count", [1, 3, 7])
+    def test_no_seekers_is_the_fleet_before_them(self, count):
+        before, before_lines = rota()
+        none, none_lines = rota(seekers=0)
+        before.open(labels(count))
+        none.open(labels(count))
+        assert (roles(none, count), changes(none_lines)) == (
+            roles(before, count), changes(before_lines))
+
+    def test_seekers_come_after_the_watchers_and_before_the_spare(self):
+        made, lines = rota(seekers=2)
+        made.open(labels(7))
+        assert (roles(made, 7), [why for _, _, _, why in changes(lines)]) == (
+            ["hall", "hall", "seek", "seek", "spare", "out", "out"],
+            ["watcher_wanted", "watcher_wanted", "seeker_wanted", "seeker_wanted",
+             "spare_wanted"])
+
+    def test_the_numbers_are_clamped_watchers_then_seekers_then_spare(self):
+        made, _ = rota(seekers=2)
+        made.open(labels(3))
+        assert roles(made, 3) == ["hall", "hall", "seek"]
+
+    def test_a_hunt_keeps_every_place_and_logs_nobody_in(self):
+        made, lines = rota(watchers=1, seekers=2)
+        made.open(labels(5))
+        made.hunt(made.free_seekers())
+        assert (roles(made, 5), changes(lines)[-2:], made.opening) == (
+            ["hall", "hunt", "hunt", "spare", "out"],
+            [("bot02", "seek", "hunt", "hunt"), ("bot03", "seek", "hunt", "hunt")],
+            False)
+
+    def test_the_winner_leaves_and_the_spare_takes_its_seek_place(self):
+        # One login per hunt, as per chase: the spare walks nowhere, and the
+        # next logged-out worker logs in as the new spare.
+        made, lines = rota(watchers=1, seekers=2)
+        made.open(labels(5))
+        made.hunt(["bot02", "bot03"])
+        made.chasing("bot02")
+        assert (roles(made, 5), changes(lines)[-3:]) == (
+            ["hall", "chase", "hunt", "seek", "spare"],
+            [("bot02", "hunt", "chase", "chase"), ("bot04", "spare", "seek", "promoted"),
+             ("bot05", "out", "spare", "spare_wanted")])
+
+    def test_a_searcher_called_off_comes_back_to_its_seek_place(self):
+        made, _ = rota(watchers=1, seekers=2)
+        made.open(labels(5))
+        made.hunt(["bot02", "bot03"])
+        made.chasing("bot02")
+        assert (made.done("bot03"), made.done("bot02")) == (Role.SEEK, Role.OUT)
+
+    def test_a_short_lobby_takes_an_idle_seeker_but_never_a_hunting_one(self):
+        made, _ = rota(watchers=2, seekers=2, spares=0)
+        made.open(labels(4))
+        made.hunt(["bot03"])
+        made.chasing("bot01")
+        # bot04 was idle and walks into the lobby; bot03 is out hunting.
+        assert roles(made, 4) == ["chase", "hall", "hunt", "hall"]
+
+    def test_a_short_lobby_with_only_hunters_stays_short(self):
+        made, _ = rota(watchers=2, seekers=2, spares=0)
+        made.open(labels(4))
+        made.hunt(["bot03", "bot04"])
+        made.chasing("bot01")
+        assert roles(made, 4) == ["chase", "hall", "hunt", "hunt"]
+
+    def test_the_startup_phase_keeps_the_seek_places_for_later(self):
+        # Seven workers: one watcher; the second, two seekers and the spare
+        # are four places, so only two startup workers can be sent.
+        made, lines = rota(bootstrap=True, seekers=2)
+        made.open(labels(7))
+        made.seated("bot02")
+        made.seated("bot03")
+        assert (roles(made, 7), phase(lines)[-1]) == (
+            ["hall", "boot", "boot", "hall", "seek", "seek", "spare"],
+            ("bootstrap_done", "exhausted", 2))
 
 
 class TestWaiting:

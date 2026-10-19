@@ -12,6 +12,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 - (scraper) `SIGUSR1` drains a fleet: no new game, the games in hand finish within the overrun, then `fleet_drained` and an idle hold. See [scraper docs](docs/scraper/index.md).
 - (scraper) A down fleet worker gets a probation login after `revive_after_minutes`, doubling to `revive_max_minutes`; `revive_attempts` failures retire it. See [scraper docs](docs/scraper/index.md).
+- (scraper) `[fleet].seekers` (default 0) keeps workers on the online menu that all hunt each lobby start at once; the watcher stays, the first table claim wins. See [scraper docs](docs/scraper/index.md).
 - `deploy/drain.sh` drains the box's fleet, waits for `fleet_drained`, then stops the service, so a planned stop loses no game. See `deploy/install.md` §5.
 
 ### Fixed

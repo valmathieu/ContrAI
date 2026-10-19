@@ -330,6 +330,12 @@ census_hops = 8
 # workers still up, so a fleet of one is one watcher and no spare.
 lobby_watchers = 2
 spares = 1
+# Optional. Workers kept logged in on the online menu (default 0). When a
+# watcher reads a start, every free seeker hunts it at once and the watcher
+# stays in the lobby; the first to take the table wins and the others are
+# called off. Round 1 is lost past ~13 s of search, so several searchers catch
+# it far more often than one. With none free, the watcher chases alone.
+seekers = 0
 # Optional. A window opens on games already under way, which the lobby will
 # never announce. With this on (the default), once the first watcher is in
 # the lobby the next logins each join one running tournament table and record

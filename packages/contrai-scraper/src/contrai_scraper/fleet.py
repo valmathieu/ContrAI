@@ -118,6 +118,59 @@ class FleetSummary:
     revivals: int = 0
     """Probation logins given to down workers."""
 
+    hunts: int = 0
+    """Starts hunted by seekers in parallel; each also counts as one chase."""
+
+    hunts_won: int = 0
+    """Hunts in which one searcher took the table."""
+
+    hunts_lost: int = 0
+    """Hunts in which every searcher gave up; each also a chase given up."""
+
+    hunt_runs: int = 0
+    """Searcher recorders run across every hunt, winners and losers."""
+
+
+@dataclass(slots=True)
+class _Hunt:
+    """One start a watcher read, hunted by several seekers at once."""
+
+    roster: LobbyRoster
+    watcher: str
+    """Who read it, and holds the roster claim until the hunt closes."""
+
+    searchers: set[str]
+    """The seekers still hunting, or watching the game the winner found."""
+
+    runs: int
+    """How many seekers were sent."""
+
+    age_s: float
+    """How old the roster was when the hunt opened."""
+
+    opened_at: float
+    """When the hunt opened, on the fleet's clock."""
+
+    won_by: str | None = None
+    """The searcher whose claim on the table was granted first."""
+
+    def roster_for(self, elapsed: float, now: float) -> LobbyRoster:
+        """The roster, with its time moved onto one searcher's own page.
+
+        A roster's ``at`` is on the frame clock of the page that read it, and
+        every page's clock starts at its own login. A searcher's chase reads
+        its match time off its own page, so the roster it carries must say
+        when the start was announced in that page's time.
+
+        Args:
+            elapsed: The searcher's frame clock now.
+            now: The fleet's clock now.
+        """
+
+        return dataclasses.replace(
+            self.roster, at=elapsed - (self.age_s + now - self.opened_at)
+        )
+
 
 @dataclass(slots=True)
 class _Down:
@@ -224,6 +277,7 @@ class Fleet:
         "_seat_deadline", "_hard_deadline", "_census_due", "_census_sightings",
         "_bootstraps", "_bootstrap_games", "_revivals",
         "_rota", "_hold", "_drain_at", "_drained", "_drain_games", "_drain_cut",
+        "_hunts", "_hunting", "_hunts_opened", "_hunts_won", "_hunts_lost", "_hunt_runs",
     )
 
     def __init__(
@@ -301,6 +355,10 @@ class Fleet:
         self._windows = self._chases = self._gave_up = 0
         self._games = self._seated = self._rejected = 0
         self._bootstraps = self._bootstrap_games = self._revivals = 0
+        self._hunts_opened = self._hunts_won = self._hunts_lost = self._hunt_runs = 0
+        # Open hunts by the roster's accounts, and each searcher's hunt.
+        self._hunts: dict[frozenset[str], _Hunt] = {}
+        self._hunting: dict[str, _Hunt] = {}
         self._records: list[Path] = []
         # Every worker down now, retired ones included, in the order they went.
         self._down: dict[str, _Down] = {}
@@ -318,6 +376,7 @@ class Fleet:
             stopping=self.stopping,
             health=health,
             bootstrap=section.bootstrap_enabled,
+            seekers=section.seekers,
         )
         # Made once and kept across windows: a worker's log, its claims and
         # its failure streak belong to the account, not to one browser.
@@ -397,6 +456,10 @@ class Fleet:
             bootstraps=self._bootstraps,
             bootstrap_games=self._bootstrap_games,
             revivals=self._revivals,
+            hunts=self._hunts_opened,
+            hunts_won=self._hunts_won,
+            hunts_lost=self._hunts_lost,
+            hunt_runs=self._hunt_runs,
         )
 
     async def _window(self, now: datetime) -> None:
@@ -458,6 +521,7 @@ class Fleet:
                 self._health.fleet_heartbeat(
                     down=len(self._down),
                     probation=sum(entry.reviving for entry in self._down.values()),
+                    hunts_open=len(self._hunts),
                     egress_probes=getattr(self._egress, "probes", None),
                     **self._rota.counts(),
                 )
@@ -642,7 +706,9 @@ class Fleet:
             None if self._hard_deadline is None else self._hard_deadline - now,
         )
 
-    def absorb(self, summary: SessionSummary, *, bootstrap: bool = False) -> None:
+    def absorb(
+        self, summary: SessionSummary, *, bootstrap: bool = False, hunt: bool = False
+    ) -> None:
         """Add one chase's work, or one startup recording's, to the fleet's totals.
 
         Both count towards the games recorded, and so towards ``max_games``.
@@ -651,11 +717,15 @@ class Fleet:
             summary: What the recorder did.
             bootstrap: Whether it was a startup worker's, joined mid-game,
                 rather than a chase's.
+            hunt: Whether it was one searcher's run in a hunt, which is
+                counted as a chase once, when the hunt closes.
         """
 
         if bootstrap:
             self._bootstraps += 1
             self._bootstrap_games += summary.games_recorded
+        elif hunt:
+            self._hunt_runs += 1
         else:
             self._chases += 1
             if summary.stop_reason is StopReason.CHASE_GAVE_UP:
@@ -667,6 +737,96 @@ class Fleet:
         self._seated += summary.tables_seated
         self._rejected += summary.tables_rejected
         self._records.extend(summary.records)
+
+    # -- hunts -------------------------------------------------------------------
+
+    def hunted(self, accounts: frozenset[str]) -> bool:
+        """Whether a hunt for this roster is open: a start heard again after a rebuild."""
+
+        return accounts in self._hunts
+
+    def open_hunt(self, roster: LobbyRoster, watcher: str, age_s: float) -> bool:
+        """Send every free seeker after a start a watcher has read and claimed.
+
+        The watcher stays in the lobby and keeps the roster's claim until the
+        hunt closes, so no other watcher chases the same start meanwhile.
+
+        Args:
+            roster: The start.
+            watcher: The worker that read it.
+            age_s: How old the roster was when read.
+
+        Returns:
+            Whether a hunt opened. ``False`` when no seeker is free, and the
+            watcher chases the start itself.
+        """
+
+        free = self._rota.free_seekers()
+        if not free:
+            return False
+        hunt = _Hunt(
+            roster=roster, watcher=watcher, searchers=set(free), runs=len(free),
+            age_s=age_s, opened_at=self._monotonic(),
+        )
+        self._hunts[roster.accounts] = hunt
+        for label in free:
+            self._hunting[label] = hunt
+        self._rota.hunt(free)
+        self._hunts_opened += 1
+        self._health.event(
+            "hunt_opened", roster=roster.digest, watcher=watcher, seekers=free,
+            age_s=round(age_s, 1),
+        )
+        return True
+
+    def hunt_of(self, label: str) -> _Hunt | None:
+        """The hunt a searcher is on, if it is still on one."""
+
+        return self._hunting.get(label)
+
+    def hunt_won(self, hunt: _Hunt, label: str) -> None:
+        """A searcher's claim on the table was granted: it chases, the rest are called off.
+
+        Its seek place is refilled at once, as a watcher's is when it leaves to
+        chase: the hunt costs the one login a chase does.
+        """
+
+        if hunt.won_by is not None:
+            return
+        hunt.won_by = label
+        self._rota.chasing(label)
+        self._hunts_won += 1
+        self._health.event(
+            "hunt_won", roster=hunt.roster.digest, worker=label,
+            after_s=round(self._monotonic() - hunt.opened_at, 1),
+        )
+
+    def hunt_leave(self, label: str) -> None:
+        """A searcher is out of its hunt; the last one out closes it.
+
+        Called when a searcher's recorder returns and, as a guard, whenever its
+        session ends, so a session that fails mid-hunt cannot leave the hunt —
+        and the watcher's claim on the roster — open for good. Closing counts
+        the hunt as one chase, and as one given up when nobody won it.
+        """
+
+        hunt = self._hunting.pop(label, None)
+        if hunt is None:
+            return
+        hunt.searchers.discard(label)
+        if hunt.searchers:
+            return
+        del self._hunts[hunt.roster.accounts]
+        self._registry.release_roster(hunt.roster.accounts, hunt.watcher)
+        self._chases += 1
+        if hunt.won_by is None:
+            self._gave_up += 1
+            self._hunts_lost += 1
+            self._health.event("hunt_lost", roster=hunt.roster.digest, runs=hunt.runs)
+        self._health.event(
+            "hunt_closed", roster=hunt.roster.digest, won_by=hunt.won_by,
+            runs=hunt.runs, open_s=round(self._monotonic() - hunt.opened_at, 1),
+        )
 
     def census_started(self) -> None:
         """Count a startup sweep as under way, until :meth:`census_report` takes it.
@@ -961,6 +1121,9 @@ class Worker:
                     raise
         finally:
             log.close()
+            # However the session ended, it hunts no more: a searcher whose
+            # page failed mid-hunt must not hold the hunt open behind it.
+            self._fleet.hunt_leave(self._label)
         self._health.event("session_ended", session=session, reason=reason)
 
     async def _serve(self, spectator: Any, frames: Any, log: RawLogWriter) -> str:
@@ -998,8 +1161,8 @@ class Worker:
             role = rota.role(self._label)
             if role is Role.OUT:
                 return "parked"
-            if role is Role.SPARE:
-                at = await self._stand_by(spectator, frames, log, at)
+            if role in (Role.SPARE, Role.SEEK):
+                at = await self._stand_by(spectator, frames, log, at, hold=role)
                 checked = False
                 continue
             if not checked and not (await fleet.egress.check()).ok:
@@ -1008,6 +1171,8 @@ class Worker:
                 # Only ever handed to a worker logged out, so the page is
                 # where its login left it.
                 left = await self._bootstrap(spectator, frames, log)
+            elif role is Role.HUNT:
+                left = await self._hunt(spectator, frames, log, at)
             else:
                 if not await self._reach_lobby(spectator, frames, log, at, sweep=sweep):
                     return self._ended()
@@ -1025,22 +1190,25 @@ class Worker:
         return "stopping" if self._fleet.stopping() else "egress_blocked"
 
     async def _stand_by(
-        self, spectator: Any, frames: Any, log: RawLogWriter, at: _Place
+        self, spectator: Any, frames: Any, log: RawLogWriter, at: _Place, *, hold: Role
     ) -> _Place:
-        """Stand by off the lobby, logged in, until sent in or no longer needed.
+        """Stand by off the lobby, logged in, until sent somewhere or no longer needed.
 
-        A spare coming from a chase steps off its table first, onto the online
-        menu. From there, or from where its login left it, it only drains its
-        page's frames into the raw log. There is no silence watchdog here: a
-        spare never hears a roster to prove its lobby works, and nobody has
-        measured how quiet a page off the lobby is. ``spare_silent`` records
-        that, once per spell of silence.
+        A spare or a seeker coming from a table steps off it first, onto the
+        online menu. From there, or from where its login left it, it only
+        drains its page's frames into the raw log. Each wait for a frame is
+        cut short the moment the rota changes the worker's role: a seeker's
+        hunt cannot afford the poll's second. There is no silence watchdog
+        here: such a page never hears a roster to prove it works, and nobody
+        has measured how quiet a page off the lobby is. ``spare_silent``
+        records that, once per spell of silence.
 
         Args:
             spectator: The worker's browser half, logged in.
             frames: Its frame source.
             log: The session's raw log.
             at: Where the page stands now.
+            hold: The role being held, :attr:`Role.SPARE` or :attr:`Role.SEEK`.
 
         Returns:
             Where the page stands once the wait is over.
@@ -1055,21 +1223,16 @@ class Worker:
             exited = await spectator.exit_table()
             self._health.event("table_exited", exited=exited)
         # ``place``, not ``at``: every line's ``at`` is its timestamp.
-        self._health.event("standing_by", place=at.value)
+        self._health.event("standing_by", place=at.value, role=hold.value)
         self._placed()
         iterator = aiter(frames)
         interval = self._profile.recorder.health_interval_s
         heard = fleet.now()
         told = False
-        while rota.role(self._label) is Role.SPARE and not fleet.stopping():
+        while rota.role(self._label) is hold and not fleet.stopping():
             if self._health.due(interval):
-                self._health.heartbeat(state="spare")
-            try:
-                frame = await asyncio.wait_for(anext(iterator), STANDBY_POLL_S)
-            except TimeoutError:
-                frame = None
-            except StopAsyncIteration:
-                raise BrowserError("the frame source ended: the page has gone") from None
+                self._health.heartbeat(state=hold.value)
+            frame = await self._frame_or_wake(iterator)
             if frame is not None:
                 log.write_frame(frame)
                 if frame.direction == RECEIVED:
@@ -1079,6 +1242,31 @@ class Worker:
                 self._health.event("spare_silent", silent_s=round(silent, 1))
                 told = True
         return at
+
+    async def _frame_or_wake(self, iterator: Any) -> Any:
+        """The page's next frame within ``STANDBY_POLL_S``, or ``None`` once woken.
+
+        The two waits race; the one still pending is cancelled, which loses
+        nothing — the frame source keeps a frame it had not yet handed out.
+
+        Raises:
+            BrowserError: The frames ended, which only a closed page does.
+        """
+
+        reading = asyncio.ensure_future(anext(iterator))
+        woken = asyncio.ensure_future(self._fleet.rota.wait(self._label, STANDBY_POLL_S))
+        try:
+            await asyncio.wait((reading, woken), return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in (reading, woken):
+                task.cancel()
+            await asyncio.gather(reading, woken, return_exceptions=True)
+        if reading.cancelled():
+            return None
+        try:
+            return reading.result()
+        except StopAsyncIteration:
+            raise BrowserError("the frame source ended: the page has gone") from None
 
     async def _reach_lobby(
         self, spectator: Any, frames: Any, log: RawLogWriter, at: _Place, *, sweep: bool
@@ -1325,8 +1513,16 @@ class Worker:
             if not registry.claim_roster(roster.accounts, self._label):
                 self._health.event("roster_taken", roster=roster.digest)
                 continue
-            # Before anything awaits: the spare is sent in while this worker
-            # is still walking out.
+            if fleet.hunted(roster.accounts):
+                # This watcher's own start, heard again on a rebuilt session:
+                # its seekers are on it already.
+                self._health.event("hunt_reannounced", roster=roster.digest)
+                continue
+            if fleet.open_hunt(roster, self._label, age):
+                # The seekers hunt it; this watcher stays for the next start.
+                continue
+            # No seeker free: the watcher chases the start itself. Before
+            # anything awaits, so the spare is sent in while it walks out.
             fleet.rota.chasing(self._label)
             try:
                 self._health.event("chase_started", roster=roster.digest)
@@ -1461,26 +1657,99 @@ class Worker:
         raise BrowserError(f"{message}, again, with no roster heard since")
 
     async def _chase(
-        self, spectator: Any, frames: Any, log: RawLogWriter, roster: LobbyRoster
+        self,
+        spectator: Any,
+        frames: Any,
+        log: RawLogWriter,
+        roster: LobbyRoster,
+        hunt: _Hunt | None = None,
     ) -> SessionSummary:
-        """Run one chase's recorder on this worker's session."""
+        """Run one chase's recorder on this worker's session.
+
+        Args:
+            spectator: The worker's browser half, on its way to a table.
+            frames: Its frame source.
+            log: The session's raw log.
+            roster: The start to find, on this page's clock.
+            hunt: The hunt this chase is one searcher of, if it is: its first
+                granted table claim wins the hunt, and it is called off as
+                soon as another searcher's does.
+        """
 
         fleet = self._fleet
+        label = self._label
         seat_in, hard_in = fleet.seconds_left()
+        claims: Any = self._claims
+        called_off: Callable[[], bool] | None = None
+        if hunt is not None:
+            searched = hunt
+
+            def lost() -> bool:
+                return searched.won_by not in (None, label)
+
+            claims = _SeatedClaims(self._claims, lambda: fleet.hunt_won(searched, label))
+            called_off = lost
         recorder = fleet.recorder(
             spectator, frames, self._profile, self._health,
             limits=RecorderLimits(max_seconds=hard_in, seat_until_s=seat_in),
             raw=log,
             egress=fleet.egress,
-            claims=self._claims,
+            claims=claims,
             curfew=fleet.curfew,
             target=ChaseTarget(
                 roster=roster,
                 distinct_budget=fleet.section.scan_distinct_budget,
                 deadline_s=fleet.section.scan_deadline_s,
+                called_off=called_off,
             ),
         )
         return await recorder.run()
+
+    async def _hunt(
+        self, spectator: Any, frames: Any, log: RawLogWriter, at: _Place
+    ) -> _Place | None:
+        """Hunt the start this seeker was sent after, beside the other seekers.
+
+        The walk in depends on where the page stands: from the menu a login
+        leaves, the observe branch is walked from the top; from the online
+        menu a table's exit lands on, it is the same back-out a watcher
+        takes from the lobby, which fails fast when the page is still at a
+        table — a free rebuild, like a walk back that does not land.
+
+        Returns:
+            Where the page is left, or ``None`` when the session should end
+            there — as after a chase.
+
+        Raises:
+            _ReturnFailed: The walk to the observe branch did not land.
+            BrowserError: A step of the walk from the menu failed, or the
+                frames ended.
+        """
+
+        fleet = self._fleet
+        hunt = fleet.hunt_of(self._label)
+        if hunt is None or hunt.won_by is not None:
+            # Over before this seeker set off: it was still logging in when
+            # the table was found, or its last session left the hunt.
+            fleet.hunt_leave(self._label)
+            fleet.rota.done(self._label)
+            return at
+        try:
+            self._health.event("hunt_started", roster=hunt.roster.digest, place=at.value)
+            if at is _Place.MENU:
+                await spectator.enter_variant()
+            else:
+                try:
+                    await spectator.enter_table_from_lobby()
+                except BrowserError as error:
+                    raise _ReturnFailed(str(error)) from error
+            roster = hunt.roster_for(frames.elapsed, fleet.now())
+            summary = await self._chase(spectator, frames, log, roster, hunt)
+        finally:
+            fleet.hunt_leave(self._label)
+        fleet.absorb(summary, hunt=True)
+        fleet.rota.done(self._label)
+        return self._settle(summary)
 
     async def _bootstrap(
         self, spectator: Any, frames: Any, log: RawLogWriter

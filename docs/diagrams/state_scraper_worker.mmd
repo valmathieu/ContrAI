@@ -12,6 +12,8 @@ stateDiagram-v2
     Census : <b>census</b> · once a process<br/>opening watchers only · census_hops tables<br/>read into the registry, nothing recorded<br/>skipped while bootstrap_enabled
     Boot : <b>startup recording</b> · the window's opening<br/>observe · any running tournament table<br/>every gate, already_recorded included<br/>one game from the mid-game join<br/>seats nothing after bootstrap_scan_s
     Spare : <b>standing by</b> · the spare<br/>logged in, off the lobby<br/>frames to the raw log · spare_silent
+    Seek : <b>seeking</b> · [fleet].seekers<br/>logged in on the online menu<br/>wakes the moment a hunt opens
+    Hunt : <b>hunting</b> · beside the other seekers<br/>keeps its seek place · a chase recorder<br/>the first granted claim wins the hunt
     Hall : <b>in the lobby</b> · at most lobby_watchers<br/>LobbyWatcher reads the socket until<br/>the tournament row raises its full flag
     Claim : <b>claim the roster</b><br/>TableRegistry, keyed by the four accounts
     Chasing : <b>chasing</b><br/>out to observe · a blind scan<br/>four accounts, or roster_mismatch and a hop<br/>gives up on distinct_budget, deadline<br/>or target_refused
@@ -36,9 +38,14 @@ stateDiagram-v2
     Boot --> Done : game over · or no table found,<br/>which ends the startup phase
     Census --> Back : the sweep is done
     Spare --> Hall : a watcher chases · promoted<br/>egress, then walk in · no login
+    Session --> Seek : seeker
     Hall --> Claim : roster_announced
-    Claim --> Hall : roster_taken · roster_stale
-    Claim --> Chasing : chase_started<br/>the spare is sent in, the next<br/>logged-out worker woken as spare
+    Claim --> Hall : roster_taken · roster_stale<br/>or hunt_opened · the watcher stays
+    Claim --> Hunt : hunt_opened<br/>every free seeker
+    Seek --> Hunt : woken
+    Hunt --> Recording : hunt_won
+    Hunt --> Seek : called off · lost
+    Claim --> Chasing : no seeker free · chase_started<br/>the spare is sent in, the next<br/>logged-out worker woken as spare
     Chasing --> Recording : chase_matched
     Chasing --> Done : chase_gave_up
     Recording --> Done : chase_ended
@@ -76,8 +83,8 @@ stateDiagram-v2
     classDef fault fill:#FDECEA,stroke:#B3261E,stroke-width:2px,color:#5F1410
 
     class Egress,Claim gate
-    class Session,Census,Hall,Chasing,Back work
-    class Out,Spare idle
+    class Session,Census,Hall,Chasing,Back,Hunt work
+    class Out,Spare,Seek idle
     class Recording,Boot,Draining record
     class Drained idle
     class Failed,Down,Retired,Handback fault
