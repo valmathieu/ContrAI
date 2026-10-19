@@ -315,8 +315,8 @@ def _add_verify_parser(subcommands: Any) -> argparse.ArgumentParser:
     verify.add_argument(
         "--stale",
         action="store_true",
-        help="skip a record whose verdict is newer than it; re-run without "
-        "this after the verifier itself changed",
+        help="skip a record whose verdict is current: newer than the record "
+        "and reached by this verifier",
     )
     return verify
 
@@ -703,8 +703,9 @@ def _fresh_verdict(path: Path, root: Path) -> GameVerdict | None:
 def _run_verify(args: argparse.Namespace) -> int:
     """Verify every record the ``verify`` arguments name.
 
-    With ``--stale``, a record whose verdict is newer than it is skipped:
-    nothing it could be checked against has moved since. Its verdict still
+    With ``--stale``, a record whose verdict is current — newer than the
+    record and reached by this verifier — is skipped: neither the record nor
+    the code that judged it has moved since. Its verdict still
     counts toward the exit code, so a suspect game found last week keeps
     failing the run until it is looked at.
 
@@ -757,7 +758,7 @@ def _run_verify(args: argparse.Namespace) -> int:
     if skipped:
         # stderr under --json, so the payload on stdout stays one document.
         print(
-            f"{skipped} of {len(paths)} records skipped: their verdict is newer",
+            f"{skipped} of {len(paths)} records skipped: their verdict is current",
             file=sys.stderr if args.json else sys.stdout,
         )
     return 1 if failed else 0
