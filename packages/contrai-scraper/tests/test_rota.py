@@ -341,9 +341,30 @@ class TestSeekers:
         made.open(labels(3))
         assert roles(made, 3) == ["hall", "hall", "seek"]
 
+    def test_only_a_seeker_standing_by_is_free_to_hunt(self):
+        # bot03 is still logging in: a hunt sent to it would set off with
+        # round 1 already lost, while the watcher could have chased at once.
+        made, _ = rota(watchers=1, seekers=2)
+        made.open(labels(5))
+        made.ready("bot02")
+        made.ready("bot04")  # the spare: not a seeker, so never free to hunt
+        assert made.free_seekers() == ["bot02"]
+
+    def test_any_change_of_role_takes_the_mark_away(self):
+        # No spare, so the lobby left short takes the idle seeker.
+        made, _ = rota(watchers=1, seekers=2, spares=0)
+        made.open(labels(4))
+        made.ready("bot02")
+        made.chasing("bot01")
+        # bot02 walked into the lobby; promoted back to seeking later, it
+        # must stand by again before a hunt may send it.
+        assert (made.role("bot02"), made.free_seekers()) == (Role.HALL, [])
+
     def test_a_hunt_keeps_every_place_and_logs_nobody_in(self):
         made, lines = rota(watchers=1, seekers=2)
         made.open(labels(5))
+        made.ready("bot02")
+        made.ready("bot03")
         made.hunt(made.free_seekers())
         assert (roles(made, 5), changes(lines)[-2:], made.opening) == (
             ["hall", "hunt", "hunt", "spare", "out"],

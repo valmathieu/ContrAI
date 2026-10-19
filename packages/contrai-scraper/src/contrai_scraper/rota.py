@@ -82,7 +82,7 @@ class Rota:
     __slots__ = ("_watchers", "_spares", "_seekers", "_stagger_s", "_monotonic",
                  "_stopping", "_health", "_bootstrap", "_live", "_roles", "_queue",
                  "_wakes", "_next_login", "_logins", "_opening", "_phase", "_scanning",
-                 "_sent")
+                 "_sent", "_ready")
 
     def __init__(
         self,
@@ -128,6 +128,8 @@ class Rota:
         self._phase = False
         self._scanning: str | None = None
         self._sent = 0
+        # Seekers standing by on the online menu, as opposed to logging in.
+        self._ready: set[str] = set()
 
     # -- a window ------------------------------------------------------------
 
@@ -151,6 +153,7 @@ class Rota:
         self._phase = self._bootstrap
         self._scanning = None
         self._sent = 0
+        self._ready = set()
         self._fill()
 
     @property
@@ -231,10 +234,23 @@ class Rota:
         self._assign(label, Role.CHASE, "chase")
         self._fill()
 
-    def free_seekers(self) -> list[str]:
-        """The seekers waiting on the online menu, in fleet order: a hunt's searchers."""
+    def ready(self, label: str) -> None:
+        """A seeker is standing by, logged in: from now on a hunt may send it.
 
-        return [label for label in self._live if self._roles[label] is Role.SEEK]
+        Until then it holds its place but cannot hunt: a seeker woken from the
+        queue takes 5-25 s to log in, and a hunt sent to it then sets off when
+        round 1 is already lost — while its watcher, which could have chased
+        at once, waits in the lobby. Any change of role takes the mark away.
+        """
+
+        if self._roles.get(label) is Role.SEEK:
+            self._ready.add(label)
+
+    def free_seekers(self) -> list[str]:
+        """The seekers standing by on the online menu, in fleet order: a hunt's searchers."""
+
+        return [label for label in self._live
+                if self._roles[label] is Role.SEEK and label in self._ready]
 
     def hunt(self, labels: Sequence[str]) -> None:
         """Send seekers after a start a watcher has just read.
@@ -265,7 +281,7 @@ class Rota:
         self._fill()
 
     def done(self, label: str) -> Role:
-        """A chase, a hunt or a startup recording is over: the lobby, a seek place, the spare's, or out.
+        """A chase, a hunt or a startup recording is over: lobby, seek, spare, or out.
 
         A worker already logged in is worth more than one that would have to
         log in, so a place still open goes to it before anyone queued. A
@@ -467,5 +483,6 @@ class Rota:
         if was is role:
             return
         self._roles[label] = role
+        self._ready.discard(label)
         self._health.event("role", worker=label, was=was.value, now=role.value, why=why)
         self._wakes[label].set()

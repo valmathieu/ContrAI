@@ -720,10 +720,12 @@ with probability p per hop finds the table within six hops 1 − (1 − p)⁶ of
 65% at p ≈ 0.16; two searchers in parallel would make it about 88%, three about 96%. So
 `[fleet].seekers` (default 0, the fleet as it was) keeps that many more workers logged in on the
 online menu, where a table's exit lands and the spare waits (`standing_by` with `role` `seek`).
-When a watcher reads a start and seekers are free, it opens a **hunt** (`hunt_opened`) and stays in
-the lobby; every free seeker walks into the observe branch at once — from the menu a login left it
-on, or by backing out of the online menu, which fails fast and rebuilds for free when the page is
-still at a table — and chases the roster. The first searcher whose table claim is granted wins
+When a watcher reads a start and seekers stand by, it opens a **hunt** (`hunt_opened`) and stays in
+the lobby. Only a seeker already standing by counts: one still logging in would set off 5–25 s
+late, as the first smoke run's first hunt did (25 and 45 s, round 1 lost), while the watcher could
+have chased at once. Every seeker sent walks into the observe branch at once — from the menu a login
+left it on, or by backing out of the online menu, which fails fast and rebuilds for free when the
+page is still at a table — and chases the roster. The first searcher whose table claim is granted wins
 (`hunt_won`) and leaves the seek pool as a chaser does a watcher's place, so the spare takes its
 place and one worker logs in: a hunt costs the one login a chase does. The others are called off
 within a second (`hunt_called_off`, never a give-up) and go back to their seek place. The last one

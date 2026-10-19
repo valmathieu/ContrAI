@@ -1455,6 +1455,23 @@ class TestHunts:
                 ("bot05", "spare", "spare_wanted"),
                 ("bot03", "seek", "returned")} <= set(harness.roles())
 
+    def test_a_start_read_before_any_seeker_stands_by_is_chased_by_its_watcher(
+        self, profile, builders
+    ):
+        # The first smoke run's first start: both seekers were still logging
+        # in, the hunt set off 25 and 45 s late and round 1 was lost, while
+        # the watcher that read it waited in the lobby.
+        hunters = Hunters({"bot01": ["chase"]})
+        harness = Harness(hunting(profile), workers=4, recorder=hunters,
+                          idle_sessions=True)
+        harness.script("bot01", (Walker(), Frames([full_row(builders)], deaf=True,
+                                                  on_empty=harness.end_when_done)))
+        harness.until = lambda: any(worker == "bot01" and why in ("returned", "parked")
+                                    for worker, _, why in harness.roles())
+        result = harness.run()
+        assert ([entry["worker"] for entry in harness.events("chase_started")],
+                harness.saw("hunt_opened"), result.hunts) == (["bot01"], False, 0)
+
     def test_each_searcher_carries_the_roster_on_its_own_pages_clock(
         self, profile, builders
     ):
@@ -1587,6 +1604,8 @@ class TestHunts:
         harness = Harness(hunting(profile), workers=4)
         fleet = harness.fleet()
         fleet.rota.open([f"bot0{index}" for index in range(1, 5)])
+        fleet.rota.ready("bot02")
+        fleet.rota.ready("bot03")
         seats = dict(zip(("top", "right", "bottom", "left"), FOUR, strict=True))
         fleet.open_hunt(LobbyRoster(seats=seats, at=0.0, received_ms=None), "bot01", 0.0)
         hunt = fleet.hunt_of("bot02")

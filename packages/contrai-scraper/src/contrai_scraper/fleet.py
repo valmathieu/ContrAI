@@ -1225,6 +1225,7 @@ class Worker:
         # ``place``, not ``at``: every line's ``at`` is its timestamp.
         self._health.event("standing_by", place=at.value, role=hold.value)
         self._placed()
+        rota.ready(self._label)
         iterator = aiter(frames)
         interval = self._profile.recorder.health_interval_s
         heard = fleet.now()
