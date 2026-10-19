@@ -748,11 +748,27 @@ takes it during the failed worker's idle poll. The first failure of a streak wai
 `FIRST_RETRY_S` (30 s) rather than the poll: when no other worker is free, the place it gave up
 stays empty, and one failed session once left the lobby unwatched for minutes. A second failure in a
 row waits the whole poll. Three sessions in a row that fail, or six refused
-egress checks in a row, and the worker goes down (`worker_down`), leaves the rota and stays down for
-the process. A chase that runs its course, whatever it found, clears the streak, so a profile broken in
-a way every chase meets cannot keep logging in forever. The process hands itself back with exit
-code 3 only once a majority of its workers are down — one worker's bad account does not end the
-others' night — which for a fleet of one is exactly `run`'s rule. A worker whose chase was stopped by
+egress checks in a row, and the worker goes down (`worker_down`) and leaves the rota. A chase that
+runs its course, whatever it found, clears the streak, so a profile broken in a way every chase meets
+cannot keep logging in forever. The process hands itself back with exit code 3 only once a majority
+of its workers are down now — one worker's bad account does not end the others' night — which for a
+fleet of one is exactly `run`'s rule.
+
+A down worker used to sit out the rest of the process, so one bad hour cost its account until the
+container restarted: the VPN outage of 2026-10-01 downed four workers that way. Now it is revived.
+After `revive_after_minutes` (30) it rejoins the rota logged out (`worker_reviving`, and a `role`
+line with `why` `revived`) on **probation**: one login, with a single failure left before it goes
+down again, rather than a whole budget. The first place it reaches — the lobby, a spare's stand-by,
+or a startup worker's observe menu — proves the account works: `worker_revived`, and its failures
+start from nothing. A probation that fails doubles the wait, up to `revive_max_minutes` (240), and
+after `revive_attempts` (3) failed revivals the worker is retired for the process
+(`worker_retired`), so an account that cannot log in stops logging in rather than costing a login
+every four hours. A worker whose wait runs out while no window is open comes back with the next
+window. Workers on probation and retired ones still count as down for the majority rule, and the
+fleet heartbeat counts the first as `probation`. `revive_after_minutes = 0` turns revival off. The
+window, which used to wait only for the workers it opened with, now lasts until every worker it
+runs is done, revived ones included; otherwise its heartbeat could stop under a revived worker
+still watching a game. A worker whose chase was stopped by
 a refused egress sends nothing more on that session and checks the egress again before the next.
 
 **Draining.** Until a fleet could drain, a schedule close was the only way to stop taking tables

@@ -430,6 +430,21 @@ DEFAULT_SPARES: int = 1
 #: table, leaves room for the tables it refuses.
 DEFAULT_BOOTSTRAP_SCAN_S: int = 60
 
+#: Minutes a down worker waits before its first revival, when
+#: ``[fleet].revive_after_minutes`` is not set. One bad hour (the VPN outage of
+#: 2026-10-01 downed four workers) should cost an account half an hour, not the
+#: rest of the process.
+DEFAULT_REVIVE_AFTER_MINUTES: int = 30
+
+#: The cap on a down worker's doubling wait, when ``[fleet].revive_max_minutes``
+#: is not set.
+DEFAULT_REVIVE_MAX_MINUTES: int = 240
+
+#: Failed revivals after which a worker is retired for the process, when
+#: ``[fleet].revive_attempts`` is not set. An account that cannot log in must not
+#: log in every few hours forever: logins already passed 24/h in some hours.
+DEFAULT_REVIVE_ATTEMPTS: int = 3
+
 
 @dataclass(frozen=True, slots=True)
 class FleetSection:
@@ -474,16 +489,27 @@ class FleetSection:
     bootstrap_scan_s: int = DEFAULT_BOOTSTRAP_SCAN_S
     """Seconds a startup worker looks for a running table before giving up."""
 
+    revive_after_minutes: int = DEFAULT_REVIVE_AFTER_MINUTES
+    """Minutes before a down worker's first revival; ``0`` never revives one."""
+
+    revive_max_minutes: int = DEFAULT_REVIVE_MAX_MINUTES
+    """The cap on the wait, which doubles after every failed revival."""
+
+    revive_attempts: int = DEFAULT_REVIVE_ATTEMPTS
+    """Failed revivals after which a worker is retired for the process."""
+
     def __post_init__(self) -> None:
         if not 1 <= self.workers <= FLEET_CEILING:
             raise ProfileError(
                 f"[fleet].workers must be between 1 and {FLEET_CEILING}"
             )
-        for name in ("login_stagger_s", "egress_cache_s", "spares"):
+        for name in ("login_stagger_s", "egress_cache_s", "spares",
+                     "revive_after_minutes"):
             if getattr(self, name) < 0:
                 raise ProfileError(f"[fleet].{name} may not be negative")
         for name in ("scan_distinct_budget", "scan_deadline_s", "roster_max_age_s",
-                     "claim_ttl_s", "census_hops", "lobby_watchers", "bootstrap_scan_s"):
+                     "claim_ttl_s", "census_hops", "lobby_watchers", "bootstrap_scan_s",
+                     "revive_max_minutes", "revive_attempts"):
             if getattr(self, name) <= 0:
                 raise ProfileError(f"[fleet].{name} must be positive")
 
@@ -1086,6 +1112,15 @@ def _fleet(table: _Table) -> FleetSection:
         bootstrap_enabled=table.optional_boolean("bootstrap_enabled", True),
         bootstrap_scan_s=table.optional_integer(
             "bootstrap_scan_s", DEFAULT_BOOTSTRAP_SCAN_S
+        ),
+        revive_after_minutes=table.optional_integer(
+            "revive_after_minutes", DEFAULT_REVIVE_AFTER_MINUTES
+        ),
+        revive_max_minutes=table.optional_integer(
+            "revive_max_minutes", DEFAULT_REVIVE_MAX_MINUTES
+        ),
+        revive_attempts=table.optional_integer(
+            "revive_attempts", DEFAULT_REVIVE_ATTEMPTS
         ),
     )
     table.done()

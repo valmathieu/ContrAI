@@ -181,6 +181,37 @@ class TestDown:
         made.vacate("bot01", "stopped")
         assert lines == []
 
+    def test_a_revived_worker_rejoins_logged_out_and_gives_the_spare_back(self):
+        made, lines = rota()
+        made.open(labels(3))
+        made.drop("bot01")
+        made.revive("bot01")
+        # Three up again, so the spare's place returns, and bot01 takes it
+        # from the back of the queue.
+        assert (roles(made, 3), changes(lines)[-2:]) == (
+            ["spare", "hall", "hall"],
+            [("bot01", "down", "out", "revived"), ("bot01", "out", "spare", "spare_wanted")])
+
+    def test_a_revived_worker_can_be_woken(self):
+        made, _ = rota(watchers=1, spares=0)
+        made.open(labels(2))
+        made.drop("bot02")
+        made.revive("bot02")
+        made.chasing("bot01")
+
+        async def woken():
+            await made.wait("bot02", 1.0)
+
+        asyncio.run(woken())
+        assert made.role("bot02") is Role.HALL
+
+    def test_a_worker_on_the_rota_is_not_revived_twice(self):
+        made, lines = rota()
+        made.open(labels(3))
+        before = list(lines)
+        made.revive("bot02")
+        assert (lines, made.counts()["out"]) == (before, 0)
+
 
 class TestLogins:
     def test_logins_take_turns_a_stagger_apart(self):

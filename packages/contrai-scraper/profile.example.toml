@@ -339,6 +339,15 @@ spares = 1
 # waiting. These records have first_round above 1.
 bootstrap_enabled = true
 bootstrap_scan_s = 60
+# Optional. A worker that spent its failure budget is down; it is brought back
+# on probation (one login, one failure allowed) after revive_after_minutes
+# (default 30; 0 never revives), the wait doubling after every failed revival up
+# to revive_max_minutes (default 240). After revive_attempts failed revivals
+# (default 3) it is retired for the process, so a broken account stops logging
+# in. Reaching the lobby, or a spare's stand-by, clears it.
+revive_after_minutes = 30
+revive_max_minutes = 240
+revive_attempts = 3
 
 [privacy]
 pseudonym_salt = "env:CONTRAI_SCRAPER_SALT"
