@@ -173,6 +173,23 @@ journalctl -t contrai-scraper -o cat | jq -c 'select(.event|test("^chase_"))'
 A worker whose sessions keep failing goes down (`worker_down`) and the others carry on; the process
 exits 3 only once a majority of workers are down.
 
+**Stopping a fleet without losing a game.** `docker compose stop` writes every game in hand
+`interrupted`. Drain it instead, from the repository root:
+
+```bash
+sudo deploy/drain.sh
+```
+
+It refuses unless the service runs `fleet`, then sends the fleet SIGUSR1: no new game is taken, the
+games in hand finish within `[schedule].max_overrun_minutes` (a game still running then is written
+`observer_left`), and the fleet logs `fleet_drained` and idles. The script echoes the
+`fleet_draining`, `game_recorded` and `fleet_drained` lines as they come, then runs `compose stop`,
+which now finds nothing in hand: the container exits 130 and, being stopped, stays stopped across a
+reboot. Start it again with `sudo docker compose $FLEET up -d scraper`. If `fleet_drained` has not
+come after the overrun plus 5 minutes, the script exits 1 and leaves the fleet draining; `compose
+stop` then ends it with the games still in hand written `interrupted`. Use the drain before every
+planned stop: a reboot, an upgrade (§9), a profile change.
+
 ## 6. Watching it
 
 The scraper writes one JSON object per line to the journal. Everything but the heartbeats:
@@ -204,7 +221,7 @@ Exit codes, as the restart count shows them (`sudo docker compose -f deploy/comp
 | --- | --- |
 | 0 | the run's limits were reached |
 | 3 | a failure budget was spent — six refused egress checks in a row, or three failed sessions in a row; Docker starts a fresh container |
-| 130 | stopped by a signal (`docker compose stop` sends SIGTERM); the game in hand was written `interrupted` |
+| 130 | stopped by a signal (`docker compose stop` sends SIGTERM); the game in hand was written `interrupted` — after `deploy/drain.sh` (§5), there was none |
 
 A restart count that keeps climbing means a budget keeps being spent: read the `egress_blocked`
 and `session_failed` lines.
@@ -288,8 +305,9 @@ sudo docker compose -f deploy/compose.yml build scraper
 sudo docker compose -f deploy/compose.yml up -d scraper
 ```
 
-A fleet takes both files here as everywhere (§5). The image carries the code, so updating the tree
-changes nothing until `build` has run. Re-run
+A fleet takes both files here as everywhere (§5), and is drained first (`sudo deploy/drain.sh`):
+`up -d` on a running container replaces it, which writes its games in hand `interrupted`. The
+image carries the code, so updating the tree changes nothing until `build` has run. Re-run
 `check-profile` (§4) whenever the update touches `profile.example.toml`: `[wire.fields]` must bind
 the parser's field names **exactly**, so a profile written against an older revision is refused
 outright rather than half-applied.

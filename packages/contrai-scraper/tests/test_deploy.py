@@ -87,3 +87,34 @@ class TestDeployFiles:
         assert (fleet[0], named, set(named) <= mounted) == (
             "fleet", ["/etc/contrai/profile.toml", "/etc/contrai/accounts.toml"], True
         )
+
+
+class TestDrainScript:
+    """``drain.sh``: the box's one command for stopping a fleet without losing a game."""
+
+    SCRIPT = DEPLOY / "drain.sh"
+
+    def test_it_waits_for_the_line_the_fleet_writes(self):
+        # Renamed on one side only, the script would wait out its timeout on
+        # every drain and never stop the service.
+        fleet = (pathlib.Path(contrai_scraper.__path__[0]) / "fleet.py").read_text(
+            encoding="utf-8")
+        assert ('"fleet_drained"' in fleet,
+                'select(.event == "fleet_drained")' in self.SCRIPT.read_text(
+                    encoding="utf-8")) == (True, True)
+
+    def test_it_signals_the_fleet_service_through_both_compose_files(self):
+        text = self.SCRIPT.read_text(encoding="utf-8")
+        assert ("-f deploy/compose.yml -f deploy/compose.fleet.yml" in text,
+                '"${COMPOSE[@]}" kill -s USR1 scraper' in text) == (True, True)
+
+    def test_it_follows_the_journal_before_it_signals(self):
+        # Started after the signal, the follower could miss a quick drain's
+        # last line; started without -n 0, it would match an older drain's.
+        text = self.SCRIPT.read_text(encoding="utf-8")
+        follow = text.index("journalctl -t contrai-scraper -f -n 0 -o cat")
+        assert follow < text.index("kill -s USR1")
+
+    def test_it_is_checked_out_with_unix_line_endings(self):
+        # A CRLF shebang names an interpreter that does not exist.
+        assert b"\r\n" not in self.SCRIPT.read_bytes()

@@ -11,6 +11,7 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 ### Added
 
 - (scraper) `SIGUSR1` drains a fleet: no new game, the games in hand finish within the overrun, then `fleet_drained` and an idle hold. See [scraper docs](docs/scraper/index.md).
+- `deploy/drain.sh` drains the box's fleet, waits for `fleet_drained`, then stops the service, so a planned stop loses no game. See `deploy/install.md` §5.
 
 ### Fixed
 
