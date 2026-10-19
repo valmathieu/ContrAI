@@ -180,7 +180,7 @@ class Walker:
         return None
 
     async def next_table(self):
-        self.calls.append("next_table")
+        self._step("next_table")
 
 
 def summary(reason=StopReason.CHASE_ENDED, games=1):
@@ -1534,15 +1534,13 @@ class TestHunts:
                 (result.hunts_lost, result.hunt_runs)) == (
             "bot02", (None, 2), (1, 1))
 
-    def test_a_seeker_back_from_a_table_walks_in_from_the_online_menu(
-        self, profile, builders
-    ):
-        # bot03 loses the first hunt and stands by at its table's exit. Its
-        # walk into the second fails, which is a free rebuild: the fresh
-        # session finds its hunt gone and stands by as a seeker again.
+    @staticmethod
+    def _two_hunts(profile, builders, bot03, bot03_second, bot04_until):
+        """bot03 loses one hunt, stands by at its table, then is sent on a second."""
+
         second = full_row(builders, OTHERS, frame_id="l2")
-        hunters = Hunters({"bot02": ["win"], "bot03": ["lose"],
-                           "bot04": [lambda: harness.saw("return_rebuilt")]})
+        hunters = Hunters({"bot02": ["win"], "bot03": ["lose", *bot03_second],
+                           "bot04": [lambda: bot04_until(harness)]})
         harness = Harness(hunting(profile), workers=5, recorder=hunters,
                           idle_sessions=True)
         harness.script("bot01", (Walker(), starts(
@@ -1550,16 +1548,41 @@ class TestHunts:
             (full_row(builders),
              lambda: seeking(harness, "bot02") and seeking(harness, "bot03")),
             (second, lambda: seeking(harness, "bot03", 2) and seeking(harness, "bot04")))))
-        harness.script("bot03", (Walker(fail={"enter_table_from_lobby": "out of reach"}),
-                                 Frames(deaf=True, on_empty=harness.end_when_done)))
+        harness.script("bot03", (bot03, Frames(deaf=True, on_empty=harness.end_when_done)))
+        return harness
+
+    def test_a_seeker_still_at_its_table_hops_into_the_next_hunt(self, profile, builders):
+        # The first smoke run: called off on a table still loading, bot05's
+        # exit never landed, the back-out found no menu, and a rebuild cost
+        # it 20 s. The page is in the observe branch already: it hops.
+        bot03 = Walker(fail={"enter_table_from_lobby": "no menu to back out of"})
+        harness = self._two_hunts(profile, builders, bot03, [lambda: True],
+                                  lambda h: h.saw("hunt_hopped_in"))
+        harness.until = lambda: len(harness.events("hunt_closed")) == 2
+        result = harness.run()
+        exited = bot03.calls.index("exit_table")
+        assert (bot03.calls[exited:exited + 3],
+                harness.events("hunt_hopped_in")[0]["worker"],
+                harness.saw("return_rebuilt"), result.hunt_runs) == (
+            ["exit_table", "enter_table_from_lobby", "next_table"], "bot03", False, 4)
+
+    def test_a_seeker_that_can_neither_back_out_nor_hop_rebuilds_for_free(
+        self, profile, builders
+    ):
+        # The fresh session finds its hunt gone and stands by as a seeker again.
+        bot03 = Walker(fail={"enter_table_from_lobby": "no menu to back out of",
+                             "next_table": "under the loading overlay"})
+        harness = self._two_hunts(profile, builders, bot03, [],
+                                  lambda h: h.saw("return_rebuilt"))
         harness.until = lambda: (len(harness.events("hunt_closed")) == 2
                                  and seeking(harness, "bot03", 3))
         result = harness.run()
-        first, rebuilt = harness.walkers["bot03"][:2]
-        assert (first.calls[first.calls.index("exit_table"):],
+        rebuilt = harness.walkers["bot03"][1]
+        assert (bot03.calls[bot03.calls.index("exit_table"):],
                 harness.events("return_rebuilt")[0]["worker"], rebuilt.calls,
                 (result.hunts, result.hunts_won, result.hunts_lost)) == (
-            ["exit_table", "enter_table_from_lobby"], "bot03", ["log_in"], (2, 1, 1))
+            ["exit_table", "enter_table_from_lobby", "next_table"], "bot03", ["log_in"],
+            (2, 1, 1))
 
     def test_a_start_heard_again_after_a_rebuild_is_not_hunted_twice(
         self, profile, builders
@@ -1595,7 +1618,6 @@ class TestHunts:
         result = harness.run()
         assert (len(harness.events("hunt_opened")), harness.saw("hall_deaf"),
                 harness.saw("hunt_reannounced"), result.hunts) == (1, True, True, 1)
-
 
     def test_a_hunt_has_one_winner(self, profile):
         # Two granted claims in one hunt would be two chasers for one game.

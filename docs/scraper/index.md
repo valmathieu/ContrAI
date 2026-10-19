@@ -724,8 +724,10 @@ When a watcher reads a start and seekers stand by, it opens a **hunt** (`hunt_op
 the lobby. Only a seeker already standing by counts: one still logging in would set off 5–25 s
 late, as the first smoke run's first hunt did (25 and 45 s, round 1 lost), while the watcher could
 have chased at once. Every seeker sent walks into the observe branch at once — from the menu a login
-left it on, or by backing out of the online menu, which fails fast and rebuilds for free when the
-page is still at a table — and chases the roster. The first searcher whose table claim is granted wins
+left it on, or by backing out of the online menu — and chases the roster. A seeker called off on a
+table that was still loading may never have got its exit to land; the back-out then finds no menu,
+and it takes the table's hop instead (`hunt_hopped_in`), about 2 s against a 20 s rebuild, which is
+left as the last resort. The first searcher whose table claim is granted wins
 (`hunt_won`) and leaves the seek pool as a chaser does a watcher's place, so the spare takes its
 place and one worker logs in: a hunt costs the one login a chase does. The others are called off
 within a second (`hunt_called_off`, never a give-up) and go back to their seek place. The last one

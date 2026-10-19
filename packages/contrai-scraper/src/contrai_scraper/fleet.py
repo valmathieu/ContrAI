@@ -1714,8 +1714,8 @@ class Worker:
         The walk in depends on where the page stands: from the menu a login
         leaves, the observe branch is walked from the top; from the online
         menu a table's exit lands on, it is the same back-out a watcher
-        takes from the lobby, which fails fast when the page is still at a
-        table — a free rebuild, like a walk back that does not land.
+        takes from the lobby — or, when the exit never landed and the page
+        is still at a table, that table's hop (:meth:`_walk_in_from_table`).
 
         Returns:
             Where the page is left, or ``None`` when the session should end
@@ -1740,10 +1740,7 @@ class Worker:
             if at is _Place.MENU:
                 await spectator.enter_variant()
             else:
-                try:
-                    await spectator.enter_table_from_lobby()
-                except BrowserError as error:
-                    raise _ReturnFailed(str(error)) from error
+                await self._walk_in_from_table(spectator)
             roster = hunt.roster_for(frames.elapsed, fleet.now())
             summary = await self._chase(spectator, frames, log, roster, hunt)
         finally:
@@ -1751,6 +1748,30 @@ class Worker:
         fleet.absorb(summary, hunt=True)
         fleet.rota.done(self._label)
         return self._settle(summary)
+
+    async def _walk_in_from_table(self, spectator: Any) -> None:
+        """Reach the observe branch from where a table's exit should have left the page.
+
+        The exit is best-effort, and a seeker called off mid-scan is often
+        seated on a table that is still loading, under whose overlay the exit
+        does not land. The back-out to the observe action then finds no menu
+        to back out of — but the page is already in the observe branch, and
+        the table's own hop is the way on: about 2 s, where the rebuild the
+        first smoke run fell back to cost 20.
+
+        Raises:
+            _ReturnFailed: Neither the back-out nor the hop landed; a fresh
+                session is the way back.
+        """
+
+        try:
+            await spectator.enter_table_from_lobby()
+        except BrowserError as error:
+            try:
+                await spectator.next_table()
+            except BrowserError:
+                raise _ReturnFailed(str(error)) from error
+            self._health.event("hunt_hopped_in", error=str(error))
 
     async def _bootstrap(
         self, spectator: Any, frames: Any, log: RawLogWriter
