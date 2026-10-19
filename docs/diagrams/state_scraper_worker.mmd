@@ -21,6 +21,8 @@ stateDiagram-v2
     Failed : <b>session_failed</b><br/>the place is given up at once
     Down : <b>worker_down</b><br/>for the rest of the process
     Handback : <b>exit 3</b><br/>most of the fleet is down
+    Draining : <b>draining</b> · SIGUSR1<br/>no new seat, chase or login<br/>the game in hand runs at most<br/>max_overrun_minutes, then observer_left
+    Drained : <b>fleet_drained</b><br/>the process holds, nothing in hand
 
     Out --> Egress : the rota has a place<br/>login_stagger_s after the last login
     Egress --> Session : egress_ok
@@ -51,6 +53,11 @@ stateDiagram-v2
     Down --> Handback : down × 2 > workers
     Down --> [*]
     Hall --> [*] : window closed · limits met
+    Recording --> Draining : fleet_draining<br/>read live through the curfew
+    Chasing --> Drained : fleet_draining<br/>the scan stops · window_closed
+    Hall --> Drained : fleet_draining<br/>out of the lobby at once
+    Draining --> Drained : game over · or left
+    Drained --> [*] : compose stop · exit 130
 
     note right of Failed
         A chase that ran its course,
@@ -68,5 +75,6 @@ stateDiagram-v2
     class Egress,Claim gate
     class Session,Census,Hall,Chasing,Back work
     class Out,Spare idle
-    class Recording,Boot record
+    class Recording,Boot,Draining record
+    class Drained idle
     class Failed,Down,Handback fault

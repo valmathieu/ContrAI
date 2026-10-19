@@ -8,6 +8,10 @@ All five workspace packages (`contrai-core`, `contrai-data`, `contrai-engine`, `
 
 ## [Unreleased]
 
+### Added
+
+- (scraper) `SIGUSR1` drains a fleet: no new game, the games in hand finish within the overrun, then `fleet_drained` and an idle hold. See [scraper docs](docs/scraper/index.md).
+
 ### Fixed
 
 - (scraper) A fleet worker whose lobby sends only keepalives for 15 min (`HALL_QUIET_S`) now logs `hall_deaf` and rebuilds; such workers sat deaf for 4–15 h. See [scraper docs](docs/scraper/index.md).

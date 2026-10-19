@@ -113,6 +113,12 @@ class FleetSummary:
     """Games those workers recorded, from where they joined."""
 
 
+async def hold_forever() -> None:
+    """Wait until cancelled: what a drained fleet does in place of exiting."""
+
+    await asyncio.Event().wait()
+
+
 class _Place(StrEnum):
     """Where a session's page stands, which decides its walk to the lobby."""
 
@@ -193,7 +199,7 @@ class Fleet:
         "_seated", "_rejected", "_records", "_down", "_run_deadline",
         "_seat_deadline", "_hard_deadline", "_census_due", "_census_sightings",
         "_bootstraps", "_bootstrap_games",
-        "_rota",
+        "_rota", "_hold", "_drain_at", "_drained", "_drain_games", "_drain_cut",
     )
 
     def __init__(
@@ -212,6 +218,7 @@ class Fleet:
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         recorder: Callable[..., Any] = Recorder,
+        hold: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         """Wire a fleet up.
 
@@ -241,6 +248,8 @@ class Fleet:
             sleep: How waits happen.
             recorder: Builds a chase's recorder; :class:`Recorder` itself
                 outside tests.
+            hold: What a drained fleet does instead of returning; waits
+                forever by default, until the process is stopped.
 
         Raises:
             ProfileError: If the profile cannot run a fleet.
@@ -261,6 +270,10 @@ class Fleet:
         self._monotonic = monotonic
         self._sleep = sleep
         self._recorder = recorder
+        self._hold = hold if hold is not None else hold_forever
+        self._drain_at: float | None = None
+        self._drained = asyncio.Event()
+        self._drain_games = self._drain_cut = 0
         self._windows = self._chases = self._gave_up = 0
         self._games = self._seated = self._rejected = 0
         self._bootstraps = self._bootstrap_games = 0
@@ -287,6 +300,11 @@ class Fleet:
 
     async def run(self) -> FleetSummary:
         """Run workers inside the schedule until the run's limits are met.
+
+        A drained fleet does not return: once its last game in hand has ended
+        it logs ``fleet_drained`` and holds, because a process that exited 0
+        would be started again by the service's restart policy. The stop that
+        follows finds nothing in hand.
 
         Returns:
             What every window and every worker did, added up.
@@ -316,6 +334,9 @@ class Fleet:
                 idle = False
 
             reading = await self._egress.check()
+            if self._over():
+                # A drain that arrived during the probe opens no browser.
+                break
             if not reading.ok:
                 blocked += 1
                 self._health.event("egress_blocked", attempt=blocked, **reading.fields())
@@ -331,6 +352,14 @@ class Fleet:
                 self._health.event("raw_logs_pruned", count=len(removed))
             await self._window(now)
 
+        if self._drain_at is not None:
+            self._health.event(
+                "fleet_drained",
+                games=self._games - self._drain_games,
+                observer_left=self._drain_cut,
+                waited_s=round(self._monotonic() - self._drain_at, 1),
+            )
+            await self._hold()
         return FleetSummary(
             windows=self._windows,
             chases=self._chases,
@@ -394,8 +423,10 @@ class Fleet:
                 )
 
     def _over(self) -> bool:
-        """Whether the run's own limits are met: games across the fleet, or time."""
+        """Whether the run is over: drained, or its own limits met — games or time."""
 
+        if self._drain_at is not None:
+            return True
         games = self._limits.max_games
         if games is not None and self._games >= games:
             return True
@@ -403,6 +434,51 @@ class Fleet:
             self._run_deadline is not None
             and self._monotonic() >= self._run_deadline
         )
+
+    def drain(self) -> None:
+        """Take no new game, let the games in hand finish, then stop.
+
+        A schedule close was the only way to do this: a service stop writes
+        every game in hand ``interrupted``. A drain is that close, brought
+        forward to now. Seating ends at once across the fleet — the rota,
+        the lobby and every running recorder, through :meth:`curfew` — and
+        each game in hand may run for the schedule's overrun, or not at all
+        when ``finish_current_game`` is off. Idle waits end at once. A second
+        drain changes nothing.
+        """
+
+        if self._drain_at is not None:
+            return
+        now = self._monotonic()
+        schedule = self._profile.schedule
+        overrun = (
+            schedule.max_overrun_minutes * _MINUTE_S
+            if schedule.finish_current_game else 0.0
+        )
+        self._drain_at = now
+        self._drain_games = self._games
+        self._seat_deadline = now
+        self._hard_deadline = _earliest(self._hard_deadline, now + overrun)
+        self._drained.set()
+        counts = self._rota.counts()
+        self._health.event(
+            "fleet_draining",
+            in_hand=counts[Role.CHASE.value] + counts[Role.BOOT.value],
+            overrun_s=overrun,
+        )
+
+    def curfew(self) -> float | None:
+        """What a running recorder asks: ``None``, or the seconds a drain leaves it.
+
+        Returns:
+            ``None`` until the fleet drains; then how long the game in hand
+            may still run, which is never negative.
+        """
+
+        if self._drain_at is None:
+            return None
+        assert self._hard_deadline is not None
+        return max(0.0, self._hard_deadline - self._monotonic())
 
     # -- what workers ask of the fleet -----------------------------------------
 
@@ -492,6 +568,9 @@ class Fleet:
             self._chases += 1
             if summary.stop_reason is StopReason.CHASE_GAVE_UP:
                 self._gave_up += 1
+        if self._drain_at is not None and summary.stop_reason is StopReason.TIME_LIMIT:
+            # The game in hand outlived the drain's overrun and was left.
+            self._drain_cut += summary.games_recorded
         self._games += summary.games_recorded
         self._seated += summary.tables_seated
         self._rejected += summary.tables_rejected
@@ -561,19 +640,29 @@ class Fleet:
         await self._sleep(seconds)
 
     async def idle(self, seconds: float | None = None) -> None:
-        """Sleep one schedule poll, never past the run's own deadline.
+        """Sleep one schedule poll, never past the run's own deadline nor a drain.
 
         Args:
             seconds: A shorter wait to take instead of the poll.
         """
 
+        if self._drain_at is not None:
+            return
         wait = (
             self._profile.schedule.idle_poll_minutes * _MINUTE_S
             if seconds is None else seconds
         )
         if self._run_deadline is not None:
             wait = max(0.0, min(wait, self._run_deadline - self._monotonic()))
-        await self._sleep(wait)
+        # The sleep stays the injected one; the drain only cuts it short.
+        sleeping = asyncio.ensure_future(self._sleep(wait))
+        drained = asyncio.ensure_future(self._drained.wait())
+        try:
+            await asyncio.wait((sleeping, drained), return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in (sleeping, drained):
+                task.cancel()
+            await asyncio.gather(sleeping, drained, return_exceptions=True)
 
 
 class Worker:
@@ -1229,6 +1318,7 @@ class Worker:
             raw=log,
             egress=fleet.egress,
             claims=self._claims,
+            curfew=fleet.curfew,
             target=ChaseTarget(
                 roster=roster,
                 distinct_budget=fleet.section.scan_distinct_budget,
@@ -1270,6 +1360,7 @@ class Worker:
             raw=log,
             egress=fleet.egress,
             claims=_SeatedClaims(self._claims, lambda: fleet.rota.seated(self._label)),
+            curfew=fleet.curfew,
         )
         summary = await recorder.run()
         fleet.absorb(summary, bootstrap=True)

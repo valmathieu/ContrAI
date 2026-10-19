@@ -1157,6 +1157,70 @@ class TestClosingRequest:
         assert [u["attempt"] for u in _named(lines, "state_unanswered")] == [0]
 
 
+class TestCurfew:
+    """A drain reaches a recorder already running through its curfew."""
+
+    @staticmethod
+    def _curfew(granted):
+        """A curfew silent until ``drain`` is called, then granting ``granted`` s."""
+
+        drained: list[bool] = []
+
+        def curfew():
+            return granted if drained else None
+
+        return curfew, lambda: drained.append(True)
+
+    def test_a_curfew_mid_scan_seats_nothing_and_hops_no_more(self, profile, builders):
+        curfew, drain = self._curfew(1800.0)
+        spectator = FakeSpectator()
+        summary = run_recorder(spectator, [drain, frame("tick"), snapshot_frame(builders)],
+                               profile, curfew=curfew)
+        assert (summary.tables_seated, summary.stop_reason, spectator.calls) == (
+            0, StopReason.WINDOW_CLOSED, [])
+
+    def test_a_curfew_mid_game_lets_the_game_finish(
+        self, profile, session_frames, game_builders
+    ):
+        curfew, drain = self._curfew(1800.0)
+        spectator = FakeSpectator()
+        ended = game_builders.game_events(
+            game_builders.round_events(1, *_ROUND_ONE),
+            reason=EndReason.TARGET_REACHED,
+        )
+        frames = session_frames(ended)
+        summary = run_recorder(spectator, [*frames[:2], drain, *frames[2:]], profile,
+                               curfew=curfew)
+        assert (summary.games_recorded, records_in(profile)[0].ended.reason,
+                ("next_table",) in spectator.calls) == (1, EndReason.TARGET_REACHED, False)
+
+    def test_a_game_outliving_the_curfew_is_left(self, profile, session_frames, source_game):
+        # Granted 60 s at 0 s; the game is still on at 9999 s.
+        clock = [0.0]
+        curfew, drain = self._curfew(60.0)
+        script = [*session_frames(source_game), drain, frame("tick"),
+                  lambda: clock.__setitem__(0, 9999.0), frame("tick")]
+        summary = run_recorder(FakeSpectator(), script, profile, curfew=curfew,
+                               monotonic=lambda: clock[0])
+        assert (summary.stop_reason, records_in(profile)[0].ended.reason) == (
+            StopReason.TIME_LIMIT, EndReason.OBSERVER_LEFT)
+
+    def test_a_curfew_never_extends_the_recorders_own_deadline(
+        self, profile, session_frames, source_game
+    ):
+        # The run's own limit is at 60 s; a drain granting half an hour must
+        # not let the game run past it.
+        clock = [0.0]
+        curfew, drain = self._curfew(1800.0)
+        script = [*session_frames(source_game), drain, frame("tick"),
+                  lambda: clock.__setitem__(0, 61.0), frame("tick")]
+        summary = run_recorder(FakeSpectator(), script, profile, curfew=curfew,
+                               limits=RecorderLimits(max_seconds=60.0),
+                               monotonic=lambda: clock[0])
+        assert (summary.stop_reason, records_in(profile)[0].ended.reason) == (
+            StopReason.TIME_LIMIT, EndReason.OBSERVER_LEFT)
+
+
 class TestShiftTerms:
     def test_no_table_is_seated_once_the_seat_deadline_has_passed(self, profile, builders):
         spectator = FakeSpectator()

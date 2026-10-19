@@ -258,11 +258,16 @@ class Harness:
     that says nothing, instead of a failed session: the extra workers of a
     larger fleet, which a test wants logged in but not doing anything. Their
     pages end the run once ``until`` says so.
+
+    An egress reading may be a callable, run at the check and answering
+    ``OPEN``: how a test acts during the probe. ``sleep`` replaces the fleet's
+    waits, and ``built`` is the last fleet made, so a callback can drain it.
+    A drained fleet's hold returns at once, counted in ``held``.
     """
 
     def __init__(self, profile, workers=1, *, egress=(OPEN,), recorder=None,
                  limits=RecorderLimits(max_seconds=1e6), clock=None,
-                 idle_sessions=False):
+                 idle_sessions=False, sleep=None):
         self.profile = profile
         self.accounts = accounts(workers)
         self.now = 0.0
@@ -278,6 +283,9 @@ class Harness:
         self.clock = clock
         self.idle_sessions = idle_sessions
         self.until = None
+        self.sleep = sleep
+        self.built = None
+        self.held = 0
 
     def script(self, label, *sessions):
         """The sessions one worker will open, in order: ``(walker, frames)``."""
@@ -327,6 +335,9 @@ class Harness:
             async def check(self):
                 reading = harness._egress[0] if len(harness._egress) == 1 \
                     else harness._egress.pop(0)
+                if callable(reading):
+                    reading()
+                    return OPEN
                 return reading
 
         @asynccontextmanager
@@ -353,14 +364,18 @@ class Harness:
             harness.now += seconds
             await asyncio.sleep(0)
 
-        return Fleet(
+        async def hold():
+            harness.held += 1
+
+        self.built = Fleet(
             self.profile, self.accounts,
             HealthLog(write=self.lines.append, monotonic=lambda: harness.now),
             open_browser=open_browser, open_session=open_session, egress=Egress(),
             registry=TableRegistry(claim_ttl_s=600, monotonic=lambda: harness.now),
             limits=self.limits, clock=self.clock, monotonic=lambda: harness.now,
-            sleep=sleep, recorder=self.recorder,
+            sleep=self.sleep or sleep, recorder=self.recorder, hold=hold,
         )
+        return self.built
 
     def run(self):
         return asyncio.run(self.fleet().run())
@@ -1152,6 +1167,8 @@ class TestStartup:
             (2, 1, 0, 1), ("empty", 2), (1, 60, False),
             ["log_in", "enter_variant"],
             ["log_in", "enter_variant", "return_to_lobby", "read_tournament_hash"])
+        # A startup recording heeds a drain as a chase does.
+        assert built["curfew"]() is None
 
     def test_the_next_startup_worker_goes_when_the_last_takes_its_table(self, profile):
         scanners = Scanners(("t1", summary(StopReason.MAX_GAMES), 0.05),
@@ -1174,6 +1191,125 @@ class TestStartup:
         assert (harness.events("census_skipped")[0]["reason"], walker.calls,
                 harness.saw("census")) == (
             "bootstrap", ["log_in", "enter_lobby", "read_tournament_hash"], False)
+
+
+class DrainingWalker(Walker):
+    """A walker whose walk to a chased table meets a drain, as an operator's would."""
+
+    def __init__(self, harness):
+        super().__init__()
+        self._harness = harness
+
+    async def enter_table_from_lobby(self):
+        await super().enter_table_from_lobby()
+        self._harness.built.drain()
+
+
+def closed(profile):
+    """The fixture profile with a schedule shut at the harness's 10:00 UTC."""
+
+    return dataclasses.replace(profile, schedule=dataclasses.replace(
+        profile.schedule, active=(parse_range("01:00-02:00"),)))
+
+
+class TestDrain:
+    def test_a_drain_in_the_lobby_ends_the_sessions_and_holds(self, profile):
+        harness = Harness(profile)
+
+        def drain_twice():
+            harness.built.drain()
+            harness.built.drain()
+
+        harness.script("bot01", (Walker(), Frames(on_empty=drain_twice)))
+        result = harness.run()
+        draining = harness.events("fleet_draining")
+        drained = harness.events("fleet_drained")
+        assert ((len(draining), draining[0]["in_hand"], draining[0]["overrun_s"]),
+                (len(drained), drained[0]["games"], drained[0]["observer_left"]),
+                [entry["reason"] for entry in harness.events("session_ended")],
+                harness.held, result.windows) == (
+            (1, 0, 1800.0), (1, 0, 0), ["stopping"], 1, 1)
+
+    def test_a_drain_cuts_a_closed_schedules_wait_short(self, profile):
+        async def sleep_until_drained(seconds):
+            harness.built.drain()
+            await asyncio.Event().wait()
+
+        harness = Harness(closed(profile), sleep=sleep_until_drained,
+                          clock=lambda: datetime(2026, 9, 24, 10, 0, tzinfo=UTC))
+        result = harness.run()
+        assert (harness.saw("schedule_idle"), harness.browsers, harness.held,
+                result.windows) == (True, 0, 1, 0)
+
+    def test_a_drain_cuts_a_workers_backoff_short(self, profile):
+        async def sleep_until_drained(seconds):
+            harness.built.drain()
+            await asyncio.Event().wait()
+
+        harness = Harness(profile, sleep=sleep_until_drained)
+        harness.script("bot01", (Walker(), Frames(ends=True)))
+        harness.run()
+        assert ([failed["attempt"] for failed in harness.events("session_failed")],
+                len(harness.opened), harness.held) == ([1], 1, 1)
+
+    def test_a_session_failing_after_a_drain_waits_no_backoff(self, profile):
+        class DrainThenFail(Walker):
+            async def log_in(self):
+                harness.built.drain()
+                raise BrowserError("refused")
+
+        harness = Harness(profile)
+        harness.script("bot01", (DrainThenFail(), Frames()))
+        harness.run()
+        assert (harness.saw("session_failed"), harness.sleeps, harness.held) == (
+            True, [], 1)
+
+    def test_a_drain_during_the_egress_check_opens_no_browser(self, profile):
+        harness = Harness(profile, egress=(lambda: harness.built.drain(),))
+        result = harness.run()
+        assert (harness.browsers, harness.saw("egress_ok"), harness.held,
+                result.windows) == (0, False, 1, 0)
+
+    @pytest.mark.parametrize(("finish", "ended", "left", "granted"), [
+        (True, StopReason.CHASE_ENDED, 0, 1800.0),
+        (False, StopReason.TIME_LIMIT, 1, 0.0),
+    ])
+    def test_a_chase_under_way_seats_nothing_more_and_may_run_the_overrun(
+        self, profile, builders, finish, ended, left, granted
+    ):
+        # The drain lands while the chaser walks to its table: the recorder it
+        # builds seats nothing new, and its game in hand gets the overrun, or
+        # none at all when the schedule would not finish a game either.
+        schedule = dataclasses.replace(profile.schedule, finish_current_game=finish)
+        recorders = Recorders(summary(ended))
+        harness = Harness(dataclasses.replace(profile, schedule=schedule),
+                          recorder=recorders)
+        harness.script("bot01", (DrainingWalker(harness), Frames([full_row(builders)])))
+        result = harness.run()
+        limits = recorders.built[0]["limits"]
+        drained = harness.events("fleet_drained")[0]
+        assert ((limits.seat_until_s, limits.max_seconds, recorders.built[0]["curfew"]()),
+                harness.events("fleet_draining")[0]["in_hand"],
+                (drained["games"], drained["observer_left"]), result.chases) == (
+            (0.0, granted, granted), 1, (1, left), 1)
+
+    def test_the_curfew_is_silent_until_a_drain(self, profile):
+        assert Harness(profile).fleet().curfew() is None
+
+    def test_an_undrained_run_returns_without_holding(self, profile):
+        harness = Harness(profile)
+        harness.script("bot01", (Walker(), Frames(on_empty=harness.end)))
+        harness.run()
+        assert (harness.held, harness.saw("fleet_drained")) == (0, False)
+
+    def test_a_drained_fleet_holds_until_it_is_stopped(self):
+        from contrai_scraper.fleet import hold_forever
+
+        async def scenario():
+            await asyncio.wait_for(hold_forever(), 0.01)
+
+        with pytest.raises(TimeoutError):
+            asyncio.run(scenario())
 
 
 class TestConstruction:

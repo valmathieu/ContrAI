@@ -20,7 +20,9 @@ from contrai_scraper import (
     read_snapshot,
 )
 from contrai_scraper.cli import (
+    _drain_on_usr1,
     _egress_result,
+    _ignore_usr1,
     _live_checks,
     _orientation_result,
     _reconfigure_streams,
@@ -285,6 +287,64 @@ class TestSigterm:
 
         monkeypatch.setattr("contrai_scraper.cli.asyncio.run", interrupted)
         assert main(["run", "--profile", str(profile_path)]) == 130
+
+
+class TestUsr1:
+    """SIGUSR1 drains a fleet, and must not kill a single session."""
+
+    #: Linux's number for it; Windows has none, so the tests lend one.
+    NUMBER = 10
+
+    class Loop:
+        """A loop that records the signal handlers it is given, or cannot watch any."""
+
+        def __init__(self, *, unsupported=False):
+            self.handlers: list[tuple] = []
+            self._unsupported = unsupported
+
+        def add_signal_handler(self, number, callback):
+            if self._unsupported:
+                raise NotImplementedError
+            self.handlers.append((number, callback))
+
+    class Draining:
+        def drain(self):
+            pass
+
+    def test_a_fleet_drains_on_usr1(self, monkeypatch):
+        monkeypatch.setattr(signal, "SIGUSR1", self.NUMBER, raising=False)
+        loop, fleet = self.Loop(), self.Draining()
+        _drain_on_usr1(loop, fleet)
+        assert loop.handlers == [(self.NUMBER, fleet.drain)]
+
+    def test_a_loop_that_cannot_watch_signals_has_no_drain(self, monkeypatch):
+        monkeypatch.setattr(signal, "SIGUSR1", self.NUMBER, raising=False)
+        loop = self.Loop(unsupported=True)
+        _drain_on_usr1(loop, self.Draining())
+        assert loop.handlers == []
+
+    def test_a_platform_without_usr1_has_no_drain(self, monkeypatch):
+        monkeypatch.delattr(signal, "SIGUSR1", raising=False)
+        loop = self.Loop()
+        _drain_on_usr1(loop, self.Draining())
+        assert loop.handlers == []
+
+    def test_a_single_session_ignores_usr1(self, monkeypatch):
+        # Python's default for it ends the process at once, game in hand and all.
+        installed: list[tuple] = []
+        monkeypatch.setattr(signal, "SIGUSR1", self.NUMBER, raising=False)
+        monkeypatch.setattr(signal, "signal",
+                            lambda number, handler: installed.append((number, handler)))
+        _ignore_usr1()
+        assert installed == [(self.NUMBER, signal.SIG_IGN)]
+
+    def test_a_platform_without_usr1_has_nothing_to_ignore(self, monkeypatch):
+        installed: list[tuple] = []
+        monkeypatch.delattr(signal, "SIGUSR1", raising=False)
+        monkeypatch.setattr(signal, "signal",
+                            lambda number, handler: installed.append((number, handler)))
+        _ignore_usr1()
+        assert installed == []
 
 
 class TestStreams:
