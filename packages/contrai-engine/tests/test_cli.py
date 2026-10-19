@@ -1553,7 +1553,7 @@ class TestRunVerify:
         assert "verified" in capsys.readouterr().out
         assert self._only_verdict(record_root).is_file()
 
-    def test_stale_skips_a_record_whose_verdict_is_newer(
+    def test_stale_skips_a_record_whose_verdict_is_current(
         self, record_root, capsys, monkeypatch
     ):
         _run_verify(self._args([record_root]))
@@ -1565,7 +1565,10 @@ class TestRunVerify:
         monkeypatch.setattr(cli_module, "verify_record", _refuse)
 
         assert _run_verify(self._args([record_root], stale=True)) == 0
-        assert "1 of 1 records skipped" in capsys.readouterr().out
+        assert (
+            "1 of 1 records skipped: their verdict is current"
+            in capsys.readouterr().out
+        )
 
     def test_stale_verifies_a_record_rewritten_after_its_verdict(
         self, record_root, capsys
