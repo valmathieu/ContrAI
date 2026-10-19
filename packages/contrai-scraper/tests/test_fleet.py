@@ -836,7 +836,8 @@ class TestHeartbeat:
         beat = harness.events("fleet_heartbeat")[0]
         roles = beat["hall"] + beat["spare"] + beat["chase"] + beat["out"]
         assert (beat["workers"], beat["down"], beat["probation"], beat["egress_probes"],
-                roles, "logins" in beat) == (2, 0, 0, 0, 2, True)
+                roles, "logins" in beat, (beat["seek"], beat["hunt"], beat["hunts_open"])) == (
+            2, 0, 0, 0, 2, True, (0, 0, 0))
 
     def test_a_worker_in_the_lobby_beats_too(self, profile):
         beating = dataclasses.replace(
@@ -1347,6 +1348,252 @@ class TestRevival:
         result = harness.run()
         assert (beat_while_alone, result.chases, harness.saw("worker_revived")) == (
             [True], 1, True)
+
+
+def hunting(profile, *, seekers=2, watchers=1, spares=1):
+    """The fixture profile with seekers on, and one watcher by default to keep it small."""
+
+    return dataclasses.replace(profile, fleet=dataclasses.replace(
+        profile.fleet, seekers=seekers, lobby_watchers=watchers, spares=spares))
+
+
+def starts(harness, *announced):
+    """A lobby page announcing each ``(row, when)`` once ``when`` holds, in order.
+
+    ``start_once`` for a watcher that reads several starts in one session.
+    """
+
+    frames = Frames(deaf=True)
+    pending = list(announced)
+
+    def poll():
+        if pending and pending[0][1]():
+            frames._frames.append(pending.pop(0)[0])
+        harness.end_when_done()
+
+    frames._on_empty = poll
+    return frames
+
+
+def seeking(harness, label, times=1):
+    """Whether a worker has stood by as a seeker at least ``times`` times."""
+
+    return sum(1 for entry in harness.events("standing_by")
+               if entry["worker"] == label and entry["role"] == "seek") >= times
+
+
+class Hunters:
+    """Recorders scripted per worker — never by build order, which races.
+
+    Each worker's entries are taken in turn: ``"win"`` takes the table a
+    moment in, through the claims it was given, then watches the game;
+    ``"lose"`` waits, in real time, until it is called off; ``"chase"`` is
+    a watcher's own chase; a callable gives up once it holds.
+    """
+
+    def __init__(self, plan):
+        self._plan = {label: list(acts) for label, acts in plan.items()}
+        self.built: list[dict] = []
+
+    def __call__(self, spectator, frames, profile, health, **kwargs):
+        label = profile.account.email.split("@")[0]
+        act = self._plan[label].pop(0)
+        target = kwargs.get("target")
+        self.built.append({"worker": label, "elapsed": frames.elapsed, **kwargs})
+        claims = kwargs["claims"]
+
+        class Scripted:
+            async def run(self):
+                if act == "win":
+                    await asyncio.sleep(0.02)
+                    claims.claim("t-found")
+                    await asyncio.sleep(0.05)
+                    return summary()
+                if act == "lose":
+                    for _ in range(500):
+                        if target.called_off():
+                            break
+                        await asyncio.sleep(0.01)
+                    return summary(StopReason.HUNT_CALLED_OFF, games=0)
+                if act == "chase":
+                    await asyncio.sleep(0.05)
+                    return summary()
+                for _ in range(500):
+                    if act():
+                        break
+                    await asyncio.sleep(0.01)
+                return summary(StopReason.CHASE_GAVE_UP, games=0)
+
+        return Scripted()
+
+
+class TestHunts:
+    def test_two_seekers_hunt_a_start_while_the_watcher_stays(self, profile, builders):
+        # One watcher, two seekers, a spare and one logged out. bot02 takes
+        # the table; bot03 is called off and stands by again; the spare
+        # takes bot02's seek place and bot05 logs in as the new spare.
+        hunters = Hunters({"bot02": ["win"], "bot03": ["lose"]})
+        harness = Harness(hunting(profile), workers=5, recorder=hunters,
+                          idle_sessions=True)
+        harness.script("bot01", (Walker(), start_once(
+            harness, full_row(builders),
+            when=lambda: seeking(harness, "bot02") and seeking(harness, "bot03"))))
+        harness.until = lambda: harness.saw("hunt_closed") and seeking(harness, "bot03", 2)
+        result = harness.run()
+        opened = harness.events("hunt_opened")[0]
+        closed = harness.events("hunt_closed")[0]
+        assert ((opened["watcher"], opened["seekers"]),
+                harness.events("hunt_won")[0]["worker"],
+                (closed["won_by"], closed["runs"]),
+                "enter_table_from_lobby" in harness.walkers["bot01"][0].calls,
+                harness.walkers["bot02"][0].calls[:2], harness.logins("bot05"),
+                (result.hunts, result.hunts_won, result.hunts_lost, result.hunt_runs,
+                 result.chases, result.chases_given_up, result.games_recorded)) == (
+            ("bot01", ["bot02", "bot03"]), "bot02", ("bot02", 2), False,
+            ["log_in", "enter_variant"], 1, (1, 1, 0, 2, 1, 0, 1))
+        assert {("bot02", "chase", "chase"), ("bot04", "seek", "promoted"),
+                ("bot05", "spare", "spare_wanted"),
+                ("bot03", "seek", "returned")} <= set(harness.roles())
+
+    def test_each_searcher_carries_the_roster_on_its_own_pages_clock(
+        self, profile, builders
+    ):
+        # The roster's time is the watcher's page's; a searcher's match time
+        # is read off its own page, so the roster must say how old the start
+        # is in that page's time.
+        hunters = Hunters({"bot02": ["win"], "bot03": ["lose"]})
+        harness = Harness(hunting(profile), workers=4, recorder=hunters,
+                          idle_sessions=True)
+        harness.script("bot01", (Walker(), start_once(
+            harness, full_row(builders),
+            when=lambda: seeking(harness, "bot02") and seeking(harness, "bot03"))))
+        harness.until = lambda: harness.saw("hunt_closed")
+        harness.run()
+        age = harness.events("hunt_opened")[0]["age_s"]
+        assert {built["worker"]: built["elapsed"] - built["target"].roster.at
+                for built in hunters.built} == {"bot02": age, "bot03": age}
+
+    def test_with_every_seeker_out_the_next_watcher_chases_alone(self, profile, builders):
+        # Back-to-back starts: the second finds both seekers on the first,
+        # so its watcher chases it the way a fleet without seekers does. The
+        # first hunt is lost, and its roster is free again once it closes.
+        second = full_row(builders, OTHERS, frame_id="l2")
+        hunters = Hunters({"bot03": [lambda: harness.saw("chase_started")],
+                           "bot04": [lambda: harness.saw("chase_started")],
+                           "bot02": ["chase"]})
+        harness = Harness(hunting(profile, watchers=2), workers=6, recorder=hunters,
+                          idle_sessions=True)
+        harness.script("bot01", (Walker(), start_once(
+            harness, full_row(builders),
+            when=lambda: seeking(harness, "bot03") and seeking(harness, "bot04"))))
+        harness.script("bot02", (Walker(), start_once(
+            harness, second, when=lambda: harness.saw("hunt_opened"))))
+        harness.until = lambda: (harness.saw("hunt_closed") and any(
+            worker == "bot02" and why in ("returned", "parked")
+            for worker, _, why in harness.roles()))
+        result = harness.run()
+        assert ([entry["worker"] for entry in harness.events("chase_started")],
+                harness.events("hunt_lost")[0]["runs"],
+                (result.hunts, result.hunts_lost, result.chases, result.chases_given_up),
+                harness.built.registry.claim_roster(frozenset(FOUR), "bot09")) == (
+            ["bot02"], 2, (1, 1, 2, 1), True)
+
+    def test_a_searcher_whose_session_fails_still_lets_the_hunt_close(
+        self, profile, builders
+    ):
+        hunters = Hunters({"bot03": [lambda: True]})
+        harness = Harness(hunting(profile), workers=4, recorder=hunters,
+                          idle_sessions=True)
+        harness.script("bot01", (Walker(), start_once(
+            harness, full_row(builders),
+            when=lambda: seeking(harness, "bot02") and seeking(harness, "bot03"))))
+        harness.script("bot02", (Walker(fail={"enter_variant": "the menu is gone"}),
+                                 Frames(deaf=True, on_empty=harness.end_when_done)))
+        harness.until = lambda: harness.saw("hunt_closed")
+        result = harness.run()
+        closed = harness.events("hunt_closed")[0]
+        assert (harness.events("session_failed")[0]["worker"],
+                (closed["won_by"], closed["runs"]),
+                (result.hunts_lost, result.hunt_runs)) == (
+            "bot02", (None, 2), (1, 1))
+
+    def test_a_seeker_back_from_a_table_walks_in_from_the_online_menu(
+        self, profile, builders
+    ):
+        # bot03 loses the first hunt and stands by at its table's exit. Its
+        # walk into the second fails, which is a free rebuild: the fresh
+        # session finds its hunt gone and stands by as a seeker again.
+        second = full_row(builders, OTHERS, frame_id="l2")
+        hunters = Hunters({"bot02": ["win"], "bot03": ["lose"],
+                           "bot04": [lambda: harness.saw("return_rebuilt")]})
+        harness = Harness(hunting(profile), workers=5, recorder=hunters,
+                          idle_sessions=True)
+        harness.script("bot01", (Walker(), starts(
+            harness,
+            (full_row(builders),
+             lambda: seeking(harness, "bot02") and seeking(harness, "bot03")),
+            (second, lambda: seeking(harness, "bot03", 2) and seeking(harness, "bot04")))))
+        harness.script("bot03", (Walker(fail={"enter_table_from_lobby": "out of reach"}),
+                                 Frames(deaf=True, on_empty=harness.end_when_done)))
+        harness.until = lambda: (len(harness.events("hunt_closed")) == 2
+                                 and seeking(harness, "bot03", 3))
+        result = harness.run()
+        first, rebuilt = harness.walkers["bot03"][:2]
+        assert (first.calls[first.calls.index("exit_table"):],
+                harness.events("return_rebuilt")[0]["worker"], rebuilt.calls,
+                (result.hunts, result.hunts_won, result.hunts_lost)) == (
+            ["exit_table", "enter_table_from_lobby"], "bot03", ["log_in"], (2, 1, 1))
+
+    def test_a_start_heard_again_after_a_rebuild_is_not_hunted_twice(
+        self, profile, builders
+    ):
+        # The watcher's lobby goes deaf just after it read the start; its
+        # rebuilt session reads the same start off the lobby again.
+        hunters = Hunters({"bot02": [lambda: harness.saw("hunt_reannounced")],
+                           "bot03": [lambda: harness.saw("hunt_reannounced")]})
+        harness = Harness(hunting(profile), workers=4, recorder=hunters,
+                          idle_sessions=True)
+        ticking = _ticking(harness, 5.0)
+
+        def deaf_once_the_hunt_is_on():
+            if harness.saw("hunt_opened"):
+                ticking()
+
+        harness.script(
+            "bot01",
+            (Walker(), start_once(
+                harness, full_row(builders),
+                when=lambda: seeking(harness, "bot02") and seeking(harness, "bot03"))),
+            (Walker(), Frames([full_row(builders, frame_id="l9")], deaf=True,
+                              on_empty=harness.end_when_done)))
+        first = harness.sessions["bot01@example.invalid"][0][1]
+        original = first._on_empty
+
+        def poll():
+            original()
+            deaf_once_the_hunt_is_on()
+
+        first._on_empty = poll
+        harness.until = lambda: harness.saw("hunt_closed")
+        result = harness.run()
+        assert (len(harness.events("hunt_opened")), harness.saw("hall_deaf"),
+                harness.saw("hunt_reannounced"), result.hunts) == (1, True, True, 1)
+
+
+    def test_a_hunt_has_one_winner(self, profile):
+        # Two granted claims in one hunt would be two chasers for one game.
+        from contrai_scraper import LobbyRoster, Role
+
+        harness = Harness(hunting(profile), workers=4)
+        fleet = harness.fleet()
+        fleet.rota.open([f"bot0{index}" for index in range(1, 5)])
+        seats = dict(zip(("top", "right", "bottom", "left"), FOUR, strict=True))
+        fleet.open_hunt(LobbyRoster(seats=seats, at=0.0, received_ms=None), "bot01", 0.0)
+        hunt = fleet.hunt_of("bot02")
+        fleet.hunt_won(hunt, "bot02")
+        fleet.hunt_won(hunt, "bot03")
+        assert ([entry["worker"] for entry in harness.events("hunt_won")],
+                fleet.rota.role("bot03")) == (["bot02"], Role.HUNT)
 
 
 class DrainingWalker(Walker):

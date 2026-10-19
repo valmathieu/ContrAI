@@ -713,6 +713,30 @@ hears a roster that would prove its page alive; `spare_silent` records instead, 
 spare page that received nothing for 60 s, because how quiet a page off the lobby is has not been
 measured.
 
+**Seekers.** Round 1 was caught in 65% of chased games on the box (16 workers, 2026-10-18), and the
+miss is search time alone: the server seats a spectator at random, a hop costs about 2 s, and a
+match after 15 s catches round 1 one time in five, after 20 s almost never. One searcher matching
+with probability p per hop finds the table within six hops 1 − (1 − p)⁶ of the time, which fits the
+65% at p ≈ 0.16; two searchers in parallel would make it about 88%, three about 96%. So
+`[fleet].seekers` (default 0, the fleet as it was) keeps that many more workers logged in on the
+online menu, where a table's exit lands and the spare waits (`standing_by` with `role` `seek`).
+When a watcher reads a start and seekers are free, it opens a **hunt** (`hunt_opened`) and stays in
+the lobby; every free seeker walks into the observe branch at once — from the menu a login left it
+on, or by backing out of the online menu, which fails fast and rebuilds for free when the page is
+still at a table — and chases the roster. The first searcher whose table claim is granted wins
+(`hunt_won`) and leaves the seek pool as a chaser does a watcher's place, so the spare takes its
+place and one worker logs in: a hunt costs the one login a chase does. The others are called off
+within a second (`hunt_called_off`, never a give-up) and go back to their seek place. The last one
+out closes the hunt (`hunt_lost` when nobody won, then `hunt_closed`) and releases the roster the
+watcher claimed, so a session that fails mid-hunt still lets it close. A start that finds every
+seeker out already is chased by its watcher, as before. Each searcher's chase carries the roster's
+time moved onto its own page's clock, so `chase_matched`'s `after_s` stays the match time. A hunt
+counts as one chase in the totals, and as one given up when lost; `hunts`, `hunts_won`,
+`hunts_lost` and `hunt_runs` count the rest, and the heartbeat carries `seek`, `hunt` and
+`hunts_open`. At rest a fleet with two seekers holds five contexts: two watchers, two seekers and
+the spare. The roles clamp in that order — watchers, then seekers, then the spare — to the workers
+up, and the startup phase keeps the seek places free like the others.
+
 A window also opens on games already under way, which no lobby will ever announce; before, the
 fleet visited them in its census and recorded nothing, and each window lost them. With
 `bootstrap_enabled` (the default) the rota opens on a **startup phase** instead. It places one

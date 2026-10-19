@@ -421,7 +421,9 @@ async def _fleet(  # pragma: no cover - needs a real browser
     summary = await fleet.run()
     print(
         f"{summary.windows} windows, {summary.chases} chases "
-        f"({summary.chases_given_up} given up), {summary.bootstraps} startup joins "
+        f"({summary.chases_given_up} given up; {summary.hunts} hunted, "
+        f"{summary.hunts_won} won, {summary.hunt_runs} searcher runs), "
+        f"{summary.bootstraps} startup joins "
         f"({summary.bootstrap_games} games), {summary.games_recorded} games, "
         f"{summary.tables_seated} tables seated, {summary.tables_rejected} rejected"
     )

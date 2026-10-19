@@ -513,6 +513,16 @@ class TestFleet:
                            match=r"\[fleet\]\.bootstrap_enabled must be bool, not int"):
             load_profile(_write(tmp_path, text))
 
+    def test_no_seekers_unless_a_profile_asks(self, tmp_path, profile, profile_text):
+        text = profile_text.replace("workers = 2", "workers = 2\nseekers = 2")
+        assert (profile.fleet.seekers, load_profile(_write(tmp_path, text)).fleet.seekers) == (
+            0, 2)
+
+    def test_a_negative_seeker_count_is_refused(self, tmp_path, profile_text):
+        text = profile_text.replace("workers = 2", "workers = 2\nseekers = -1")
+        with pytest.raises(ProfileError, match="seekers may not be negative"):
+            load_profile(_write(tmp_path, text))
+
     def test_revival_is_on_unless_a_profile_says_otherwise(self, profile):
         fleet = profile.fleet
         assert (fleet.revive_after_minutes, fleet.revive_max_minutes,
